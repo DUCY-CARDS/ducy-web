@@ -111,7 +111,7 @@ function createGameAndSetBoard(filled, boardCards) {
   if (curG === 'nlhe') {
     game = new HoldemGame();
   } else if (curG.includes('hl')) {
-    game = new OmahaHiLoGame();
+    game = new OmahaHiLoGame(g().cards);
   } else {
     game = new OmahaGame(g().cards);
   }
@@ -209,7 +209,7 @@ function runMonteCarloEquity(filled, boardCards, boardNeeded) {
 
         let game;
         if (curG.includes('hl')) {
-          game = new OmahaHiLoGame();
+          game = new OmahaHiLoGame(g().cards);
         } else {
           game = new OmahaGame(g().cards);
         }

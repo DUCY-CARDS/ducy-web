@@ -200,8 +200,11 @@ export class OmahaHiLoGame {
         wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
         return v1;
     }
-    constructor() {
-        const ret = wasm.omahahilogame_new();
+    /**
+     * @param {number} cards_per_player
+     */
+    constructor(cards_per_player) {
+        const ret = wasm.omahahilogame_new(cards_per_player);
         this.__wbg_ptr = ret;
         OmahaHiLoGameFinalization.register(this, this.__wbg_ptr, this);
         return this;
