@@ -17,6 +17,8 @@ const GM = {
   'omaha6-hl': {cards:6, max:6},
 };
 const CW = {2:42, 4:32, 5:28, 6:24};
+const ALL_CARDS = [];
+for (const suit of ST) for (const rank of RK) ALL_CARDS.push(rank + suit.c);
 const COMBOS = {};
 for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
   let l = r===c ? RK[r]+RK[c] : r<c ? RK[r]+RK[c]+'s' : RK[c]+RK[r]+'o';
@@ -69,8 +71,63 @@ function cardToWasm(c) {
   return c[0] + c[1];
 }
 
+let mcAbort = null;
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+function expandRangeToHands(sel, usedCards) {
+  const hands = [];
+  const suits = ['s', 'h', 'd', 'c'];
+  for (const label of sel) {
+    if (label.length === 2 && label[0] === label[1]) {
+      const r = label[0];
+      for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
+        const c1 = r + suits[i], c2 = r + suits[j];
+        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
+      }
+    } else if (label.length === 3 && label[2] === 's') {
+      for (const s of suits) {
+        const c1 = label[0] + s, c2 = label[1] + s;
+        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
+      }
+    } else if (label.length === 3 && label[2] === 'o') {
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+        if (i === j) continue;
+        const c1 = label[0] + suits[i], c2 = label[1] + suits[j];
+        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
+      }
+    }
+  }
+  return hands;
+}
+
+function createGameAndSetBoard(filled, boardCards) {
+  let game;
+  if (curG === 'nlhe') {
+    game = new HoldemGame();
+  } else if (curG.includes('hl')) {
+    game = new OmahaHiLoGame();
+  } else {
+    game = new OmahaGame(g().cards);
+  }
+  for (const si of filled) {
+    game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+  }
+  if (boardCards.length >= 3) game.set_flop(boardCards.slice(0, 3).map(cardToWasm).join(' '));
+  if (boardCards.length >= 4) game.set_turn(cardToWasm(boardCards[3]));
+  if (boardCards.length >= 5) game.set_river(cardToWasm(boardCards[4]));
+  return game;
+}
+
 function runEquityCalc() {
   if (!wasmReady) return;
+  if (mcAbort) { mcAbort(); mcAbort = null; }
+
   const gm = g();
   const filled = [];
   for (let i = 0; i < gm.max; i++) {
@@ -80,76 +137,32 @@ function runEquityCalc() {
   }
   if (filled.length < 2) return;
 
-  // Range mode only supported for NLHE, skip calc if any range seat in non-NLHE
-  for (const si of filled) {
-    if (seats[si].mode === 'range') {
-      // TODO: range equity not yet supported via WASM
-      return;
-    }
+  const hasRange = filled.some(si => seats[si].mode === 'range');
+  if (hasRange) {
+    if (curG !== 'nlhe') return;
+    runRangeEquity(filled);
+    return;
+  }
+
+  const boardCards = board.filter(c => c);
+  const boardNeeded = 5 - boardCards.length;
+  const isOmaha = curG !== 'nlhe';
+
+  if (isOmaha && boardNeeded > 0) {
+    runMonteCarloEquity(filled, boardCards, boardNeeded);
+    return;
   }
 
   calculating = true;
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
 
-  // Run calc in a setTimeout to let the UI update
   setTimeout(() => {
     try {
       const t0 = performance.now();
-      let equity;
-
-      if (curG === 'nlhe') {
-        const game = new HoldemGame();
-        for (const si of filled) {
-          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-        }
-        const boardCards = board.filter(c => c);
-        if (boardCards.length >= 3) {
-          game.set_flop(boardCards.slice(0, 3).map(cardToWasm).join(' '));
-        }
-        if (boardCards.length >= 4) {
-          game.set_turn(cardToWasm(boardCards[3]));
-        }
-        if (boardCards.length >= 5) {
-          game.set_river(cardToWasm(boardCards[4]));
-        }
-        equity = game.evaluate_equity();
-        game.free();
-      } else if (curG.includes('hl')) {
-        const game = new OmahaHiLoGame();
-        for (const si of filled) {
-          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-        }
-        const boardCards = board.filter(c => c);
-        if (boardCards.length >= 3) {
-          game.set_flop(boardCards.slice(0, 3).map(cardToWasm).join(' '));
-        }
-        if (boardCards.length >= 4) {
-          game.set_turn(cardToWasm(boardCards[3]));
-        }
-        if (boardCards.length >= 5) {
-          game.set_river(cardToWasm(boardCards[4]));
-        }
-        equity = game.evaluate_equity();
-        game.free();
-      } else {
-        const game = new OmahaGame(gm.cards);
-        for (const si of filled) {
-          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-        }
-        const boardCards = board.filter(c => c);
-        if (boardCards.length >= 3) {
-          game.set_flop(boardCards.slice(0, 3).map(cardToWasm).join(' '));
-        }
-        if (boardCards.length >= 4) {
-          game.set_turn(cardToWasm(boardCards[3]));
-        }
-        if (boardCards.length >= 5) {
-          game.set_river(cardToWasm(boardCards[4]));
-        }
-        equity = game.evaluate_equity();
-        game.free();
-      }
+      const game = createGameAndSetBoard(filled, boardCards);
+      const equity = game.evaluate_equity();
+      game.free();
 
       const ms = (performance.now() - t0).toFixed(0);
       eqs = new Array(10).fill(null);
@@ -166,6 +179,202 @@ function runEquityCalc() {
       console.error('Equity calc error:', err);
     }
   }, 10);
+}
+
+function runMonteCarloEquity(filled, boardCards, boardNeeded) {
+  const TIME_BUDGET = 2000;
+  const BATCH_MS = 50;
+
+  calculating = true;
+  document.getElementById('timer').textContent = 'Calculating…';
+  showCalcOverlay(true);
+
+  const t0 = performance.now();
+  const usedSet = used();
+  const available = ALL_CARDS.filter(c => !usedSet.has(c));
+  const totals = new Array(filled.length).fill(0);
+  let done = 0;
+  let aborted = false;
+
+  mcAbort = () => { aborted = true; };
+
+  function batch() {
+    if (aborted) { finish(); return; }
+    const batchEnd = performance.now() + BATCH_MS;
+
+    try {
+      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
+        shuffleArray(available);
+        const fullBoard = [...boardCards, ...available.slice(0, boardNeeded)];
+
+        let game;
+        if (curG.includes('hl')) {
+          game = new OmahaHiLoGame();
+        } else {
+          game = new OmahaGame(g().cards);
+        }
+        for (const si of filled) {
+          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+        }
+        game.set_flop(fullBoard.slice(0, 3).map(cardToWasm).join(' '));
+        game.set_turn(cardToWasm(fullBoard[3]));
+        game.set_river(cardToWasm(fullBoard[4]));
+
+        const eq = game.evaluate_equity();
+        for (let i = 0; i < filled.length; i++) totals[i] += eq[i];
+        game.free();
+        done++;
+      }
+    } catch (err) {
+      aborted = true;
+      console.error('Monte carlo error:', err);
+      finish();
+      return;
+    }
+
+    if ((performance.now() - t0) < TIME_BUDGET) {
+      setTimeout(batch, 0);
+    } else {
+      finish();
+    }
+  }
+
+  function finish() {
+    const ms = (performance.now() - t0).toFixed(0);
+    eqs = new Array(10).fill(null);
+    if (!aborted && done > 0) {
+      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
+      calced = true;
+    }
+    calculating = false;
+    mcAbort = null;
+    document.getElementById('timer').textContent = aborted ? 'Error' : `~${ms}ms (${done} samples)`;
+    showCalcOverlay(false);
+    render();
+  }
+
+  setTimeout(batch, 0);
+}
+
+function runRangeEquity(filled) {
+  const TIME_BUDGET = 2000;
+  const BATCH_MS = 50;
+
+  calculating = true;
+  document.getElementById('timer').textContent = 'Calculating…';
+  showCalcOverlay(true);
+
+  const t0 = performance.now();
+  const boardCards = board.filter(c => c);
+  const boardNeeded = 5 - boardCards.length;
+
+  const baseUsed = new Set();
+  for (const c of boardCards) baseUsed.add(c);
+  for (const c of deadCards) baseUsed.add(c);
+
+  const rangeSeatIndices = [];
+  const cardSeatIndices = [];
+  for (const si of filled) {
+    if (seats[si].mode === 'range') {
+      rangeSeatIndices.push(si);
+    } else {
+      cardSeatIndices.push(si);
+      for (const c of seats[si].cards) if (c) baseUsed.add(c);
+    }
+  }
+
+  const rangeHands = rangeSeatIndices.map(si => expandRangeToHands(seats[si].sel, baseUsed));
+  if (rangeHands.some(h => h.length === 0)) {
+    calculating = false;
+    document.getElementById('timer').textContent = 'No valid combos';
+    showCalcOverlay(false);
+    return;
+  }
+
+  const totals = new Array(filled.length).fill(0);
+  let done = 0;
+  let aborted = false;
+
+  mcAbort = () => { aborted = true; };
+
+  function batch() {
+    if (aborted) { finish(); return; }
+    const batchEnd = performance.now() + BATCH_MS;
+
+    try {
+      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
+        const sampleUsed = new Set(baseUsed);
+        const pickedHands = [];
+        let valid = true;
+
+        for (const rh of rangeHands) {
+          const validHands = rh.filter(h => !sampleUsed.has(h[0]) && !sampleUsed.has(h[1]));
+          if (validHands.length === 0) { valid = false; break; }
+          const hand = validHands[Math.floor(Math.random() * validHands.length)];
+          pickedHands.push(hand);
+          sampleUsed.add(hand[0]);
+          sampleUsed.add(hand[1]);
+        }
+        if (!valid) continue;
+
+        const available = ALL_CARDS.filter(c => !sampleUsed.has(c));
+
+        let fullBoard;
+        if (boardNeeded > 0) {
+          shuffleArray(available);
+          fullBoard = [...boardCards, ...available.slice(0, boardNeeded)];
+        } else {
+          fullBoard = boardCards;
+        }
+
+        const game = new HoldemGame();
+        for (const si of filled) {
+          if (seats[si].mode === 'cards') {
+            game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+          } else {
+            const ri = rangeSeatIndices.indexOf(si);
+            game.add_player(pickedHands[ri].map(cardToWasm).join(' '));
+          }
+        }
+
+        if (fullBoard.length >= 3) game.set_flop(fullBoard.slice(0, 3).map(cardToWasm).join(' '));
+        if (fullBoard.length >= 4) game.set_turn(cardToWasm(fullBoard[3]));
+        if (fullBoard.length >= 5) game.set_river(cardToWasm(fullBoard[4]));
+
+        const eq = game.evaluate_equity();
+        for (let i = 0; i < filled.length; i++) totals[i] += eq[i];
+        game.free();
+        done++;
+      }
+    } catch (err) {
+      aborted = true;
+      console.error('Range equity error:', err);
+      finish();
+      return;
+    }
+
+    if ((performance.now() - t0) < TIME_BUDGET) {
+      setTimeout(batch, 0);
+    } else {
+      finish();
+    }
+  }
+
+  function finish() {
+    const ms = (performance.now() - t0).toFixed(0);
+    eqs = new Array(10).fill(null);
+    if (!aborted && done > 0) {
+      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
+      calced = true;
+    }
+    calculating = false;
+    mcAbort = null;
+    document.getElementById('timer').textContent = aborted ? 'Error' : `~${ms}ms (${done} samples)`;
+    showCalcOverlay(false);
+    render();
+  }
+
+  setTimeout(batch, 0);
 }
 
 function showCalcOverlay(show) {
@@ -273,7 +482,7 @@ function openCardPicker(seatIdx, cardIdx) {
   const isHoldem = curG === 'nlhe';
 
   const uForPicker = new Set(u);
-  for (const c of hand) if (c) uForPicker.delete(c);
+  if (hand[cardIdx]) uForPicker.delete(hand[cardIdx]);
 
   let h = '';
   if (isHoldem) {
@@ -412,7 +621,15 @@ function parseRange(text) {
       expandPlus(plusMatch[1], sel);
       continue;
     }
-    if (COMBOS[t]) sel.add(t);
+    if (COMBOS[t]) { sel.add(t); continue; }
+    if (t.length === 2 && t[0] !== t[1] && ri(t[0]) >= 0 && ri(t[1]) >= 0) {
+      const hi = Math.min(ri(t[0]), ri(t[1]));
+      const lo = Math.max(ri(t[0]), ri(t[1]));
+      const ks = RK[hi]+RK[lo]+'s';
+      const ko = RK[hi]+RK[lo]+'o';
+      if (COMBOS[ks]) sel.add(ks);
+      if (COMBOS[ko]) sel.add(ko);
+    }
   }
   return sel;
 }
@@ -421,6 +638,14 @@ function expandPlus(hand, sel) {
   if (hand.length === 2 && hand[0] === hand[1]) {
     const start = ri(hand[0]);
     for (let i = start; i >= 0; i--) sel.add(RK[i]+RK[i]);
+  } else if (hand.length === 2) {
+    const hi = ri(hand[0]), lo = ri(hand[1]);
+    for (let i = lo; i > hi; i--) {
+      const ks = RK[hi]+RK[i]+'s';
+      const ko = RK[hi]+RK[i]+'o';
+      if (COMBOS[ks]) sel.add(ks);
+      if (COMBOS[ko]) sel.add(ko);
+    }
   } else if (hand.length === 3) {
     const suit = hand[2];
     const hi = ri(hand[0]), lo = ri(hand[1]);
@@ -436,6 +661,24 @@ function expandDash(lo, hi, sel) {
     let a = ri(lo[0]), b = ri(hi[0]);
     if (a < b) [a, b] = [b, a];
     for (let i = b; i <= a; i++) sel.add(RK[i]+RK[i]);
+  } else if (lo.length >= 2 && hi.length >= 2 && lo[0] === hi[0] && lo[0] !== lo[1]) {
+    const hiCard = ri(lo[0]);
+    let a = ri(lo[1]), b = ri(hi[1]);
+    if (a < b) [a, b] = [b, a];
+    const loSuffix = lo.length === 3 ? lo[2] : null;
+    const hiSuffix = hi.length === 3 ? hi[2] : null;
+    const suffix = loSuffix || hiSuffix;
+    for (let i = b; i <= a; i++) {
+      if (suffix) {
+        const k = RK[hiCard]+RK[i]+suffix;
+        if (COMBOS[k]) sel.add(k);
+      } else {
+        const ks = RK[hiCard]+RK[i]+'s';
+        const ko = RK[hiCard]+RK[i]+'o';
+        if (COMBOS[ks]) sel.add(ks);
+        if (COMBOS[ko]) sel.add(ko);
+      }
+    }
   }
 }
 

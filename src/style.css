@@ -28,13 +28,6 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
   border-bottom: 1px solid var(--border); background: var(--bg-raised); gap: 24px;
 }
 .wordmark { font-family: var(--font-data); font-size: 17px; font-weight: 700; color: var(--fg-strong); letter-spacing: -0.03em; }
-.tabs { display: flex; height: 100%; align-items: stretch; }
-.tab-btn {
-  font-family: var(--font-ui); font-size: 13px; font-weight: 500; padding: 0 14px;
-  border: none; background: transparent; color: var(--fg-muted); cursor: default; position: relative;
-}
-.tab-btn.on { color: var(--fg-strong); }
-.tab-btn.on::after { content:''; position: absolute; bottom: -1px; left: 8px; right: 8px; height: 2px; background: var(--teal); }
 .wasm-status {
   margin-left: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted);
 }
