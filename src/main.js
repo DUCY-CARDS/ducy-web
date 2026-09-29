@@ -72,6 +72,7 @@ function cardToWasm(c) {
 }
 
 let mcAbort = null;
+let lastMcType = null;
 
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -169,6 +170,7 @@ function runEquityCalc() {
       filled.forEach((si, j) => { eqs[si] = equity[j]; });
       calced = true;
       calculating = false;
+      lastMcType = null;
       document.getElementById('timer').textContent = ms + 'ms';
       showCalcOverlay(false);
       render();
@@ -248,7 +250,8 @@ function runMonteCarloEquity(filled, boardCards, boardNeeded) {
     }
     calculating = false;
     mcAbort = null;
-    document.getElementById('timer').textContent = aborted ? 'Error' : `~${ms}ms (${done} samples)`;
+    lastMcType = aborted ? null : 'mc';
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
     showCalcOverlay(false);
     render();
   }
@@ -369,7 +372,8 @@ function runRangeEquity(filled) {
     }
     calculating = false;
     mcAbort = null;
-    document.getElementById('timer').textContent = aborted ? 'Error' : `~${ms}ms (${done} samples)`;
+    lastMcType = aborted ? null : 'range';
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
     showCalcOverlay(false);
     render();
   }
@@ -597,6 +601,7 @@ let calcTimer = null;
 function dirty() {
   calced = false;
   eqs = new Array(10).fill(null);
+  lastMcType = null;
   document.getElementById('timer').textContent = '';
   if (calcTimer) clearTimeout(calcTimer);
   calcTimer = setTimeout(runEquityCalc, 150);
@@ -893,6 +898,12 @@ document.getElementById('game-sel').addEventListener('click', e => {
     else omahaHlCards = cards;
     switchGame(gameKey(activeType, cards));
     updateGameUI();
+  }
+});
+
+document.getElementById('timer').addEventListener('click', e => {
+  if (e.target.id === 'rerun-btn' && !calculating) {
+    runEquityCalc();
   }
 });
 

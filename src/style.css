@@ -47,6 +47,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
 .btn-ghost:hover { border-color: var(--fg-muted); }
 .timer { font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); margin-left: auto; }
+.rerun-btn { background: none; border: 1px solid var(--fg-muted); color: var(--fg-muted); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: pointer; margin-left: 4px; }
+.rerun-btn:hover { border-color: var(--teal); color: var(--teal); }
 
 .game-sel {
   display: flex; align-items: start; gap: 6px; flex-wrap: wrap;
