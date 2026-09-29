@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ducy</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="wordmark">ducy</div>
+    <div class="tabs">
+      <div class="tab-btn on">Equity</div>
+    </div>
+    <div id="wasm-status" class="wasm-status">Loading…</div>
+  </div>
+
+  <div class="toolbar">
+    <div class="game-sel" id="game-sel">
+      <div class="game-group">
+        <button class="game-btn on" data-game="nlhe">Hold'em</button>
+      </div>
+      <div class="game-group">
+        <button class="game-btn" data-game="omaha">Omaha</button>
+        <div class="card-count dim" id="cc-omaha">
+          <button class="cc-btn on" data-cc="4">4</button>
+          <button class="cc-btn" data-cc="5">5</button>
+          <button class="cc-btn" data-cc="6">6</button>
+        </div>
+      </div>
+      <div class="game-group">
+        <button class="game-btn" data-game="omaha-hl">Omaha Hi-Lo</button>
+        <div class="card-count dim" id="cc-omaha-hl">
+          <button class="cc-btn on" data-cc="4">4</button>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar-right">
+      <span class="timer" id="timer"></span>
+      <button class="btn btn-ghost" id="clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <div class="table-wrap" id="tw">
+    <div class="felt">
+      <div class="board-area">
+        <div class="board" id="board"></div>
+        <div class="dead-row">
+          <span class="dead-label">Dead</span>
+          <div class="dead-cards" id="dead"></div>
+          <button class="dead-add" id="dead-add">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="mbg" hidden>
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
