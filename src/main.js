@@ -600,6 +600,7 @@ function dirty() {
   document.getElementById('timer').textContent = '';
   if (calcTimer) clearTimeout(calcTimer);
   calcTimer = setTimeout(runEquityCalc, 150);
+  syncHash();
 }
 
 // Range parsing
@@ -900,7 +901,77 @@ document.getElementById('clear-btn').addEventListener('click', () => {
   board = [null,null,null,null,null];
   deadCards = [];
   dirty(); render();
+  syncHash();
 });
+
+function stateToHash() {
+  const parts = ['g=' + curG];
+  for (let i = 0; i < seats.length; i++) {
+    const s = seats[i];
+    if (!s) continue;
+    if (s.mode === 'cards') {
+      const cards = s.cards.filter(c => c);
+      if (cards.length) parts.push('p' + i + '=' + cards.join('.'));
+    } else if (s.mode === 'range' && s.sel.size > 0) {
+      parts.push('p' + i + '=r:' + [...s.sel].join(','));
+    }
+  }
+  const bc = board.filter(c => c);
+  if (bc.length) parts.push('b=' + bc.join('.'));
+  if (deadCards.length) parts.push('d=' + deadCards.join('.'));
+  return '#' + parts.join('&');
+}
+
+function syncHash() {
+  const h = stateToHash();
+  if (location.hash !== h) history.replaceState(null, '', h);
+}
+
+function loadFromHash() {
+  const h = location.hash.slice(1);
+  if (!h) return;
+  const params = {};
+  for (const part of h.split('&')) {
+    const eq = part.indexOf('=');
+    if (eq > 0) params[part.slice(0, eq)] = part.slice(eq + 1);
+  }
+  if (params.g && GM[params.g]) {
+    curG = params.g;
+    const m = curG.match(/omaha(\d)?/);
+    if (m) {
+      const cc = m[1] ? +m[1] : 4;
+      if (curG.includes('hl')) omahaHlCards = cc; else omahaCards = cc;
+    }
+  }
+  seats = new Array(10).fill(null);
+  board = [null, null, null, null, null];
+  deadCards = [];
+  const gm = g();
+  for (const [k, v] of Object.entries(params)) {
+    const pm = k.match(/^p(\d+)$/);
+    if (!pm) continue;
+    const si = +pm[1];
+    if (si >= gm.max) continue;
+    if (v.startsWith('r:')) {
+      seats[si] = { mode: 'range', sel: parseRange(v.slice(2)) };
+    } else {
+      const cards = v.split('.').filter(Boolean);
+      const hand = new Array(gm.cards).fill(null);
+      cards.forEach((c, j) => { if (j < gm.cards) hand[j] = c; });
+      seats[si] = { mode: 'cards', cards: hand };
+    }
+  }
+  if (params.b) {
+    const bc = params.b.split('.').filter(Boolean);
+    bc.forEach((c, i) => { if (i < 5) board[i] = c; });
+  }
+  if (params.d) {
+    deadCards = params.d.split('.').filter(Boolean);
+  }
+  dirty();
+}
+
+window.addEventListener('hashchange', () => { loadFromHash(); render(); updateGameUI(); });
 
 // Init
 const statusEl = document.getElementById('wasm-status');
@@ -915,4 +986,6 @@ try {
   console.error('WASM init failed:', err);
 }
 
+loadFromHash();
 render();
+updateGameUI();
