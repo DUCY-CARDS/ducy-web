@@ -11,6 +11,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout ducy
+        uses: actions/checkout@v4
+        with:
+          repository: allenpiscitello/ducy
+          path: ducy
+          token: ${{ secrets.DUCY_PAT }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          cd ducy
+          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript
+
+      - name: Copy WASM to site
+        run: |
+          mkdir -p wasm
+          cp ducy/ducy-wasm/pkg/ducy_wasm.js wasm/
+          cp ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
@@ -24,4 +50,5 @@ jobs:
             --exclude '.git' \
             --exclude '.github' \
             --exclude '.gitignore' \
+            --exclude 'ducy' \
             ./ "${{ secrets.SSH_DEPLOY_TARGET }}/"

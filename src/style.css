@@ -92,6 +92,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 }
 
 .board-area { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.boards-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.board-label {
+  font-family: var(--font-data); font-size: 9px; font-weight: 700;
+  color: rgba(255,255,255,0.4); letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 2px; text-align: center;
+}
 .board { display: flex; align-items: center; gap: 4px; }
 .board-gap { width: 8px; }
 .dead-row { display: flex; align-items: center; gap: 6px; }

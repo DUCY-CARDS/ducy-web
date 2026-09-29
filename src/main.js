@@ -1,4 +1,4 @@
-import init, { HoldemGame, OmahaGame, OmahaHiLoGame } from '../wasm/ducy_wasm.js';
+import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
 
 const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 const ST = [
@@ -8,13 +8,14 @@ const ST = [
   {ch:'♣', c:'c', cl:'bl'},
 ];
 const GM = {
-  'nlhe':      {cards:2, max:10},
-  'omaha':     {cards:4, max:10},
-  'omaha-hl':  {cards:4, max:10},
-  'omaha5':    {cards:5, max:9},
-  'omaha5-hl': {cards:5, max:9},
-  'omaha6':    {cards:6, max:6},
-  'omaha6-hl': {cards:6, max:6},
+  'nlhe':      {cards:2, max:10, numBoards:1},
+  'omaha':     {cards:4, max:10, numBoards:1},
+  'omaha-hl':  {cards:4, max:10, numBoards:1},
+  'omaha5':    {cards:5, max:9,  numBoards:1},
+  'omaha5-hl': {cards:5, max:9,  numBoards:1},
+  'omaha6':    {cards:6, max:6,  numBoards:1},
+  'omaha6-hl': {cards:6, max:6,  numBoards:1},
+  'bomb-pot':  {cards:4, max:10, numBoards:2},
 };
 const CW = {2:42, 4:32, 5:28, 6:24};
 const ALL_CARDS = [];
@@ -28,7 +29,7 @@ for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
 let wasmReady = false;
 let curG = 'nlhe';
 let seats = new Array(10).fill(null);
-let board = [null,null,null,null,null];
+let boards = [[null,null,null,null,null]];
 let deadCards = [];
 let eqs = new Array(10).fill(null);
 let calced = false;
@@ -36,11 +37,18 @@ let calculating = false;
 let target = null;
 
 function g() { return GM[curG]; }
+function isBombPot() { return curG === 'bomb-pot'; }
+
+function initBoards() {
+  const nb = g().numBoards;
+  boards = [];
+  for (let i = 0; i < nb; i++) boards.push([null,null,null,null,null]);
+}
 
 function used() {
   const u = new Set();
   for (const s of seats) if (s && s.mode==='cards') for (const c of s.cards) if (c) u.add(c);
-  for (const c of board) if (c) u.add(c);
+  for (const b of boards) for (const c of b) if (c) u.add(c);
   for (const c of deadCards) u.add(c);
   return u;
 }
@@ -66,7 +74,6 @@ function seatPos(n) {
   return p;
 }
 
-// Card string format: "As" -> "A♠" for WASM (ducy uses "As" format)
 function cardToWasm(c) {
   return c[0] + c[1];
 }
@@ -125,6 +132,20 @@ function createGameAndSetBoard(filled, boardCards) {
   return game;
 }
 
+function createBombPotGame(filled, allBoardCards) {
+  const game = new OmahaBombPotGame(boards.length, g().cards);
+  for (const si of filled) {
+    game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+  }
+  for (let bi = 0; bi < allBoardCards.length; bi++) {
+    const bc = allBoardCards[bi];
+    if (bc.length >= 3) game.set_flop(bi, bc.slice(0, 3).map(cardToWasm).join(' '));
+    if (bc.length >= 4) game.set_turn(bi, cardToWasm(bc[3]));
+    if (bc.length >= 5) game.set_river(bi, cardToWasm(bc[4]));
+  }
+  return game;
+}
+
 function runEquityCalc() {
   if (!wasmReady) return;
   if (mcAbort) { mcAbort(); mcAbort = null; }
@@ -145,7 +166,12 @@ function runEquityCalc() {
     return;
   }
 
-  const boardCards = board.filter(c => c);
+  if (isBombPot()) {
+    runBombPotEquity(filled);
+    return;
+  }
+
+  const boardCards = boards[0].filter(c => c);
   const boardNeeded = 5 - boardCards.length;
   const isOmaha = curG !== 'nlhe';
 
@@ -181,6 +207,120 @@ function runEquityCalc() {
       console.error('Equity calc error:', err);
     }
   }, 10);
+}
+
+function runBombPotEquity(filled) {
+  const allBoardCards = boards.map(b => b.filter(c => c));
+  const totalNeeded = allBoardCards.reduce((sum, bc) => sum + (5 - bc.length), 0);
+
+  if (totalNeeded === 0) {
+    calculating = true;
+    document.getElementById('timer').textContent = 'Calculating…';
+    showCalcOverlay(true);
+
+    setTimeout(() => {
+      try {
+        const t0 = performance.now();
+        const game = createBombPotGame(filled, allBoardCards);
+        const equity = game.evaluate_equity();
+        game.free();
+
+        const ms = (performance.now() - t0).toFixed(0);
+        eqs = new Array(10).fill(null);
+        filled.forEach((si, j) => { eqs[si] = equity[j]; });
+        calced = true;
+        calculating = false;
+        lastMcType = null;
+        document.getElementById('timer').textContent = ms + 'ms';
+        showCalcOverlay(false);
+        render();
+      } catch (err) {
+        calculating = false;
+        document.getElementById('timer').textContent = 'Error: ' + err.message;
+        showCalcOverlay(false);
+        console.error('Bomb pot equity error:', err);
+      }
+    }, 10);
+    return;
+  }
+
+  const TIME_BUDGET = 2000;
+  const BATCH_MS = 50;
+
+  calculating = true;
+  document.getElementById('timer').textContent = 'Calculating…';
+  showCalcOverlay(true);
+
+  const t0 = performance.now();
+  const usedSet = used();
+  const available = ALL_CARDS.filter(c => !usedSet.has(c));
+  const totals = new Array(filled.length).fill(0);
+  let done = 0;
+  let aborted = false;
+
+  mcAbort = () => { aborted = true; };
+
+  function batch() {
+    if (aborted) { finish(); return; }
+    const batchEnd = performance.now() + BATCH_MS;
+
+    try {
+      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
+        shuffleArray(available);
+        let dealt = 0;
+        const fullBoards = allBoardCards.map(bc => {
+          const needed = 5 - bc.length;
+          const full = [...bc, ...available.slice(dealt, dealt + needed)];
+          dealt += needed;
+          return full;
+        });
+
+        const game = new OmahaBombPotGame(boards.length, g().cards);
+        for (const si of filled) {
+          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+        }
+        for (let bi = 0; bi < fullBoards.length; bi++) {
+          const fb = fullBoards[bi];
+          game.set_flop(bi, fb.slice(0, 3).map(cardToWasm).join(' '));
+          game.set_turn(bi, cardToWasm(fb[3]));
+          game.set_river(bi, cardToWasm(fb[4]));
+        }
+
+        const eq = game.evaluate_equity();
+        for (let i = 0; i < filled.length; i++) totals[i] += eq[i];
+        game.free();
+        done++;
+      }
+    } catch (err) {
+      aborted = true;
+      console.error('Bomb pot monte carlo error:', err);
+      finish();
+      return;
+    }
+
+    if ((performance.now() - t0) < TIME_BUDGET) {
+      setTimeout(batch, 0);
+    } else {
+      finish();
+    }
+  }
+
+  function finish() {
+    const ms = (performance.now() - t0).toFixed(0);
+    eqs = new Array(10).fill(null);
+    if (!aborted && done > 0) {
+      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
+      calced = true;
+    }
+    calculating = false;
+    mcAbort = null;
+    lastMcType = aborted ? null : 'mc';
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
+    showCalcOverlay(false);
+    render();
+  }
+
+  setTimeout(batch, 0);
 }
 
 function runMonteCarloEquity(filled, boardCards, boardNeeded) {
@@ -268,7 +408,7 @@ function runRangeEquity(filled) {
   showCalcOverlay(true);
 
   const t0 = performance.now();
-  const boardCards = board.filter(c => c);
+  const boardCards = boards[0].filter(c => c);
   const boardNeeded = 5 - boardCards.length;
 
   const baseUsed = new Set();
@@ -442,14 +582,29 @@ function render() {
 }
 
 function renderBoard() {
-  let h = '';
-  for (let i = 0; i < 5; i++) {
-    if (i===3||i===4) h += '<div class="board-gap"></div>';
-    const d = cd(board[i]);
-    if (d) h += `<div class="bc ${d.cl}" data-bi="${i}">${d.t}</div>`;
-    else h += `<div class="bc empty" data-bi="${i}">+</div>`;
+  const wrap = document.getElementById('boards-wrap');
+  wrap.innerHTML = '';
+
+  for (let bi = 0; bi < boards.length; bi++) {
+    const b = boards[bi];
+    if (boards.length > 1) {
+      const label = document.createElement('div');
+      label.className = 'board-label';
+      label.textContent = 'Board ' + (bi + 1);
+      wrap.appendChild(label);
+    }
+    const boardEl = document.createElement('div');
+    boardEl.className = 'board';
+    let h = '';
+    for (let i = 0; i < 5; i++) {
+      if (i===3||i===4) h += '<div class="board-gap"></div>';
+      const d = cd(b[i]);
+      if (d) h += `<div class="bc ${d.cl}" data-bi="${i}" data-bb="${bi}">${d.t}</div>`;
+      else h += `<div class="bc empty" data-bi="${i}" data-bb="${bi}">+</div>`;
+    }
+    boardEl.innerHTML = h;
+    wrap.appendChild(boardEl);
   }
-  document.getElementById('board').innerHTML = h;
 
   let dh = '';
   for (let i = 0; i < deadCards.length; i++) {
@@ -551,17 +706,19 @@ function openRangePicker(seatIdx) {
   showModal(h);
 }
 
-function openBoardPicker(cardIdx) {
-  const curCard = board[cardIdx];
-  target = {type:'board', card:cardIdx};
+function openBoardPicker(boardIdx, cardIdx) {
+  const b = boards[boardIdx];
+  const curCard = b[cardIdx];
+  target = {type:'board', boardIdx, card:cardIdx};
   const u = used();
   const labels = ['Flop','Flop','Flop','Turn','River'];
+  const boardLabel = boards.length > 1 ? `Board ${boardIdx+1} · ${labels[cardIdx]}` : `Board · ${labels[cardIdx]}`;
 
-  let h = `<div class="modal-header"><span>Board · ${labels[cardIdx]}</span></div>`;
+  let h = `<div class="modal-header"><span>${boardLabel}</span></div>`;
 
   h += '<div class="picker-hand">';
   for (let j = 0; j < 5; j++) {
-    const c = board[j];
+    const c = b[j];
     const d = cd(c);
     const active = j === cardIdx ? ' active' : '';
     if (j === 3) h += '<div style="width:8px"></div>';
@@ -708,11 +865,13 @@ document.getElementById('tw').addEventListener('click', e => {
   }
   const rm = e.target.closest('[data-rm]');
   if (rm) { seats[+rm.dataset.rm] = null; dirty(); render(); return; }
-});
 
-document.getElementById('board').addEventListener('click', e => {
   const bc = e.target.closest('[data-bi]');
-  if (bc) openBoardPicker(+bc.dataset.bi);
+  if (bc) {
+    const bi = bc.dataset.bb != null ? +bc.dataset.bb : 0;
+    openBoardPicker(bi, +bc.dataset.bi);
+    return;
+  }
 });
 
 document.getElementById('dead-add').addEventListener('click', () => openDeadPicker());
@@ -760,12 +919,13 @@ document.getElementById('mbg').addEventListener('click', e => {
   const pb = e.target.closest('[data-pb]');
   if (pb && target && target.type === 'board') {
     const j = +pb.dataset.pb;
-    if (board[j]) {
-      board[j] = null;
+    const bi = target.boardIdx;
+    if (boards[bi][j]) {
+      boards[bi][j] = null;
       dirty(); render();
-      openBoardPicker(j);
+      openBoardPicker(bi, j);
     } else {
-      openBoardPicker(j);
+      openBoardPicker(bi, j);
     }
     return;
   }
@@ -779,10 +939,11 @@ document.getElementById('mbg').addEventListener('click', e => {
       const next = seats[target.seat].cards.indexOf(null);
       if (next !== -1) { openCardPicker(target.seat, next); } else { closeModal(); }
     } else if (target.type === 'board') {
-      board[target.card] = card;
+      const bi = target.boardIdx;
+      boards[bi][target.card] = card;
       dirty(); render();
-      const next = board.indexOf(null);
-      if (next !== -1) { openBoardPicker(next); } else { closeModal(); }
+      const next = boards[bi].indexOf(null);
+      if (next !== -1) { openBoardPicker(bi, next); } else { closeModal(); }
     } else if (target.type === 'dead') {
       deadCards.push(card);
       dirty(); render();
@@ -814,9 +975,9 @@ document.getElementById('mbg').addEventListener('click', e => {
 
   if (e.target.id === 'mclear' && target) {
     if (target.type === 'board') {
-      board[target.card] = null;
+      boards[target.boardIdx][target.card] = null;
       dirty(); render();
-      openBoardPicker(target.card);
+      openBoardPicker(target.boardIdx, target.card);
     }
     return;
   }
@@ -850,7 +1011,7 @@ function switchGame(newGame) {
   if (newGame === curG) return;
   curG = newGame;
   seats = new Array(10).fill(null);
-  board = [null,null,null,null,null];
+  initBoards();
   deadCards = [];
   dirty(); render();
 }
@@ -865,7 +1026,11 @@ function gameKey(type, cards) {
 
 function updateGameUI() {
   document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('on'));
-  const activeType = curG === 'nlhe' ? 'nlhe' : curG.includes('hl') ? 'omaha-hl' : 'omaha';
+  let activeType;
+  if (curG === 'nlhe') activeType = 'nlhe';
+  else if (curG === 'bomb-pot') activeType = 'bomb-pot';
+  else if (curG.includes('hl')) activeType = 'omaha-hl';
+  else activeType = 'omaha';
   document.querySelector(`.game-btn[data-game="${activeType}"]`).classList.add('on');
 
   document.getElementById('cc-omaha').classList.toggle('dim', activeType !== 'omaha');
@@ -885,6 +1050,7 @@ document.getElementById('game-sel').addEventListener('click', e => {
   if (gb) {
     const type = gb.dataset.game;
     if (type === 'nlhe') switchGame('nlhe');
+    else if (type === 'bomb-pot') switchGame('bomb-pot');
     else if (type === 'omaha') switchGame(gameKey('omaha', omahaCards));
     else if (type === 'omaha-hl') switchGame(gameKey('omaha-hl', omahaHlCards));
     updateGameUI();
@@ -909,7 +1075,7 @@ document.getElementById('timer').addEventListener('click', e => {
 
 document.getElementById('clear-btn').addEventListener('click', () => {
   seats = new Array(10).fill(null);
-  board = [null,null,null,null,null];
+  initBoards();
   deadCards = [];
   dirty(); render();
   syncHash();
@@ -927,8 +1093,11 @@ function stateToHash() {
       parts.push('p' + i + '=r:' + [...s.sel].join(','));
     }
   }
-  const bc = board.filter(c => c);
-  if (bc.length) parts.push('b=' + bc.join('.'));
+  for (let bi = 0; bi < boards.length; bi++) {
+    const bc = boards[bi].filter(c => c);
+    const key = boards.length > 1 ? 'b' + bi : 'b';
+    if (bc.length) parts.push(key + '=' + bc.join('.'));
+  }
   if (deadCards.length) parts.push('d=' + deadCards.join('.'));
   return '#' + parts.join('&');
 }
@@ -955,7 +1124,7 @@ function loadFromHash() {
     }
   }
   seats = new Array(10).fill(null);
-  board = [null, null, null, null, null];
+  initBoards();
   deadCards = [];
   const gm = g();
   for (const [k, v] of Object.entries(params)) {
@@ -972,9 +1141,19 @@ function loadFromHash() {
       seats[si] = { mode: 'cards', cards: hand };
     }
   }
-  if (params.b) {
-    const bc = params.b.split('.').filter(Boolean);
-    bc.forEach((c, i) => { if (i < 5) board[i] = c; });
+  if (boards.length > 1) {
+    for (let bi = 0; bi < boards.length; bi++) {
+      const bkey = 'b' + bi;
+      if (params[bkey]) {
+        const bc = params[bkey].split('.').filter(Boolean);
+        bc.forEach((c, i) => { if (i < 5) boards[bi][i] = c; });
+      }
+    }
+  } else {
+    if (params.b) {
+      const bc = params.b.split('.').filter(Boolean);
+      bc.forEach((c, i) => { if (i < 5) boards[0][i] = c; });
+    }
   }
   if (params.d) {
     deadCards = params.d.split('.').filter(Boolean);
