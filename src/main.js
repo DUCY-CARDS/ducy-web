@@ -163,6 +163,7 @@ function runEquityCalc() {
       calculating = false;
       document.getElementById('timer').textContent = 'Error: ' + err.message;
       showCalcOverlay(false);
+      console.error('Equity calc error:', err);
     }
   }, 10);
 }
@@ -341,11 +342,25 @@ function openBoardPicker(cardIdx) {
   const curCard = board[cardIdx];
   target = {type:'board', card:cardIdx};
   const u = used();
-  const labels = ['Flop 1','Flop 2','Flop 3','Turn','River'];
+  const labels = ['Flop','Flop','Flop','Turn','River'];
 
-  let h = `<div class="modal-header"><span>Board · ${labels[cardIdx]}</span>`;
-  if (curCard) h += '<button class="modal-clear" id="mclear">Remove</button>';
-  h += '</div><div class="card-picker">';
+  let h = `<div class="modal-header"><span>Board · ${labels[cardIdx]}</span></div>`;
+
+  h += '<div class="picker-hand">';
+  for (let j = 0; j < 5; j++) {
+    const c = board[j];
+    const d = cd(c);
+    const active = j === cardIdx ? ' active' : '';
+    if (j === 3) h += '<div style="width:8px"></div>';
+    if (d) {
+      h += `<div class="ph-card ${d.cl}${active}" data-pb="${j}">${d.t}</div>`;
+    } else {
+      h += `<div class="ph-card empty${active}" data-pb="${j}">+</div>`;
+    }
+  }
+  h += '</div>';
+
+  h += '<div class="card-picker">';
   for (const suit of ST) {
     h += '<div class="psuit">';
     h += `<span class="sicon" style="color:${suit.cl==='rd'?'var(--red)':'var(--fg-strong)'}">${suit.ch}</span>`;
@@ -493,6 +508,19 @@ document.getElementById('mbg').addEventListener('click', e => {
     return;
   }
 
+  const pb = e.target.closest('[data-pb]');
+  if (pb && target && target.type === 'board') {
+    const j = +pb.dataset.pb;
+    if (board[j]) {
+      board[j] = null;
+      dirty(); render();
+      openBoardPicker(j);
+    } else {
+      openBoardPicker(j);
+    }
+    return;
+  }
+
   const pk = e.target.closest('.pk:not(.used)');
   if (pk && target) {
     const card = pk.dataset.pk;
@@ -538,7 +566,8 @@ document.getElementById('mbg').addEventListener('click', e => {
   if (e.target.id === 'mclear' && target) {
     if (target.type === 'board') {
       board[target.card] = null;
-      dirty(); closeModal(); render();
+      dirty(); render();
+      openBoardPicker(target.card);
     }
     return;
   }
