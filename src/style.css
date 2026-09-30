@@ -9,6 +9,8 @@
   --teal-hover: #38909e;
   --teal-faint: rgba(46,120,136,0.12);
   --red: #a04040;
+  --blue: #2f5fa8;
+  --green: #2e7a3c;
   --border: #ced0d4;
   --card-face: #fff;
   --felt: #2c3834;
@@ -46,6 +48,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 }
 .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
 .btn-ghost:hover { border-color: var(--fg-muted); }
+.btn-ghost[aria-pressed="true"] { border-color: var(--teal); color: var(--teal); }
 .timer { font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); margin-left: auto; }
 .rerun-btn { background: none; border: 1px solid var(--fg-muted); color: var(--fg-muted); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: pointer; margin-left: 4px; }
 .rerun-btn:hover { border-color: var(--teal); color: var(--teal); }
@@ -239,6 +242,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .psuit { display: flex; align-items: center; gap: 0; margin-bottom: 6px; }
 .psuit:last-child { margin-bottom: 0; }
 .sicon { width: 30px; text-align: center; font-size: 22px; flex-shrink: 0; }
+.sicon.rd { color: var(--red); }
+.sicon.bl { color: var(--fg-strong); }
 .pk {
   font-family: var(--font-data); font-size: 17px; font-weight: 600;
   width: 37px; height: 37px; border: none; border-radius: 4px;
@@ -309,6 +314,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
   color: var(--fg-strong); background: var(--bg-raised);
   padding: 8px 20px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
+
+/* Four-color deck: diamonds blue, clubs green */
+.four-color :is(.board .bc, .seat-cards .sc, .picker-hand .ph-card, .pk, .sicon).s-d { color: var(--blue); }
+.four-color :is(.board .bc, .seat-cards .sc, .picker-hand .ph-card, .pk, .sicon).s-c { color: var(--green); }
+.four-color .dead-cards .dc.s-d { color: #7fa6e6; }
+.four-color .dead-cards .dc.s-c { color: #72c282; }
 
 @media (max-width: 640px) {
   .table-wrap { aspect-ratio: 1.2; }
