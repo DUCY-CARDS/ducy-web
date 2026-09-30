@@ -702,6 +702,7 @@ function render() {
     tw.appendChild(el);
   }
   renderBoard();
+  updateRandomPlayersUI();
 }
 
 function renderBoard() {
@@ -1236,6 +1237,9 @@ function updateGameUI() {
   document.getElementById('cc-omaha').classList.toggle('dim', activeType !== 'omaha');
   document.getElementById('cc-omaha-hl').classList.toggle('dim', activeType !== 'omaha-hl');
 
+  document.getElementById('bp-random').hidden = activeType !== 'bomb-pot';
+  updateRandomPlayersUI();
+
   if (activeType === 'omaha' || activeType === 'omaha-hl') {
     const cc = activeType === 'omaha' ? omahaCards : omahaHlCards;
     const container = document.getElementById('cc-' + activeType);
@@ -1245,7 +1249,31 @@ function updateGameUI() {
   }
 }
 
+function updateRandomPlayersUI() {
+  const n = seats.slice(0, g().max).filter(Boolean).length;
+  document.querySelectorAll('#bp-random .cc-btn').forEach(b => {
+    b.classList.toggle('on', +b.dataset.rp === n);
+  });
+}
+
+// Grow or shrink the table to n players, adding random seats in empty spots and
+// removing random seats (highest first) when shrinking. Picked hands are kept.
+function setRandomPlayers(n) {
+  const max = g().max;
+  let count = seats.slice(0, max).filter(Boolean).length;
+  for (let i = 0; i < max && count < n; i++) {
+    if (!seats[i]) { seats[i] = {mode:'random'}; count++; }
+  }
+  for (let i = max - 1; i >= 0 && count > n; i--) {
+    if (seats[i] && seats[i].mode === 'random') { seats[i] = null; count--; }
+  }
+  dirty(); render();
+  syncHash();
+}
+
 document.getElementById('game-sel').addEventListener('click', e => {
+  const rp = e.target.closest('[data-rp]');
+  if (rp) { setRandomPlayers(+rp.dataset.rp); return; }
   const gb = e.target.closest('.game-btn');
   if (gb) {
     const type = gb.dataset.game;
