@@ -693,7 +693,8 @@ document.getElementById('tw').addEventListener('click', e => {
   const sc = e.target.closest('[data-s]');
   if (sc) {
     const si = +sc.dataset.s;
-    openCardPicker(si, 0);
+    const ci = sc.dataset.c != null ? +sc.dataset.c : 0;
+    openCardPicker(si, ci);
     return;
   }
   const rng = e.target.closest('[data-rng]');
