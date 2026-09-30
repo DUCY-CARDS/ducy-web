@@ -14,7 +14,6 @@ jobs:
         with:
           repository: allenpiscitello/ducy
           path: ducy
-          token: ${{ secrets.DUCY_PAT }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
