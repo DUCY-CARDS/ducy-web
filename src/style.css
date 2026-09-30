@@ -93,6 +93,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 
 .board-area { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .boards-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.board-col { display: flex; flex-direction: column; align-items: center; }
 .board-label {
   font-family: var(--font-data); font-size: 9px; font-weight: 700;
   color: rgba(255,255,255,0.4); letter-spacing: 0.08em; text-transform: uppercase;
@@ -163,6 +164,25 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .seat-range:hover { background: rgba(46,120,136,0.18); }
 .seat-range-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--teal); }
 .seat-range-count { font-family: var(--font-data); font-size: 10px; color: var(--fg-muted); margin-top: 2px; }
+.seat-random {
+  background: var(--teal-faint); border: 1.5px solid var(--teal); border-radius: 4px;
+  padding: 10px 16px; text-align: center; min-width: 80px;
+}
+.seat-random-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--teal); }
+.seat-bp-stats {
+  font-family: var(--font-data); font-size: 9px; font-weight: 600;
+  color: var(--fg-muted); white-space: nowrap; margin-top: 2px;
+}
+.seat-mode-picker {
+  display: flex; gap: 8px; padding: 8px 0;
+}
+.seat-mode-btn {
+  font-family: var(--font-ui); font-size: 13px; font-weight: 600;
+  padding: 12px 20px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raised); color: var(--fg); cursor: pointer;
+  transition: all 0.12s;
+}
+.seat-mode-btn:hover { border-color: var(--teal); color: var(--teal); }
 .seat-eq {
   font-family: var(--font-data); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
@@ -243,6 +263,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .picker-hand .ph-card.active { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-faint); }
 .picker-hand .ph-card.empty { border-style: dashed; color: var(--fg-muted); cursor: pointer; }
 .picker-hand .ph-card.empty.active { border-style: solid; }
+.picker-board-label {
+  font-family: var(--font-data); font-size: 10px; font-weight: 600;
+  color: var(--fg-muted); letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 2px; margin-top: 6px;
+}
+.picker-board-label:first-child { margin-top: 0; }
 .picker-hand .ph-card.r { color: var(--red); }
 .picker-hand .ph-card.bk { color: var(--fg-strong); }
 
