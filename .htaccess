@@ -3,3 +3,10 @@ RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
 AddType application/wasm .wasm
+
+# Revalidate on every load so a deploy never mixes old and new JS/WASM
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js|css|wasm)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
