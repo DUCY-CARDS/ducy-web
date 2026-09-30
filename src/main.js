@@ -167,9 +167,10 @@ function completeFlops(allBoardCards, available) {
   });
 }
 
-const MC_TIME_BUDGET = 2000;
+// Set from the evaluation-time setting by applySettings()
+let MC_TIME_BUDGET = 2000;
 const MC_BATCH_MS = 50;
-const MC_MAX_SAMPLES = 100000;
+let MC_MAX_SAMPLES = 100000;
 
 function samplesPerCall(allBoardCards) {
   return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 100 : 1000;
@@ -363,7 +364,7 @@ function runBombPotEquity(filled) {
     calculating = false;
     mcAbort = null;
     lastMcType = aborted ? null : 'mc';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
     showCalcOverlay(false);
     render();
   }
@@ -472,7 +473,7 @@ function runMonteCarloEquity(filled, boardCards) {
     calculating = false;
     mcAbort = null;
     lastMcType = aborted ? null : 'mc';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
     showCalcOverlay(false);
     render();
   }
@@ -481,7 +482,7 @@ function runMonteCarloEquity(filled, boardCards) {
 }
 
 function runRangeEquity(filled) {
-  const TIME_BUDGET = 2000;
+  const TIME_BUDGET = MC_TIME_BUDGET;
   const BATCH_MS = 50;
 
   calculating = true;
@@ -594,7 +595,7 @@ function runRangeEquity(filled) {
     calculating = false;
     mcAbort = null;
     lastMcType = aborted ? null : 'range';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
     showCalcOverlay(false);
     render();
   }
@@ -652,13 +653,13 @@ function render() {
         h += '</div>';
       }
       if (calced && eqs[i] != null) {
-        const pct = (eqs[i]*100).toFixed(1);
+        const pct = (eqs[i]*100).toFixed(settings.decimals);
         const col = eqs[i] >= be - 0.001 ? 'var(--teal)' : 'var(--fg-muted)';
         h += `<div class="seat-eq" style="color:${col}">${pct}%</div>`;
       }
       if (calced && bpStats && bpStats[i]) {
         const st = bpStats[i];
-        const pct = v => (v*100).toFixed(1) + '%';
+        const pct = v => (v*100).toFixed(settings.decimals) + '%';
         const stats = st.boardWin.map((w, bi) => [`B${bi+1}`, pct(w), `Board ${bi+1} equity`]);
         stats.push(['Scoop', pct(st.scoop), 'Wins both boards']);
         stats.push(['Scooped', pct(st.scooped), 'An opponent wins both boards']);
@@ -914,7 +915,7 @@ function dirty() {
   lastMcType = null;
   document.getElementById('timer').textContent = '';
   if (calcTimer) clearTimeout(calcTimer);
-  calcTimer = setTimeout(runEquityCalc, 150);
+  scheduleCalc(150);
   syncHash();
 }
 
@@ -1044,6 +1045,9 @@ document.getElementById('dead').addEventListener('click', e => {
 
 document.getElementById('mbg').addEventListener('click', e => {
   if (e.target.id === 'mbg') { closeModal(); return; }
+
+  const set = e.target.closest('[data-set]');
+  if (set) { changeSetting(set.dataset.set, JSON.parse(set.dataset.val)); return; }
 
   const smode = e.target.closest('[data-smode]');
   if (smode) {
@@ -1273,18 +1277,94 @@ document.getElementById('timer').addEventListener('click', e => {
   }
 });
 
-const fourColorBtn = document.getElementById('four-color-btn');
-function setFourColor(on) {
-  document.documentElement.classList.toggle('four-color', on);
-  fourColorBtn.setAttribute('aria-pressed', on);
-  try { localStorage.setItem('fourColor', on ? '1' : '0'); } catch {}
+// Settings (per browser, not part of the share link)
+const EVAL_SECONDS = [1, 2, 5, 10, 30];
+const DEFAULT_SETTINGS = {evalSeconds: 2, autoCalc: true, showSamples: true, fourColor: true, decimals: 1, theme: 'system'};
+let settings = {...DEFAULT_SETTINGS};
+try {
+  const saved = JSON.parse(localStorage.getItem('ducySettings') || 'null');
+  if (saved) settings = {...settings, ...saved};
+  else if (localStorage.getItem('fourColor') === '0') settings.fourColor = false;
+} catch {}
+
+function applySettings() {
+  MC_TIME_BUDGET = settings.evalSeconds * 1000;
+  MC_MAX_SAMPLES = settings.evalSeconds * 50000;
+  const root = document.documentElement;
+  root.classList.toggle('four-color', settings.fourColor);
+  if (settings.theme === 'system') delete root.dataset.theme;
+  else root.dataset.theme = settings.theme;
 }
-let savedFourColor = null;
-try { savedFourColor = localStorage.getItem('fourColor'); } catch {}
-setFourColor(savedFourColor !== '0');
-fourColorBtn.addEventListener('click', () => {
-  setFourColor(!document.documentElement.classList.contains('four-color'));
-});
+
+function saveSettings() {
+  try { localStorage.setItem('ducySettings', JSON.stringify(settings)); } catch {}
+}
+
+function scheduleCalc(delay) {
+  if (calcTimer) clearTimeout(calcTimer);
+  calcTimer = null;
+  if (settings.autoCalc) {
+    calcTimer = setTimeout(runEquityCalc, delay);
+  } else {
+    document.getElementById('timer').innerHTML = '<button class="rerun-btn" id="rerun-btn">Calculate</button>';
+  }
+}
+
+// Worst-case 95% margin of error across players for a sampled result
+function marginOfError(n) {
+  const ps = eqs.filter(e => e != null);
+  if (!n || !ps.length) return 0;
+  return Math.max(...ps.map(p => 1.96 * Math.sqrt(p * (1 - p) / n)));
+}
+
+function mcTimerHtml(ms, done) {
+  let t = `~${ms}ms`;
+  if (settings.showSamples) t += ` (${done.toLocaleString()} samples, ±${(marginOfError(done) * 100).toFixed(settings.decimals)}%)`;
+  return t + ' <button class="rerun-btn" id="rerun-btn">↻</button>';
+}
+
+const SETTING_ROWS = [
+  ['Calculation', [
+    ['evalSeconds', 'Evaluation time', EVAL_SECONDS.map(v => [v, v + 's'])],
+    ['autoCalc', 'Auto-calculate', [[true, 'On'], [false, 'Off']]],
+    ['showSamples', 'Samples & margin', [[true, 'Show'], [false, 'Hide']]],
+  ]],
+  ['Display', [
+    ['fourColor', '4-color deck', [[true, 'On'], [false, 'Off']]],
+    ['decimals', 'Equity decimals', [[1, '1'], [2, '2']]],
+    ['theme', 'Theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]],
+  ]],
+];
+
+function openSettings() {
+  let h = '<div class="modal-header"><span>Settings</span></div><div class="settings">';
+  for (const [section, rows] of SETTING_ROWS) {
+    h += `<div class="settings-section">${section}</div>`;
+    for (const [key, label, opts] of rows) {
+      h += `<div class="settings-row"><span class="settings-label">${label}</span><div class="card-count">`;
+      for (const [v, text] of opts) {
+        h += `<button class="cc-btn${settings[key] === v ? ' on' : ''}" data-set="${key}" data-val='${JSON.stringify(v)}'>${text}</button>`;
+      }
+      h += '</div></div>';
+    }
+  }
+  h += '<div class="settings-note">Longer evaluation runs more samples for tighter results. Settings are saved in this browser.</div></div>';
+  showModal(h);
+}
+
+function changeSetting(key, value) {
+  if (settings[key] === value) return;
+  settings[key] = value;
+  saveSettings();
+  applySettings();
+  openSettings();
+  if (key === 'evalSeconds' || key === 'autoCalc') dirty();
+  render();
+  if (key === 'showSamples' && calced && !calculating && lastMcType) runEquityCalc();
+}
+
+applySettings();
+document.getElementById('settings-btn').addEventListener('click', openSettings);
 
 document.getElementById('clear-btn').addEventListener('click', () => {
   seats = new Array(10).fill(null);
@@ -1396,4 +1476,4 @@ try {
 loadFromHash();
 render();
 updateGameUI();
-runEquityCalc();
+scheduleCalc(0);
