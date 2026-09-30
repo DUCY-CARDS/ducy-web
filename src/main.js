@@ -57,7 +57,7 @@ function used() {
 function cd(c) {
   if (!c) return null;
   const s = ST.find(x => x.c===c[1]);
-  return {t: c[0]+s.ch, cl: s.cl==='rd'?'r':'bk'};
+  return {t: c[0]+s.ch, cl: (s.cl==='rd'?'r':'bk')+' s-'+s.c};
 }
 
 function bestEq() {
@@ -779,11 +779,11 @@ function openDeadPicker() {
   let h = `<div class="modal-header"><span>Dead card</span></div><div class="card-picker">`;
   for (const suit of ST) {
     h += '<div class="psuit">';
-    h += `<span class="sicon" style="color:${suit.cl==='rd'?'var(--red)':'var(--fg-strong)'}">${suit.ch}</span>`;
+    h += `<span class="sicon ${suit.cl} s-${suit.c}">${suit.ch}</span>`;
     for (const rank of RK) {
       const card = rank + suit.c;
       const isUsed = u.has(card);
-      h += `<button class="pk ${suit.cl}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
+      h += `<button class="pk ${suit.cl} s-${suit.c}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
     }
     h += '</div>';
   }
@@ -827,11 +827,11 @@ function openCardPicker(seatIdx, cardIdx) {
   h += '<div class="card-picker">';
   for (const suit of ST) {
     h += '<div class="psuit">';
-    h += `<span class="sicon" style="color:${suit.cl==='rd'?'var(--red)':'var(--fg-strong)'}">${suit.ch}</span>`;
+    h += `<span class="sicon ${suit.cl} s-${suit.c}">${suit.ch}</span>`;
     for (const rank of RK) {
       const card = rank + suit.c;
       const isUsed = uForPicker.has(card);
-      h += `<button class="pk ${suit.cl}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
+      h += `<button class="pk ${suit.cl} s-${suit.c}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
     }
     h += '</div>';
   }
@@ -912,11 +912,11 @@ function openBoardPicker(boardIdx, cardIdx) {
   h += '<div class="card-picker">';
   for (const suit of ST) {
     h += '<div class="psuit">';
-    h += `<span class="sicon" style="color:${suit.cl==='rd'?'var(--red)':'var(--fg-strong)'}">${suit.ch}</span>`;
+    h += `<span class="sicon ${suit.cl} s-${suit.c}">${suit.ch}</span>`;
     for (const rank of RK) {
       const card = rank + suit.c;
       const isUsed = u.has(card) && card !== curCard;
-      h += `<button class="pk ${suit.cl}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
+      h += `<button class="pk ${suit.cl} s-${suit.c}${isUsed?' used':''}" data-pk="${card}"${isUsed?' disabled':''}>${rank}</button>`;
     }
     h += '</div>';
   }
@@ -1271,6 +1271,19 @@ document.getElementById('timer').addEventListener('click', e => {
   if (e.target.id === 'rerun-btn' && !calculating) {
     runEquityCalc();
   }
+});
+
+const fourColorBtn = document.getElementById('four-color-btn');
+function setFourColor(on) {
+  document.documentElement.classList.toggle('four-color', on);
+  fourColorBtn.setAttribute('aria-pressed', on);
+  try { localStorage.setItem('fourColor', on ? '1' : '0'); } catch {}
+}
+let savedFourColor = null;
+try { savedFourColor = localStorage.getItem('fourColor'); } catch {}
+setFourColor(savedFourColor !== '0');
+fourColorBtn.addEventListener('click', () => {
+  setFourColor(!document.documentElement.classList.contains('four-color'));
 });
 
 document.getElementById('clear-btn').addEventListener('click', () => {
