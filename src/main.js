@@ -1,4 +1,4 @@
-import init, { HoldemGame, OmahaGame, OmahaHiLoGame } from '../wasm/ducy_wasm.js';
+import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
 
 const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 const ST = [
@@ -8,13 +8,14 @@ const ST = [
   {ch:'♣', c:'c', cl:'bl'},
 ];
 const GM = {
-  'nlhe':      {cards:2, max:10},
-  'omaha':     {cards:4, max:10},
-  'omaha-hl':  {cards:4, max:10},
-  'omaha5':    {cards:5, max:9},
-  'omaha5-hl': {cards:5, max:9},
-  'omaha6':    {cards:6, max:6},
-  'omaha6-hl': {cards:6, max:6},
+  'nlhe':      {cards:2, max:10, numBoards:1},
+  'omaha':     {cards:4, max:10, numBoards:1},
+  'omaha-hl':  {cards:4, max:10, numBoards:1},
+  'omaha5':    {cards:5, max:9,  numBoards:1},
+  'omaha5-hl': {cards:5, max:9,  numBoards:1},
+  'omaha6':    {cards:6, max:6,  numBoards:1},
+  'omaha6-hl': {cards:6, max:6,  numBoards:1},
+  'bomb-pot':  {cards:4, max:10, numBoards:2},
 };
 const CW = {2:42, 4:32, 5:28, 6:24};
 const ALL_CARDS = [];
@@ -28,19 +29,27 @@ for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
 let wasmReady = false;
 let curG = 'nlhe';
 let seats = new Array(10).fill(null);
-let board = [null,null,null,null,null];
+let boards = [[null,null,null,null,null]];
 let deadCards = [];
 let eqs = new Array(10).fill(null);
+let bpStats = null;
 let calced = false;
 let calculating = false;
 let target = null;
 
 function g() { return GM[curG]; }
+function isBombPot() { return curG === 'bomb-pot'; }
+
+function initBoards() {
+  const nb = g().numBoards;
+  boards = [];
+  for (let i = 0; i < nb; i++) boards.push([null,null,null,null,null]);
+}
 
 function used() {
   const u = new Set();
   for (const s of seats) if (s && s.mode==='cards') for (const c of s.cards) if (c) u.add(c);
-  for (const c of board) if (c) u.add(c);
+  for (const b of boards) for (const c of b) if (c) u.add(c);
   for (const c of deadCards) u.add(c);
   return u;
 }
@@ -66,7 +75,6 @@ function seatPos(n) {
   return p;
 }
 
-// Card string format: "As" -> "A♠" for WASM (ducy uses "As" format)
 function cardToWasm(c) {
   return c[0] + c[1];
 }
@@ -125,6 +133,20 @@ function createGameAndSetBoard(filled, boardCards) {
   return game;
 }
 
+function createBombPotGame(filled, allBoardCards) {
+  const game = new OmahaBombPotGame(boards.length, g().cards);
+  for (const si of filled) {
+    game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+  }
+  for (let bi = 0; bi < allBoardCards.length; bi++) {
+    const bc = allBoardCards[bi];
+    if (bc.length >= 3) game.set_flop(bi, bc.slice(0, 3).map(cardToWasm).join(' '));
+    if (bc.length >= 4) game.set_turn(bi, cardToWasm(bc[3]));
+    if (bc.length >= 5) game.set_river(bi, cardToWasm(bc[4]));
+  }
+  return game;
+}
+
 function runEquityCalc() {
   if (!wasmReady) return;
   if (mcAbort) { mcAbort(); mcAbort = null; }
@@ -135,6 +157,7 @@ function runEquityCalc() {
     if (!seats[i]) continue;
     if (seats[i].mode === 'cards' && seats[i].cards.every(c => c)) filled.push(i);
     if (seats[i].mode === 'range' && seats[i].sel.size > 0) filled.push(i);
+    if (seats[i].mode === 'random') filled.push(i);
   }
   if (filled.length < 2) return;
 
@@ -145,7 +168,12 @@ function runEquityCalc() {
     return;
   }
 
-  const boardCards = board.filter(c => c);
+  if (isBombPot()) {
+    runBombPotEquity(filled);
+    return;
+  }
+
+  const boardCards = boards[0].filter(c => c);
   const boardNeeded = 5 - boardCards.length;
   const isOmaha = curG !== 'nlhe';
 
@@ -181,6 +209,230 @@ function runEquityCalc() {
       console.error('Equity calc error:', err);
     }
   }, 10);
+}
+
+function runBombPotEquity(filled) {
+  const hasRandom = filled.some(si => seats[si].mode === 'random');
+  const allBoardCards = boards.map(b => b.filter(c => c));
+  const totalBoardNeeded = allBoardCards.reduce((sum, bc) => sum + (5 - bc.length), 0);
+  const needsMC = totalBoardNeeded > 0 || hasRandom;
+
+  if (!needsMC) {
+    calculating = true;
+    document.getElementById('timer').textContent = 'Calculating…';
+    showCalcOverlay(true);
+
+    setTimeout(() => {
+      try {
+        const t0 = performance.now();
+        const game = createBombPotGame(filled, allBoardCards);
+        const winners = game.evaluate_winners();
+        const equity = game.evaluate_equity();
+        game.free();
+
+        const ms = (performance.now() - t0).toFixed(0);
+        eqs = new Array(10).fill(null);
+        filled.forEach((si, j) => { eqs[si] = equity[j]; });
+
+        bpStats = buildBpStatsFromWinners(winners, filled, 1);
+
+        calced = true;
+        calculating = false;
+        lastMcType = null;
+        document.getElementById('timer').textContent = ms + 'ms';
+        showCalcOverlay(false);
+        render();
+      } catch (err) {
+        calculating = false;
+        document.getElementById('timer').textContent = 'Error: ' + err.message;
+        showCalcOverlay(false);
+        console.error('Bomb pot equity error:', err);
+      }
+    }, 10);
+    return;
+  }
+
+  const TIME_BUDGET = 2000;
+  const BATCH_MS = 50;
+  const numBoards = boards.length;
+  const cardsPerPlayer = g().cards;
+
+  calculating = true;
+  document.getElementById('timer').textContent = 'Calculating…';
+  showCalcOverlay(true);
+
+  const t0 = performance.now();
+  const usedSet = used();
+  const available = ALL_CARDS.filter(c => !usedSet.has(c));
+  const totals = new Array(filled.length).fill(0);
+  const boardWins = [];
+  for (let bi = 0; bi < numBoards; bi++) boardWins.push(new Array(filled.length).fill(0));
+  const scoops = new Array(filled.length).fill(0);
+  const scooped = new Array(filled.length).fill(0);
+  let done = 0;
+  let aborted = false;
+
+  mcAbort = () => { aborted = true; };
+
+  const randomIndices = [];
+  const cardIndices = [];
+  for (let fi = 0; fi < filled.length; fi++) {
+    if (seats[filled[fi]].mode === 'random') randomIndices.push(fi);
+    else cardIndices.push(fi);
+  }
+
+  function batch() {
+    if (aborted) { finish(); return; }
+    const batchEnd = performance.now() + BATCH_MS;
+
+    try {
+      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
+        shuffleArray(available);
+        let dealt = 0;
+
+        const fullBoards = allBoardCards.map(bc => {
+          const needed = 5 - bc.length;
+          const full = [...bc, ...available.slice(dealt, dealt + needed)];
+          dealt += needed;
+          return full;
+        });
+
+        const game = new OmahaBombPotGame(numBoards, cardsPerPlayer);
+
+        const randomHands = [];
+        for (const fi of randomIndices) {
+          const hand = available.slice(dealt, dealt + cardsPerPlayer);
+          dealt += cardsPerPlayer;
+          randomHands.push(hand);
+        }
+
+        let ri = 0;
+        for (let fi = 0; fi < filled.length; fi++) {
+          const si = filled[fi];
+          if (seats[si].mode === 'random') {
+            game.add_player(randomHands[ri].map(cardToWasm).join(' '));
+            ri++;
+          } else {
+            game.add_player(seats[si].cards.map(cardToWasm).join(' '));
+          }
+        }
+
+        for (let bi = 0; bi < fullBoards.length; bi++) {
+          const fb = fullBoards[bi];
+          game.set_flop(bi, fb.slice(0, 3).map(cardToWasm).join(' '));
+          game.set_turn(bi, cardToWasm(fb[3]));
+          game.set_river(bi, cardToWasm(fb[4]));
+        }
+
+        const winners = game.evaluate_winners();
+        game.free();
+
+        for (let fi = 0; fi < filled.length; fi++) {
+          let totalShare = 0;
+          for (let bi = 0; bi < numBoards; bi++) {
+            for (const w of winners[bi]) {
+              if (w.player_index === fi) totalShare += w.pot_share;
+            }
+          }
+          totals[fi] += totalShare;
+        }
+
+        tallyScoopStats(winners, filled, numBoards, boardWins, scoops, scooped);
+
+        done++;
+      }
+    } catch (err) {
+      aborted = true;
+      console.error('Bomb pot monte carlo error:', err);
+      finish();
+      return;
+    }
+
+    if ((performance.now() - t0) < TIME_BUDGET) {
+      setTimeout(batch, 0);
+    } else {
+      finish();
+    }
+  }
+
+  function finish() {
+    const ms = (performance.now() - t0).toFixed(0);
+    eqs = new Array(10).fill(null);
+    bpStats = null;
+    if (!aborted && done > 0) {
+      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
+      bpStats = {};
+      for (let fi = 0; fi < filled.length; fi++) {
+        const si = filled[fi];
+        const perBoard = [];
+        for (let bi = 0; bi < numBoards; bi++) {
+          perBoard.push(boardWins[bi][fi] / done);
+        }
+        bpStats[si] = {
+          boardWin: perBoard,
+          scoop: scoops[fi] / done,
+          scooped: scooped[fi] / done,
+        };
+      }
+      calced = true;
+    }
+    calculating = false;
+    mcAbort = null;
+    lastMcType = aborted ? null : 'mc';
+    document.getElementById('timer').innerHTML = aborted ? 'Error' : `~${ms}ms (${done} samples) <button class="rerun-btn" id="rerun-btn">↻</button>`;
+    showCalcOverlay(false);
+    render();
+  }
+
+  setTimeout(batch, 0);
+}
+
+function tallyScoopStats(winners, filled, numBoards, boardWins, scoops, scooped) {
+  const perBoard = [];
+  for (let bi = 0; bi < numBoards; bi++) {
+    const winnerSet = new Set();
+    for (const w of winners[bi]) winnerSet.add(w.player_index);
+    perBoard.push(winnerSet);
+    for (const fi of winnerSet) {
+      if (fi < filled.length) boardWins[bi][fi]++;
+    }
+  }
+
+  for (let fi = 0; fi < filled.length; fi++) {
+    const wonAll = perBoard.every(ws => ws.size === 1 && ws.has(fi));
+    if (wonAll) scoops[fi]++;
+
+    const opponents = new Set();
+    for (let oi = 0; oi < filled.length; oi++) {
+      if (oi !== fi) opponents.add(oi);
+    }
+    for (const oi of opponents) {
+      const oppScooped = perBoard.every(ws => ws.size === 1 && ws.has(oi));
+      if (oppScooped) { scooped[fi]++; break; }
+    }
+  }
+}
+
+function buildBpStatsFromWinners(winners, filled, samples) {
+  const numBoards = winners.length;
+  const boardWins = [];
+  for (let bi = 0; bi < numBoards; bi++) boardWins.push(new Array(filled.length).fill(0));
+  const scoopsArr = new Array(filled.length).fill(0);
+  const scoopedArr = new Array(filled.length).fill(0);
+  tallyScoopStats(winners, filled, numBoards, boardWins, scoopsArr, scoopedArr);
+
+  const stats = {};
+  for (let fi = 0; fi < filled.length; fi++) {
+    const si = filled[fi];
+    const perBoard = [];
+    for (let bi = 0; bi < numBoards; bi++) perBoard.push(boardWins[bi][fi] / samples);
+    stats[si] = {
+      boardWin: perBoard,
+      scoop: scoopsArr[fi] / samples,
+      scooped: scoopedArr[fi] / samples,
+    };
+  }
+  return stats;
 }
 
 function runMonteCarloEquity(filled, boardCards, boardNeeded) {
@@ -268,7 +520,7 @@ function runRangeEquity(filled) {
   showCalcOverlay(true);
 
   const t0 = performance.now();
-  const boardCards = board.filter(c => c);
+  const boardCards = boards[0].filter(c => c);
   const boardNeeded = 5 - boardCards.length;
 
   const baseUsed = new Set();
@@ -419,17 +671,28 @@ function render() {
           else h += `<div class="sc empty" data-s="${i}" data-c="${j}">+</div>`;
         }
         h += '</div>';
-      } else {
+      } else if (s.mode === 'range') {
         const cnt = [...s.sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
         h += `<div class="seat-range" data-rng="${i}">`;
         h += `<div class="seat-range-label">Range</div>`;
         h += `<div class="seat-range-count">${cnt} combos</div>`;
+        h += '</div>';
+      } else if (s.mode === 'random') {
+        h += `<div class="seat-random">`;
+        h += `<div class="seat-random-label">Random</div>`;
         h += '</div>';
       }
       if (calced && eqs[i] != null) {
         const pct = (eqs[i]*100).toFixed(1);
         const col = eqs[i] >= be - 0.001 ? 'var(--teal)' : 'var(--fg-muted)';
         h += `<div class="seat-eq" style="color:${col}">${pct}%</div>`;
+      }
+      if (calced && bpStats && bpStats[i]) {
+        const st = bpStats[i];
+        const labels = st.boardWin.map((w, bi) => `B${bi+1}: ${(w*100).toFixed(1)}%`);
+        labels.push(`Scoop: ${(st.scoop*100).toFixed(1)}%`);
+        labels.push(`Scooped: ${(st.scooped*100).toFixed(1)}%`);
+        h += `<div class="seat-bp-stats">${labels.join(' · ')}</div>`;
       }
       h += `<button class="seat-x" data-rm="${i}">×</button></div>`;
       el.innerHTML = h;
@@ -442,14 +705,35 @@ function render() {
 }
 
 function renderBoard() {
-  let h = '';
-  for (let i = 0; i < 5; i++) {
-    if (i===3||i===4) h += '<div class="board-gap"></div>';
-    const d = cd(board[i]);
-    if (d) h += `<div class="bc ${d.cl}" data-bi="${i}">${d.t}</div>`;
-    else h += `<div class="bc empty" data-bi="${i}">+</div>`;
+  const wrap = document.getElementById('boards-wrap');
+  wrap.innerHTML = '';
+  const multi = boards.length > 1;
+  if (multi) wrap.classList.add('multi');
+  else wrap.classList.remove('multi');
+
+  for (let bi = 0; bi < boards.length; bi++) {
+    const b = boards[bi];
+    const col = document.createElement('div');
+    col.className = 'board-col';
+    if (multi) {
+      const label = document.createElement('div');
+      label.className = 'board-label';
+      label.textContent = 'Board ' + (bi + 1);
+      col.appendChild(label);
+    }
+    const boardEl = document.createElement('div');
+    boardEl.className = 'board';
+    let h = '';
+    for (let i = 0; i < 5; i++) {
+      if (i===3||i===4) h += '<div class="board-gap"></div>';
+      const d = cd(b[i]);
+      if (d) h += `<div class="bc ${d.cl}" data-bi="${i}" data-bb="${bi}">${d.t}</div>`;
+      else h += `<div class="bc empty" data-bi="${i}" data-bb="${bi}">+</div>`;
+    }
+    boardEl.innerHTML = h;
+    col.appendChild(boardEl);
+    wrap.appendChild(col);
   }
-  document.getElementById('board').innerHTML = h;
 
   let dh = '';
   for (let i = 0; i < deadCards.length; i++) {
@@ -457,6 +741,36 @@ function renderBoard() {
     if (d) dh += `<div class="dc ${d.cl}" data-di="${i}">${d.t}</div>`;
   }
   document.getElementById('dead').innerHTML = dh;
+}
+
+function boardFillOrder() {
+  const order = [];
+  for (let bi = 0; bi < boards.length; bi++)
+    for (let ci = 0; ci < 3; ci++) order.push({bi, ci});
+  for (let bi = 0; bi < boards.length; bi++) order.push({bi, ci: 3});
+  for (let bi = 0; bi < boards.length; bi++) order.push({bi, ci: 4});
+  return order;
+}
+
+function nextBoardSlot(curBoard, curCard) {
+  const order = boardFillOrder();
+  const curIdx = order.findIndex(s => s.bi === curBoard && s.ci === curCard);
+  for (let i = curIdx + 1; i < order.length; i++) {
+    if (!boards[order[i].bi][order[i].ci]) return order[i];
+  }
+  for (let i = 0; i <= curIdx; i++) {
+    if (!boards[order[i].bi][order[i].ci]) return order[i];
+  }
+  return null;
+}
+
+function openSeatModePicker(seatIdx) {
+  let h = `<div class="modal-header"><span>Player ${seatIdx+1}</span></div>`;
+  h += '<div class="seat-mode-picker">';
+  h += `<button class="seat-mode-btn" data-smode="cards" data-si="${seatIdx}">Pick Cards</button>`;
+  h += `<button class="seat-mode-btn" data-smode="random" data-si="${seatIdx}">Random</button>`;
+  h += '</div>';
+  showModal(h);
 }
 
 function openDeadPicker() {
@@ -551,27 +865,49 @@ function openRangePicker(seatIdx) {
   showModal(h);
 }
 
-function openBoardPicker(cardIdx) {
-  const curCard = board[cardIdx];
-  target = {type:'board', card:cardIdx};
+function openBoardPicker(boardIdx, cardIdx) {
+  const curCard = boards[boardIdx][cardIdx];
+  target = {type:'board', boardIdx, card:cardIdx};
   const u = used();
   const labels = ['Flop','Flop','Flop','Turn','River'];
+  const multi = boards.length > 1;
+  const boardLabel = multi ? `Board ${boardIdx+1} · ${labels[cardIdx]}` : `Board · ${labels[cardIdx]}`;
 
-  let h = `<div class="modal-header"><span>Board · ${labels[cardIdx]}</span></div>`;
+  let h = `<div class="modal-header"><span>${boardLabel}</span></div>`;
 
-  h += '<div class="picker-hand">';
-  for (let j = 0; j < 5; j++) {
-    const c = board[j];
-    const d = cd(c);
-    const active = j === cardIdx ? ' active' : '';
-    if (j === 3) h += '<div style="width:8px"></div>';
-    if (d) {
-      h += `<div class="ph-card ${d.cl}${active}" data-pb="${j}">${d.t}</div>`;
-    } else {
-      h += `<div class="ph-card empty${active}" data-pb="${j}">+</div>`;
+  if (multi) {
+    for (let bi = 0; bi < boards.length; bi++) {
+      h += `<div class="picker-board-label">Board ${bi+1}</div>`;
+      h += '<div class="picker-hand">';
+      for (let j = 0; j < 5; j++) {
+        const c = boards[bi][j];
+        const d = cd(c);
+        const isCur = bi === boardIdx && j === cardIdx;
+        const active = isCur ? ' active' : '';
+        if (j === 3) h += '<div style="width:8px"></div>';
+        if (d) {
+          h += `<div class="ph-card ${d.cl}${active}" data-pb="${j}" data-pbb="${bi}">${d.t}</div>`;
+        } else {
+          h += `<div class="ph-card empty${active}" data-pb="${j}" data-pbb="${bi}">+</div>`;
+        }
+      }
+      h += '</div>';
     }
+  } else {
+    h += '<div class="picker-hand">';
+    for (let j = 0; j < 5; j++) {
+      const c = boards[0][j];
+      const d = cd(c);
+      const active = j === cardIdx ? ' active' : '';
+      if (j === 3) h += '<div style="width:8px"></div>';
+      if (d) {
+        h += `<div class="ph-card ${d.cl}${active}" data-pb="${j}">${d.t}</div>`;
+      } else {
+        h += `<div class="ph-card empty${active}" data-pb="${j}">+</div>`;
+      }
+    }
+    h += '</div>';
   }
-  h += '</div>';
 
   h += '<div class="card-picker">';
   for (const suit of ST) {
@@ -601,6 +937,7 @@ let calcTimer = null;
 function dirty() {
   calced = false;
   eqs = new Array(10).fill(null);
+  bpStats = null;
   lastMcType = null;
   document.getElementById('timer').textContent = '';
   if (calcTimer) clearTimeout(calcTimer);
@@ -701,18 +1038,24 @@ document.getElementById('tw').addEventListener('click', e => {
   const add = e.target.closest('[data-add]');
   if (add) {
     const i = +add.dataset.add;
-    seats[i] = {mode:'cards', cards: new Array(g().cards).fill(null)};
-    dirty(); render();
-    openCardPicker(i, 0);
+    if (isBombPot()) {
+      openSeatModePicker(i);
+    } else {
+      seats[i] = {mode:'cards', cards: new Array(g().cards).fill(null)};
+      dirty(); render();
+      openCardPicker(i, 0);
+    }
     return;
   }
   const rm = e.target.closest('[data-rm]');
   if (rm) { seats[+rm.dataset.rm] = null; dirty(); render(); return; }
-});
 
-document.getElementById('board').addEventListener('click', e => {
   const bc = e.target.closest('[data-bi]');
-  if (bc) openBoardPicker(+bc.dataset.bi);
+  if (bc) {
+    const bi = bc.dataset.bb != null ? +bc.dataset.bb : 0;
+    openBoardPicker(bi, +bc.dataset.bi);
+    return;
+  }
 });
 
 document.getElementById('dead-add').addEventListener('click', () => openDeadPicker());
@@ -727,6 +1070,21 @@ document.getElementById('dead').addEventListener('click', e => {
 
 document.getElementById('mbg').addEventListener('click', e => {
   if (e.target.id === 'mbg') { closeModal(); return; }
+
+  const smode = e.target.closest('[data-smode]');
+  if (smode) {
+    const si = +smode.dataset.si;
+    if (smode.dataset.smode === 'random') {
+      seats[si] = {mode:'random'};
+      closeModal();
+      dirty(); render();
+    } else {
+      seats[si] = {mode:'cards', cards: new Array(g().cards).fill(null)};
+      dirty(); render();
+      openCardPicker(si, 0);
+    }
+    return;
+  }
 
   const mt = e.target.closest('[data-mt]');
   if (mt && target && target.type === 'hand' && curG === 'nlhe') {
@@ -760,12 +1118,13 @@ document.getElementById('mbg').addEventListener('click', e => {
   const pb = e.target.closest('[data-pb]');
   if (pb && target && target.type === 'board') {
     const j = +pb.dataset.pb;
-    if (board[j]) {
-      board[j] = null;
+    const bi = pb.dataset.pbb != null ? +pb.dataset.pbb : target.boardIdx;
+    if (boards[bi][j]) {
+      boards[bi][j] = null;
       dirty(); render();
-      openBoardPicker(j);
+      openBoardPicker(bi, j);
     } else {
-      openBoardPicker(j);
+      openBoardPicker(bi, j);
     }
     return;
   }
@@ -779,10 +1138,11 @@ document.getElementById('mbg').addEventListener('click', e => {
       const next = seats[target.seat].cards.indexOf(null);
       if (next !== -1) { openCardPicker(target.seat, next); } else { closeModal(); }
     } else if (target.type === 'board') {
-      board[target.card] = card;
+      const bi = target.boardIdx;
+      boards[bi][target.card] = card;
       dirty(); render();
-      const next = board.indexOf(null);
-      if (next !== -1) { openBoardPicker(next); } else { closeModal(); }
+      const nb = nextBoardSlot(bi, target.card);
+      if (nb) { openBoardPicker(nb.bi, nb.ci); } else { closeModal(); }
     } else if (target.type === 'dead') {
       deadCards.push(card);
       dirty(); render();
@@ -814,9 +1174,9 @@ document.getElementById('mbg').addEventListener('click', e => {
 
   if (e.target.id === 'mclear' && target) {
     if (target.type === 'board') {
-      board[target.card] = null;
+      boards[target.boardIdx][target.card] = null;
       dirty(); render();
-      openBoardPicker(target.card);
+      openBoardPicker(target.boardIdx, target.card);
     }
     return;
   }
@@ -850,7 +1210,7 @@ function switchGame(newGame) {
   if (newGame === curG) return;
   curG = newGame;
   seats = new Array(10).fill(null);
-  board = [null,null,null,null,null];
+  initBoards();
   deadCards = [];
   dirty(); render();
 }
@@ -865,7 +1225,11 @@ function gameKey(type, cards) {
 
 function updateGameUI() {
   document.querySelectorAll('.game-btn').forEach(b => b.classList.remove('on'));
-  const activeType = curG === 'nlhe' ? 'nlhe' : curG.includes('hl') ? 'omaha-hl' : 'omaha';
+  let activeType;
+  if (curG === 'nlhe') activeType = 'nlhe';
+  else if (curG === 'bomb-pot') activeType = 'bomb-pot';
+  else if (curG.includes('hl')) activeType = 'omaha-hl';
+  else activeType = 'omaha';
   document.querySelector(`.game-btn[data-game="${activeType}"]`).classList.add('on');
 
   document.getElementById('cc-omaha').classList.toggle('dim', activeType !== 'omaha');
@@ -885,6 +1249,7 @@ document.getElementById('game-sel').addEventListener('click', e => {
   if (gb) {
     const type = gb.dataset.game;
     if (type === 'nlhe') switchGame('nlhe');
+    else if (type === 'bomb-pot') switchGame('bomb-pot');
     else if (type === 'omaha') switchGame(gameKey('omaha', omahaCards));
     else if (type === 'omaha-hl') switchGame(gameKey('omaha-hl', omahaHlCards));
     updateGameUI();
@@ -909,7 +1274,7 @@ document.getElementById('timer').addEventListener('click', e => {
 
 document.getElementById('clear-btn').addEventListener('click', () => {
   seats = new Array(10).fill(null);
-  board = [null,null,null,null,null];
+  initBoards();
   deadCards = [];
   dirty(); render();
   syncHash();
@@ -925,10 +1290,15 @@ function stateToHash() {
       if (cards.length) parts.push('p' + i + '=' + cards.join('.'));
     } else if (s.mode === 'range' && s.sel.size > 0) {
       parts.push('p' + i + '=r:' + [...s.sel].join(','));
+    } else if (s.mode === 'random') {
+      parts.push('p' + i + '=random');
     }
   }
-  const bc = board.filter(c => c);
-  if (bc.length) parts.push('b=' + bc.join('.'));
+  for (let bi = 0; bi < boards.length; bi++) {
+    const bc = boards[bi].filter(c => c);
+    const key = boards.length > 1 ? 'b' + bi : 'b';
+    if (bc.length) parts.push(key + '=' + bc.join('.'));
+  }
   if (deadCards.length) parts.push('d=' + deadCards.join('.'));
   return '#' + parts.join('&');
 }
@@ -955,7 +1325,7 @@ function loadFromHash() {
     }
   }
   seats = new Array(10).fill(null);
-  board = [null, null, null, null, null];
+  initBoards();
   deadCards = [];
   const gm = g();
   for (const [k, v] of Object.entries(params)) {
@@ -963,7 +1333,9 @@ function loadFromHash() {
     if (!pm) continue;
     const si = +pm[1];
     if (si >= gm.max) continue;
-    if (v.startsWith('r:')) {
+    if (v === 'random') {
+      seats[si] = { mode: 'random' };
+    } else if (v.startsWith('r:')) {
       seats[si] = { mode: 'range', sel: parseRange(v.slice(2)) };
     } else {
       const cards = v.split('.').filter(Boolean);
@@ -972,9 +1344,19 @@ function loadFromHash() {
       seats[si] = { mode: 'cards', cards: hand };
     }
   }
-  if (params.b) {
-    const bc = params.b.split('.').filter(Boolean);
-    bc.forEach((c, i) => { if (i < 5) board[i] = c; });
+  if (boards.length > 1) {
+    for (let bi = 0; bi < boards.length; bi++) {
+      const bkey = 'b' + bi;
+      if (params[bkey]) {
+        const bc = params[bkey].split('.').filter(Boolean);
+        bc.forEach((c, i) => { if (i < 5) boards[bi][i] = c; });
+      }
+    }
+  } else {
+    if (params.b) {
+      const bc = params.b.split('.').filter(Boolean);
+      bc.forEach((c, i) => { if (i < 5) boards[0][i] = c; });
+    }
   }
   if (params.d) {
     deadCards = params.d.split('.').filter(Boolean);
