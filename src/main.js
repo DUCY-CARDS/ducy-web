@@ -1427,3 +1427,4 @@ try {
 loadFromHash();
 render();
 updateGameUI();
+runEquityCalc();
