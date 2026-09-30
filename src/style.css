@@ -120,6 +120,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .cc-btn:hover { border-color: var(--fg-muted); color: var(--fg); }
 .cc-btn.on { background: var(--fg-strong); border-color: var(--fg-strong); color: var(--bg-raised); }
 #bp-random { margin-left: 10px; justify-content: space-between; }
+#bp-random[hidden] { display: none; }
 .group-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--fg-muted); padding: 7px 0; }
 
 .table-wrap {
