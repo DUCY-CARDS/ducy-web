@@ -689,10 +689,13 @@ function render() {
       }
       if (calced && bpStats && bpStats[i]) {
         const st = bpStats[i];
-        const labels = st.boardWin.map((w, bi) => `B${bi+1}: ${(w*100).toFixed(1)}%`);
-        labels.push(`Scoop: ${(st.scoop*100).toFixed(1)}%`);
-        labels.push(`Scooped: ${(st.scooped*100).toFixed(1)}%`);
-        h += `<div class="seat-bp-stats">${labels.join(' · ')}</div>`;
+        const pct = v => (v*100).toFixed(1) + '%';
+        const stats = st.boardWin.map((w, bi) => [`B${bi+1}`, pct(w), `Board ${bi+1} equity`]);
+        stats.push(['Scoop', pct(st.scoop), 'Wins both boards']);
+        stats.push(['Scooped', pct(st.scooped), 'An opponent wins both boards']);
+        h += '<div class="seat-bp-stats">';
+        for (const [k, v, title] of stats) h += `<span class="bp-k" title="${title}">${k}</span><span class="bp-v">${v}</span>`;
+        h += '</div>';
       }
       h += `<button class="seat-x" data-rm="${i}">×</button></div>`;
       el.innerHTML = h;
