@@ -175,9 +175,13 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 }
 .seat-random-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--teal); }
 .seat-bp-stats {
-  font-family: var(--font-data); font-size: 9px; font-weight: 600;
-  color: var(--fg-muted); white-space: nowrap; margin-top: 2px;
+  display: grid; grid-template-columns: auto auto auto auto; column-gap: 4px; row-gap: 1px;
+  font-family: var(--font-data); font-size: 9px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--fg-muted); white-space: nowrap; margin-top: 1px;
 }
+.seat-bp-stats .bp-k { text-align: right; cursor: help; }
+.seat-bp-stats .bp-v { color: var(--fg); text-align: left; }
+.seat-bp-stats .bp-v:nth-child(4n+2) { margin-right: 4px; }
 .seat-mode-picker {
   display: flex; gap: 8px; padding: 8px 0;
 }
