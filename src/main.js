@@ -130,6 +130,7 @@ function createGameAndSetBoard(filled, boardCards) {
   if (boardCards.length >= 3) game.set_flop(boardCards.slice(0, 3).map(cardToWasm).join(' '));
   if (boardCards.length >= 4) game.set_turn(cardToWasm(boardCards[3]));
   if (boardCards.length >= 5) game.set_river(cardToWasm(boardCards[4]));
+  addDeadCards(game);
   return game;
 }
 
@@ -144,7 +145,34 @@ function createBombPotGame(filled, allBoardCards) {
     if (bc.length >= 4) game.set_turn(bi, cardToWasm(bc[3]));
     if (bc.length >= 5) game.set_river(bi, cardToWasm(bc[4]));
   }
+  addDeadCards(game);
   return game;
+}
+
+function addDeadCards(game) {
+  if (deadCards.length) game.add_dead_cards(deadCards.map(cardToWasm).join(' '));
+}
+
+// The engine only accepts a board of 0, 3, 4 or 5 cards, so a board with
+// 1-2 known cards gets a random flop completion for each sampling batch.
+function completeFlops(allBoardCards, available) {
+  if (!allBoardCards.some(bc => bc.length === 1 || bc.length === 2)) return allBoardCards;
+  shuffleArray(available);
+  let dealt = 0;
+  return allBoardCards.map(bc => {
+    if (bc.length !== 1 && bc.length !== 2) return bc;
+    const extra = available.slice(dealt, dealt + 3 - bc.length);
+    dealt += extra.length;
+    return [...bc, ...extra];
+  });
+}
+
+const MC_TIME_BUDGET = 2000;
+const MC_BATCH_MS = 50;
+const MC_MAX_SAMPLES = 100000;
+
+function samplesPerCall(allBoardCards) {
+  return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 100 : 1000;
 }
 
 function runEquityCalc() {
@@ -174,11 +202,10 @@ function runEquityCalc() {
   }
 
   const boardCards = boards[0].filter(c => c);
-  const boardNeeded = 5 - boardCards.length;
   const isOmaha = curG !== 'nlhe';
 
-  if (isOmaha && boardNeeded > 0) {
-    runMonteCarloEquity(filled, boardCards, boardNeeded);
+  if (isOmaha && boardCards.length < 3) {
+    runMonteCarloEquity(filled, boardCards);
     return;
   }
 
@@ -252,10 +279,7 @@ function runBombPotEquity(filled) {
     return;
   }
 
-  const TIME_BUDGET = 2000;
-  const BATCH_MS = 50;
   const numBoards = boards.length;
-  const cardsPerPlayer = g().cards;
 
   calculating = true;
   document.getElementById('timer').textContent = 'Calculating…';
@@ -275,71 +299,31 @@ function runBombPotEquity(filled) {
   mcAbort = () => { aborted = true; };
 
   const randomIndices = [];
-  const cardIndices = [];
+  const cardSeats = [];
   for (let fi = 0; fi < filled.length; fi++) {
     if (seats[filled[fi]].mode === 'random') randomIndices.push(fi);
-    else cardIndices.push(fi);
+    else cardSeats.push(filled[fi]);
   }
+  const perCall = samplesPerCall(allBoardCards);
+  const keepGoing = () => (performance.now() - t0) < MC_TIME_BUDGET && done < MC_MAX_SAMPLES;
 
   function batch() {
     if (aborted) { finish(); return; }
-    const batchEnd = performance.now() + BATCH_MS;
+    const batchEnd = performance.now() + MC_BATCH_MS;
 
     try {
-      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
-        shuffleArray(available);
-        let dealt = 0;
-
-        const fullBoards = allBoardCards.map(bc => {
-          const needed = 5 - bc.length;
-          const full = [...bc, ...available.slice(dealt, dealt + needed)];
-          dealt += needed;
-          return full;
-        });
-
-        const game = new OmahaBombPotGame(numBoards, cardsPerPlayer);
-
-        const randomHands = [];
-        for (const fi of randomIndices) {
-          const hand = available.slice(dealt, dealt + cardsPerPlayer);
-          dealt += cardsPerPlayer;
-          randomHands.push(hand);
-        }
-
-        let ri = 0;
-        for (let fi = 0; fi < filled.length; fi++) {
-          const si = filled[fi];
-          if (seats[si].mode === 'random') {
-            game.add_player(randomHands[ri].map(cardToWasm).join(' '));
-            ri++;
-          } else {
-            game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-          }
-        }
-
-        for (let bi = 0; bi < fullBoards.length; bi++) {
-          const fb = fullBoards[bi];
-          game.set_flop(bi, fb.slice(0, 3).map(cardToWasm).join(' '));
-          game.set_turn(bi, cardToWasm(fb[3]));
-          game.set_river(bi, cardToWasm(fb[4]));
-        }
-
-        const winners = game.evaluate_winners();
+      while (performance.now() < batchEnd && keepGoing()) {
+        const game = createBombPotGame(cardSeats, completeFlops(allBoardCards, available));
+        const r = game.sample(perCall, randomIndices);
         game.free();
 
         for (let fi = 0; fi < filled.length; fi++) {
-          let totalShare = 0;
-          for (let bi = 0; bi < numBoards; bi++) {
-            for (const w of winners[bi]) {
-              if (w.player_index === fi) totalShare += w.pot_share;
-            }
-          }
-          totals[fi] += totalShare;
+          totals[fi] += r.equity_sum[fi];
+          scoops[fi] += r.scoops[fi];
+          scooped[fi] += r.scooped[fi];
+          for (let bi = 0; bi < numBoards; bi++) boardWins[bi][fi] += r.board_wins[bi][fi];
         }
-
-        tallyScoopStats(winners, filled, numBoards, boardWins, scoops, scooped);
-
-        done++;
+        done += r.samples;
       }
     } catch (err) {
       aborted = true;
@@ -348,7 +332,7 @@ function runBombPotEquity(filled) {
       return;
     }
 
-    if ((performance.now() - t0) < TIME_BUDGET) {
+    if (keepGoing()) {
       setTimeout(batch, 0);
     } else {
       finish();
@@ -435,10 +419,7 @@ function buildBpStatsFromWinners(winners, filled, samples) {
   return stats;
 }
 
-function runMonteCarloEquity(filled, boardCards, boardNeeded) {
-  const TIME_BUDGET = 2000;
-  const BATCH_MS = 50;
-
+function runMonteCarloEquity(filled, boardCards) {
   calculating = true;
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
@@ -451,33 +432,21 @@ function runMonteCarloEquity(filled, boardCards, boardNeeded) {
   let aborted = false;
 
   mcAbort = () => { aborted = true; };
+  const perCall = samplesPerCall([boardCards]);
+  const keepGoing = () => (performance.now() - t0) < MC_TIME_BUDGET && done < MC_MAX_SAMPLES;
 
   function batch() {
     if (aborted) { finish(); return; }
-    const batchEnd = performance.now() + BATCH_MS;
+    const batchEnd = performance.now() + MC_BATCH_MS;
 
     try {
-      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
-        shuffleArray(available);
-        const fullBoard = [...boardCards, ...available.slice(0, boardNeeded)];
-
-        let game;
-        if (curG.includes('hl')) {
-          game = new OmahaHiLoGame(g().cards);
-        } else {
-          game = new OmahaGame(g().cards);
-        }
-        for (const si of filled) {
-          game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-        }
-        game.set_flop(fullBoard.slice(0, 3).map(cardToWasm).join(' '));
-        game.set_turn(cardToWasm(fullBoard[3]));
-        game.set_river(cardToWasm(fullBoard[4]));
-
-        const eq = game.evaluate_equity();
-        for (let i = 0; i < filled.length; i++) totals[i] += eq[i];
+      while (performance.now() < batchEnd && keepGoing()) {
+        const [flop] = completeFlops([boardCards], available);
+        const game = createGameAndSetBoard(filled, flop);
+        const eq = game.sample_equity(perCall);
         game.free();
-        done++;
+        for (let i = 0; i < filled.length; i++) totals[i] += eq[i] * perCall;
+        done += perCall;
       }
     } catch (err) {
       aborted = true;
@@ -486,7 +455,7 @@ function runMonteCarloEquity(filled, boardCards, boardNeeded) {
       return;
     }
 
-    if ((performance.now() - t0) < TIME_BUDGET) {
+    if (keepGoing()) {
       setTimeout(batch, 0);
     } else {
       finish();
