@@ -376,10 +376,20 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .settings-note { font-size: 11px; color: var(--fg-muted); margin-top: 8px; max-width: 320px; line-height: 1.4; }
 
 @media (max-width: 640px) {
-  .table-wrap { aspect-ratio: 1.2; }
-  .felt { top: 18%; left: 12%; right: 12%; bottom: 18%; }
+  /* Tall table: side seats sit in columns at 18%/82% (seatPosNarrow), each
+     with ~36% of the width, and hole cards wrap to two rows to fit it. */
+  .table-wrap { aspect-ratio: 0.55; margin-top: 8px; }
+  .table-wrap.multi-board { aspect-ratio: 0.47; }
+  .felt { top: 13%; left: 21%; right: 21%; bottom: 13%; border-radius: 48% / 36%; }
+  .seat-cards { display: grid; grid-template-columns: repeat(var(--card-cols), var(--card-w)); justify-content: center; }
+  .seat-cards .sc { font-size: calc(var(--card-w) * 0.42); }
+  .seat-panel { padding: 6px 8px 5px; }
   .board .bc { width: 30px; height: 42px; font-size: 11px; }
   .toolbar { padding: 10px 12px; }
   .card-picker { width: 92vw; }
   .range-picker { width: 92vw; }
+}
+
+@media (max-width: 340px) {
+  .board .bc { width: 26px; height: 36px; font-size: 10px; }
 }

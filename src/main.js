@@ -66,12 +66,43 @@ function bestEq() {
   return b;
 }
 
-function seatPos(n) {
+// Phones get a tall table with seats pulled inward so side seats stay on
+// screen, and hole cards wrap onto two rows (see .seat-cards in style.css).
+const NARROW = window.matchMedia('(max-width: 640px)');
+// PLO5/6 wrap to three cards per row; a side seat must fit in about 32% of the
+// screen width (3 cards + gaps + 26px of padding/border), so those scale down
+// on the narrowest phones.
+const CW_NARROW = {2:'36px', 4:'min(32px, calc(10vw - 2px))', 5:'min(32px, calc((32vw - 26px) / 3))', 6:'min(32px, calc((32vw - 26px) / 3))'};
+
+// Seats run clockwise from bottom center: up the left side, across the top,
+// down the right side.
+function seatPos(n, numBoards) {
+  if (NARROW.matches) return seatPosNarrow(n, numBoards);
   const p = [], ax = 47, ay = 44;
   for (let i = 0; i < n; i++) {
     const a = Math.PI/2 + i * 2*Math.PI/n;
     p.push({l: 50 + ax*Math.cos(a), t: 50 + ay*Math.sin(a)});
   }
+  return p;
+}
+
+// Phone layout on the tall table: one seat at bottom center, one at top center
+// when the count is even, and the rest in left/right columns at 18%/82% that
+// stay above and below the board so they don't cover it.
+function seatPosNarrow(n, numBoards) {
+  const multi = numBoards > 1;
+  const [topT, bottomT] = multi ? [8, 92] : [9, 91];
+  const [upper, lower] = multi ? [[10, 30], [70, 90]] : [[11, 33], [67, 89]];
+  const rest = n - 1;
+  const hasTop = rest % 2 === 1;
+  const perSide = Math.floor(rest / 2);
+  const spread = ([a, b], k) => k === 1 ? [(a + b) / 2] : Array.from({length: k}, (_, i) => a + (b - a) * i / (k - 1));
+  const sideT = [...spread(upper, Math.ceil(perSide / 2)), ...spread(lower, Math.floor(perSide / 2))];
+
+  const p = [{l: 50, t: bottomT}];
+  for (let i = perSide - 1; i >= 0; i--) p.push({l: 18, t: sideT[i]});
+  if (hasTop) p.push({l: 50, t: topT});
+  for (let i = 0; i < perSide; i++) p.push({l: 82, t: sideT[i]});
   return p;
 }
 
@@ -618,10 +649,13 @@ function showCalcOverlay(show) {
 
 function render() {
   const gm = g();
-  document.documentElement.style.setProperty('--card-w', CW[gm.cards]+'px');
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--card-w', NARROW.matches ? CW_NARROW[gm.cards] : CW[gm.cards]+'px');
+  rootStyle.setProperty('--card-cols', gm.cards <= 3 ? gm.cards : Math.ceil(gm.cards / 2));
   const tw = document.getElementById('tw');
   tw.querySelectorAll('.seat').forEach(e => e.remove());
-  const pos = seatPos(gm.max);
+  const pos = seatPos(gm.max, gm.numBoards);
+  tw.classList.toggle('multi-board', gm.numBoards > 1);
   const be = bestEq();
 
   for (let i = 0; i < gm.max; i++) {
@@ -1476,4 +1510,5 @@ try {
 loadFromHash();
 render();
 updateGameUI();
+NARROW.addEventListener('change', render);
 scheduleCalc(0);
