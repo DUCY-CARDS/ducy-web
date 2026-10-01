@@ -702,7 +702,9 @@ function openCardPicker(seatIdx, cardIdx) {
   showModal(h);
 }
 
-function openRangePicker(seatIdx) {
+// `opts.msg` is a status line for the saved-ranges section; `opts.name`
+// prefills the save box (e.g. after loading a saved range).
+function openRangePicker(seatIdx, opts = {}) {
   const s = seats[seatIdx];
   const sel = (s && s.mode==='range') ? s.sel : new Set();
   target = {type:'hand', seat:seatIdx, seatMode:'range'};
@@ -724,8 +726,195 @@ function openRangePicker(seatIdx) {
   const pctH = (cnt / 1326 * 100).toFixed(1);
   h += `</div><div class="range-info"><span id="rcnt">${cnt} combos · ${pctH}%</span></div>`;
   h += `<textarea class="range-text" id="rtxt" placeholder="AA, AKs, QQ+ ...">${[...sel].join(', ')}</textarea>`;
+  h += savedRangesHtml(sel, opts);
   h += '</div>';
   showModal(h);
+}
+
+// Saved ranges live in this browser's localStorage as [{name, game, range}],
+// where `range` is the picker's text form ("AA, AKs, ..."). `game` lets
+// Omaha ranges share the store later; only Hold'em has ranges today.
+const SAVED_RANGES_KEY = 'ducyRanges';
+const RANGE_NAME_MAX = 60;
+const RANGE_GAME = 'nlhe';
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+}
+
+function comboCount(sel) {
+  return [...sel].reduce((a, k) => a + (COMBOS[k] || 0), 0);
+}
+
+function loadSavedRanges() {
+  try {
+    const list = JSON.parse(localStorage.getItem(SAVED_RANGES_KEY) || '[]');
+    if (!Array.isArray(list)) return [];
+    return list.filter(r => r && typeof r.name === 'string' && typeof r.range === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function storeSavedRanges(list) {
+  try {
+    localStorage.setItem(SAVED_RANGES_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sameSel(a, b) {
+  return a.size === b.size && [...a].every(k => b.has(k));
+}
+
+function savedRangesHtml(sel, opts) {
+  const list = loadSavedRanges();
+  let h = '<div class="saved-ranges">';
+  h += '<div class="saved-head"><span>Saved ranges</span>';
+  h += '<button class="link-btn" id="rlib">Import / Export</button></div>';
+  h += '<div class="saved-save">';
+  h += `<input class="range-name" id="rname" maxlength="${RANGE_NAME_MAX}" placeholder="Name this range" value="${escapeHtml(opts.name || '')}" autocomplete="off">`;
+  h += '<button class="btn-small" id="rsave">Save</button></div>';
+  const mine = list.map((r, i) => ({r, i})).filter(({r}) => (r.game || RANGE_GAME) === RANGE_GAME);
+  if (!mine.length) {
+    h += '<div class="saved-empty">No saved ranges yet. Name the current range and save it to reuse it later.</div>';
+  } else {
+    h += '<div class="saved-list">';
+    for (const {r, i} of mine) {
+      const rs = parseRange(r.range);
+      const cur = sel.size && sameSel(rs, sel) ? ' current' : '';
+      h += `<div class="saved-row${cur}">`;
+      h += `<button class="saved-load" data-rload="${i}" title="${escapeHtml(r.range)}">`;
+      h += `<span class="saved-name">${escapeHtml(r.name)}</span>`;
+      h += `<span class="saved-meta">${comboCount(rs)} combos</span></button>`;
+      h += `<button class="saved-del" data-rdel="${i}" aria-label="Delete ${escapeHtml(r.name)}">×</button>`;
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += `<div class="saved-msg" id="rmsg" role="status">${escapeHtml(opts.msg || '')}</div>`;
+  h += '</div>';
+  return h;
+}
+
+function saveCurrentRange() {
+  const input = document.getElementById('rname');
+  const name = (input ? input.value : '').trim().slice(0, RANGE_NAME_MAX);
+  const s = seats[target.seat];
+  const sel = s && s.mode === 'range' ? s.sel : new Set();
+  const msg = document.getElementById('rmsg');
+  if (!sel.size) { if (msg) msg.textContent = 'Select some hands first.'; return; }
+  if (!name) { if (msg) msg.textContent = 'Enter a name for this range.'; if (input) input.focus(); return; }
+
+  const list = loadSavedRanges();
+  const range = [...sel].join(', ');
+  const existing = list.findIndex(r => r.name === name && (r.game || RANGE_GAME) === RANGE_GAME);
+  if (existing >= 0) list[existing] = {name, game: RANGE_GAME, range};
+  else list.push({name, game: RANGE_GAME, range});
+  const ok = storeSavedRanges(list);
+  openRangePicker(target.seat, {
+    name,
+    msg: !ok ? 'Couldn’t save: this browser is blocking storage.'
+      : existing >= 0 ? `Updated “${name}”.` : `Saved “${name}”.`,
+  });
+}
+
+function exportRangesText() {
+  const ranges = loadSavedRanges().map(r => ({name: r.name, game: r.game || RANGE_GAME, range: r.range}));
+  return JSON.stringify({format: 'ducy-ranges', version: 1, ranges}, null, 2);
+}
+
+// Accepts the exported JSON (or a bare array of {name, range}), or plain
+// lines of "Name: AA, KK, AKs". Returns {added, unchanged, invalid}.
+function importRanges(text) {
+  let entries = [];
+  let invalid = 0;
+  const t = text.trim();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    let data;
+    try { data = JSON.parse(t); } catch { return {added: 0, unchanged: 0, invalid: 0, error: 'That isn’t valid JSON.'}; }
+    entries = Array.isArray(data) ? data : Array.isArray(data && data.ranges) ? data.ranges : [];
+  } else {
+    for (const line of t.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const colon = line.indexOf(':');
+      if (colon <= 0) { invalid++; continue; }
+      entries.push({name: line.slice(0, colon), range: line.slice(colon + 1)});
+    }
+  }
+
+  const list = loadSavedRanges();
+  let added = 0, unchanged = 0;
+  for (const e of entries) {
+    const name = e && typeof e.name === 'string' ? e.name.trim().slice(0, RANGE_NAME_MAX) : '';
+    const game = e && typeof e.game === 'string' ? e.game : RANGE_GAME;
+    const sel = e && typeof e.range === 'string' ? parseRange(e.range) : new Set();
+    if (!name || !sel.size || game !== RANGE_GAME) { invalid++; continue; }
+    const range = [...sel].join(', ');
+    const same = list.filter(r => (r.game || RANGE_GAME) === game);
+    if (same.some(r => r.name === name && sameSel(parseRange(r.range), sel))) { unchanged++; continue; }
+    let unique = name;
+    for (let n = 2; same.some(r => r.name === unique); n++) unique = `${name} (${n})`;
+    list.push({name: unique, game, range});
+    added++;
+  }
+  if (added && !storeSavedRanges(list)) return {added: 0, unchanged, invalid, error: 'Couldn’t save: this browser is blocking storage.'};
+  return {added, unchanged, invalid};
+}
+
+function importSummary(r) {
+  if (r.error) return r.error;
+  const parts = [`Imported ${r.added} range${r.added === 1 ? '' : 's'}`];
+  if (r.unchanged) parts.push(`${r.unchanged} already saved`);
+  if (r.invalid) parts.push(`${r.invalid} skipped (missing name or no valid hands)`);
+  return parts.join(', ') + '.';
+}
+
+function openRangeLibrary(seatIdx, msg = '') {
+  target = {type:'hand', seat:seatIdx, seatMode:'range'};
+  const count = loadSavedRanges().length;
+  let h = '<div class="modal-header"><span>Saved ranges · Import / Export</span>';
+  h += '<button class="link-btn" id="rback">Back</button></div>';
+  h += '<div class="range-picker range-lib">';
+  h += `<div class="lib-label">Export (${count} saved)</div>`;
+  h += `<textarea class="range-text lib-text" id="rexport" readonly rows="6">${escapeHtml(exportRangesText())}</textarea>`;
+  h += '<div class="lib-actions">';
+  h += `<button class="btn-small" id="rcopy"${count ? '' : ' disabled'}>Copy</button>`;
+  h += `<button class="btn-small" id="rdownload"${count ? '' : ' disabled'}>Download .json</button></div>`;
+  h += '<div class="lib-label">Import</div>';
+  h += '<textarea class="range-text lib-text" id="rimport" rows="5" placeholder="Paste exported ranges, or one range per line:&#10;Tight open: 77+, ATs+, KQs, AJo+"></textarea>';
+  h += '<div class="lib-actions">';
+  h += '<label class="btn-small file-btn">Choose file…<input type="file" id="rfile" accept=".json,.txt,application/json,text/plain" hidden></label>';
+  h += '<button class="btn-small primary" id="rimportbtn">Import</button></div>';
+  h += `<div class="saved-msg" id="rmsg" role="status">${escapeHtml(msg)}</div>`;
+  h += '</div>';
+  showModal(h);
+}
+
+function copyExport() {
+  const ta = document.getElementById('rexport');
+  const msg = document.getElementById('rmsg');
+  const done = ok => { if (msg) msg.textContent = ok ? 'Copied to clipboard.' : 'Select the text above and copy it.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(ta.value).then(() => done(true), () => { ta.select(); done(false); });
+  } else {
+    ta.select();
+    done(false);
+  }
+}
+
+function downloadExport() {
+  const blob = new Blob([exportRangesText()], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ducy-ranges.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function openBoardPicker(boardIdx, cardIdx) {
@@ -1054,6 +1243,62 @@ document.getElementById('mbg').addEventListener('click', e => {
     openRangePicker(target.seat);
     return;
   }
+
+  if (!target || target.seatMode !== 'range') return;
+  if (e.target.id === 'rsave') { saveCurrentRange(); return; }
+  if (e.target.id === 'rlib') { openRangeLibrary(target.seat); return; }
+  if (e.target.id === 'rback') { openRangePicker(target.seat); return; }
+  if (e.target.id === 'rcopy') { copyExport(); return; }
+  if (e.target.id === 'rdownload') { downloadExport(); return; }
+  if (e.target.id === 'rimportbtn') {
+    const text = document.getElementById('rimport').value;
+    openRangeLibrary(target.seat, text.trim() ? importSummary(importRanges(text)) : 'Paste ranges to import, or choose a file.');
+    return;
+  }
+
+  const load = e.target.closest('[data-rload]');
+  if (load) {
+    const r = loadSavedRanges()[+load.dataset.rload];
+    if (!r) return;
+    seats[target.seat] = {mode:'range', sel: parseRange(r.range)};
+    dirty(); render();
+    openRangePicker(target.seat, {name: r.name, msg: `Loaded “${r.name}”.`});
+    return;
+  }
+
+  // Delete takes two clicks: the first turns the button into a confirm.
+  const del = e.target.closest('[data-rdel]');
+  if (del) {
+    if (!del.classList.contains('confirm')) {
+      del.classList.add('confirm');
+      del.textContent = 'Delete?';
+      setTimeout(() => { if (del.isConnected) { del.classList.remove('confirm'); del.textContent = '×'; } }, 3000);
+      return;
+    }
+    const list = loadSavedRanges();
+    const [removed] = list.splice(+del.dataset.rdel, 1);
+    storeSavedRanges(list);
+    openRangePicker(target.seat, {msg: removed ? `Deleted “${removed.name}”.` : ''});
+  }
+});
+
+document.getElementById('mbg').addEventListener('keydown', e => {
+  if (e.target.id === 'rname' && e.key === 'Enter') {
+    e.preventDefault();
+    saveCurrentRange();
+  }
+});
+
+document.getElementById('mbg').addEventListener('change', e => {
+  if (e.target.id !== 'rfile' || !target) return;
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const seat = target.seat;
+  if (file.size > 1e6) { openRangeLibrary(seat, 'That file is too large to be a ranges export.'); return; }
+  const reader = new FileReader();
+  reader.onload = () => openRangeLibrary(seat, importSummary(importRanges(String(reader.result))));
+  reader.onerror = () => openRangeLibrary(seat, 'Couldn’t read that file.');
+  reader.readAsText(file);
 });
 
 document.getElementById('mbg').addEventListener('input', e => {
