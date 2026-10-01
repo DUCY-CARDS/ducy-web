@@ -24,8 +24,11 @@ function completeFlops(allBoardCards, available) {
   });
 }
 
+// With a 1-2 card board each call shares one random flop completion, so small
+// calls spread samples over more flops: 25 per flop measured about half the
+// error of 100 at 100k samples, for ~1.7x the time.
 function samplesPerCall(allBoardCards) {
-  return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 100 : 1000;
+  return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 25 : 1000;
 }
 
 function setBoard(game, bc, bi) {

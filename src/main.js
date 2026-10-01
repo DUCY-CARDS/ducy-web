@@ -162,12 +162,19 @@ function runSampling(job, onDone) {
   const id = ++mcRunId;
   const t0 = performance.now();
   const merged = newState(job);
+  // An exact job finishes after one result instead of running out the budget.
+  const sampleCap = job.exact ? 1 : MC_MAX_SAMPLES;
   let active = true;
   const finish = failed => {
     if (!active) return;
     active = false;
     mcAbort = null;
     onDone(merged, (performance.now() - t0).toFixed(0), failed);
+  };
+  const fail = message => {
+    // An unusable range is a normal outcome, shown as "No valid combos".
+    if (!/invalid range/i.test(message)) console.error('Monte carlo error:', message);
+    finish(message || 'error');
   };
 
   if (mcPool) {
@@ -180,9 +187,8 @@ function runSampling(job, onDone) {
         mergeState(merged, m.state);
         if (--pending === 0) { stop(); finish(false); }
       } else if (m.type === 'error') {
-        console.error('Monte carlo error:', m.message);
         stop();
-        finish(m.message || 'error');
+        fail(m.message);
       }
     };
     const stop = () => workers.forEach(w => {
@@ -190,7 +196,7 @@ function runSampling(job, onDone) {
       w.postMessage({type: 'stop', id});
     });
     mcAbort = () => { stop(); active = false; };
-    const maxSamples = Math.ceil(MC_MAX_SAMPLES / workers.length);
+    const maxSamples = Math.ceil(sampleCap / workers.length);
     for (const w of workers) {
       w.addEventListener('message', onMessage);
       w.postMessage({type: 'run', id, job, budgetMs: MC_TIME_BUDGET, maxSamples});
@@ -203,13 +209,12 @@ function runSampling(job, onDone) {
   function batch() {
     if (!active) return;
     try {
-      runChunk(job, merged, Math.min(deadline, performance.now() + MC_BATCH_MS), MC_MAX_SAMPLES);
+      runChunk(job, merged, Math.min(deadline, performance.now() + MC_BATCH_MS), sampleCap);
     } catch (err) {
-      console.error('Monte carlo error:', err);
-      finish(String(err && err.message || err));
+      fail(String(err && err.message || err));
       return;
     }
-    if (performance.now() < deadline && merged.done < MC_MAX_SAMPLES) setTimeout(batch, 0);
+    if (performance.now() < deadline && merged.done < sampleCap) setTimeout(batch, 0);
     else finish(false);
   }
   setTimeout(batch, 0);
@@ -1347,7 +1352,7 @@ window.addEventListener('hashchange', () => { loadFromHash(); render(); updateGa
 // Init
 const statusEl = document.getElementById('wasm-status');
 try {
-  await init(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
+  await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
   wasmReady = true;
   startWorkerPool();
   statusEl.textContent = '';
