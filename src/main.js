@@ -1,4 +1,5 @@
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
+import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 
 const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 const ST = [
@@ -82,39 +83,6 @@ function cardToWasm(c) {
 let mcAbort = null;
 let lastMcType = null;
 
-function shuffleArray(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
-
-function expandRangeToHands(sel, usedCards) {
-  const hands = [];
-  const suits = ['s', 'h', 'd', 'c'];
-  for (const label of sel) {
-    if (label.length === 2 && label[0] === label[1]) {
-      const r = label[0];
-      for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
-        const c1 = r + suits[i], c2 = r + suits[j];
-        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
-      }
-    } else if (label.length === 3 && label[2] === 's') {
-      for (const s of suits) {
-        const c1 = label[0] + s, c2 = label[1] + s;
-        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
-      }
-    } else if (label.length === 3 && label[2] === 'o') {
-      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-        if (i === j) continue;
-        const c1 = label[0] + suits[i], c2 = label[1] + suits[j];
-        if (!usedCards.has(c1) && !usedCards.has(c2)) hands.push([c1, c2]);
-      }
-    }
-  }
-  return hands;
-}
-
 function createGameAndSetBoard(filled, boardCards) {
   let game;
   if (curG === 'nlhe') {
@@ -153,27 +121,103 @@ function addDeadCards(game) {
   if (deadCards.length) game.add_dead_cards(deadCards.map(cardToWasm).join(' '));
 }
 
-// The engine only accepts a board of 0, 3, 4 or 5 cards, so a board with
-// 1-2 known cards gets a random flop completion for each sampling batch.
-function completeFlops(allBoardCards, available) {
-  if (!allBoardCards.some(bc => bc.length === 1 || bc.length === 2)) return allBoardCards;
-  shuffleArray(available);
-  let dealt = 0;
-  return allBoardCards.map(bc => {
-    if (bc.length !== 1 && bc.length !== 2) return bc;
-    const extra = available.slice(dealt, dealt + 3 - bc.length);
-    dealt += extra.length;
-    return [...bc, ...extra];
-  });
-}
-
 // Set from the evaluation-time setting by applySettings()
 let MC_TIME_BUDGET = 2000;
 const MC_BATCH_MS = 50;
 let MC_MAX_SAMPLES = 100000;
 
-function samplesPerCall(allBoardCards) {
-  return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 100 : 1000;
+// Monte Carlo runs in a pool of workers, one per spare core, each taking an
+// equal share of the sample cap. If workers are unavailable, it falls back to
+// batches on the main thread.
+const MC_WORKERS = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+let mcPool = null;
+let mcRunId = 0;
+
+function startWorkerPool() {
+  if (typeof Worker === 'undefined') return;
+  try {
+    mcPool = [];
+    for (let i = 0; i < MC_WORKERS; i++) {
+      const w = new Worker(new URL('./mc-worker.js', import.meta.url), {type: 'module'});
+      w.addEventListener('error', onWorkerPoolError);
+      mcPool.push(w);
+    }
+  } catch (err) {
+    onWorkerPoolError(err);
+  }
+}
+
+function onWorkerPoolError(err) {
+  if (!mcPool) return;
+  console.warn('Monte Carlo workers unavailable, using the main thread:', err.message || err);
+  mcPool.forEach(w => w.terminate());
+  mcPool = null;
+  if (calculating) runEquityCalc();
+}
+
+// Runs `job` (see mc.js) and calls onDone(state, ms, failed), where failed is
+// false or an error message. Exact jobs are one calculation, so they run on a
+// single worker. Aborting via mcAbort drops the run without calling onDone.
+function runSampling(job, onDone) {
+  const id = ++mcRunId;
+  const t0 = performance.now();
+  const merged = newState(job);
+  // An exact job finishes after one result instead of running out the budget.
+  const sampleCap = job.exact ? 1 : MC_MAX_SAMPLES;
+  let active = true;
+  const finish = failed => {
+    if (!active) return;
+    active = false;
+    mcAbort = null;
+    onDone(merged, (performance.now() - t0).toFixed(0), failed);
+  };
+  const fail = message => {
+    // An unusable range is a normal outcome, shown as "No valid combos".
+    if (!/invalid range/i.test(message)) console.error('Monte carlo error:', message);
+    finish(message || 'error');
+  };
+
+  if (mcPool) {
+    const workers = job.exact ? mcPool.slice(0, 1) : mcPool;
+    let pending = workers.length;
+    const onMessage = e => {
+      const m = e.data;
+      if (m.id !== id || !active) return;
+      if (m.type === 'done') {
+        mergeState(merged, m.state);
+        if (--pending === 0) { stop(); finish(false); }
+      } else if (m.type === 'error') {
+        stop();
+        fail(m.message);
+      }
+    };
+    const stop = () => workers.forEach(w => {
+      w.removeEventListener('message', onMessage);
+      w.postMessage({type: 'stop', id});
+    });
+    mcAbort = () => { stop(); active = false; };
+    const maxSamples = Math.ceil(sampleCap / workers.length);
+    for (const w of workers) {
+      w.addEventListener('message', onMessage);
+      w.postMessage({type: 'run', id, job, budgetMs: MC_TIME_BUDGET, maxSamples});
+    }
+    return;
+  }
+
+  mcAbort = () => { active = false; };
+  const deadline = t0 + MC_TIME_BUDGET;
+  function batch() {
+    if (!active) return;
+    try {
+      runChunk(job, merged, Math.min(deadline, performance.now() + MC_BATCH_MS), sampleCap);
+    } catch (err) {
+      fail(String(err && err.message || err));
+      return;
+    }
+    if (performance.now() < deadline && merged.done < sampleCap) setTimeout(batch, 0);
+    else finish(false);
+  }
+  setTimeout(batch, 0);
 }
 
 function runEquityCalc() {
@@ -286,90 +330,42 @@ function runBombPotEquity(filled) {
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
 
-  const t0 = performance.now();
   const usedSet = used();
-  const available = ALL_CARDS.filter(c => !usedSet.has(c));
-  const totals = new Array(filled.length).fill(0);
-  const boardWins = [];
-  for (let bi = 0; bi < numBoards; bi++) boardWins.push(new Array(filled.length).fill(0));
-  const scoops = new Array(filled.length).fill(0);
-  const scooped = new Array(filled.length).fill(0);
-  let done = 0;
-  let aborted = false;
-
-  mcAbort = () => { aborted = true; };
-
   const randomIndices = [];
-  const cardSeats = [];
+  const hands = [];
   for (let fi = 0; fi < filled.length; fi++) {
-    if (seats[filled[fi]].mode === 'random') randomIndices.push(fi);
-    else cardSeats.push(filled[fi]);
+    const s = seats[filled[fi]];
+    if (s.mode === 'random') randomIndices.push(fi);
+    else hands.push(s.cards.map(cardToWasm));
   }
-  const perCall = samplesPerCall(allBoardCards);
-  const keepGoing = () => (performance.now() - t0) < MC_TIME_BUDGET && done < MC_MAX_SAMPLES;
+  const job = {
+    type: 'bombpot', numPlayers: filled.length, numBoards, cardsPer: g().cards,
+    hands, randomIndices, allBoardCards: allBoardCards.map(bc => bc.map(cardToWasm)),
+    dead: deadCards.map(cardToWasm), available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+  };
 
-  function batch() {
-    if (aborted) { finish(); return; }
-    const batchEnd = performance.now() + MC_BATCH_MS;
-
-    try {
-      while (performance.now() < batchEnd && keepGoing()) {
-        const game = createBombPotGame(cardSeats, completeFlops(allBoardCards, available));
-        const r = game.sample(perCall, randomIndices);
-        game.free();
-
-        for (let fi = 0; fi < filled.length; fi++) {
-          totals[fi] += r.equity_sum[fi];
-          scoops[fi] += r.scoops[fi];
-          scooped[fi] += r.scooped[fi];
-          for (let bi = 0; bi < numBoards; bi++) boardWins[bi][fi] += r.board_wins[bi][fi];
-        }
-        done += r.samples;
-      }
-    } catch (err) {
-      aborted = true;
-      console.error('Bomb pot monte carlo error:', err);
-      finish();
-      return;
-    }
-
-    if (keepGoing()) {
-      setTimeout(batch, 0);
-    } else {
-      finish();
-    }
-  }
-
-  function finish() {
-    const ms = (performance.now() - t0).toFixed(0);
+  runSampling(job, (st, ms, failed) => {
+    const done = st.done;
     eqs = new Array(10).fill(null);
     bpStats = null;
-    if (!aborted && done > 0) {
-      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
+    if (!failed && done > 0) {
+      filled.forEach((si, j) => { eqs[si] = st.totals[j] / done; });
       bpStats = {};
       for (let fi = 0; fi < filled.length; fi++) {
-        const si = filled[fi];
-        const perBoard = [];
-        for (let bi = 0; bi < numBoards; bi++) {
-          perBoard.push(boardWins[bi][fi] / done);
-        }
-        bpStats[si] = {
-          boardWin: perBoard,
-          scoop: scoops[fi] / done,
-          scooped: scooped[fi] / done,
+        bpStats[filled[fi]] = {
+          boardWin: st.boardWins.map(bw => bw[fi] / done),
+          scoop: st.scoops[fi] / done,
+          scooped: st.scooped[fi] / done,
         };
       }
       calced = true;
     }
     calculating = false;
-    mcAbort = null;
-    lastMcType = aborted ? null : 'mc';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
+    lastMcType = failed ? null : 'mc';
+    document.getElementById('timer').innerHTML = failed ? 'Error' : mcTimerHtml(ms, done);
     showCalcOverlay(false);
     render();
-  }
-
-  setTimeout(batch, 0);
+  });
 }
 
 function tallyScoopStats(winners, filled, numBoards, boardWins, scoops, scooped) {
@@ -425,182 +421,75 @@ function runMonteCarloEquity(filled, boardCards) {
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
 
-  const t0 = performance.now();
   const usedSet = used();
-  const available = ALL_CARDS.filter(c => !usedSet.has(c));
-  const totals = new Array(filled.length).fill(0);
-  let done = 0;
-  let aborted = false;
+  const job = {
+    type: 'omaha', numPlayers: filled.length, hilo: curG.includes('hl'), cardsPer: g().cards,
+    hands: filled.map(si => seats[si].cards.map(cardToWasm)), boardCards: boardCards.map(cardToWasm),
+    dead: deadCards.map(cardToWasm), available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+  };
 
-  mcAbort = () => { aborted = true; };
-  const perCall = samplesPerCall([boardCards]);
-  const keepGoing = () => (performance.now() - t0) < MC_TIME_BUDGET && done < MC_MAX_SAMPLES;
-
-  function batch() {
-    if (aborted) { finish(); return; }
-    const batchEnd = performance.now() + MC_BATCH_MS;
-
-    try {
-      while (performance.now() < batchEnd && keepGoing()) {
-        const [flop] = completeFlops([boardCards], available);
-        const game = createGameAndSetBoard(filled, flop);
-        const eq = game.sample_equity(perCall);
-        game.free();
-        for (let i = 0; i < filled.length; i++) totals[i] += eq[i] * perCall;
-        done += perCall;
-      }
-    } catch (err) {
-      aborted = true;
-      console.error('Monte carlo error:', err);
-      finish();
-      return;
-    }
-
-    if (keepGoing()) {
-      setTimeout(batch, 0);
-    } else {
-      finish();
-    }
-  }
-
-  function finish() {
-    const ms = (performance.now() - t0).toFixed(0);
-    eqs = new Array(10).fill(null);
-    if (!aborted && done > 0) {
-      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
-      calced = true;
-    }
-    calculating = false;
-    mcAbort = null;
-    lastMcType = aborted ? null : 'mc';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
-    showCalcOverlay(false);
-    render();
-  }
-
-  setTimeout(batch, 0);
+  runSampling(job, (st, ms, failed) => finishSampling(filled, st, ms, failed, 'mc'));
 }
 
+// `failed` is false or the engine's error message. `exact` results are a single
+// complete calculation, so they get no sample count or rerun button.
+function finishSampling(filled, st, ms, failed, type, exact = false) {
+  eqs = new Array(10).fill(null);
+  if (!failed && st.weight > 0) {
+    filled.forEach((si, j) => { eqs[si] = st.totals[j] / st.weight; });
+    calced = true;
+  }
+  calculating = false;
+  lastMcType = failed || exact ? null : type;
+  const timer = document.getElementById('timer');
+  const noCombos = failed ? /invalid range/i.test(failed) : type === 'range' && st.weight === 0;
+  if (noCombos) timer.textContent = 'No valid combos';
+  else if (failed) timer.textContent = 'Error';
+  else if (exact) timer.textContent = ms + 'ms';
+  else timer.innerHTML = mcTimerHtml(ms, st.done);
+  showCalcOverlay(false);
+  render();
+}
+
+// Exact range equity is used when it needs at most this many hand evaluations
+// (an upper bound from the engine); above it, Monte Carlo sampling.
+const RANGE_EXACT_MAX_EVALS = 5e6;
+
 function runRangeEquity(filled) {
-  const TIME_BUDGET = MC_TIME_BUDGET;
-  const BATCH_MS = 50;
+  const boardCards = boards[0].filter(c => c);
+  // The engine puts known hands first, then one player per range.
+  const cardSeats = filled.filter(si => seats[si].mode === 'cards');
+  const rangeSeats = filled.filter(si => seats[si].mode === 'range');
+  const order = [...cardSeats, ...rangeSeats];
+  const usedSet = used();
+  const job = {
+    type: 'range', numPlayers: order.length,
+    hands: cardSeats.map(si => seats[si].cards.map(cardToWasm)),
+    ranges: rangeSeats.map(si => [...seats[si].sel].join(',')),
+    boardCards: boardCards.map(cardToWasm), dead: deadCards.map(cardToWasm),
+    available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+  };
+
+  let cost;
+  try {
+    cost = rangeExactCost(job);
+  } catch (err) {
+    showNoValidCombos();
+    return;
+  }
+  const partialFlop = boardCards.length === 1 || boardCards.length === 2;
+  job.exact = !partialFlop && cost <= RANGE_EXACT_MAX_EVALS;
 
   calculating = true;
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
+  runSampling(job, (st, ms, failed) => finishSampling(order, st, ms, failed, 'range', job.exact));
+}
 
-  const t0 = performance.now();
-  const boardCards = boards[0].filter(c => c);
-  const boardNeeded = 5 - boardCards.length;
-
-  const baseUsed = new Set();
-  for (const c of boardCards) baseUsed.add(c);
-  for (const c of deadCards) baseUsed.add(c);
-
-  const rangeSeatIndices = [];
-  const cardSeatIndices = [];
-  for (const si of filled) {
-    if (seats[si].mode === 'range') {
-      rangeSeatIndices.push(si);
-    } else {
-      cardSeatIndices.push(si);
-      for (const c of seats[si].cards) if (c) baseUsed.add(c);
-    }
-  }
-
-  const rangeHands = rangeSeatIndices.map(si => expandRangeToHands(seats[si].sel, baseUsed));
-  if (rangeHands.some(h => h.length === 0)) {
-    calculating = false;
-    document.getElementById('timer').textContent = 'No valid combos';
-    showCalcOverlay(false);
-    return;
-  }
-
-  const totals = new Array(filled.length).fill(0);
-  let done = 0;
-  let aborted = false;
-
-  mcAbort = () => { aborted = true; };
-
-  function batch() {
-    if (aborted) { finish(); return; }
-    const batchEnd = performance.now() + BATCH_MS;
-
-    try {
-      while (performance.now() < batchEnd && (performance.now() - t0) < TIME_BUDGET) {
-        const sampleUsed = new Set(baseUsed);
-        const pickedHands = [];
-        let valid = true;
-
-        for (const rh of rangeHands) {
-          const validHands = rh.filter(h => !sampleUsed.has(h[0]) && !sampleUsed.has(h[1]));
-          if (validHands.length === 0) { valid = false; break; }
-          const hand = validHands[Math.floor(Math.random() * validHands.length)];
-          pickedHands.push(hand);
-          sampleUsed.add(hand[0]);
-          sampleUsed.add(hand[1]);
-        }
-        if (!valid) continue;
-
-        const available = ALL_CARDS.filter(c => !sampleUsed.has(c));
-
-        let fullBoard;
-        if (boardNeeded > 0) {
-          shuffleArray(available);
-          fullBoard = [...boardCards, ...available.slice(0, boardNeeded)];
-        } else {
-          fullBoard = boardCards;
-        }
-
-        const game = new HoldemGame();
-        for (const si of filled) {
-          if (seats[si].mode === 'cards') {
-            game.add_player(seats[si].cards.map(cardToWasm).join(' '));
-          } else {
-            const ri = rangeSeatIndices.indexOf(si);
-            game.add_player(pickedHands[ri].map(cardToWasm).join(' '));
-          }
-        }
-
-        if (fullBoard.length >= 3) game.set_flop(fullBoard.slice(0, 3).map(cardToWasm).join(' '));
-        if (fullBoard.length >= 4) game.set_turn(cardToWasm(fullBoard[3]));
-        if (fullBoard.length >= 5) game.set_river(cardToWasm(fullBoard[4]));
-
-        const eq = game.evaluate_equity();
-        for (let i = 0; i < filled.length; i++) totals[i] += eq[i];
-        game.free();
-        done++;
-      }
-    } catch (err) {
-      aborted = true;
-      console.error('Range equity error:', err);
-      finish();
-      return;
-    }
-
-    if ((performance.now() - t0) < TIME_BUDGET) {
-      setTimeout(batch, 0);
-    } else {
-      finish();
-    }
-  }
-
-  function finish() {
-    const ms = (performance.now() - t0).toFixed(0);
-    eqs = new Array(10).fill(null);
-    if (!aborted && done > 0) {
-      filled.forEach((si, j) => { eqs[si] = totals[j] / done; });
-      calced = true;
-    }
-    calculating = false;
-    mcAbort = null;
-    lastMcType = aborted ? null : 'range';
-    document.getElementById('timer').innerHTML = aborted ? 'Error' : mcTimerHtml(ms, done);
-    showCalcOverlay(false);
-    render();
-  }
-
-  setTimeout(batch, 0);
+function showNoValidCombos() {
+  calculating = false;
+  document.getElementById('timer').textContent = 'No valid combos';
+  showCalcOverlay(false);
 }
 
 function showCalcOverlay(show) {
@@ -1463,8 +1352,9 @@ window.addEventListener('hashchange', () => { loadFromHash(); render(); updateGa
 // Init
 const statusEl = document.getElementById('wasm-status');
 try {
-  await init(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
+  await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
   wasmReady = true;
+  startWorkerPool();
   statusEl.textContent = '';
   statusEl.className = 'wasm-status ok';
 } catch (err) {
