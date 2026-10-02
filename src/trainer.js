@@ -6,6 +6,7 @@
 import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
 import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile } from './omaha-rank.js';
+import { omahaTags, TAG_LABELS } from './omaha-tags.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -189,8 +190,264 @@ function renderOmahaSetup() {
   h += `<div class="tr-preview-meta">Play about ${pct} of every 100 hands dealt</div></div>`;
   h += `<div class="tr-group">Just inside the cutoff</div>${ex.inside.map(row).join('')}`;
   h += `<div class="tr-group">Just outside</div>${ex.outside.map(row).join('')}`;
-  h += handCountAndStart();
+  const prog = loadProgress()[practiceKey(cards, pct)];
+  const score = prog ? prog.score : 0;
+  h += '<div class="tr-mode">';
+  h += '<div class="tr-mode-row"><div><b>Practice</b><span>Adaptive: easy hands first, closer calls as your score rises.</span></div>';
+  h += `<span class="tr-level lvl-${levelFor(score).name.toLowerCase()}">${prog ? `${levelFor(score).name} · ${score}` : 'New'}</span></div>`;
+  h += '<button class="tr-start" data-act="practice">Practice</button>';
+  h += '</div>';
+  h += '<div class="tr-mode"><div class="tr-mode-row"><div><b>Test</b><span>A fixed set with no feedback until the end.</span></div></div>';
+  h += handCountAndStart().replace('class="tr-start"', 'class="tr-start secondary"').replace('>Start<', '>Start test<');
+  h += '</div>';
   h += '</div></div></div>';
+  root.innerHTML = h;
+}
+
+// ---- adaptive practice (Omaha) ----
+// An IXL-style skill score from 0 to 100 per game and target. The score picks
+// how close to the cutoff hands are dealt; correct answers raise it (less as
+// it climbs), and wrong answers lower it more the more obvious the hand was.
+//
+// Closeness is relative to each side of the cutoff: for a hand inside the
+// range, how far in as a share of the cutoff; outside, how far out as a share
+// of the rest. Obvious hands (deep inside, or far outside) aren't dealt except
+// as occasional probes for major mistakes, and practice leans toward the
+// kinds of hands (omaha-tags.js) the player keeps getting wrong.
+
+const PROGRESS_KEY = 'ducyTrainerProgress';
+// band: relative distance from the cutoff, [min, max).
+const LEVELS = [
+  {name: 'Easy', from: 0, band: [0.4, 1]},
+  {name: 'Medium', from: 50, band: [0.15, 0.4]},
+  {name: 'Hard', from: 80, band: [0.05, 0.2]},
+  {name: 'Challenge', from: 90, band: [0, 0.08]},
+];
+const OBVIOUS_INSIDE = 0.75; // deeper than this into the range is an obvious play
+const OBVIOUS_OUTSIDE = 0.5; // further than this out of the range is an obvious fold
+const PROBE_RATE = 0.1;
+const FOCUS_RATE = 0.4;
+
+/** Relative distance from the cutoff: 0 at the edge, 1 at the far end of its side. */
+function closeness(p, cut) {
+  return p < cut ? (cut - p) / cut : (p - cut) / (100 - cut);
+}
+
+function isObvious(p, cut) {
+  return p < cut ? closeness(p, cut) > OBVIOUS_INSIDE : closeness(p, cut) > OBVIOUS_OUTSIDE;
+}
+
+const levelFor = score => [...LEVELS].reverse().find(l => score >= l.from);
+
+function loadProgress() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+    return p && typeof p === 'object' ? p : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveProgress(key, rec) {
+  try {
+    const all = loadProgress();
+    all[key] = rec;
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+const practiceKey = (cards, pct) => `omaha:${cards}:${pct}`;
+
+// The Challenge zone (90+) moves one point at a time, so mastery means about
+// ten close calls in a row.
+function gainFor(score) {
+  return score < 50 ? 8 : score < 70 ? 5 : score < 80 ? 4 : score < 90 ? 3 : 1;
+}
+
+// Missing a close call costs a little; missing an obvious hand (a probe) costs a lot.
+function penaltyFor(score, rel, probe) {
+  if (probe) return 20;
+  const base = 4 + 12 * Math.min(1, rel / 0.5);
+  return Math.round(score >= 90 ? base * 1.25 : base);
+}
+
+// Deals a non-obvious hand on one side of the cutoff (chosen 50/50 so plays
+// and folds stay balanced) within the band, optionally with a given tag.
+function dealInBand(cards, cut, [lo, hi], tag) {
+  const inside = Math.random() < 0.5;
+  for (let i = 0; i < 8000; i++) {
+    const h = dealOmaha(cards), p = omahaPercentile(h);
+    if ((p < cut) !== inside || isObvious(p, cut)) continue;
+    const r = closeness(p, cut);
+    if (r < lo || r >= hi) continue;
+    if (tag && !omahaTags(h).includes(tag)) continue;
+    return {cards: h, pct: p};
+  }
+  // Nothing found (a rare tag, or a very narrow band): relax the tag, then the band.
+  if (tag) return dealInBand(cards, cut, [lo, hi]);
+  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1]);
+  const h = dealOmaha(cards);
+  return {cards: h, pct: omahaPercentile(h)};
+}
+
+function dealProbe(cards, cut) {
+  const inside = Math.random() < 0.5;
+  for (let i = 0; i < 8000; i++) {
+    const h = dealOmaha(cards), p = omahaPercentile(h);
+    if ((p < cut) === inside && isObvious(p, cut)) return {cards: h, pct: p, probe: true};
+  }
+  const h = dealOmaha(cards);
+  return {cards: h, pct: omahaPercentile(h)};
+}
+
+// Kinds of hands the player is overplaying or overfolding, worst first.
+function patterns(pr, minErrors = 2) {
+  const out = [];
+  for (const [tag, s] of Object.entries(pr.tagStats)) {
+    if (s.over >= minErrors && s.over / s.seenOut >= 0.34) out.push({tag, kind: 'over', n: s.over, of: s.seenOut});
+    if (s.under >= minErrors && s.under / s.seenIn >= 0.34) out.push({tag, kind: 'under', n: s.under, of: s.seenIn});
+  }
+  return out.sort((a, b) => b.n - a.n || b.n / b.of - a.n / a.of);
+}
+
+function patternText(p, cut) {
+  return p.kind === 'over'
+    ? `You’re playing too many ${TAG_LABELS[p.tag]}: ${p.n} of ${p.of} you saw were outside your top ${cut}%.`
+    : `You’re folding too many ${TAG_LABELS[p.tag]}: ${p.n} of ${p.of} you saw were inside your top ${cut}%.`;
+}
+
+function startPractice() {
+  const {cards, pct} = st.omaha;
+  const key = practiceKey(cards, pct);
+  const saved = loadProgress()[key] || {score: 0, best: 0, answered: 0};
+  st.screen = 'practice';
+  st.practice = {key, cards, pct, score: saved.score, best: saved.best, startScore: saved.score,
+    total: saved.answered || 0, answered: 0, correct: 0, streak: 0, history: [], tagStats: {},
+    feedback: null, delta: 0, mastered: false};
+  nextPractice();
+}
+
+function nextPractice() {
+  const pr = st.practice;
+  pr.feedback = null;
+  const band = levelFor(pr.score).band;
+  const focus = patterns(pr)[0];
+  if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealProbe(pr.cards, pr.pct);
+  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus.tag), focus: focus.tag};
+  else pr.current = dealInBand(pr.cards, pr.pct, band);
+  render();
+}
+
+function answerPractice(yes) {
+  const pr = st.practice;
+  if (!pr || pr.feedback || pr.mastered) return;
+  const {cards, pct, probe} = pr.current;
+  const inRange = pct < pr.pct;
+  const correct = yes === inRange;
+  const rel = closeness(pct, pr.pct);
+  const before = pr.score;
+  pr.score = correct ? Math.min(100, pr.score + gainFor(pr.score)) : Math.max(0, pr.score - penaltyFor(pr.score, rel, probe));
+  pr.delta = pr.score - before;
+  pr.answered++;
+  pr.total++;
+  pr.best = Math.max(pr.best, pr.score);
+  if (correct) { pr.correct++; pr.streak++; } else pr.streak = 0;
+  const tags = omahaTags(cards);
+  for (const t of tags) {
+    const s = pr.tagStats[t] ||= {seenIn: 0, seenOut: 0, over: 0, under: 0};
+    if (inRange) s.seenIn++; else s.seenOut++;
+    if (!correct) { if (yes) s.over++; else s.under++; }
+  }
+  pr.history.push({cards, pct, answer: yes, correct, rel, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, tags, level: levelFor(before).name});
+  saveProgress(pr.key, {score: pr.score, best: pr.best, answered: pr.total});
+  if (pr.score >= 100) { pr.mastered = true; render(); return; }
+  if (correct) nextPractice();
+  else {
+    // Point out a pattern this mistake belongs to, once there's evidence for it.
+    const pat = patterns(pr).find(p => tags.includes(p.tag) && p.kind === (yes ? 'over' : 'under'));
+    pr.feedback = {cards, pct, yes, major: !!probe, pattern: pat ? patternText(pat, pr.pct) : null};
+    render();
+  }
+}
+
+function renderPractice() {
+  const pr = st.practice, lvl = levelFor(pr.score);
+  let h = '<div class="tr-wrap tr-play">';
+  h += '<div class="tr-bar">';
+  h += `<div><div class="tr-preview-name">PLO${pr.cards} · top ${pr.pct}% · Practice</div>`;
+  h += `<div class="tr-preview-meta">Play the top ${pr.pct}% of ${pr.cards}-card hands</div></div>`;
+  h += `<div class="tr-progress"><span class="tr-level lvl-${lvl.name.toLowerCase()}">${lvl.name}</span><span>${pr.correct}/${pr.answered} correct</span></div>`;
+  h += '<button class="link-btn" data-act="end-practice">End</button></div>';
+
+  const deltaText = pr.delta > 0 ? `+${pr.delta}` : pr.delta < 0 ? `${pr.delta}` : '';
+  h += '<div class="tr-score">';
+  h += `<div class="tr-score-num"><b>${pr.score}</b><span>/ 100</span>${deltaText ? `<em class="${pr.delta > 0 ? 'up' : 'down'}" data-k="${pr.answered}">${deltaText}</em>` : ''}</div>`;
+  h += '<div class="tr-score-bar">';
+  h += `<div class="tr-score-fill" style="width:${pr.score}%"></div>`;
+  for (const l of LEVELS.slice(1)) h += `<span class="tr-score-mark" style="left:${l.from}%" title="${l.name}"></span>`;
+  h += '</div>';
+  // The last label hangs from the right edge so it can't run off narrow screens.
+  h += '<div class="tr-score-labels">' + LEVELS.map((l, i) => `<span style="${i === LEVELS.length - 1 ? 'right:0' : `left:${l.from}%`}">${l.name}</span>`).join('') + '</div>';
+  h += '</div>';
+
+  if (pr.mastered) {
+    h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
+    h += `<p>You reached 100 on PLO${pr.cards} · top ${pr.pct}% after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
+    h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
+    h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
+    h += '</div>';
+    root.innerHTML = h;
+    return;
+  }
+
+  const show = pr.feedback ? pr.feedback.cards : pr.current.cards;
+  // Feedback re-shows the same hand, so only a fresh deal animates.
+  h += `<div class="tr-felt"><div class="tr-cards${show.length > 2 ? ' omaha' : ''}"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}>${show.map(cardHtml).join('')}</div></div>`;
+  if (pr.feedback) {
+    const f = pr.feedback;
+    const where = f.pct < pr.pct ? `inside your top ${pr.pct}%` : `outside your top ${pr.pct}%`;
+    h += '<div class="tr-feedback bad" role="status">';
+    h += `<strong>${f.major ? 'Major mistake' : 'Not quite'}</strong> — this hand is ${pctLabel(f.pct)}, ${where}, so it’s ${f.major ? 'a clear' : 'a'} ${f.pct < pr.pct ? 'play' : 'fold'}.`;
+    if (f.pattern) h += `<div class="tr-pattern">${esc(f.pattern)}</div>`;
+    h += '</div>';
+    h += '<div class="tr-actions"><button class="tr-btn next" data-act="continue-practice">Continue<kbd>Space</kbd></button></div>';
+  } else {
+    h += '<div class="tr-actions">';
+    h += `<button class="tr-btn no" data-answer="no">Fold<kbd>F</kbd></button>`;
+    h += `<button class="tr-btn yes" data-answer="yes">Play<kbd>R</kbd></button>`;
+    h += '</div>';
+  }
+  h += '</div>';
+  root.innerHTML = h;
+}
+
+function renderPracticeSummary() {
+  const pr = st.practice;
+  const misses = pr.history.filter(x => !x.correct).sort((a, b) => b.major - a.major || b.rel - a.rel);
+  const major = misses.filter(x => x.major).length;
+  const pats = patterns(pr);
+  let h = '<div class="tr-wrap">';
+  h += `<div class="tr-head"><h1>Score ${pr.startScore} → ${pr.score}</h1>`;
+  h += `<p>PLO${pr.cards} · top ${pr.pct}% · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
+  h += '<div class="tr-summary">';
+  h += '<div class="tr-stats">';
+  h += `<div class="tr-stat"><b>${pr.answered}</b><span>Hands this session</span></div>`;
+  h += `<div class="tr-stat"><b>${pr.answered ? Math.round(pr.correct / pr.answered * 100) : 0}%</b><span>Accuracy</span></div>`;
+  h += `<div class="tr-stat bad"><b>${major}</b><span>Major mistakes (obvious hands)</span></div>`;
+  h += `<div class="tr-stat"><b>${misses.length - major}</b><span>Close calls missed</span></div>`;
+  h += '</div>';
+  h += '<div class="tr-mistakes"><div class="tr-group">Patterns</div>';
+  h += pats.length
+    ? pats.slice(0, 3).map(p => `<div class="tr-pattern">${esc(patternText(p, pr.pct))}</div>`).join('')
+    : `<span class="tr-none">No clear patterns yet${pr.answered < 20 ? ' — play a few more hands' : ''}.</span>`;
+  h += '</div>';
+  const list = misses.length
+    ? misses.map(x => `<div class="tr-ex${x.major ? ' major' : ''}"><span class="tr-hand">${handText(x.cards)}</span><span class="tr-pct">${x.major ? 'major · ' : ''}${pctLabel(x.pct)} · ${x.answer ? 'played' : 'folded'}</span></div>`).join('')
+    : '<span class="tr-none">None</span>';
+  h += `<div class="tr-mistakes"><div class="tr-group">Mistakes, worst first</div>${list}</div>`;
+  h += '<div class="tr-actions"><button class="tr-btn" data-act="setup">Change settings</button>';
+  h += '<button class="tr-btn yes" data-act="practice">Practice again</button></div>';
+  h += '</div></div>';
   root.innerHTML = h;
 }
 
@@ -433,7 +690,9 @@ function renderSummary() {
 
 function render() {
   if (!open) return;
-  if (st.screen === 'play') renderPlay();
+  if (st.screen === 'practice') renderPractice();
+  else if (st.screen === 'practice-summary') renderPracticeSummary();
+  else if (st.screen === 'play') renderPlay();
   else if (st.screen === 'summary') renderSummary();
   else renderSetup();
 }
@@ -487,8 +746,12 @@ function onClick(e) {
   }
   else if (el.dataset.choice) { st.choice = el.dataset.choice; st.edit = null; render(); }
   else if (el.dataset.total) { st.total = +el.dataset.total; render(); }
-  else if (el.dataset.answer) answer(el.dataset.answer === 'yes');
+  else if (el.dataset.answer) (st.screen === 'practice' ? answerPractice : answer)(el.dataset.answer === 'yes');
   else if (el.dataset.act === 'start') start();
+  else if (el.dataset.act === 'practice') startPractice();
+  else if (el.dataset.act === 'continue-practice') nextPractice();
+  else if (el.dataset.act === 'keep-practicing') { st.practice.mastered = false; nextPractice(); }
+  else if (el.dataset.act === 'end-practice') { st.screen = 'practice-summary'; render(); }
   else if (el.dataset.act === 'new') { startEdit(null); render(); root.querySelector('#tr-ename').focus(); }
   else if (el.dataset.act === 'customize') { startEdit(st.choice); render(); }
   else if (el.dataset.act === 'save-edit') saveEdit();
@@ -498,9 +761,16 @@ function onClick(e) {
 }
 
 function onKey(e) {
-  if (!open || st.screen !== 'play' || e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.repeat) return;
+  if (!open || e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
+  if (st.screen === 'practice') {
+    const pr = st.practice;
+    if (pr.feedback && (k === ' ' || k === 'enter')) { e.preventDefault(); nextPractice(); }
+    else if (!pr.feedback && !pr.mastered && (k === 'r' || k === 'y')) { e.preventDefault(); answerPractice(true); }
+    else if (!pr.feedback && !pr.mastered && (k === 'f' || k === 'n')) { e.preventDefault(); answerPractice(false); }
+    return;
+  }
+  if (st.screen !== 'play') return;
   if (k === 'r' || k === 'y') { e.preventDefault(); answer(true); }
   else if (k === 'f' || k === 'n') { e.preventDefault(); answer(false); }
 }
