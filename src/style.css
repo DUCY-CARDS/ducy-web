@@ -670,3 +670,11 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 @media (max-width: 340px) {
   .board .bc { width: 26px; height: 36px; font-size: 10px; }
 }
+
+/* Omaha shorthand ranges */
+.seat-range.bad { border-color: var(--red); background: rgba(198,88,88,0.1); }
+.seat-range.bad .seat-range-label, #ocov.bad { color: var(--red); }
+.presets-foot code { font-family: var(--font-data); font-size: 11px; background: var(--bg-inset); padding: 0 3px; border-radius: 2px; }
+.preset.oex { flex-direction: column; align-items: flex-start; gap: 1px; }
+.preset.oex .saved-name { font-family: var(--font-data); font-weight: 600; }
+.preset.oex .saved-meta { white-space: normal; text-align: left; }
