@@ -31,15 +31,28 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 }
 
-function savedRanges() {
+// Saved ranges are shared with the calculator's range picker (same storage key
+// and format). `i` is the index in the stored list, used for editing.
+function storedRanges() {
   try {
     const list = JSON.parse(localStorage.getItem(SAVED_RANGES_KEY) || '[]');
-    return Array.isArray(list)
-      ? list.filter(r => r && typeof r.name === 'string' && typeof r.range === 'string' && (r.game || 'nlhe') === 'nlhe')
-      : [];
+    return Array.isArray(list) ? list.filter(r => r && typeof r.name === 'string' && typeof r.range === 'string') : [];
   } catch {
     return [];
   }
+}
+
+function writeStoredRanges(list) {
+  try {
+    localStorage.setItem(SAVED_RANGES_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function savedRanges() {
+  return storedRanges().map((r, i) => ({...r, i})).filter(r => (r.game || 'nlhe') === 'nlhe');
 }
 
 // A target is what the player is trying to match: hand classes split into
@@ -55,7 +68,7 @@ function targetFor(choice) {
       value: parseRange(p.value), bluff: p.bluff ? parseRange(p.bluff) : new Set(),
     };
   }
-  const r = savedRanges()[+id];
+  const r = savedRanges().find(x => x.i === +id);
   if (!r) return null;
   return {name: r.name, spot: 'other', context: 'Your saved range', value: parseRange(r.range), bluff: new Set()};
 }
@@ -113,28 +126,121 @@ function renderSetup() {
     }
     h += '</div>';
   }
-  if (saved.length) {
-    h += '<div class="tr-group">Your saved ranges</div><div class="tr-options">';
-    saved.forEach((r, i) => {
-      const key = `saved:${i}`;
-      h += `<button class="tr-opt${st.choice === key ? ' on' : ''}" data-choice="${esc(key)}">${esc(r.name)}</button>`;
-    });
-    h += '</div>';
+  h += '<div class="tr-group">Your ranges</div><div class="tr-options">';
+  for (const r of saved) {
+    const key = `saved:${r.i}`;
+    h += `<button class="tr-opt${st.choice === key ? ' on' : ''}" data-choice="${esc(key)}">${esc(r.name)}</button>`;
   }
+  h += `<button class="tr-opt tr-new${st.edit && st.edit.index == null ? ' on' : ''}" data-act="new">+ New range</button>`;
+  h += '</div>';
   h += '</div>';
 
-  const all = new Set([...t.value, ...t.bluff]);
-  h += '<div class="tr-preview">';
-  h += `<div class="tr-preview-name">${esc(t.name)}</div>`;
-  h += `<div class="tr-preview-meta">${esc(t.context)} · ${(comboCount(all) / 1326 * 100).toFixed(1)}% of hands</div>`;
-  h += rangeGrid(t);
-  if (t.bluff.size) h += '<div class="tr-legend"><span class="tr-key value"></span>Value <span class="tr-key bluff"></span>Bluff</div>';
-  h += '<div class="tr-count">Hands: ';
-  for (const n of HAND_COUNTS) h += `<button class="cc-btn${st.total === n ? ' on' : ''}" data-total="${n}">${n}</button>`;
-  h += '</div>';
-  h += '<button class="tr-start" data-act="start">Start</button>';
-  h += '</div></div></div>';
+  if (st.edit) {
+    h += editorHtml();
+  } else {
+    const all = new Set([...t.value, ...t.bluff]);
+    h += '<div class="tr-preview">';
+    h += '<div class="tr-preview-top"><div>';
+    h += `<div class="tr-preview-name">${esc(t.name)}</div>`;
+    h += `<div class="tr-preview-meta">${esc(t.context)} · ${(comboCount(all) / 1326 * 100).toFixed(1)}% of hands</div>`;
+    h += `</div><button class="btn-small" data-act="customize">${st.choice.startsWith('saved:') ? 'Edit' : 'Customize'}</button></div>`;
+    h += rangeGrid(t);
+    if (t.bluff.size) h += '<div class="tr-legend"><span class="tr-key value"></span>Value <span class="tr-key bluff"></span>Bluff</div>';
+    h += '<div class="tr-count">Hands: ';
+    for (const n of HAND_COUNTS) h += `<button class="cc-btn${st.total === n ? ' on' : ''}" data-total="${n}">${n}</button>`;
+    h += '</div>';
+    h += '<button class="tr-start" data-act="start">Start</button>';
+    h += '</div>';
+  }
+  h += '</div></div>';
   root.innerHTML = h;
+}
+
+// ---- range editor ----
+// st.edit = {name, sel: Set of hand classes, index: stored index being edited
+// or null for a new range, msg, confirmDelete}
+
+function editorHtml() {
+  const e = st.edit;
+  let h = '<div class="tr-preview tr-editor">';
+  h += `<div class="tr-preview-name">${e.index == null ? 'New range' : 'Edit range'}</div>`;
+  h += `<input class="range-name" id="tr-ename" maxlength="60" placeholder="Name this range" value="${esc(e.name)}" autocomplete="off">`;
+  h += '<div class="tr-grid tr-edit-grid">';
+  for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
+    const l = gridLabel(r, c);
+    h += `<button class="tr-cell ${e.sel.has(l) ? 'value' : 'out'}" data-cell="${l}" aria-pressed="${e.sel.has(l)}">${l}</button>`;
+  }
+  h += '</div>';
+  h += `<div class="tr-preview-meta" id="tr-ecount">${editCountText(e.sel)}</div>`;
+  h += `<textarea class="range-text" id="tr-etext" rows="2" placeholder="Click hands above or type: QQ+, AKs, A5s-A2s">${esc([...e.sel].join(', '))}</textarea>`;
+  h += '<div class="tr-edit-actions">';
+  if (e.index != null) {
+    h += `<button class="btn-small tr-del${e.confirmDelete ? ' confirm' : ''}" data-act="delete">${e.confirmDelete ? 'Delete?' : 'Delete'}</button>`;
+  }
+  h += '<button class="btn-small" data-act="cancel-edit">Cancel</button>';
+  h += '<button class="btn-small primary" data-act="save-edit">Save</button></div>';
+  h += `<div class="saved-msg" id="tr-emsg" role="status">${esc(e.msg || '')}</div>`;
+  h += '</div>';
+  return h;
+}
+
+function editCountText(sel) {
+  const n = comboCount(sel);
+  return `${n} combos · ${(n / 1326 * 100).toFixed(1)}% of hands`;
+}
+
+// Updates the grid, count and (optionally) text box in place, so typing and
+// clicking don't lose focus.
+function refreshEditor(updateText) {
+  const e = st.edit;
+  root.querySelectorAll('[data-cell]').forEach(b => {
+    const on = e.sel.has(b.dataset.cell);
+    b.classList.toggle('value', on);
+    b.classList.toggle('out', !on);
+    b.setAttribute('aria-pressed', on);
+  });
+  root.querySelector('#tr-ecount').textContent = editCountText(e.sel);
+  if (updateText) root.querySelector('#tr-etext').value = [...e.sel].join(', ');
+}
+
+function startEdit(fromChoice) {
+  if (!fromChoice) {
+    st.edit = {name: '', sel: new Set(), index: null};
+    return;
+  }
+  const t = targetFor(fromChoice);
+  if (!t) return;
+  const sel = new Set([...t.value, ...t.bluff]);
+  if (fromChoice.startsWith('saved:')) st.edit = {name: t.name, sel, index: +fromChoice.slice(6)};
+  else st.edit = {name: `${t.name} (custom)`, sel, index: null};
+}
+
+function saveEdit() {
+  const e = st.edit;
+  e.name = e.name.trim().slice(0, 60);
+  if (!e.name) { e.msg = 'Enter a name for this range.'; render(); root.querySelector('#tr-ename').focus(); return; }
+  if (!e.sel.size) { e.msg = 'Select at least one hand.'; render(); return; }
+  const list = storedRanges();
+  const entry = {name: e.name, game: 'nlhe', range: [...e.sel].join(', ')};
+  // Saving under an existing name replaces that range, as in the calculator.
+  let at = list.findIndex(r => r.name === e.name && (r.game || 'nlhe') === 'nlhe');
+  if (at < 0 && e.index != null && list[e.index]) at = e.index;
+  if (at >= 0) list[at] = entry; else at = list.push(entry) - 1;
+  if (!writeStoredRanges(list)) { e.msg = 'Couldn’t save: this browser is blocking storage.'; render(); return; }
+  st.choice = `saved:${at}`;
+  st.edit = null;
+  render();
+}
+
+function deleteEdit() {
+  const e = st.edit;
+  if (!e.confirmDelete) { e.confirmDelete = true; render(); return; }
+  const list = storedRanges();
+  list.splice(e.index, 1);
+  writeStoredRanges(list);
+  st.choice = 'preset:open-btn';
+  st.edit = null;
+  render();
 }
 
 // No feedback during a set: answering deals the next hand, and results are
@@ -233,12 +339,22 @@ function answer(yes) {
 }
 
 function onClick(e) {
-  const el = e.target.closest('[data-choice],[data-total],[data-act],[data-answer]');
+  const el = e.target.closest('[data-choice],[data-total],[data-act],[data-answer],[data-cell]');
   if (!el) return;
-  if (el.dataset.choice) { st.choice = el.dataset.choice; render(); }
+  if (el.dataset.cell && st.edit) {
+    const s = st.edit.sel, l = el.dataset.cell;
+    if (s.has(l)) s.delete(l); else s.add(l);
+    refreshEditor(true);
+  }
+  else if (el.dataset.choice) { st.choice = el.dataset.choice; st.edit = null; render(); }
   else if (el.dataset.total) { st.total = +el.dataset.total; render(); }
   else if (el.dataset.answer) answer(el.dataset.answer === 'yes');
   else if (el.dataset.act === 'start') start();
+  else if (el.dataset.act === 'new') { startEdit(null); render(); root.querySelector('#tr-ename').focus(); }
+  else if (el.dataset.act === 'customize') { startEdit(st.choice); render(); }
+  else if (el.dataset.act === 'save-edit') saveEdit();
+  else if (el.dataset.act === 'cancel-edit') { st.edit = null; render(); }
+  else if (el.dataset.act === 'delete') deleteEdit();
   else if (el.dataset.act === 'quit' || el.dataset.act === 'setup') { st.screen = 'setup'; render(); }
 }
 
@@ -250,10 +366,22 @@ function onKey(e) {
   else if (k === 'f' || k === 'n') { e.preventDefault(); answer(false); }
 }
 
+function onInput(e) {
+  if (!st.edit) return;
+  if (e.target.id === 'tr-ename') st.edit.name = e.target.value;
+  else if (e.target.id === 'tr-etext') { st.edit.sel = parseRange(e.target.value); refreshEditor(false); }
+}
+
+function onEditorKey(e) {
+  if (st.edit && e.target.id === 'tr-ename' && e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+}
+
 export function openTrainer(el) {
   if (!root) {
     root = el;
     root.addEventListener('click', onClick);
+    root.addEventListener('input', onInput);
+    root.addEventListener('keydown', onEditorKey);
     document.addEventListener('keydown', onKey);
   }
   open = true;

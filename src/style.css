@@ -106,6 +106,15 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
   display: flex; flex-direction: column; gap: 10px;
 }
 .tr-preview-name { font-size: 15px; font-weight: 700; color: var(--fg-strong); }
+.tr-preview-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.tr-new { border-style: dashed; color: var(--teal); }
+.tr-edit-grid .tr-cell { border: none; padding: 0; font: inherit; cursor: pointer; }
+.tr-edit-grid .tr-cell.out:hover { background: var(--teal-faint); color: var(--fg); }
+.tr-edit-grid .tr-cell.value:hover { background: var(--teal-hover); }
+.tr-editor .range-text { margin-top: 0; }
+.tr-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.tr-del { margin-right: auto; color: var(--red); }
+.tr-del.confirm { background: var(--red); border-color: var(--red); color: #fff; }
 .tr-preview-meta { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
 .tr-grid {
   display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 1px;
