@@ -1,4 +1,4 @@
-import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
+import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount } from './ranges.js';
@@ -258,9 +258,16 @@ function runEquityCalc() {
     if (!seats[i]) continue;
     if (seats[i].mode === 'cards' && seats[i].cards.every(c => c)) filled.push(i);
     if (seats[i].mode === 'range' && seats[i].sel.size > 0) filled.push(i);
+    if (seats[i].mode === 'orange' && omahaRangeInfo(seats[i].text).ok) filled.push(i);
     if (seats[i].mode === 'random') filled.push(i);
   }
   if (filled.length < 2) return;
+
+  if (filled.some(si => seats[si].mode === 'orange')) {
+    if (curG === 'nlhe' || isBombPot()) return;
+    runOmahaRangeEquity(filled);
+    return;
+  }
 
   const hasRange = filled.some(si => seats[si].mode === 'range');
   if (hasRange) {
@@ -470,7 +477,7 @@ function finishSampling(filled, st, ms, failed, type, exact = false) {
   calculating = false;
   lastMcType = failed || exact ? null : type;
   const timer = document.getElementById('timer');
-  const noCombos = failed ? /invalid range/i.test(failed) : type === 'range' && st.weight === 0;
+  const noCombos = failed ? /invalid range/i.test(failed) : (type === 'range' || type === 'orange') && st.weight === 0;
   if (noCombos) timer.textContent = 'No valid combos';
   else if (failed) timer.textContent = 'Error';
   else if (exact) timer.textContent = ms + 'ms';
@@ -512,6 +519,61 @@ function runRangeEquity(filled) {
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
   runSampling(job, (st, ms, failed) => finishSampling(order, st, ms, failed, 'range', job.exact));
+}
+
+function runOmahaRangeEquity(filled) {
+  const boardCards = boards[0].filter(c => c);
+  // The engine puts known hands first, then one player per range.
+  const cardSeats = filled.filter(si => seats[si].mode === 'cards');
+  const rangeSeats = filled.filter(si => seats[si].mode === 'orange');
+  const order = [...cardSeats, ...rangeSeats];
+  const usedSet = used();
+  const job = {
+    type: 'orange', numPlayers: order.length, hilo: curG.includes('hl'), cardsPer: g().cards,
+    hands: cardSeats.map(si => seats[si].cards.map(cardToWasm)),
+    ranges: rangeSeats.map(si => seats[si].text),
+    boardCards: boardCards.map(cardToWasm), dead: deadCards.map(cardToWasm),
+    available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+  };
+  calculating = true;
+  document.getElementById('timer').textContent = 'Calculating…';
+  showCalcOverlay(true);
+  runSampling(job, (st, ms, failed) => finishSampling(order, st, ms, failed, 'orange'));
+}
+
+// Omaha shorthand range info for the current game: {ok, coverage, exact, error}.
+// Parsing PLO4/5 narrow ranges builds a hand list, so results are cached.
+const omahaRangeCache = new Map();
+function omahaRangeInfo(text) {
+  const key = g().cards + '|' + text;
+  if (omahaRangeCache.has(key)) return omahaRangeCache.get(key);
+  let info;
+  if (!wasmReady || !text.trim()) {
+    info = {ok: false, error: text.trim() ? '' : 'Enter a range'};
+  } else {
+    let r;
+    try {
+      r = new OmahaRangeSampler(g().cards, text);
+      info = {ok: true, coverage: r.coverage(), exact: r.coverage_exact()};
+      if (info.coverage === 0 && info.exact) info = {ok: false, error: 'No hands match'};
+    } catch (err) {
+      info = {ok: false, error: 'Invalid range syntax'};
+    } finally {
+      if (r) r.free();
+    }
+  }
+  if (wasmReady) {
+    if (omahaRangeCache.size > 200) omahaRangeCache.clear();
+    omahaRangeCache.set(key, info);
+  }
+  return info;
+}
+
+function coverageText(info) {
+  if (!info.ok) return info.error || '';
+  const pct = info.coverage * 100;
+  const shown = pct >= 10 ? pct.toFixed(1) : pct >= 0.1 ? pct.toFixed(2) : pct.toFixed(3);
+  return `${info.exact ? '' : '~'}${shown}% of hands`;
 }
 
 function showNoValidCombos() {
@@ -566,6 +628,12 @@ function render() {
         h += `<div class="seat-range" data-rng="${i}">`;
         h += `<div class="seat-range-label">Range</div>`;
         h += `<div class="seat-range-count">${cnt} combos</div>`;
+        h += '</div>';
+      } else if (s.mode === 'orange') {
+        const info = omahaRangeInfo(s.text);
+        h += `<div class="seat-range${info.ok ? '' : ' bad'}" data-orng="${i}" title="${escapeHtml(s.text)}">`;
+        h += `<div class="seat-range-label">Range</div>`;
+        h += `<div class="seat-range-count">${escapeHtml(coverageText(info) || 'Empty')}</div>`;
         h += '</div>';
       } else if (s.mode === 'random') {
         h += `<div class="seat-random">`;
@@ -697,7 +765,7 @@ function openCardPicker(seatIdx, cardIdx) {
   if (hand[cardIdx]) uForPicker.delete(hand[cardIdx]);
 
   let h = '';
-  if (isHoldem) {
+  if (isHoldem || !isBombPot()) {
     h += '<div class="modal-tabs">';
     h += '<button class="mtab on" data-mt="cards">Cards</button>';
     h += '<button class="mtab" data-mt="range">Range</button>';
@@ -731,6 +799,49 @@ function openCardPicker(seatIdx, cardIdx) {
   }
   h += '</div>';
   showModal(h);
+}
+
+const OMAHA_RANGE_EXAMPLES = [
+  ['AAxx', 'Any aces'], ['AAxx$ds', 'Double-suited aces'], ['KK$!r', 'Kings, not rainbow'],
+  ['$rd$ds', 'Double-suited rundowns'], ['$rd0-1$ss', 'Single-suited rundowns, ≤1 gap'], ['$2p', 'Two pair'],
+];
+
+function openOmahaRangePicker(seatIdx) {
+  const s = seats[seatIdx];
+  const text = s && s.mode === 'orange' ? s.text : '';
+  target = {type: 'hand', seat: seatIdx, seatMode: 'orange'};
+  let h = '<div class="modal-tabs">';
+  h += '<button class="mtab" data-mt="cards">Cards</button>';
+  h += '<button class="mtab on" data-mt="range">Range</button>';
+  h += '</div>';
+  h += `<div class="modal-header"><span>Player ${seatIdx + 1} range · PLO${g().cards}</span>`;
+  h += '<button class="modal-clear" id="oclear">Clear</button></div>';
+  h += '<div class="range-picker">';
+  h += `<textarea class="range-text" id="otxt" rows="3" placeholder="AAxx$ds, KKxx$ds, $rd$ds" spellcheck="false" autocapitalize="off">${escapeHtml(text)}</textarea>`;
+  const info = omahaRangeInfo(text);
+  h += `<div class="range-info"><span id="ocov" class="${info.ok || !text ? '' : 'bad'}">${escapeHtml(text ? coverageText(info) : 'Type a range in shorthand')}</span></div>`;
+  h += '<div class="saved-head" style="margin-top:12px"><span>Examples</span></div><div class="preset-grid">';
+  for (const [t, label] of OMAHA_RANGE_EXAMPLES) {
+    h += `<button class="preset oex" data-oex="${escapeHtml(t)}" title="${escapeHtml(label)}"><span class="saved-name">${escapeHtml(t)}</span><span class="saved-meta">${escapeHtml(label)}</span></button>`;
+  }
+  h += '</div>';
+  h += '<div class="presets-foot">Terms are separated by commas; a hand is in the range if it matches any term. ' +
+    'Ranks and cards (<code>AA</code>, <code>AsKs</code>, <code>x</code> = any card), then conditions: ' +
+    '<code>$ds</code> <code>$ss</code> <code>$r</code> suits, <code>$np</code> <code>$1p</code> <code>$2p</code> pairs, ' +
+    '<code>$rd</code> rundown (<code>$rd1</code> one gap, <code>$3rd</code> three-card), <code>$!cond</code> negates.</div>';
+  h += '</div>';
+  showModal(h);
+}
+
+function setOmahaRangeText(text) {
+  seats[target.seat] = {mode: 'orange', text};
+  const info = omahaRangeInfo(text);
+  const cov = document.getElementById('ocov');
+  if (cov) {
+    cov.textContent = text ? coverageText(info) : 'Type a range in shorthand';
+    cov.className = info.ok || !text ? '' : 'bad';
+  }
+  dirty(); render();
 }
 
 // `opts.msg` is a status line for the saved-ranges section; `opts.name`
@@ -1061,6 +1172,8 @@ document.getElementById('tw').addEventListener('click', e => {
   }
   const rng = e.target.closest('[data-rng]');
   if (rng) { openRangePicker(+rng.dataset.rng); return; }
+  const orng = e.target.closest('[data-orng]');
+  if (orng) { openOmahaRangePicker(+orng.dataset.orng); return; }
   const add = e.target.closest('[data-add]');
   if (add) {
     const i = +add.dataset.add;
@@ -1116,10 +1229,11 @@ document.getElementById('mbg').addEventListener('click', e => {
   }
 
   const mt = e.target.closest('[data-mt]');
-  if (mt && target && target.type === 'hand' && curG === 'nlhe') {
+  if (mt && target && target.type === 'hand' && !isBombPot()) {
     const mode = mt.dataset.mt;
     if (mode === 'range') {
-      openRangePicker(target.seat);
+      if (curG === 'nlhe') openRangePicker(target.seat);
+      else openOmahaRangePicker(target.seat);
     } else {
       if (!seats[target.seat] || seats[target.seat].mode !== 'cards') {
         seats[target.seat] = {mode:'cards', cards: new Array(g().cards).fill(null)};
@@ -1127,6 +1241,20 @@ document.getElementById('mbg').addEventListener('click', e => {
       }
       openCardPicker(target.seat, 0);
     }
+    return;
+  }
+
+  const oex = e.target.closest('[data-oex]');
+  if (oex && target && target.seatMode === 'orange') {
+    const ta = document.getElementById('otxt');
+    const cur = ta.value.trim();
+    ta.value = cur ? `${cur}, ${oex.dataset.oex}` : oex.dataset.oex;
+    setOmahaRangeText(ta.value);
+    return;
+  }
+  if (e.target.id === 'oclear' && target && target.seatMode === 'orange') {
+    document.getElementById('otxt').value = '';
+    setOmahaRangeText('');
     return;
   }
 
@@ -1292,6 +1420,10 @@ document.getElementById('mbg').addEventListener('change', e => {
 });
 
 document.getElementById('mbg').addEventListener('input', e => {
+  if (e.target.id === 'otxt' && target && target.seatMode === 'orange') {
+    setOmahaRangeText(e.target.value);
+    return;
+  }
   if (e.target.id === 'rtxt' && target && target.seatMode === 'range') {
     const sel = parseRange(e.target.value);
     seats[target.seat] = {mode:'range', sel};
@@ -1508,6 +1640,8 @@ function stateToHash() {
       if (cards.length) parts.push('p' + i + '=' + cards.join('.'));
     } else if (s.mode === 'range' && s.sel.size > 0) {
       parts.push('p' + i + '=r:' + [...s.sel].join(','));
+    } else if (s.mode === 'orange' && s.text.trim()) {
+      parts.push('p' + i + '=o:' + encodeURIComponent(s.text.trim()));
     } else if (s.mode === 'random') {
       parts.push('p' + i + '=random');
     }
@@ -1557,6 +1691,10 @@ function loadFromHash() {
       seats[si] = { mode: 'random' };
     } else if (v.startsWith('r:')) {
       seats[si] = { mode: 'range', sel: parseRange(v.slice(2)) };
+    } else if (v.startsWith('o:')) {
+      let text = v.slice(2);
+      try { text = decodeURIComponent(text); } catch {}
+      seats[si] = { mode: 'orange', text };
     } else {
       const cards = v.split('.').filter(Boolean);
       const hand = new Array(gm.cards).fill(null);

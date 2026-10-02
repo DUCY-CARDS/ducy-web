@@ -138,6 +138,34 @@ export function runChunk(job, st, deadline, maxSamples) {
         game.free();
       }
     }
+  } else if (job.type === 'orange') {
+    // Omaha shorthand ranges: known hands first, then one player per range.
+    const available = job.available.slice();
+    const perCall = samplesPerCall([job.boardCards]);
+    const partialFlop = job.boardCards.length === 1 || job.boardCards.length === 2;
+    while (more()) {
+      const [board] = completeFlops([job.boardCards], available);
+      const game = job.hilo ? new OmahaHiLoGame(job.cardsPer) : new OmahaGame(job.cardsPer);
+      try {
+        for (const h of job.hands) game.add_player(h.join(' '));
+        setBoard(game, board);
+        addDead(game, job.dead);
+        let r;
+        try {
+          r = game.sample_range_equity(job.ranges, perCall);
+        } catch (err) {
+          // With 1-2 known board cards, skip random flop completions that
+          // block a range; otherwise the range really is unusable.
+          if (partialFlop && /invalid range/i.test(String(err && err.message || err))) continue;
+          throw err;
+        }
+        for (let i = 0; i < st.totals.length; i++) st.totals[i] += r.equity_sum[i];
+        st.done += r.samples;
+        st.weight += r.samples;
+      } finally {
+        game.free();
+      }
+    }
   } else if (job.type === 'range') {
     if (job.exact) {
       if (st.done > 0) return st;
