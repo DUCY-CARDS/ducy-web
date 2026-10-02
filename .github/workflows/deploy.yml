@@ -36,6 +36,13 @@ jobs:
           cp ducy/ducy-wasm/pkg/ducy_wasm.js wasm/
           cp ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
 
+      # Each release goes under v/<site commit>-<ducy commit>/, so a ducy-only
+      # redeploy (workflow_dispatch) also gets a fresh folder.
+      - name: Build site
+        run: |
+          DUCY_SHA="$(git -C ducy rev-parse --short=8 HEAD)"
+          scripts/build-site.sh "${GITHUB_SHA::8}-${DUCY_SHA}" _site
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
@@ -44,10 +51,4 @@ jobs:
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
       - name: Deploy via rsync
-        run: |
-          rsync -avz --delete \
-            --exclude '.git' \
-            --exclude '.github' \
-            --exclude '.gitignore' \
-            --exclude 'ducy' \
-            ./ "${{ secrets.SSH_DEPLOY_TARGET }}/"
+        run: scripts/deploy.sh _site "${{ secrets.SSH_DEPLOY_TARGET }}"
