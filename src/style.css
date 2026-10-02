@@ -160,13 +160,10 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-card.bk { color: var(--card-ink); }
 .tr-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .tr-actions .tr-btn { min-width: 150px; }
-.tr-feedback {
-  text-align: center; font-size: 15px; padding: 10px 14px; border-radius: 6px; color: var(--fg-strong);
-}
-.tr-feedback.ok { background: var(--teal-faint); }
-.tr-feedback.bad { background: rgba(198,88,88,0.15); }
-.tr-feedback strong { color: var(--teal); }
-.tr-feedback.bad strong { color: var(--red); }
+.tr-cards[data-deal] .tr-card { animation: tr-deal 0.16s ease-out both; }
+.tr-cards[data-deal] .tr-card + .tr-card { animation-delay: 0.04s; }
+@keyframes tr-deal { from { opacity: 0; transform: translateY(-10px) scale(0.96); } }
+@media (prefers-reduced-motion: reduce) { .tr-cards[data-deal] .tr-card { animation: none; } }
 .tr-summary { display: flex; flex-direction: column; gap: 14px; }
 .tr-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .tr-stat {

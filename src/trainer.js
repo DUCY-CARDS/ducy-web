@@ -102,7 +102,7 @@ function renderSetup() {
   const saved = savedRanges();
   let h = '<div class="tr-wrap">';
   h += '<div class="tr-head"><h1>Range trainer</h1>';
-  h += `<p>Pick a range, then decide for each random hand whether it belongs. After ${st.total} hands you’ll see your accuracy and which hands you wrongly played or wrongly folded.</p></div>`;
+  h += `<p>Pick a range, then decide for each random hand whether it belongs. There’s no feedback along the way; after ${st.total} hands you’ll see your accuracy and which hands you wrongly played or wrongly folded.</p></div>`;
   h += '<div class="tr-setup">';
   h += '<div class="tr-choose">';
   for (const g of PRESET_GROUPS) {
@@ -137,32 +137,25 @@ function renderSetup() {
   root.innerHTML = h;
 }
 
+// No feedback during a set: answering deals the next hand, and results are
+// only revealed in the summary.
 function renderPlay() {
   const t = st.target, a = ACTIONS[t.spot];
   const n = st.hands.length;
-  const correct = st.hands.filter(x => x.correct).length;
   const cur = st.current;
   let h = '<div class="tr-wrap tr-play">';
   h += '<div class="tr-bar">';
   h += `<div><div class="tr-preview-name">${esc(t.name)}</div><div class="tr-preview-meta">${esc(t.context)}</div></div>`;
-  h += `<div class="tr-progress"><span>Hand ${Math.min(n + (st.answered ? 0 : 1), st.total)} of ${st.total}</span>`;
-  h += `<span>${correct} / ${n} correct</span></div>`;
+  h += `<div class="tr-progress"><span>Hand ${n + 1} of ${st.total}</span></div>`;
   h += '<button class="link-btn" data-act="quit">Quit</button></div>';
   h += `<div class="tr-meter"><div style="width:${(n / st.total * 100).toFixed(1)}%"></div></div>`;
-  h += `<div class="tr-felt"><div class="tr-cards">${cardHtml(cur.cards[0])}${cardHtml(cur.cards[1])}</div></div>`;
-  if (!st.answered) {
-    h += '<div class="tr-actions">';
-    h += `<button class="tr-btn no" data-answer="no">${esc(a.no)}<kbd>F</kbd></button>`;
-    h += `<button class="tr-btn yes" data-answer="yes">${esc(a.yes)}<kbd>R</kbd></button>`;
-    h += '</div>';
-  } else {
-    const last = st.hands[n - 1];
-    const where = last.kind ? `in the range${t.bluff.size ? ` (${last.kind})` : ''}` : 'not in the range';
-    h += `<div class="tr-feedback ${last.correct ? 'ok' : 'bad'}" role="status">`;
-    h += `<strong>${last.correct ? 'Correct' : 'Wrong'}</strong> — ${esc(last.cls)} is ${where}.`;
-    h += '</div>';
-    h += `<div class="tr-actions"><button class="tr-btn next" data-act="next">${n >= st.total ? 'See results' : 'Next hand'}<kbd>Space</kbd></button></div>`;
-  }
+  // The key changes every hand so the deal animation replays, even when the
+  // same two cards come up again.
+  h += `<div class="tr-felt"><div class="tr-cards" data-deal="${n}">${cardHtml(cur.cards[0])}${cardHtml(cur.cards[1])}</div></div>`;
+  h += '<div class="tr-actions">';
+  h += `<button class="tr-btn no" data-answer="no">${esc(a.no)}<kbd>F</kbd></button>`;
+  h += `<button class="tr-btn yes" data-answer="yes">${esc(a.yes)}<kbd>R</kbd></button>`;
+  h += '</div>';
   h += '</div>';
   root.innerHTML = h;
 }
@@ -221,7 +214,7 @@ function render() {
 function start() {
   const target = targetFor(st.choice);
   if (!target) return;
-  st = {...st, screen: 'play', target, hands: [], answered: false};
+  st = {...st, screen: 'play', target, hands: []};
   next();
 }
 
@@ -229,16 +222,14 @@ function next() {
   if (st.hands.length >= st.total) { st.screen = 'summary'; render(); return; }
   const cards = dealHand();
   st.current = {cards, cls: handClass(cards[0], cards[1])};
-  st.answered = false;
   render();
 }
 
 function answer(yes) {
-  if (st.screen !== 'play' || st.answered) return;
+  if (st.screen !== 'play') return;
   const kind = inTarget(st.target, st.current.cls);
   st.hands.push({...st.current, kind, answer: yes, correct: yes === !!kind});
-  st.answered = true;
-  render();
+  next();
 }
 
 function onClick(e) {
@@ -248,16 +239,15 @@ function onClick(e) {
   else if (el.dataset.total) { st.total = +el.dataset.total; render(); }
   else if (el.dataset.answer) answer(el.dataset.answer === 'yes');
   else if (el.dataset.act === 'start') start();
-  else if (el.dataset.act === 'next') next();
   else if (el.dataset.act === 'quit' || el.dataset.act === 'setup') { st.screen = 'setup'; render(); }
 }
 
 function onKey(e) {
   if (!open || st.screen !== 'play' || e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.repeat) return;
   const k = e.key.toLowerCase();
-  if (!st.answered && (k === 'r' || k === 'y')) { e.preventDefault(); answer(true); }
-  else if (!st.answered && (k === 'f' || k === 'n')) { e.preventDefault(); answer(false); }
-  else if (st.answered && (k === ' ' || k === 'enter')) { e.preventDefault(); next(); }
+  if (k === 'r' || k === 'y') { e.preventDefault(); answer(true); }
+  else if (k === 'f' || k === 'n') { e.preventDefault(); answer(false); }
 }
 
 export function openTrainer(el) {
