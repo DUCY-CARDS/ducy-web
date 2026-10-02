@@ -300,20 +300,80 @@ function dealProbe(cards, cut) {
   return {cards: h, pct: omahaPercentile(h)};
 }
 
-// Kinds of hands the player is overplaying or overfolding, worst first.
-function patterns(pr, minErrors = 2) {
-  const out = [];
-  for (const [tag, s] of Object.entries(pr.tagStats)) {
-    if (s.over >= minErrors && s.over / s.seenOut >= 0.34) out.push({tag, kind: 'over', n: s.over, of: s.seenOut});
-    if (s.under >= minErrors && s.under / s.seenIn >= 0.34) out.push({tag, kind: 'under', n: s.under, of: s.seenIn});
-  }
-  return out.sort((a, b) => b.n - a.n || b.n / b.of - a.n / a.of);
+// Mistake patterns. Trends are only called out once there's a long record:
+// at least DIAG_MIN_HANDS hands and DIAG_MIN_ERRORS mistakes. Players then
+// fall into one of three buckets:
+//   loose - mostly playing hands outside the range: which kinds are they?
+//   tight - mostly folding hands inside the range: which kinds are missed?
+//   mixed - both, so good and bad hands are being confused: which kinds go
+//           each way (a kind appearing on both sides isn't being sorted at all)?
+const DIAG_MIN_HANDS = 20;
+const DIAG_MIN_ERRORS = 6;
+const TAG_MIN_ERRORS = 3;
+const TAG_MIN_RATE = 0.5;
+const TREND_NOTE_GAP = 8; // hands between in-play trend notes
+
+// Hand kinds behind one direction of mistake ('over' = played but outside the
+// range, 'under' = folded but inside), most frequent first.
+function tagsFor(pr, kind) {
+  return Object.entries(pr.tagStats)
+    .map(([tag, s]) => {
+      const n = kind === 'over' ? s.over : s.under, of = kind === 'over' ? s.seenOut : s.seenIn;
+      return {tag, n, of};
+    })
+    .filter(x => x.n >= TAG_MIN_ERRORS && x.n / x.of >= TAG_MIN_RATE)
+    .sort((a, b) => b.n - a.n || b.n / b.of - a.n / a.of)
+    .slice(0, 3);
 }
 
-function patternText(p, cut) {
-  return p.kind === 'over'
-    ? `You’re playing too many ${TAG_LABELS[p.tag]}: ${p.n} of ${p.of} you saw were outside your top ${cut}%.`
-    : `You’re folding too many ${TAG_LABELS[p.tag]}: ${p.n} of ${p.of} you saw were inside your top ${cut}%.`;
+function diagnose(pr) {
+  const misses = pr.history.filter(x => !x.correct);
+  const over = misses.filter(x => x.answer).length, under = misses.length - over;
+  if (pr.answered < DIAG_MIN_HANDS || misses.length < DIAG_MIN_ERRORS) return null;
+  let kind;
+  if (over >= 4 && over >= 2 * under) kind = 'loose';
+  else if (under >= 4 && under >= 2 * over) kind = 'tight';
+  else if (over >= 3 && under >= 3) kind = 'mixed';
+  else return null;
+  const seenOut = pr.history.filter(x => x.pct >= pr.pct).length;
+  const seenIn = pr.history.length - seenOut;
+  return {kind, over, under, seenOut, seenIn, overTags: tagsFor(pr, 'over'), underTags: tagsFor(pr, 'under')};
+}
+
+const tagList = xs => xs.map(x => `${TAG_LABELS[x.tag]} (${x.n} of ${x.of})`).join('; ');
+
+/** {headline, details[]} for a diagnosis. */
+function diagnosisText(d, cut) {
+  if (d.kind === 'loose') {
+    return {
+      headline: `You’re playing too many hands: you played ${d.over} of ${d.seenOut} hands outside your top ${cut}%.`,
+      details: [d.overTags.length ? `Most of the extra hands: ${tagList(d.overTags)}.` : 'The extra hands are spread across all kinds rather than one type, so tighten up overall.'],
+    };
+  }
+  if (d.kind === 'tight') {
+    return {
+      headline: `You’re folding hands you should play: you folded ${d.under} of ${d.seenIn} hands inside your top ${cut}%.`,
+      details: [d.underTags.length ? `Most often missed: ${tagList(d.underTags)}.` : 'The missed hands are spread across all kinds, so loosen up overall.'],
+    };
+  }
+  const both = d.overTags.filter(o => d.underTags.some(u => u.tag === o.tag)).map(o => TAG_LABELS[o.tag]);
+  const details = [];
+  if (d.overTags.length) details.push(`Played when they’re outside the range: ${tagList(d.overTags)}.`);
+  if (d.underTags.length) details.push(`Folded when they’re inside the range: ${tagList(d.underTags)}.`);
+  if (both.length) details.push(`With ${both.join(' and ')}, you’re going both ways, so look at what separates the good ones from the bad ones.`);
+  if (!details.length) details.push('The mix-ups aren’t concentrated in one kind of hand yet.');
+  return {
+    headline: `You’re mixing up good and bad hands: you played ${d.over} hands outside your top ${cut}% and folded ${d.under} inside it.`,
+    details,
+  };
+}
+
+// The kind of hand to deal more of while practising, if the record shows one.
+function focusTag(pr) {
+  const d = diagnose(pr);
+  if (!d) return null;
+  const pool = d.kind === 'loose' ? d.overTags : d.kind === 'tight' ? d.underTags : [...d.overTags, ...d.underTags].sort((a, b) => b.n - a.n);
+  return pool.length ? pool[0].tag : null;
 }
 
 function startPractice() {
@@ -331,9 +391,9 @@ function nextPractice() {
   const pr = st.practice;
   pr.feedback = null;
   const band = levelFor(pr.score).band;
-  const focus = patterns(pr)[0];
+  const focus = focusTag(pr);
   if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealProbe(pr.cards, pr.pct);
-  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus.tag), focus: focus.tag};
+  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus), focus};
   else pr.current = dealInBand(pr.cards, pr.pct, band);
   render();
 }
@@ -363,9 +423,18 @@ function answerPractice(yes) {
   if (pr.score >= 100) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
   else {
-    // Point out a pattern this mistake belongs to, once there's evidence for it.
-    const pat = patterns(pr).find(p => tags.includes(p.tag) && p.kind === (yes ? 'over' : 'under'));
-    pr.feedback = {cards, pct, yes, major: !!probe, pattern: pat ? patternText(pat, pr.pct) : null};
+    // Mention the trend only with a long record behind it, when this mistake
+    // fits it, and not more often than every TREND_NOTE_GAP hands.
+    const d = diagnose(pr);
+    const fits = d && (d.kind === 'mixed' || (d.kind === 'loose') === yes);
+    const due = pr.lastTrendAt == null || pr.answered - pr.lastTrendAt >= TREND_NOTE_GAP;
+    let pattern = null;
+    if (fits && due) {
+      const t = diagnosisText(d, pr.pct);
+      pattern = [t.headline, ...t.details].join(' ');
+      pr.lastTrendAt = pr.answered;
+    }
+    pr.feedback = {cards, pct, yes, major: !!probe, pattern};
     render();
   }
 }
@@ -425,7 +494,7 @@ function renderPracticeSummary() {
   const pr = st.practice;
   const misses = pr.history.filter(x => !x.correct).sort((a, b) => b.major - a.major || b.rel - a.rel);
   const major = misses.filter(x => x.major).length;
-  const pats = patterns(pr);
+  const diag = diagnose(pr);
   let h = '<div class="tr-wrap">';
   h += `<div class="tr-head"><h1>Score ${pr.startScore} → ${pr.score}</h1>`;
   h += `<p>PLO${pr.cards} · top ${pr.pct}% · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
@@ -437,9 +506,14 @@ function renderPracticeSummary() {
   h += `<div class="tr-stat"><b>${misses.length - major}</b><span>Close calls missed</span></div>`;
   h += '</div>';
   h += '<div class="tr-mistakes"><div class="tr-group">Patterns</div>';
-  h += pats.length
-    ? pats.slice(0, 3).map(p => `<div class="tr-pattern">${esc(patternText(p, pr.pct))}</div>`).join('')
-    : `<span class="tr-none">No clear patterns yet${pr.answered < 20 ? ' — play a few more hands' : ''}.</span>`;
+  if (diag) {
+    const t = diagnosisText(diag, pr.pct);
+    h += `<div class="tr-pattern tr-diag-${diag.kind}"><strong>${esc(t.headline)}</strong>${t.details.map(x => `<div>${esc(x)}</div>`).join('')}</div>`;
+  } else if (pr.answered < DIAG_MIN_HANDS || misses.length < DIAG_MIN_ERRORS) {
+    h += `<span class="tr-none">Not enough evidence for a pattern yet (${pr.answered} hands, ${misses.length} mistakes; patterns need ${DIAG_MIN_HANDS}+ hands and ${DIAG_MIN_ERRORS}+ mistakes).</span>`;
+  } else {
+    h += '<span class="tr-none">Your mistakes don’t lean one way or share a pattern, so they look like close calls rather than a habit.</span>';
+  }
   h += '</div>';
   const list = misses.length
     ? misses.map(x => `<div class="tr-ex${x.major ? ' major' : ''}"><span class="tr-hand">${handText(x.cards)}</span><span class="tr-pct">${x.major ? 'major · ' : ''}${pctLabel(x.pct)} · ${x.answer ? 'played' : 'folded'}</span></div>`).join('')
