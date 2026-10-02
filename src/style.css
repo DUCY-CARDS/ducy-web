@@ -256,6 +256,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-feedback strong { color: var(--red); }
 .tr-pattern { font-size: 13px; color: var(--fg-strong); margin-top: 6px; line-height: 1.4; }
 .tr-mistakes .tr-pattern { padding: 8px 10px; background: rgba(192,138,46,0.12); border-radius: 6px; margin: 0 0 6px; max-width: 62ch; }
+.tr-mistakes .tr-pattern strong { display: block; margin-bottom: 4px; }
+.tr-mistakes .tr-pattern div { margin-top: 3px; color: var(--fg); }
 .tr-ex.major .tr-pct { color: var(--red); font-weight: 600; }
 .tr-mastered { background: var(--teal-faint); border-radius: 8px; padding: 22px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
 .tr-mastered strong { font-size: 22px; color: var(--teal); }
