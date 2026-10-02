@@ -5,6 +5,7 @@
 
 import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
 import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
+import { omahaPercentile } from './omaha-rank.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -21,11 +22,14 @@ const ACTIONS = {
   '3bet': {yes: '3-bet', no: 'Don’t 3-bet'},
   '4bet': {yes: '4-bet', no: 'Don’t 4-bet'},
   other: {yes: 'In range', no: 'Not in range'},
+  omaha: {yes: 'Play', no: 'Fold'},
 };
+const OMAHA_CARDS = [4, 5, 6];
+const OMAHA_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 
 let root = null;
 let open = false;
-let st = {screen: 'setup', choice: 'preset:open-btn', total: 50};
+let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}};
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -92,6 +96,46 @@ function dealHand() {
   return RK.indexOf(DECK[i][0]) <= RK.indexOf(DECK[j][0]) ? [DECK[i], DECK[j]] : [DECK[j], DECK[i]];
 }
 
+const RANK_ORDER = 'AKQJT98765432';
+const SUIT_ORDER = 'shdc';
+
+/** Deals an Omaha hand, sorted high to low (then by suit) for reading. */
+function dealOmaha(n) {
+  const d = DECK.slice();
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (52 - i));
+    [d[i], d[j]] = [d[j], d[i]];
+  }
+  return d.slice(0, n).sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || SUIT_ORDER.indexOf(a[1]) - SUIT_ORDER.indexOf(b[1]));
+}
+
+function handText(cards) {
+  return cards.map(c => {
+    const s = SUITS.find(x => x.c === c[1]);
+    return `<span class="tr-hc ${s.red ? 'r' : 'bk'} s-${s.c}">${c[0]}${s.ch}</span>`;
+  }).join('');
+}
+
+// One decimal, so hands just either side of a cutoff (19.6% vs 20.4%) read differently.
+const pctLabel = p => `top ${p.toFixed(1)}%`;
+
+// Example hands just inside and just outside an Omaha cutoff, cached per
+// setting so the setup screen doesn't reshuffle on every render.
+const exampleCache = new Map();
+function omahaExamples(cards, pct) {
+  const key = `${cards}:${pct}`;
+  if (exampleCache.has(key)) return exampleCache.get(key);
+  const inside = [], outside = [];
+  for (let i = 0; i < 20000 && (inside.length < 3 || outside.length < 3); i++) {
+    const h = dealOmaha(cards), p = omahaPercentile(h);
+    if (p < pct && p >= pct - 3 && inside.length < 3) inside.push({h, p});
+    else if (p >= pct && p < pct + 3 && outside.length < 3) outside.push({h, p});
+  }
+  const ex = {inside, outside};
+  exampleCache.set(key, ex);
+  return ex;
+}
+
 function cardHtml(c) {
   const s = SUITS.find(x => x.c === c[1]);
   return `<div class="tr-card ${s.red ? 'r' : 'bk'} s-${s.c}">${c[0]}${s.ch}</div>`;
@@ -110,12 +154,54 @@ function rangeGrid(t, marks = {}) {
 
 // ---- screens ----
 
+function gameTabs() {
+  return '<div class="tr-game-tabs card-count">' +
+    `<button class="cc-btn${st.game === 'holdem' ? ' on' : ''}" data-tgame="holdem">Hold’em ranges</button>` +
+    `<button class="cc-btn${st.game === 'omaha' ? ' on' : ''}" data-tgame="omaha">Omaha top %</button></div>`;
+}
+
+function handCountAndStart() {
+  let h = '<div class="tr-count">Hands: ';
+  for (const n of HAND_COUNTS) h += `<button class="cc-btn${st.total === n ? ' on' : ''}" data-total="${n}">${n}</button>`;
+  return h + '</div><button class="tr-start" data-act="start">Start</button>';
+}
+
+function renderOmahaSetup() {
+  const {cards, pct} = st.omaha;
+  let h = '<div class="tr-wrap">';
+  h += '<div class="tr-head"><h1>Range trainer</h1>';
+  h += `<p>Decide for each random Omaha hand whether it’s in the top ${pct}% of ${cards}-card hands. No feedback along the way; after ${st.total} hands you’ll see your accuracy and each mistake with the hand’s real percentile.</p></div>`;
+  h += gameTabs();
+  h += '<div class="tr-setup"><div class="tr-choose">';
+  h += '<div class="tr-group">Game</div><div class="tr-options">';
+  for (const n of OMAHA_CARDS) h += `<button class="tr-opt${cards === n ? ' on' : ''}" data-ocards="${n}">PLO${n}</button>`;
+  h += '</div><div class="tr-group">Play the top</div><div class="tr-options">';
+  for (const p of OMAHA_TARGETS) h += `<button class="tr-opt${pct === p ? ' on' : ''}" data-opct="${p}">${p}%</button>`;
+  h += `<label class="tr-custom-pct">Other <input type="number" id="tr-opct" min="1" max="99" step="1" value="${OMAHA_TARGETS.includes(pct) ? '' : pct}" placeholder="%"></label>`;
+  h += '</div>';
+  h += '<p class="tr-note">Hands are ranked by raw preflop equity and how often they flop well against opponents who are strong on that flop (top set, nut draws, the top of a straight) rather than dominated. The ranking is a fitted approximation, not exact.</p>';
+  h += '</div>';
+
+  const ex = omahaExamples(cards, pct);
+  const row = e => `<div class="tr-ex"><span class="tr-hand">${handText(e.h)}</span><span class="tr-pct">${pctLabel(e.p)}</span></div>`;
+  h += '<div class="tr-preview">';
+  h += `<div><div class="tr-preview-name">PLO${cards} · top ${pct}%</div>`;
+  h += `<div class="tr-preview-meta">Play about ${pct} of every 100 hands dealt</div></div>`;
+  h += `<div class="tr-group">Just inside the cutoff</div>${ex.inside.map(row).join('')}`;
+  h += `<div class="tr-group">Just outside</div>${ex.outside.map(row).join('')}`;
+  h += handCountAndStart();
+  h += '</div></div></div>';
+  root.innerHTML = h;
+}
+
 function renderSetup() {
+  if (st.game === 'omaha') { renderOmahaSetup(); return; }
   const t = targetFor(st.choice) || targetFor(st.choice = 'preset:open-btn');
   const saved = savedRanges();
   let h = '<div class="tr-wrap">';
   h += '<div class="tr-head"><h1>Range trainer</h1>';
   h += `<p>Pick a range, then decide for each random hand whether it belongs. There’s no feedback along the way; after ${st.total} hands you’ll see your accuracy and which hands you wrongly played or wrongly folded.</p></div>`;
+  h += gameTabs();
   h += '<div class="tr-setup">';
   h += '<div class="tr-choose">';
   for (const g of PRESET_GROUPS) {
@@ -146,10 +232,7 @@ function renderSetup() {
     h += `</div><button class="btn-small" data-act="customize">${st.choice.startsWith('saved:') ? 'Edit' : 'Customize'}</button></div>`;
     h += rangeGrid(t);
     if (t.bluff.size) h += '<div class="tr-legend"><span class="tr-key value"></span>Value <span class="tr-key bluff"></span>Bluff</div>';
-    h += '<div class="tr-count">Hands: ';
-    for (const n of HAND_COUNTS) h += `<button class="cc-btn${st.total === n ? ' on' : ''}" data-total="${n}">${n}</button>`;
-    h += '</div>';
-    h += '<button class="tr-start" data-act="start">Start</button>';
+    h += handCountAndStart();
     h += '</div>';
   }
   h += '</div></div>';
@@ -257,7 +340,7 @@ function renderPlay() {
   h += `<div class="tr-meter"><div style="width:${(n / st.total * 100).toFixed(1)}%"></div></div>`;
   // The key changes every hand so the deal animation replays, even when the
   // same two cards come up again.
-  h += `<div class="tr-felt"><div class="tr-cards" data-deal="${n}">${cardHtml(cur.cards[0])}${cardHtml(cur.cards[1])}</div></div>`;
+  h += `<div class="tr-felt"><div class="tr-cards${cur.cards.length > 2 ? ' omaha' : ''}" data-deal="${n}">${cur.cards.map(cardHtml).join('')}</div></div>`;
   h += '<div class="tr-actions">';
   h += `<button class="tr-btn no" data-answer="no">${esc(a.no)}<kbd>F</kbd></button>`;
   h += `<button class="tr-btn yes" data-answer="yes">${esc(a.yes)}<kbd>R</kbd></button>`;
@@ -266,7 +349,47 @@ function renderPlay() {
   root.innerHTML = h;
 }
 
+function renderOmahaSummary() {
+  const t = st.target, a = ACTIONS.omaha;
+  const hands = st.hands;
+  const correct = hands.filter(x => x.correct).length;
+  const wrongIn = hands.filter(x => !x.correct && x.answer).sort((x, y) => x.pct - y.pct);
+  const wrongOut = hands.filter(x => !x.correct && !x.answer).sort((x, y) => x.pct - y.pct);
+  const rightIn = hands.filter(x => x.correct && x.answer).length;
+  const rightOut = hands.filter(x => x.correct && !x.answer).length;
+  const list = xs => xs.length
+    ? xs.map(x => `<div class="tr-ex"><span class="tr-hand">${handText(x.cards)}</span><span class="tr-pct">${pctLabel(x.pct)}</span></div>`).join('')
+    : '<span class="tr-none">None</span>';
+  // Every decision placed on the 0-100 percentile line; rows spread the dots.
+  const dot = (x, i) => {
+    const cls = x.correct ? 'ok' : x.answer ? 'miss-in' : 'miss-out';
+    return `<span class="tr-dot ${cls}" style="left:${x.pct.toFixed(2)}%;top:${(i % 4) * 7 + 4}px" title="${esc(x.cards.join(' '))}: ${pctLabel(x.pct)}"></span>`;
+  };
+
+  let h = '<div class="tr-wrap">';
+  h += `<div class="tr-head"><h1>${correct} / ${hands.length} correct</h1>`;
+  h += `<p>${esc(t.name)} · ${(correct / hands.length * 100).toFixed(0)}% accuracy</p></div>`;
+  h += '<div class="tr-summary">';
+  h += '<div class="tr-stats">';
+  h += `<div class="tr-stat"><b>${rightIn}</b><span>Correct play</span></div>`;
+  h += `<div class="tr-stat"><b>${rightOut}</b><span>Correct fold</span></div>`;
+  h += `<div class="tr-stat bad"><b>${wrongIn.length}</b><span>Wrongly included</span></div>`;
+  h += `<div class="tr-stat bad"><b>${wrongOut.length}</b><span>Wrongly excluded</span></div>`;
+  h += '</div>';
+  h += '<div class="tr-preview"><div class="tr-group">Your decisions by hand percentile</div>';
+  h += `<div class="tr-strip"><span class="tr-cut" style="left:${t.pct}%"><em>top ${t.pct}%</em></span>${hands.map(dot).join('')}</div>`;
+  h += '<div class="tr-strip-scale"><span>Best</span><span>Worst</span></div>';
+  h += '<div class="tr-legend"><span class="tr-key ok"></span>Correct <span class="tr-key miss-in"></span>Wrongly included <span class="tr-key miss-out"></span>Wrongly excluded</div></div>';
+  h += `<div class="tr-mistakes"><div class="tr-group">Wrongly included — you played a hand outside the top ${t.pct}%</div>${list(wrongIn)}</div>`;
+  h += `<div class="tr-mistakes"><div class="tr-group">Wrongly excluded — you folded a hand in the top ${t.pct}%</div>${list(wrongOut)}</div>`;
+  h += '<div class="tr-actions"><button class="tr-btn" data-act="setup">Change settings</button>';
+  h += `<button class="tr-btn yes" data-act="start">Play again</button></div>`;
+  h += '</div></div>';
+  root.innerHTML = h;
+}
+
 function renderSummary() {
+  if (st.target.omaha) { renderOmahaSummary(); return; }
   const t = st.target, a = ACTIONS[t.spot];
   const hands = st.hands;
   const correct = hands.filter(x => x.correct).length;
@@ -318,7 +441,13 @@ function render() {
 // ---- game flow ----
 
 function start() {
-  const target = targetFor(st.choice);
+  let target;
+  if (st.game === 'omaha') {
+    const {cards, pct} = st.omaha;
+    target = {omaha: true, cards, pct, spot: 'omaha', name: `PLO${cards} · top ${pct}%`, context: `Play the top ${pct}% of ${cards}-card hands`};
+  } else {
+    target = targetFor(st.choice);
+  }
   if (!target) return;
   st = {...st, screen: 'play', target, hands: []};
   next();
@@ -326,22 +455,32 @@ function start() {
 
 function next() {
   if (st.hands.length >= st.total) { st.screen = 'summary'; render(); return; }
-  const cards = dealHand();
-  st.current = {cards, cls: handClass(cards[0], cards[1])};
+  if (st.target.omaha) {
+    const cards = dealOmaha(st.target.cards);
+    st.current = {cards, pct: omahaPercentile(cards)};
+  } else {
+    const cards = dealHand();
+    st.current = {cards, cls: handClass(cards[0], cards[1])};
+  }
   render();
 }
 
 function answer(yes) {
   if (st.screen !== 'play') return;
-  const kind = inTarget(st.target, st.current.cls);
+  const kind = st.target.omaha
+    ? (st.current.pct < st.target.pct ? 'in' : null)
+    : inTarget(st.target, st.current.cls);
   st.hands.push({...st.current, kind, answer: yes, correct: yes === !!kind});
   next();
 }
 
 function onClick(e) {
-  const el = e.target.closest('[data-choice],[data-total],[data-act],[data-answer],[data-cell]');
+  const el = e.target.closest('[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
   if (!el) return;
-  if (el.dataset.cell && st.edit) {
+  if (el.dataset.tgame) { st.game = el.dataset.tgame; st.edit = null; render(); }
+  else if (el.dataset.ocards) { st.omaha.cards = +el.dataset.ocards; render(); }
+  else if (el.dataset.opct) { st.omaha.pct = +el.dataset.opct; render(); }
+  else if (el.dataset.cell && st.edit) {
     const s = st.edit.sel, l = el.dataset.cell;
     if (s.has(l)) s.delete(l); else s.add(l);
     refreshEditor(true);
@@ -366,6 +505,14 @@ function onKey(e) {
   else if (k === 'f' || k === 'n') { e.preventDefault(); answer(false); }
 }
 
+// Custom Omaha target: applied when the field is committed (change), so typing
+// "2" on the way to "25" doesn't redraw the screen mid-entry.
+function onChange(e) {
+  if (e.target.id !== 'tr-opct') return;
+  const v = Math.round(+e.target.value);
+  if (v >= 1 && v <= 99) { st.omaha.pct = v; render(); }
+}
+
 function onInput(e) {
   if (!st.edit) return;
   if (e.target.id === 'tr-ename') st.edit.name = e.target.value;
@@ -381,6 +528,7 @@ export function openTrainer(el) {
     root = el;
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
+    root.addEventListener('change', onChange);
     root.addEventListener('keydown', onEditorKey);
     document.addEventListener('keydown', onKey);
   }
