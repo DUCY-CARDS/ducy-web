@@ -1,5 +1,6 @@
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
+import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 
 const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 const ST = [
@@ -760,9 +761,35 @@ function openRangePicker(seatIdx, opts = {}) {
   const pctH = (cnt / 1326 * 100).toFixed(1);
   h += `</div><div class="range-info"><span id="rcnt">${cnt} combos · ${pctH}%</span></div>`;
   h += `<textarea class="range-text" id="rtxt" placeholder="AA, AKs, QQ+ ...">${[...sel].join(', ')}</textarea>`;
+  h += presetsHtml(sel);
   h += savedRangesHtml(sel, opts);
   h += '</div>';
   showModal(h);
+}
+
+// Whether the presets list is expanded; remembered across picker openings.
+const PRESETS_OPEN_KEY = 'ducyPresetsOpen';
+let presetsOpen = (() => { try { return localStorage.getItem(PRESETS_OPEN_KEY) === '1'; } catch { return false; } })();
+
+function presetsHtml(sel) {
+  let h = `<details class="presets" id="rpresets"${presetsOpen ? ' open' : ''}>`;
+  h += '<summary class="saved-head"><span>Presets</span><span class="presets-note">approx. 6-max 100bb</span></summary>';
+  for (const g of PRESET_GROUPS) {
+    const items = RANGE_PRESETS.filter(p => p.spot === g.spot);
+    h += `<div class="preset-group">${escapeHtml(g.label)}</div><div class="preset-grid">`;
+    for (const p of items) {
+      const ps = parseRange(presetRangeText(p));
+      const cur = sel.size && sameSel(ps, sel) ? ' current' : '';
+      const tip = [p.bluff ? `Value: ${p.value}\nBluffs: ${p.bluff}` : p.value, p.note].filter(Boolean).join('\n');
+      h += `<button class="preset${cur}" data-rpreset="${escapeHtml(p.id)}" title="${escapeHtml(tip)}">`;
+      h += `<span class="saved-name">${escapeHtml(p.name)}</span>`;
+      h += `<span class="saved-meta">${(comboCount(ps) / 1326 * 100).toFixed(1)}%</span></button>`;
+    }
+    h += '</div>';
+  }
+  h += '<div class="presets-foot">Overall frequencies match published solver figures; hands are approximate. Hover a preset to see its value hands and bluffs.</div>';
+  h += '</details>';
+  return h;
 }
 
 // Saved ranges live in this browser's localStorage as [{name, game, range}],
@@ -1290,6 +1317,16 @@ document.getElementById('mbg').addEventListener('click', e => {
     return;
   }
 
+  const preset = e.target.closest('[data-rpreset]');
+  if (preset) {
+    const p = RANGE_PRESETS.find(x => x.id === preset.dataset.rpreset);
+    if (!p) return;
+    seats[target.seat] = {mode:'range', sel: parseRange(presetRangeText(p))};
+    dirty(); render();
+    openRangePicker(target.seat, {msg: `Loaded preset “${p.name}”. Edit it and save under your own name to keep a copy.`});
+    return;
+  }
+
   const load = e.target.closest('[data-rload]');
   if (load) {
     const r = loadSavedRanges()[+load.dataset.rload];
@@ -1315,6 +1352,13 @@ document.getElementById('mbg').addEventListener('click', e => {
     openRangePicker(target.seat, {msg: removed ? `Deleted “${removed.name}”.` : ''});
   }
 });
+
+// 'toggle' doesn't bubble, so listen in the capture phase.
+document.getElementById('mbg').addEventListener('toggle', e => {
+  if (e.target.id !== 'rpresets') return;
+  presetsOpen = e.target.open;
+  try { localStorage.setItem(PRESETS_OPEN_KEY, presetsOpen ? '1' : '0'); } catch {}
+}, true);
 
 document.getElementById('mbg').addEventListener('keydown', e => {
   if (e.target.id === 'rname' && e.key === 'Enter') {

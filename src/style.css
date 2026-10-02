@@ -349,6 +349,26 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 }
 .range-text:focus { outline: none; border-color: var(--teal); }
 
+/* Range presets */
+.presets { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.presets > summary { cursor: pointer; list-style: none; margin-bottom: 0; user-select: none; }
+.presets > summary::-webkit-details-marker { display: none; }
+.presets > summary::before { content: '\25B8'; margin-right: 6px; display: inline-block; transition: transform 0.12s; }
+.presets[open] > summary::before { transform: rotate(90deg); }
+.presets[open] > summary { margin-bottom: 4px; }
+.presets > summary > span:first-child { flex: 1; }
+.presets-note { font-weight: 600; letter-spacing: 0; text-transform: none; font-family: var(--font-ui); font-size: 11px; }
+.preset-group { font-size: 11px; font-weight: 600; color: var(--fg-muted); margin: 8px 0 4px; }
+.preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
+.preset {
+  min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  font-family: var(--font-ui); font-size: 12px; text-align: left; padding: 5px 8px; cursor: pointer;
+  border: 1px solid transparent; border-radius: var(--radius); background: var(--bg-inset); color: var(--fg);
+}
+.preset:hover { border-color: var(--teal); }
+.preset.current { border-color: var(--teal); background: var(--teal-faint); }
+.presets-foot { font-size: 11px; color: var(--fg-muted); margin-top: 8px; line-height: 1.4; }
+
 /* Saved ranges */
 .saved-ranges { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 .saved-head {
