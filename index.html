@@ -12,6 +12,10 @@
 <body>
   <div class="topbar">
     <div class="wordmark">DUCY</div>
+    <nav class="mode-tabs" aria-label="Mode">
+      <button class="mode-tab on" data-mode="equity">Equity</button>
+      <button class="mode-tab" data-mode="trainer">Trainer</button>
+    </nav>
     <div id="wasm-status" class="wasm-status">Loading…</div>
   </div>
 
@@ -75,6 +79,8 @@
       </div>
     </div>
   </div>
+
+  <main class="trainer" id="trainer"></main>
 
   <div class="modal-bg" id="mbg" hidden>
     <div class="modal" id="modal"></div>

@@ -1,8 +1,9 @@
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
+import { RK, COMBOS, parseRange, comboCount } from './ranges.js';
+import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 
-const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
   {ch:'♥', c:'h', cl:'rd'},
@@ -22,11 +23,6 @@ const GM = {
 const CW = {2:42, 4:32, 5:28, 6:24};
 const ALL_CARDS = [];
 for (const suit of ST) for (const rank of RK) ALL_CARDS.push(rank + suit.c);
-const COMBOS = {};
-for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
-  let l = r===c ? RK[r]+RK[c] : r<c ? RK[r]+RK[c]+'s' : RK[c]+RK[r]+'o';
-  COMBOS[l] = r===c ? 6 : r<c ? 4 : 12;
-}
 
 let wasmReady = false;
 let curG = 'nlhe';
@@ -803,10 +799,6 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 }
 
-function comboCount(sel) {
-  return [...sel].reduce((a, k) => a + (COMBOS[k] || 0), 0);
-}
-
 function loadSavedRanges() {
   try {
     const list = JSON.parse(localStorage.getItem(SAVED_RANGES_KEY) || '[]');
@@ -1056,86 +1048,6 @@ function dirty() {
   if (calcTimer) clearTimeout(calcTimer);
   scheduleCalc(150);
   syncHash();
-}
-
-// Range parsing
-function ri(r) { return RK.indexOf(r); }
-
-function parseRange(text) {
-  const sel = new Set();
-  const tokens = text.split(/[\s,]+/).filter(Boolean);
-  for (const tok of tokens) {
-    const t = tok.trim();
-    if (!t) continue;
-    const dashMatch = t.match(/^([AKQJT2-9]{2}[so]?)-([AKQJT2-9]{2}[so]?)$/);
-    if (dashMatch) {
-      expandDash(dashMatch[1], dashMatch[2], sel);
-      continue;
-    }
-    const plusMatch = t.match(/^([AKQJT2-9]{2}[so]?)\+$/);
-    if (plusMatch) {
-      expandPlus(plusMatch[1], sel);
-      continue;
-    }
-    if (COMBOS[t]) { sel.add(t); continue; }
-    if (t.length === 2 && t[0] !== t[1] && ri(t[0]) >= 0 && ri(t[1]) >= 0) {
-      const hi = Math.min(ri(t[0]), ri(t[1]));
-      const lo = Math.max(ri(t[0]), ri(t[1]));
-      const ks = RK[hi]+RK[lo]+'s';
-      const ko = RK[hi]+RK[lo]+'o';
-      if (COMBOS[ks]) sel.add(ks);
-      if (COMBOS[ko]) sel.add(ko);
-    }
-  }
-  return sel;
-}
-
-function expandPlus(hand, sel) {
-  if (hand.length === 2 && hand[0] === hand[1]) {
-    const start = ri(hand[0]);
-    for (let i = start; i >= 0; i--) sel.add(RK[i]+RK[i]);
-  } else if (hand.length === 2) {
-    const hi = ri(hand[0]), lo = ri(hand[1]);
-    for (let i = lo; i > hi; i--) {
-      const ks = RK[hi]+RK[i]+'s';
-      const ko = RK[hi]+RK[i]+'o';
-      if (COMBOS[ks]) sel.add(ks);
-      if (COMBOS[ko]) sel.add(ko);
-    }
-  } else if (hand.length === 3) {
-    const suit = hand[2];
-    const hi = ri(hand[0]), lo = ri(hand[1]);
-    for (let i = lo; i > hi; i--) {
-      const k = RK[hi]+RK[i]+suit;
-      if (COMBOS[k]) sel.add(k);
-    }
-  }
-}
-
-function expandDash(lo, hi, sel) {
-  if (lo.length === 2 && hi.length === 2 && lo[0] === lo[1] && hi[0] === hi[1]) {
-    let a = ri(lo[0]), b = ri(hi[0]);
-    if (a < b) [a, b] = [b, a];
-    for (let i = b; i <= a; i++) sel.add(RK[i]+RK[i]);
-  } else if (lo.length >= 2 && hi.length >= 2 && lo[0] === hi[0] && lo[0] !== lo[1]) {
-    const hiCard = ri(lo[0]);
-    let a = ri(lo[1]), b = ri(hi[1]);
-    if (a < b) [a, b] = [b, a];
-    const loSuffix = lo.length === 3 ? lo[2] : null;
-    const hiSuffix = hi.length === 3 ? hi[2] : null;
-    const suffix = loSuffix || hiSuffix;
-    for (let i = b; i <= a; i++) {
-      if (suffix) {
-        const k = RK[hiCard]+RK[i]+suffix;
-        if (COMBOS[k]) sel.add(k);
-      } else {
-        const ks = RK[hiCard]+RK[i]+'s';
-        const ko = RK[hiCard]+RK[i]+'o';
-        if (COMBOS[ks]) sel.add(ks);
-        if (COMBOS[ko]) sel.add(ko);
-      }
-    }
-  }
 }
 
 // Events
@@ -1610,12 +1522,14 @@ function stateToHash() {
 }
 
 function syncHash() {
+  if (trainerOpen()) return;
   const h = stateToHash();
   if (location.hash !== h) history.replaceState(null, '', h);
 }
 
 function loadFromHash() {
   const h = location.hash.slice(1);
+  if (h === 'trainer') return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1670,7 +1584,31 @@ function loadFromHash() {
   dirty();
 }
 
-window.addEventListener('hashchange', () => { loadFromHash(); render(); updateGameUI(); });
+// Modes: the equity calculator, or the range trainer at #trainer. The trainer
+// doesn't need the engine, so it's set up before the WASM load below.
+function setMode(mode) {
+  const trainer = mode === 'trainer';
+  document.body.classList.toggle('mode-trainer', trainer);
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  if (trainer) openTrainer(document.getElementById('trainer'));
+  else closeTrainer();
+}
+
+document.querySelector('.mode-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-mode]');
+  if (!b || b.classList.contains('on')) return;
+  // Changing the hash adds a history entry, so Back returns to the other mode.
+  if (b.dataset.mode === 'trainer') location.hash = 'trainer';
+  else { closeTrainer(); location.hash = stateToHash() || 'g=' + curG; }
+});
+
+window.addEventListener('hashchange', () => {
+  if (location.hash === '#trainer') { setMode('trainer'); return; }
+  setMode('equity');
+  loadFromHash(); render(); updateGameUI();
+});
+
+if (location.hash === '#trainer') setMode('trainer');
 
 // Init
 const statusEl = document.getElementById('wasm-status');
