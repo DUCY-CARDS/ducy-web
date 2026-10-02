@@ -27,3 +27,9 @@ jobs:
         run: |
           cd ducy
           wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript
+
+      - name: Build site
+        run: |
+          mkdir -p wasm
+          cp ducy/ducy-wasm/pkg/ducy_wasm.js ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+          scripts/build-site.sh "${GITHUB_SHA::8}" _site
