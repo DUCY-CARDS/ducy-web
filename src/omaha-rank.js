@@ -3,13 +3,18 @@
 // The model and its cutoffs come from scripts/fit-omaha-rank.mjs.
 
 import { omahaFeatures } from './omaha-features.js';
+import { nutFlushBlock } from './omaha-blockers.js';
 import { OMAHA_MODEL } from './omaha-rank-model.js';
 
 export function omahaScore(cards) {
-  const w = OMAHA_MODEL[cards.length].weights;
+  const m = OMAHA_MODEL[cards.length];
+  const w = m.weights;
   const x = omahaFeatures(cards);
   let s = 0;
   for (let i = 0; i < w.length; i++) s += w[i] * x[i];
+  // Holding the nut card of a suit that may flush (see omaha-blockers.js).
+  const b = m.blocker;
+  if (b && b.weight) s += b.weight * b.scoreSd / b.sd * (nutFlushBlock(cards) - b.mean);
   return s;
 }
 
