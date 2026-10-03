@@ -33,7 +33,7 @@ const OMAHA_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 
 let root = null;
 let open = false;
-let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}};
+let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: ''};
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -199,6 +199,9 @@ function renderOmahaSetup() {
   h += cards === 2
     ? '<p class="tr-note">Hands are ranked by raw preflop equity, how often they flop well against strong opponents who give action, and implied odds: how often they make trips or better and win, rather than lose with them. A guide for a full-ring or 6-max opening range, not a solver output.</p>'
     : '<p class="tr-note">Hands are ranked by raw preflop equity and how often they flop well against opponents who are strong on that flop (top set, nut draws, the top of a straight) rather than dominated. The ranking is a fitted approximation, not exact.</p>';
+  h += '<div class="tr-group">Look up a hand</div>';
+  h += `<input class="tr-lookup" id="tr-lookup" placeholder="AKs, Ah Kd, or AsKsJh9h" value="${esc(st.lookup)}" autocomplete="off" spellcheck="false">`;
+  h += `<div class="tr-lookup-out" id="tr-lookup-out" role="status">${lookupHtml(st.lookup, pct)}</div>`;
   h += '</div>';
 
   const ex = omahaExamples(cards, pct);
@@ -577,6 +580,50 @@ function holdemMistakeGrid(pct, misses) {
     `<div class="tr-legend"><span class="tr-key value"></span>Top ${pct}% <span class="tr-key miss-in"></span>Wrongly played <span class="tr-key miss-out"></span>Wrongly folded</div></div>`;
 }
 
+// ---- hand lookup ----
+// Accepts a Hold'em class (AKs, QJo, 77), or 2, 4, 5 or 6 cards like "Ah Kd"
+// or "AsKsJh9h" (any spacing, upper or lower case).
+
+/** {cards} | {cls} | {error} for lookup text, or null when empty. */
+export function parseLookup(text) {
+  const t = text.replace(/[\s,]+/g, '');
+  if (!t) return null;
+  const m = /^([2-9TJQKA])([2-9TJQKA])([so]?)$/i.exec(t);
+  if (m) {
+    const [a, b] = [m[1].toUpperCase(), m[2].toUpperCase()];
+    const [hi, lo] = RK.indexOf(a) <= RK.indexOf(b) ? [a, b] : [b, a];
+    const suit = m[3].toLowerCase();
+    if (hi === lo) return suit ? {error: 'A pair can’t be suited or offsuit: try ' + hi + lo + '.'} : {cls: hi + lo};
+    if (!suit) return {error: `Add s (suited) or o (offsuit): ${hi}${lo}s or ${hi}${lo}o.`};
+    return {cls: hi + lo + suit};
+  }
+  if (t.length % 2) return {error: 'Enter cards as rank and suit, like Ah Kd.'};
+  const cards = [];
+  for (let i = 0; i < t.length; i += 2) {
+    const c = t[i].toUpperCase() + t[i + 1].toLowerCase();
+    if (!/^[2-9TJQKA][shdc]$/.test(c)) return {error: `“${t.slice(i, i + 2)}” isn’t a card. Use ranks 2-9, T, J, Q, K, A and suits s, h, d, c.`};
+    if (cards.includes(c)) return {error: `${c} appears twice.`};
+    cards.push(c);
+  }
+  if (![2, 4, 5, 6].includes(cards.length)) return {error: 'Enter 2 cards for Hold’em or 4, 5 or 6 for Omaha.'};
+  return {cards: cards.sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || SUIT_ORDER.indexOf(a[1]) - SUIT_ORDER.indexOf(b[1]))};
+}
+
+function lookupHtml(text, cut) {
+  const q = parseLookup(text);
+  if (!q) return '<span class="tr-none">Type a hand to see where it ranks.</span>';
+  if (q.error) return `<span class="tr-lookup-err">${esc(q.error)}</span>`;
+  const n = q.cls ? 2 : q.cards.length;
+  const cls = q.cls || (n === 2 ? handClass(q.cards[0], q.cards[1]) : null);
+  const p = cls ? HOLDEM_PERCENTILE[cls] : omahaPercentile(q.cards);
+  const shown = q.cards ? handText(q.cards) : `<b>${cls}</b>`;
+  let h = `<div class="tr-ex"><span class="tr-hand">${shown}</span><span class="tr-pct">${pctLabel(p)} of ${handsName(n)}</span></div>`;
+  h += '<div class="tr-lookup-bar"><span style="width:' + Math.max(1, 100 - p).toFixed(1) + '%"></span></div>';
+  const target = st.omaha.cards === n ? ` · ${p < cut ? 'inside' : 'outside'} your top ${cut}%` : '';
+  h += `<div class="tr-preview-meta">${n === 2 ? `${cls}, ` : `${gameName(n)}, `}better than ${(100 - p).toFixed(1)}% of hands${target}</div>`;
+  return h;
+}
+
 function renderSetup() {
   if (st.game === 'omaha') { renderOmahaSetup(); return; }
   const t = targetFor(st.choice) || targetFor(st.choice = 'preset:open-btn');
@@ -911,6 +958,12 @@ function onChange(e) {
 }
 
 function onInput(e) {
+  // Lookup updates in place so the field keeps focus.
+  if (e.target.id === 'tr-lookup') {
+    st.lookup = e.target.value;
+    root.querySelector('#tr-lookup-out').innerHTML = lookupHtml(st.lookup, st.omaha.pct);
+    return;
+  }
   if (!st.edit) return;
   if (e.target.id === 'tr-ename') st.edit.name = e.target.value;
   else if (e.target.id === 'tr-etext') { st.edit.sel = parseRange(e.target.value); refreshEditor(false); }
