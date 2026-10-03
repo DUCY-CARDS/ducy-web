@@ -262,6 +262,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-feedback { text-align: center; font-size: 15px; padding: 10px 14px; border-radius: 6px; color: var(--fg-strong); }
 .tr-feedback.bad { background: rgba(198,88,88,0.15); }
 .tr-feedback strong { color: var(--red); }
+.tr-feedback.close { background: rgba(192,138,46,0.16); }
+.tr-feedback.close strong { color: #a87523; }
 .tr-pattern { font-size: 13px; color: var(--fg-strong); margin-top: 6px; line-height: 1.4; }
 .tr-mistakes .tr-pattern { padding: 8px 10px; background: rgba(192,138,46,0.12); border-radius: 6px; margin: 0 0 6px; max-width: 62ch; }
 .tr-mistakes .tr-pattern strong { display: block; margin-bottom: 4px; }

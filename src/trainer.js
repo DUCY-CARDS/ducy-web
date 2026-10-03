@@ -286,12 +286,28 @@ function gainFor(score) {
   return score < 50 ? 8 : score < 70 ? 5 : score < 80 ? 4 : score < 90 ? 3 : 1;
 }
 
-// Missing a close call costs a little; missing an obvious hand (a probe) costs a lot.
-function penaltyFor(score, rel, probe) {
-  if (probe) return 20;
-  const base = 4 + 12 * Math.min(1, rel / 0.5);
-  return Math.round(score >= 90 ? base * 1.25 : base);
+// How bad a wrong answer is, from 0 (right at the cutoff) to 1. It scales
+// with how far the hand is from the target, measured against the target
+// itself, so at top 15% playing a 25th-percentile hand (10 points out) costs
+// far more than a 16th, and folding a top-5% hand far more than a 14th. The
+// same scale applies on both sides: a hand a full target-width away (30th at
+// top 15%, or the very best hands) is as bad as it gets.
+// When rough EVs per hand exist, the EV given up would be the better measure;
+// until then, percentile distance stands in for it.
+function severityFor(pct, cut) {
+  return Math.min(1, Math.abs(pct - cut) / cut);
 }
+
+// From 1 point for a hair-thin miss up to 16; missed probes (obvious hands)
+// cost 20. Near misses cost about what one correct answer earns in the
+// Challenge zone, so a single close call doesn't wipe out a run.
+function penaltyFor(severity, probe) {
+  if (probe) return 20;
+  return Math.max(1, Math.round(16 * severity));
+}
+
+// A miss this close to the cutoff is called a close call rather than a mistake.
+const CLOSE_CALL = 0.2;
 
 // Deals a non-obvious hand on one side of the cutoff (chosen 50/50 so plays
 // and folds stay balanced, unless `side` is 'in' or 'out') within the band,
@@ -441,9 +457,9 @@ function answerPractice(yes) {
   const {cards, pct, probe} = pr.current;
   const inRange = pct < pr.pct;
   const correct = yes === inRange;
-  const rel = closeness(pct, pr.pct);
+  const rel = closeness(pct, pr.pct), severity = severityFor(pct, pr.pct);
   const before = pr.score;
-  pr.score = correct ? Math.min(100, pr.score + gainFor(pr.score)) : Math.max(0, pr.score - penaltyFor(pr.score, rel, probe));
+  pr.score = correct ? Math.min(100, pr.score + gainFor(pr.score)) : Math.max(0, pr.score - penaltyFor(severity, probe));
   pr.delta = pr.score - before;
   pr.answered++;
   pr.total++;
@@ -455,7 +471,7 @@ function answerPractice(yes) {
     if (inRange) s.seenIn++; else s.seenOut++;
     if (!correct) { if (yes) s.over++; else s.under++; }
   }
-  pr.history.push({cards, pct, answer: yes, correct, rel, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, focus: !!pr.current.focus, tags, level: levelFor(before).name});
+  pr.history.push({cards, pct, answer: yes, correct, rel, severity, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, focus: !!pr.current.focus, tags, level: levelFor(before).name});
   saveProgress(pr.key, {score: pr.score, best: pr.best, answered: pr.total});
   if (pr.score >= 100) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
@@ -471,7 +487,7 @@ function answerPractice(yes) {
       pattern = [t.headline, ...t.details].join(' ');
       pr.lastTrendAt = pr.answered;
     }
-    pr.feedback = {cards, pct, yes, major: !!probe, pattern};
+    pr.feedback = {cards, pct, yes, major: !!probe, close: !probe && severity < CLOSE_CALL, pattern};
     render();
   }
 }
@@ -514,8 +530,8 @@ function renderPractice() {
   if (pr.feedback) {
     const f = pr.feedback;
     const where = f.pct < pr.pct ? `inside your top ${pr.pct}%` : `outside your top ${pr.pct}%`;
-    h += '<div class="tr-feedback bad" role="status">';
-    h += `<strong>${f.major ? 'Major mistake' : 'Not quite'}</strong> — this hand is ${pctLabel(f.pct)}, ${where}, so it’s ${f.major ? 'a clear' : 'a'} ${f.pct < pr.pct ? 'play' : 'fold'}.`;
+    h += `<div class="tr-feedback ${f.close ? 'close' : 'bad'}" role="status">`;
+    h += `<strong>${f.major ? 'Major mistake' : f.close ? 'Close call' : 'Not quite'}</strong> — this hand is ${pctLabel(f.pct)}, ${where}, so it’s ${f.major ? 'a clear' : 'a'} ${f.pct < pr.pct ? 'play' : 'fold'}.`;
     if (f.pattern) h += `<div class="tr-pattern">${esc(f.pattern)}</div>`;
     h += '</div>';
     h += '<div class="tr-actions"><button class="tr-btn next" data-act="continue-practice">Continue<kbd>Space</kbd></button></div>';
@@ -531,7 +547,7 @@ function renderPractice() {
 
 function renderPracticeSummary() {
   const pr = st.practice;
-  const misses = pr.history.filter(x => !x.correct).sort((a, b) => b.major - a.major || b.rel - a.rel);
+  const misses = pr.history.filter(x => !x.correct).sort((a, b) => b.major - a.major || b.severity - a.severity);
   const major = misses.filter(x => x.major).length;
   const diag = diagnose(pr);
   let h = '<div class="tr-wrap">';
@@ -558,7 +574,7 @@ function renderPracticeSummary() {
   const rows = [];
   for (const x of misses) {
     const cls = pr.cards === 2 ? handClass(x.cards[0], x.cards[1]) : null;
-    const same = cls && rows.find(r => r.cls === cls && r.answer === x.answer);
+    const same = cls && rows.find(r => r.cls === cls && r.answer === x.answer && r.major === x.major);
     if (same) same.n++; else rows.push({...x, cls, n: 1});
   }
   const list = rows.length
