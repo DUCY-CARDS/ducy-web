@@ -1,6 +1,8 @@
 // Hold'em starting-hand classes and range-text parsing, shared by the equity
 // calculator and the trainer. A hand class is "AA", "AKs" or "AKo".
 
+import { HOLDEM_PERCENTILE } from './holdem-rank.js';
+
 export const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 
 /** Number of card combinations in each hand class (pair 6, suited 4, offsuit 12). */
@@ -29,8 +31,22 @@ export function comboCount(sel) {
 }
 
 /** Parses range text like "QQ+, AKs, A5s-A2s, KQ" into a Set of hand classes. */
+/**
+ * The top `pct`% of Hold'em hands by the trainer's ranking (holdem-rank.js):
+ * every class whose middle combo falls inside the cutoff, so the range covers
+ * about pct% of the 1,326 combos.
+ */
+export function topRange(pct) {
+  return new Set(Object.keys(HOLDEM_PERCENTILE).filter(c => HOLDEM_PERCENTILE[c] < pct));
+}
+
 export function parseRange(text) {
   const sel = new Set();
+  // "top 20%" (or "top20%") adds the top 20% of hands.
+  text = text.replace(/\btop\s*(\d+(?:\.\d+)?)\s*%?/gi, (_, n) => {
+    for (const c of topRange(+n)) sel.add(c);
+    return ' ';
+  });
   const tokens = text.split(/[\s,]+/).filter(Boolean);
   for (const tok of tokens) {
     const t = tok.trim();

@@ -1,7 +1,7 @@
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
-import { RK, COMBOS, parseRange, comboCount } from './ranges.js';
+import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 
 const ST = [
@@ -867,6 +867,11 @@ function openRangePicker(seatIdx, opts = {}) {
   const cnt = [...sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
   const pctH = (cnt / 1326 * 100).toFixed(1);
   h += `</div><div class="range-info"><span id="rcnt">${cnt} combos · ${pctH}%</span></div>`;
+  // Fills the grid with the top X% of hands by ducy's Hold'em ranking.
+  const topV = Math.max(1, Math.round(cnt / 13.26));
+  h += '<label class="range-top"><span>Top</span>';
+  h += `<input type="range" id="rtop" min="1" max="100" step="1" value="${topV}" aria-label="Fill with the top percent of hands">`;
+  h += `<b id="rtopv">${topV}%</b></label>`;
   h += `<textarea class="range-text" id="rtxt" placeholder="AA, AKs, QQ+ ...">${[...sel].join(', ')}</textarea>`;
   h += presetsHtml(sel);
   h += savedRangesHtml(sel, opts);
@@ -1424,21 +1429,37 @@ document.getElementById('mbg').addEventListener('input', e => {
     setOmahaRangeText(e.target.value);
     return;
   }
+  if (e.target.id === 'rtop' && target && target.seatMode === 'range') {
+    const v = +e.target.value;
+    const sel = topRange(v);
+    seats[target.seat] = {mode:'range', sel};
+    document.getElementById('rtopv').textContent = v + '%';
+    const tx = document.getElementById('rtxt');
+    if (tx) tx.value = [...sel].join(', ');
+    syncRangeGrid(sel);
+    dirty(); render();
+    return;
+  }
   if (e.target.id === 'rtxt' && target && target.seatMode === 'range') {
     const sel = parseRange(e.target.value);
     seats[target.seat] = {mode:'range', sel};
-    const cnt = [...sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
-    const pctH = (cnt/1326*100).toFixed(1);
-    const ci = document.getElementById('rcnt');
-    if (ci) ci.textContent = cnt + ' combos · ' + pctH + '%';
-    document.querySelectorAll('#rgrid .rc').forEach(rc => {
-      const h = rc.dataset.h;
-      rc.classList.toggle('on', sel.has(h));
-      rc.classList.toggle('off', !sel.has(h));
-    });
+    syncRangeGrid(sel);
     dirty(); render();
   }
 });
+
+// Updates the picker's grid and combo count in place to match `sel`.
+function syncRangeGrid(sel) {
+  const cnt = [...sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
+  const pctH = (cnt/1326*100).toFixed(1);
+  const ci = document.getElementById('rcnt');
+  if (ci) ci.textContent = cnt + ' combos · ' + pctH + '%';
+  document.querySelectorAll('#rgrid .rc').forEach(rc => {
+    const h = rc.dataset.h;
+    rc.classList.toggle('on', sel.has(h));
+    rc.classList.toggle('off', !sel.has(h));
+  });
+}
 
 function switchGame(newGame) {
   if (newGame === curG) return;

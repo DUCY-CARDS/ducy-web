@@ -552,6 +552,13 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
   font-family: var(--font-data); font-size: 11px; color: var(--fg-muted);
   display: flex; justify-content: space-between; align-items: center;
 }
+/* "Top X%" slider in the Hold'em range picker */
+.range-top {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  font-size: 12px; color: var(--fg-muted);
+}
+.range-top input { flex: 1; min-width: 0; accent-color: var(--teal); }
+.range-top b { font-family: var(--font-data); font-size: 12px; color: var(--fg); min-width: 3.5em; text-align: right; }
 .range-text {
   font-family: var(--font-data); font-size: 12px; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: var(--radius);
