@@ -133,8 +133,13 @@ function handText(cards) {
   }).join('');
 }
 
-// One decimal, so hands just either side of a cutoff (19.6% vs 20.4%) read differently.
-const pctLabel = p => `top ${p.toFixed(1)}%`;
+// One decimal, so hands just either side of a cutoff (19.6% vs 20.4%) read
+// differently. Cutoffs are whole numbers, so when one decimal would round onto
+// one (19.96% to "20.0%"), show two so the hand doesn't seem to sit on the line.
+const pctLabel = p => {
+  const one = p.toFixed(1);
+  return `top ${Number.isInteger(+one) && Math.abs(+one - p) > 1e-9 ? p.toFixed(2) : one}%`;
+};
 
 // Example hands just inside and just outside an Omaha cutoff, cached per
 // setting so the setup screen doesn't reshuffle on every render.
