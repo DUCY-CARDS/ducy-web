@@ -4,7 +4,7 @@
 // and wrongly excluded (folded but in the range).
 
 import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
-import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
+import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile } from './omaha-rank.js';
 import { omahaTags, TAG_LABELS } from './omaha-tags.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
@@ -33,7 +33,8 @@ const OMAHA_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 
 let root = null;
 let open = false;
-let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: ''};
+// drill: a hand kind (tag) to practise on its own, or null for all hands.
+let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: '', drill: null};
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -212,18 +213,135 @@ function renderOmahaSetup() {
   h += `<div class="tr-group">Just inside the cutoff</div>${ex.inside.map(row).join('')}`;
   h += `<div class="tr-group">Just outside</div>${ex.outside.map(row).join('')}`;
   if (cards === 2) h += rangeGrid(holdemTopTarget(pct));
-  const prog = loadProgress()[practiceKey(cards, pct)];
-  const score = prog ? prog.score : 0;
-  h += '<div class="tr-mode">';
-  h += '<div class="tr-mode-row"><div><b>Practice</b><span>Adaptive: easy hands first, closer calls as your score rises.</span></div>';
-  h += `<span class="tr-level lvl-${levelFor(score).name.toLowerCase()}">${prog ? `${levelFor(score).name} · ${score}` : 'New'}</span></div>`;
-  h += '<button class="tr-start" data-act="practice">Practice</button>';
-  h += '</div>';
+  h += practiceCard(cards, pct);
   h += '<div class="tr-mode"><div class="tr-mode-row"><div><b>Test</b><span>A fixed set with no feedback until the end.</span></div></div>';
   h += handCountAndStart().replace('class="tr-start"', 'class="tr-start secondary"').replace('>Start<', '>Start test<');
   h += '</div>';
   h += '</div></div></div>';
   root.innerHTML = h;
+}
+
+// ---- practice drills ----
+// Besides all hands, practice can drill one kind of hand (only double-suited,
+// only small pairs...). Each drill has its own score and level, and every
+// answer also adds to lifetime per-kind accuracy for the game and target, kept
+// across visits, so the setup screen can point at the weakest kinds.
+
+// A drill needs some hands on each side of the cutoff; it deals plays and folds
+// 50/50 either way, so a kind that's mostly folds (weak suited) still drills well.
+const DRILL_MIN_SHARE = 0.04;
+const WEAK_MIN_SEEN = 8;     // hands of a kind needed before calling it weak
+const SESSIONS_KEPT = 30;
+const RECENT_KEPT = 30;      // weakness is judged on each kind's latest hands, so improvement shows
+
+const shortLabel = (n, tag) => {
+  const l = labelsFor(n)[tag].replace(/\s*\(.*$/, '');
+  return l[0].toUpperCase() + l.slice(1);
+};
+
+// Kinds worth drilling at this cutoff: ones with real decisions on both sides
+// (aces at top 50% would be all plays). Exact for Hold'em, sampled for Omaha.
+const drillCache = new Map();
+function drillTags(cards, pct) {
+  const key = `${cards}:${pct}`;
+  if (drillCache.has(key)) return drillCache.get(key);
+  const count = {};
+  const add = (tags, inside, w) => { for (const t of tags) { const c = count[t] ||= {in: 0, out: 0}; c[inside ? 'in' : 'out'] += w; } };
+  if (cards === 2) {
+    for (const [cls, p] of Object.entries(HOLDEM_PERCENTILE)) {
+      const h = cls.length === 2 ? [cls[0] + 's', cls[1] + 'h'] : cls[2] === 's' ? [cls[0] + 's', cls[1] + 's'] : [cls[0] + 's', cls[1] + 'h'];
+      add(holdemTags(h), p < pct, COMBOS[cls]);
+    }
+  } else {
+    for (let i = 0; i < 6000; i++) { const h = dealOmaha(cards); add(omahaTags(h), omahaPercentile(h) < pct, 1); }
+  }
+  const tags = Object.keys(labelsFor(cards)).filter(t => {
+    const c = count[t];
+    return c && Math.min(c.in, c.out) / (c.in + c.out) >= DRILL_MIN_SHARE;
+  });
+  drillCache.set(key, tags);
+  return tags;
+}
+
+/** Recent accuracy per kind for a target (its last RECENT_KEPT hands), weakest first. */
+function weakestKinds(rec, tags) {
+  const kinds = (rec && rec.kinds) || {};
+  return tags.map(t => ({tag: t, recent: (kinds[t] && kinds[t].recent) || ''}))
+    .filter(k => k.recent.length >= WEAK_MIN_SEEN)
+    .map(k => ({tag: k.tag, seen: k.recent.length, acc: k.recent.split('').filter(c => c === '1').length / k.recent.length}))
+    .sort((a, b) => a.acc - b.acc);
+}
+
+function levelChip(rec) {
+  const score = rec ? rec.score : 0;
+  return `<span class="tr-level lvl-${levelFor(score).name.toLowerCase()}">${rec ? `${levelFor(score).name} · ${score}` : 'New'}</span>`;
+}
+
+function practiceCard(cards, pct) {
+  const all = loadProgress();
+  const base = practiceKey(cards, pct), rec = all[base];
+  const tags = drillTags(cards, pct);
+  if (st.drill && !tags.includes(st.drill)) st.drill = null;
+  const weak = weakestKinds(rec, tags).filter(w => w.acc < 0.9).slice(0, 3);
+  const cur = st.drill ? all[`${base}:${st.drill}`] : rec;
+  let h = '<div class="tr-mode">';
+  h += `<div class="tr-mode-row"><div><b>Practice</b><span>Adaptive: easy hands first, closer calls as your score rises.</span></div>${levelChip(cur)}</div>`;
+  h += '<div class="tr-group">Hands</div><div class="tr-drills">';
+  h += `<button class="tr-drill${st.drill ? '' : ' on'}" data-drill="">All hands</button>`;
+  for (const t of tags) {
+    const r = all[`${base}:${t}`];
+    const isWeak = weak.some(w => w.tag === t);
+    h += `<button class="tr-drill${st.drill === t ? ' on' : ''}${isWeak ? ' weak' : ''}" data-drill="${t}" title="${esc(labelsFor(cards)[t])}">${esc(shortLabel(cards, t))}${r ? ` <em>${r.score}</em>` : ''}</button>`;
+  }
+  h += '</div>';
+  if (weak.length) {
+    h += `<div class="tr-weak">Weakest so far: ${weak.map(w => `<button class="link-btn" data-drill="${w.tag}">${esc(shortLabel(cards, w.tag))}</button> ${Math.round(w.acc * 100)}% of last ${w.seen}`).join(' · ')}</div>`;
+  } else if (rec && rec.answered) {
+    h += '<div class="tr-weak">Keep practicing all hands; your weakest kinds show here once there’s enough to go on.</div>';
+  }
+  if (rec && rec.sessions && rec.sessions.length) {
+    const n = rec.sessions.length, hands = rec.sessions.reduce((a, x) => a + x.hands, 0);
+    h += `<div class="tr-weak">${n} session${n > 1 ? 's' : ''}, ${hands} hands practiced here.</div>`;
+  }
+  h += `<button class="tr-start" data-act="practice">${st.drill ? `Practice ${esc(shortLabel(cards, st.drill).toLowerCase())}` : 'Practice'}</button>`;
+  return h + '</div>';
+}
+
+// Adds an answer to the target's lifetime per-kind stats and this session's entry.
+function recordLifetime(pr, tags, correct) {
+  try {
+    const all = loadProgress();
+    const rec = all[pr.baseKey] ||= {score: 0, best: 0, answered: 0};
+    const kinds = rec.kinds ||= {};
+    // seen/wrong are lifetime totals; recent is the latest answers as '1' (right) / '0' (wrong).
+    for (const t of tags) {
+      const k = kinds[t] ||= {seen: 0, wrong: 0, recent: ''};
+      k.seen++; if (!correct) k.wrong++;
+      k.recent = ((k.recent || '') + (correct ? '1' : '0')).slice(-RECENT_KEPT);
+    }
+    const sessions = rec.sessions ||= [];
+    let sess = sessions.find(x => x.id === pr.sessionId);
+    if (!sess) { sess = {id: pr.sessionId, at: Date.now(), drill: pr.drill, hands: 0, correct: 0, from: pr.startScore}; sessions.push(sess); }
+    sess.hands++; if (correct) sess.correct++; sess.to = pr.score;
+    if (sessions.length > SESSIONS_KEPT) sessions.splice(0, sessions.length - SESSIONS_KEPT);
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+// A drill hand: the drilled kind, on either side of the cutoff, preferring the
+// level's band and non-obvious hands but falling back rather than giving up.
+function dealDrill(cards, cut, band, tag) {
+  const sides = Math.random() < 0.5 ? [true, false] : [false, true];
+  for (const b of [band, [0, 1]]) for (const inside of sides) {
+    const r = findInBand(cards, cut, b, tag, inside);
+    if (r) return r;
+  }
+  for (let i = 0; i < 20000; i++) {
+    const h = dealTop(cards);
+    if (topTags(h).includes(tag)) return {cards: h, pct: topPercentile(h)};
+  }
+  const h = dealTop(cards);
+  return {cards: h, pct: topPercentile(h)};
 }
 
 // ---- adaptive practice (Omaha) ----
@@ -314,6 +432,17 @@ const CLOSE_CALL = 0.2;
 // optionally with a given tag.
 function dealInBand(cards, cut, [lo, hi], tag, side) {
   const inside = side ? side === 'in' : Math.random() < 0.5;
+  const found = findInBand(cards, cut, [lo, hi], tag, inside);
+  if (found) return found;
+  // Nothing found (a rare tag, or a very narrow band): relax the tag, then the band.
+  if (tag) return dealInBand(cards, cut, [lo, hi], null, side);
+  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1], null, side);
+  const h = dealTop(cards);
+  return {cards: h, pct: topPercentile(h)};
+}
+
+/** A non-obvious hand on the given side within the band (and with the tag), or null. */
+function findInBand(cards, cut, [lo, hi], tag, inside) {
   for (let i = 0; i < 8000; i++) {
     const h = dealTop(cards), p = topPercentile(h);
     if ((p < cut) !== inside || isObvious(p, cut)) continue;
@@ -322,11 +451,7 @@ function dealInBand(cards, cut, [lo, hi], tag, side) {
     if (tag && !topTags(h).includes(tag)) continue;
     return {cards: h, pct: p};
   }
-  // Nothing found (a rare tag, or a very narrow band): relax the tag, then the band.
-  if (tag) return dealInBand(cards, cut, [lo, hi], null, side);
-  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1], null, side);
-  const h = dealTop(cards);
-  return {cards: h, pct: topPercentile(h)};
+  return null;
 }
 
 function dealProbe(cards, cut) {
@@ -431,10 +556,12 @@ function focusFor(pr) {
 
 function startPractice() {
   const {cards, pct} = st.omaha;
-  const key = practiceKey(cards, pct);
+  const baseKey = practiceKey(cards, pct), drill = st.drill;
+  const key = drill ? `${baseKey}:${drill}` : baseKey;
   const saved = loadProgress()[key] || {score: 0, best: 0, answered: 0};
   st.screen = 'practice';
-  st.practice = {key, cards, pct, score: saved.score, best: saved.best, startScore: saved.score,
+  st.practice = {key, baseKey, drill, sessionId: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    cards, pct, score: saved.score, best: saved.best, startScore: saved.score,
     total: saved.answered || 0, answered: 0, correct: 0, streak: 0, history: [], tagStats: {},
     feedback: null, delta: 0, mastered: false};
   nextPractice();
@@ -444,6 +571,7 @@ function nextPractice() {
   const pr = st.practice;
   pr.feedback = null;
   const band = levelFor(pr.score).band;
+  if (pr.drill) { pr.current = dealDrill(pr.cards, pr.pct, band, pr.drill); render(); return; }
   const focus = focusFor(pr);
   if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealProbe(pr.cards, pr.pct);
   else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus.tag, focus.side), focus: focus.tag};
@@ -472,7 +600,10 @@ function answerPractice(yes) {
     if (!correct) { if (yes) s.over++; else s.under++; }
   }
   pr.history.push({cards, pct, answer: yes, correct, rel, severity, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, focus: !!pr.current.focus, tags, level: levelFor(before).name});
-  saveProgress(pr.key, {score: pr.score, best: pr.best, answered: pr.total});
+  // The record at the drill's key keeps its score; lifetime kinds and sessions live on the base record.
+  const prev = loadProgress()[pr.key] || {};
+  saveProgress(pr.key, {...prev, score: pr.score, best: pr.best, answered: pr.total});
+  recordLifetime(pr, tags, correct);
   if (pr.score >= 100) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
   else {
@@ -496,7 +627,7 @@ function renderPractice() {
   const pr = st.practice, lvl = levelFor(pr.score);
   let h = '<div class="tr-wrap tr-play">';
   h += '<div class="tr-bar">';
-  h += `<div><div class="tr-preview-name">${gameName(pr.cards)} · top ${pr.pct}% · Practice</div>`;
+  h += `<div><div class="tr-preview-name">${gameName(pr.cards)} · top ${pr.pct}% · Practice${pr.drill ? ` · ${esc(shortLabel(pr.cards, pr.drill))}` : ''}</div>`;
   h += `<div class="tr-preview-meta">Play the top ${pr.pct}% of ${handsName(pr.cards)}</div></div>`;
   h += `<div class="tr-progress"><span class="tr-level lvl-${lvl.name.toLowerCase()}">${lvl.name}</span><span>${pr.correct}/${pr.answered} correct</span></div>`;
   h += '<button class="link-btn" data-act="end-practice">End</button></div>';
@@ -514,7 +645,7 @@ function renderPractice() {
 
   if (pr.mastered) {
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}% after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
+    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
     h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
     h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
     h += '</div>';
@@ -552,7 +683,7 @@ function renderPracticeSummary() {
   const diag = diagnose(pr);
   let h = '<div class="tr-wrap">';
   h += `<div class="tr-head"><h1>Score ${pr.startScore} → ${pr.score}</h1>`;
-  h += `<p>${gameName(pr.cards)} · top ${pr.pct}% · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
+  h += `<p>${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` · ${esc(shortLabel(pr.cards, pr.drill))} only` : ''} · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
   h += '<div class="tr-summary">';
   h += '<div class="tr-stats">';
   h += `<div class="tr-stat"><b>${pr.answered}</b><span>Hands this session</span></div>`;
@@ -582,6 +713,11 @@ function renderPracticeSummary() {
     : '<span class="tr-none">None</span>';
   h += `<div class="tr-mistakes"><div class="tr-group">Mistakes, worst first</div>${list}</div>`;
   if (pr.cards === 2) h += holdemMistakeGrid(pr.pct, misses);
+  // After all-hands practice, point at the weakest kind across sessions as the next drill.
+  if (!pr.drill) {
+    const weak = weakestKinds(loadProgress()[pr.baseKey], drillTags(pr.cards, pr.pct)).filter(w => w.acc < 0.9)[0];
+    if (weak) h += `<div class="tr-weak tr-next-drill">Your weakest kind so far is ${esc(labelsFor(pr.cards)[weak.tag])}: ${Math.round(weak.acc * 100)}% right over your last ${weak.seen}. <button class="tr-btn yes" data-drill-start="${weak.tag}">Drill ${esc(shortLabel(pr.cards, weak.tag).toLowerCase())}</button></div>`;
+  }
   h += '<div class="tr-actions"><button class="tr-btn" data-act="setup">Change settings</button>';
   h += '<button class="tr-btn yes" data-act="practice">Practice again</button></div>';
   h += '</div></div>';
@@ -924,9 +1060,11 @@ function answer(yes) {
 }
 
 function onClick(e) {
-  const el = e.target.closest('[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
+  const el = e.target.closest('[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
   if (!el) return;
-  if (el.dataset.tgame) { st.game = el.dataset.tgame; st.edit = null; render(); }
+  if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
+  else if (el.dataset.drillStart) { st.drill = el.dataset.drillStart; startPractice(); }
+  else if (el.dataset.tgame) { st.game = el.dataset.tgame; st.edit = null; render(); }
   else if (el.dataset.ocards) { st.omaha.cards = +el.dataset.ocards; render(); }
   else if (el.dataset.opct) { st.omaha.pct = +el.dataset.opct; render(); }
   else if (el.dataset.cell && st.edit) {
