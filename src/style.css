@@ -199,6 +199,14 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
   width: 64px; font-family: var(--font-data); font-size: 13px; padding: 5px 8px;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg);
 }
+.tr-lookup {
+  width: 100%; max-width: 320px; font-family: var(--font-data); font-size: 14px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg);
+}
+.tr-lookup-out { max-width: 320px; margin-top: 8px; min-height: 52px; display: flex; flex-direction: column; gap: 4px; }
+.tr-lookup-err { font-size: 13px; color: var(--red); }
+.tr-lookup-bar { height: 6px; border-radius: 3px; background: var(--bg-inset); overflow: hidden; }
+.tr-lookup-bar span { display: block; height: 100%; background: var(--teal); }
 .tr-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 14px; max-width: 60ch; }
 .tr-ex { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 3px 0; }
 .tr-mistakes .tr-ex { max-width: 360px; border-bottom: 1px solid var(--border); padding: 5px 0; }
