@@ -197,7 +197,7 @@ function renderOmahaSetup() {
   h += `<label class="tr-custom-pct">Other <input type="number" id="tr-opct" min="1" max="99" step="1" value="${OMAHA_TARGETS.includes(pct) ? '' : pct}" placeholder="%"></label>`;
   h += '</div>';
   h += cards === 2
-    ? '<p class="tr-note">Hands are ranked by raw preflop equity, how often they flop well against strong opponents who give action, and implied odds: how often they make trips or better and win, rather than lose with them. A guide for a full-ring or 6-max opening range, not a solver output.</p>'
+    ? '<p class="tr-note">Ranked for 100bb+ play: mostly by how much equity a hand keeps against the opponents who continue after the flop, plus implied odds (making trips or better and winning, rather than losing with it), with raw preflop equity counting for less. Checked against 6-max 100bb opening charts; a guide, not a solver output.</p>'
     : '<p class="tr-note">Hands are ranked by raw preflop equity and how often they flop well against opponents who are strong on that flop (top set, nut draws, the top of a straight) rather than dominated. The ranking is a fitted approximation, not exact.</p>';
   h += '<div class="tr-group">Look up a hand</div>';
   h += `<input class="tr-lookup" id="tr-lookup" placeholder="AKs, Ah Kd, or AsKsJh9h" value="${esc(st.lookup)}" autocomplete="off" spellcheck="false">`;
