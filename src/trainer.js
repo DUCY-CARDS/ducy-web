@@ -7,6 +7,8 @@ import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
 import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile } from './omaha-rank.js';
 import { omahaTags, TAG_LABELS } from './omaha-tags.js';
+import { HOLDEM_PERCENTILE } from './holdem-rank.js';
+import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -25,7 +27,8 @@ const ACTIONS = {
   other: {yes: 'In range', no: 'Not in range'},
   omaha: {yes: 'Play', no: 'Fold'},
 };
-const OMAHA_CARDS = [4, 5, 6];
+// Top-% games by hole cards: 2 is Hold'em, 4-6 are Omaha.
+const OMAHA_CARDS = [2, 4, 5, 6];
 const OMAHA_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 
 let root = null;
@@ -110,6 +113,19 @@ function dealOmaha(n) {
   return d.slice(0, n).sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || SUIT_ORDER.indexOf(a[1]) - SUIT_ORDER.indexOf(b[1]));
 }
 
+// Top-% games share one flow; these pick Hold'em or Omaha by hole-card count.
+const gameName = n => (n === 2 ? 'NLHE' : `PLO${n}`);
+const handsName = n => (n === 2 ? 'Hold’em hands' : `${n}-card hands`);
+const dealTop = n => (n === 2 ? dealHand() : dealOmaha(n));
+const topPercentile = h => (h.length === 2 ? HOLDEM_PERCENTILE[handClass(h[0], h[1])] : omahaPercentile(h));
+const topTags = h => (h.length === 2 ? holdemTags(h) : omahaTags(h));
+const labelsFor = n => (n === 2 ? HOLDEM_TAG_LABELS : TAG_LABELS);
+
+/** The top X% of Hold'em hands as a target, for drawing the 13x13 grid. */
+function holdemTopTarget(pct) {
+  return {value: new Set(Object.keys(HOLDEM_PERCENTILE).filter(c => HOLDEM_PERCENTILE[c] < pct)), bluff: new Set()};
+}
+
 function handText(cards) {
   return cards.map(c => {
     const s = SUITS.find(x => x.c === c[1]);
@@ -128,7 +144,7 @@ function omahaExamples(cards, pct) {
   if (exampleCache.has(key)) return exampleCache.get(key);
   const inside = [], outside = [];
   for (let i = 0; i < 20000 && (inside.length < 3 || outside.length < 3); i++) {
-    const h = dealOmaha(cards), p = omahaPercentile(h);
+    const h = dealTop(cards), p = topPercentile(h);
     if (p < pct && p >= pct - 3 && inside.length < 3) inside.push({h, p});
     else if (p >= pct && p < pct + 3 && outside.length < 3) outside.push({h, p});
   }
@@ -158,7 +174,7 @@ function rangeGrid(t, marks = {}) {
 function gameTabs() {
   return '<div class="tr-game-tabs card-count">' +
     `<button class="cc-btn${st.game === 'holdem' ? ' on' : ''}" data-tgame="holdem">Hold’em ranges</button>` +
-    `<button class="cc-btn${st.game === 'omaha' ? ' on' : ''}" data-tgame="omaha">Omaha top %</button></div>`;
+    `<button class="cc-btn${st.game === 'omaha' ? ' on' : ''}" data-tgame="omaha">Top %</button></div>`;
 }
 
 function handCountAndStart() {
@@ -171,25 +187,28 @@ function renderOmahaSetup() {
   const {cards, pct} = st.omaha;
   let h = '<div class="tr-wrap">';
   h += '<div class="tr-head"><h1>Range trainer</h1>';
-  h += `<p>Decide for each random Omaha hand whether it’s in the top ${pct}% of ${cards}-card hands. No feedback along the way; after ${st.total} hands you’ll see your accuracy and each mistake with the hand’s real percentile.</p></div>`;
+  h += `<p>Decide for each random hand whether it’s in the top ${pct}% of ${handsName(cards)}. Practice adapts to you and explains mistakes; a test gives no feedback until the end.</p></div>`;
   h += gameTabs();
   h += '<div class="tr-setup"><div class="tr-choose">';
   h += '<div class="tr-group">Game</div><div class="tr-options">';
-  for (const n of OMAHA_CARDS) h += `<button class="tr-opt${cards === n ? ' on' : ''}" data-ocards="${n}">PLO${n}</button>`;
+  for (const n of OMAHA_CARDS) h += `<button class="tr-opt${cards === n ? ' on' : ''}" data-ocards="${n}">${gameName(n)}</button>`;
   h += '</div><div class="tr-group">Play the top</div><div class="tr-options">';
   for (const p of OMAHA_TARGETS) h += `<button class="tr-opt${pct === p ? ' on' : ''}" data-opct="${p}">${p}%</button>`;
   h += `<label class="tr-custom-pct">Other <input type="number" id="tr-opct" min="1" max="99" step="1" value="${OMAHA_TARGETS.includes(pct) ? '' : pct}" placeholder="%"></label>`;
   h += '</div>';
-  h += '<p class="tr-note">Hands are ranked by raw preflop equity and how often they flop well against opponents who are strong on that flop (top set, nut draws, the top of a straight) rather than dominated. The ranking is a fitted approximation, not exact.</p>';
+  h += cards === 2
+    ? '<p class="tr-note">Hands are ranked by raw preflop equity, how often they flop well against strong opponents who give action, and implied odds: how often they make trips or better and win, rather than lose with them. A guide for a full-ring or 6-max opening range, not a solver output.</p>'
+    : '<p class="tr-note">Hands are ranked by raw preflop equity and how often they flop well against opponents who are strong on that flop (top set, nut draws, the top of a straight) rather than dominated. The ranking is a fitted approximation, not exact.</p>';
   h += '</div>';
 
   const ex = omahaExamples(cards, pct);
   const row = e => `<div class="tr-ex"><span class="tr-hand">${handText(e.h)}</span><span class="tr-pct">${pctLabel(e.p)}</span></div>`;
   h += '<div class="tr-preview">';
-  h += `<div><div class="tr-preview-name">PLO${cards} · top ${pct}%</div>`;
+  h += `<div><div class="tr-preview-name">${gameName(cards)} · top ${pct}%</div>`;
   h += `<div class="tr-preview-meta">Play about ${pct} of every 100 hands dealt</div></div>`;
   h += `<div class="tr-group">Just inside the cutoff</div>${ex.inside.map(row).join('')}`;
   h += `<div class="tr-group">Just outside</div>${ex.outside.map(row).join('')}`;
+  if (cards === 2) h += rangeGrid(holdemTopTarget(pct));
   const prog = loadProgress()[practiceKey(cards, pct)];
   const score = prog ? prog.score : 0;
   h += '<div class="tr-mode">';
@@ -256,7 +275,7 @@ function saveProgress(key, rec) {
   } catch {}
 }
 
-const practiceKey = (cards, pct) => `omaha:${cards}:${pct}`;
+const practiceKey = (cards, pct) => (cards === 2 ? `holdem:${pct}` : `omaha:${cards}:${pct}`);
 
 // The Challenge zone (90+) moves one point at a time, so mastery means about
 // ten close calls in a row.
@@ -272,32 +291,33 @@ function penaltyFor(score, rel, probe) {
 }
 
 // Deals a non-obvious hand on one side of the cutoff (chosen 50/50 so plays
-// and folds stay balanced) within the band, optionally with a given tag.
-function dealInBand(cards, cut, [lo, hi], tag) {
-  const inside = Math.random() < 0.5;
+// and folds stay balanced, unless `side` is 'in' or 'out') within the band,
+// optionally with a given tag.
+function dealInBand(cards, cut, [lo, hi], tag, side) {
+  const inside = side ? side === 'in' : Math.random() < 0.5;
   for (let i = 0; i < 8000; i++) {
-    const h = dealOmaha(cards), p = omahaPercentile(h);
+    const h = dealTop(cards), p = topPercentile(h);
     if ((p < cut) !== inside || isObvious(p, cut)) continue;
     const r = closeness(p, cut);
     if (r < lo || r >= hi) continue;
-    if (tag && !omahaTags(h).includes(tag)) continue;
+    if (tag && !topTags(h).includes(tag)) continue;
     return {cards: h, pct: p};
   }
   // Nothing found (a rare tag, or a very narrow band): relax the tag, then the band.
-  if (tag) return dealInBand(cards, cut, [lo, hi]);
-  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1]);
-  const h = dealOmaha(cards);
-  return {cards: h, pct: omahaPercentile(h)};
+  if (tag) return dealInBand(cards, cut, [lo, hi], null, side);
+  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1], null, side);
+  const h = dealTop(cards);
+  return {cards: h, pct: topPercentile(h)};
 }
 
 function dealProbe(cards, cut) {
   const inside = Math.random() < 0.5;
   for (let i = 0; i < 8000; i++) {
-    const h = dealOmaha(cards), p = omahaPercentile(h);
+    const h = dealTop(cards), p = topPercentile(h);
     if ((p < cut) === inside && isObvious(p, cut)) return {cards: h, pct: p, probe: true};
   }
-  const h = dealOmaha(cards);
-  return {cards: h, pct: omahaPercentile(h)};
+  const h = dealTop(cards);
+  return {cards: h, pct: topPercentile(h)};
 }
 
 // Mistake patterns. Trends are only called out once there's a long record:
@@ -327,39 +347,48 @@ function tagsFor(pr, kind) {
 }
 
 function diagnose(pr) {
-  const misses = pr.history.filter(x => !x.correct);
+  if (pr.answered < DIAG_MIN_HANDS || pr.history.filter(x => !x.correct).length < DIAG_MIN_ERRORS) return null;
+  // Which way mistakes lean is judged from regular deals only: hands dealt to
+  // focus on a weak spot are a biased sample and would feed back into it.
+  const regular = pr.history.filter(x => !x.focus);
+  const misses = regular.filter(x => !x.correct);
   const over = misses.filter(x => x.answer).length, under = misses.length - over;
-  if (pr.answered < DIAG_MIN_HANDS || misses.length < DIAG_MIN_ERRORS) return null;
+  const seenOut = regular.filter(x => x.pct >= pr.pct).length;
+  const seenIn = regular.length - seenOut;
+  // Compare mistake rates, not counts: folding a third of the hands you should
+  // play is a problem of its own even next to a lot of overplaying.
+  const overRate = seenOut ? over / seenOut : 0, underRate = seenIn ? under / seenIn : 0;
+  const lo = Math.min(overRate, underRate), hi = Math.max(overRate, underRate);
   let kind;
-  if (over >= 4 && over >= 2 * under) kind = 'loose';
-  else if (under >= 4 && under >= 2 * over) kind = 'tight';
+  if (over >= 3 && under >= 3 && lo >= 0.2 && lo >= hi / 3) kind = 'mixed';
+  // A couple of stray mistakes the other way don't hide a clear lean.
+  else if (over >= 4 && (overRate >= 2 * underRate || under < 3)) kind = 'loose';
+  else if (under >= 4 && (underRate >= 2 * overRate || over < 3)) kind = 'tight';
   else if (over >= 3 && under >= 3) kind = 'mixed';
   else return null;
-  const seenOut = pr.history.filter(x => x.pct >= pr.pct).length;
-  const seenIn = pr.history.length - seenOut;
-  return {kind, over, under, seenOut, seenIn, overTags: tagsFor(pr, 'over'), underTags: tagsFor(pr, 'under')};
+  return {kind, over, under, seenOut, seenIn, overTags: tagsFor(pr, 'over'), underTags: tagsFor(pr, 'under'), labels: labelsFor(pr.cards)};
 }
 
-const tagList = xs => xs.map(x => `${TAG_LABELS[x.tag]} (${x.n} of ${x.of})`).join('; ');
+const tagList = (xs, labels) => xs.map(x => `${labels[x.tag]} (${x.n} of ${x.of})`).join('; ');
 
 /** {headline, details[]} for a diagnosis. */
 function diagnosisText(d, cut) {
   if (d.kind === 'loose') {
     return {
       headline: `You’re playing too many hands: you played ${d.over} of ${d.seenOut} hands outside your top ${cut}%.`,
-      details: [d.overTags.length ? `Most of the extra hands: ${tagList(d.overTags)}.` : 'The extra hands are spread across all kinds rather than one type, so tighten up overall.'],
+      details: [d.overTags.length ? `Most of the extra hands: ${tagList(d.overTags, d.labels)}.` : 'The extra hands are spread across all kinds rather than one type, so tighten up overall.'],
     };
   }
   if (d.kind === 'tight') {
     return {
       headline: `You’re folding hands you should play: you folded ${d.under} of ${d.seenIn} hands inside your top ${cut}%.`,
-      details: [d.underTags.length ? `Most often missed: ${tagList(d.underTags)}.` : 'The missed hands are spread across all kinds, so loosen up overall.'],
+      details: [d.underTags.length ? `Most often missed: ${tagList(d.underTags, d.labels)}.` : 'The missed hands are spread across all kinds, so loosen up overall.'],
     };
   }
-  const both = d.overTags.filter(o => d.underTags.some(u => u.tag === o.tag)).map(o => TAG_LABELS[o.tag]);
+  const both = d.overTags.filter(o => d.underTags.some(u => u.tag === o.tag)).map(o => d.labels[o.tag]);
   const details = [];
-  if (d.overTags.length) details.push(`Played when they’re outside the range: ${tagList(d.overTags)}.`);
-  if (d.underTags.length) details.push(`Folded when they’re inside the range: ${tagList(d.underTags)}.`);
+  if (d.overTags.length) details.push(`Played when they’re outside the range: ${tagList(d.overTags, d.labels)}.`);
+  if (d.underTags.length) details.push(`Folded when they’re inside the range: ${tagList(d.underTags, d.labels)}.`);
   if (both.length) details.push(`With ${both.join(' and ')}, you’re going both ways, so look at what separates the good ones from the bad ones.`);
   if (!details.length) details.push('The mix-ups aren’t concentrated in one kind of hand yet.');
   return {
@@ -368,12 +397,17 @@ function diagnosisText(d, cut) {
   };
 }
 
-// The kind of hand to deal more of while practising, if the record shows one.
-function focusTag(pr) {
+// The kind of hand to deal more of while practising, if the record shows one,
+// and the side of the cutoff its mistakes are on: overplayed kinds are tested
+// with hands outside the range, overfolded kinds with hands inside it.
+function focusFor(pr) {
   const d = diagnose(pr);
   if (!d) return null;
-  const pool = d.kind === 'loose' ? d.overTags : d.kind === 'tight' ? d.underTags : [...d.overTags, ...d.underTags].sort((a, b) => b.n - a.n);
-  return pool.length ? pool[0].tag : null;
+  const over = d.overTags.map(x => ({...x, side: 'out'})), under = d.underTags.map(x => ({...x, side: 'in'}));
+  // A mixed player gets both sides in turn, so neither crowds out the other.
+  const pool = d.kind === 'loose' ? over : d.kind === 'tight' ? under
+    : [over[0], under[0]].filter(Boolean).sort(() => Math.random() - 0.5);
+  return pool.length ? {tag: pool[0].tag, side: pool[0].side} : null;
 }
 
 function startPractice() {
@@ -391,9 +425,9 @@ function nextPractice() {
   const pr = st.practice;
   pr.feedback = null;
   const band = levelFor(pr.score).band;
-  const focus = focusTag(pr);
+  const focus = focusFor(pr);
   if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealProbe(pr.cards, pr.pct);
-  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus), focus};
+  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus.tag, focus.side), focus: focus.tag};
   else pr.current = dealInBand(pr.cards, pr.pct, band);
   render();
 }
@@ -412,13 +446,13 @@ function answerPractice(yes) {
   pr.total++;
   pr.best = Math.max(pr.best, pr.score);
   if (correct) { pr.correct++; pr.streak++; } else pr.streak = 0;
-  const tags = omahaTags(cards);
+  const tags = topTags(cards);
   for (const t of tags) {
     const s = pr.tagStats[t] ||= {seenIn: 0, seenOut: 0, over: 0, under: 0};
     if (inRange) s.seenIn++; else s.seenOut++;
     if (!correct) { if (yes) s.over++; else s.under++; }
   }
-  pr.history.push({cards, pct, answer: yes, correct, rel, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, tags, level: levelFor(before).name});
+  pr.history.push({cards, pct, answer: yes, correct, rel, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, focus: !!pr.current.focus, tags, level: levelFor(before).name});
   saveProgress(pr.key, {score: pr.score, best: pr.best, answered: pr.total});
   if (pr.score >= 100) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
@@ -443,8 +477,8 @@ function renderPractice() {
   const pr = st.practice, lvl = levelFor(pr.score);
   let h = '<div class="tr-wrap tr-play">';
   h += '<div class="tr-bar">';
-  h += `<div><div class="tr-preview-name">PLO${pr.cards} · top ${pr.pct}% · Practice</div>`;
-  h += `<div class="tr-preview-meta">Play the top ${pr.pct}% of ${pr.cards}-card hands</div></div>`;
+  h += `<div><div class="tr-preview-name">${gameName(pr.cards)} · top ${pr.pct}% · Practice</div>`;
+  h += `<div class="tr-preview-meta">Play the top ${pr.pct}% of ${handsName(pr.cards)}</div></div>`;
   h += `<div class="tr-progress"><span class="tr-level lvl-${lvl.name.toLowerCase()}">${lvl.name}</span><span>${pr.correct}/${pr.answered} correct</span></div>`;
   h += '<button class="link-btn" data-act="end-practice">End</button></div>';
 
@@ -461,7 +495,7 @@ function renderPractice() {
 
   if (pr.mastered) {
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached 100 on PLO${pr.cards} · top ${pr.pct}% after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
+    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}% after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
     h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
     h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
     h += '</div>';
@@ -471,7 +505,9 @@ function renderPractice() {
 
   const show = pr.feedback ? pr.feedback.cards : pr.current.cards;
   // Feedback re-shows the same hand, so only a fresh deal animates.
-  h += `<div class="tr-felt"><div class="tr-cards${show.length > 2 ? ' omaha' : ''}"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}>${show.map(cardHtml).join('')}</div></div>`;
+  // data-focus marks hands dealt to work on a diagnosed weak spot.
+  const focusAttr = !pr.feedback && pr.current.focus ? ` data-focus="${pr.current.focus}"` : '';
+  h += `<div class="tr-felt"><div class="tr-cards${show.length > 2 ? ' omaha' : ''}"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}${focusAttr}>${show.map(cardHtml).join('')}</div></div>`;
   if (pr.feedback) {
     const f = pr.feedback;
     const where = f.pct < pr.pct ? `inside your top ${pr.pct}%` : `outside your top ${pr.pct}%`;
@@ -497,7 +533,7 @@ function renderPracticeSummary() {
   const diag = diagnose(pr);
   let h = '<div class="tr-wrap">';
   h += `<div class="tr-head"><h1>Score ${pr.startScore} → ${pr.score}</h1>`;
-  h += `<p>PLO${pr.cards} · top ${pr.pct}% · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
+  h += `<p>${gameName(pr.cards)} · top ${pr.pct}% · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
   h += '<div class="tr-summary">';
   h += '<div class="tr-stats">';
   h += `<div class="tr-stat"><b>${pr.answered}</b><span>Hands this session</span></div>`;
@@ -515,14 +551,30 @@ function renderPracticeSummary() {
     h += '<span class="tr-none">Your mistakes don’t lean one way or share a pattern, so they look like close calls rather than a habit.</span>';
   }
   h += '</div>';
-  const list = misses.length
-    ? misses.map(x => `<div class="tr-ex${x.major ? ' major' : ''}"><span class="tr-hand">${handText(x.cards)}</span><span class="tr-pct">${x.major ? 'major · ' : ''}${pctLabel(x.pct)} · ${x.answer ? 'played' : 'folded'}</span></div>`).join('')
+  // Hold'em mistakes are about hand classes, so repeats of a class share a row.
+  const rows = [];
+  for (const x of misses) {
+    const cls = pr.cards === 2 ? handClass(x.cards[0], x.cards[1]) : null;
+    const same = cls && rows.find(r => r.cls === cls && r.answer === x.answer);
+    if (same) same.n++; else rows.push({...x, cls, n: 1});
+  }
+  const list = rows.length
+    ? rows.map(x => `<div class="tr-ex${x.major ? ' major' : ''}"><span class="tr-hand">${x.cls ? `<b class="tr-cls">${x.cls}</b>${x.n > 1 ? ` ×${x.n}` : ''}` : handText(x.cards)}</span><span class="tr-pct">${x.major ? 'major · ' : ''}${pctLabel(x.pct)} · ${x.answer ? 'played' : 'folded'}</span></div>`).join('')
     : '<span class="tr-none">None</span>';
   h += `<div class="tr-mistakes"><div class="tr-group">Mistakes, worst first</div>${list}</div>`;
+  if (pr.cards === 2) h += holdemMistakeGrid(pr.pct, misses);
   h += '<div class="tr-actions"><button class="tr-btn" data-act="setup">Change settings</button>';
   h += '<button class="tr-btn yes" data-act="practice">Practice again</button></div>';
   h += '</div></div>';
   root.innerHTML = h;
+}
+
+// The top X% on the 13x13 grid with wrongly played and wrongly folded classes marked.
+function holdemMistakeGrid(pct, misses) {
+  const marks = {};
+  for (const x of misses) marks[handClass(x.cards[0], x.cards[1])] = x.answer ? 'miss-in' : 'miss-out';
+  return '<div class="tr-preview">' + rangeGrid(holdemTopTarget(pct), marks) +
+    `<div class="tr-legend"><span class="tr-key value"></span>Top ${pct}% <span class="tr-key miss-in"></span>Wrongly played <span class="tr-key miss-out"></span>Wrongly folded</div></div>`;
 }
 
 function renderSetup() {
@@ -710,9 +762,10 @@ function renderOmahaSummary() {
   h += '<div class="tr-preview"><div class="tr-group">Your decisions by hand percentile</div>';
   h += `<div class="tr-strip"><span class="tr-cut" style="left:${t.pct}%"><em>top ${t.pct}%</em></span>${hands.map(dot).join('')}</div>`;
   h += '<div class="tr-strip-scale"><span>Best</span><span>Worst</span></div>';
-  h += '<div class="tr-legend"><span class="tr-key ok"></span>Correct <span class="tr-key miss-in"></span>Wrongly included <span class="tr-key miss-out"></span>Wrongly excluded</div></div>';
+  h += '<div class="tr-legend dots"><span class="tr-key ok"></span>Correct <span class="tr-key miss-in"></span>Wrongly included <span class="tr-key miss-out"></span>Wrongly excluded</div></div>';
   h += `<div class="tr-mistakes"><div class="tr-group">Wrongly included — you played a hand outside the top ${t.pct}%</div>${list(wrongIn)}</div>`;
   h += `<div class="tr-mistakes"><div class="tr-group">Wrongly excluded — you folded a hand in the top ${t.pct}%</div>${list(wrongOut)}</div>`;
+  if (t.cards === 2) h += holdemMistakeGrid(t.pct, [...wrongIn, ...wrongOut]);
   h += '<div class="tr-actions"><button class="tr-btn" data-act="setup">Change settings</button>';
   h += `<button class="tr-btn yes" data-act="start">Play again</button></div>`;
   h += '</div></div>';
@@ -777,7 +830,7 @@ function start() {
   let target;
   if (st.game === 'omaha') {
     const {cards, pct} = st.omaha;
-    target = {omaha: true, cards, pct, spot: 'omaha', name: `PLO${cards} · top ${pct}%`, context: `Play the top ${pct}% of ${cards}-card hands`};
+    target = {omaha: true, cards, pct, spot: 'omaha', name: `${gameName(cards)} · top ${pct}%`, context: `Play the top ${pct}% of ${handsName(cards)}`};
   } else {
     target = targetFor(st.choice);
   }
@@ -789,8 +842,8 @@ function start() {
 function next() {
   if (st.hands.length >= st.total) { st.screen = 'summary'; render(); return; }
   if (st.target.omaha) {
-    const cards = dealOmaha(st.target.cards);
-    st.current = {cards, pct: omahaPercentile(cards)};
+    const cards = dealTop(st.target.cards);
+    st.current = {cards, pct: topPercentile(cards)};
   } else {
     const cards = dealHand();
     st.current = {cards, cls: handClass(cards[0], cards[1])};

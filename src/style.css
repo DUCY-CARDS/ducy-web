@@ -217,8 +217,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-dot.ok, .tr-key.ok { background: var(--teal); }
 .tr-dot.miss-in { background: var(--red); }
 .tr-dot.miss-out { background: #c08a2e; }
-.tr-summary .tr-key.miss-out { background: #c08a2e; box-shadow: none; }
-.tr-summary .tr-key.miss-in { background: var(--red); box-shadow: none; }
+.tr-legend.dots .tr-key.miss-out { background: #c08a2e; box-shadow: none; }
+.tr-legend.dots .tr-key.miss-in { background: var(--red); box-shadow: none; }
 .tr-strip-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted); }
 
 /* Adaptive practice */
