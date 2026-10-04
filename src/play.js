@@ -1,0 +1,319 @@
+// Hidden page at #play: no-limit Hold'em against ducy's personality bots.
+// The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
+// table, paces the bots' actions, and sends the player's decisions.
+
+import init, { BotTable, botPersonalities } from '../wasm/ducy_wasm.js';
+
+const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
+const BOT_DELAY = 650; // ms between bot actions
+const SETUP_KEY = 'ducyPlaySetup';
+
+let root = null;
+let open = false;
+let personalities = [];
+let table = null;
+let state = null;
+let timer = null;
+let raiseTo = 0;
+let setup = loadSetup();
+
+function loadSetup() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
+    if (s && Array.isArray(s.bots)) return s;
+  } catch {}
+  return {count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+}
+
+function saveSetup() {
+  try { localStorage.setItem(SETUP_KEY, JSON.stringify(setup)); } catch {}
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
+
+function cardHtml(c) {
+  if (!c) return '<span class="pl-card back"></span>';
+  const red = c[1] === 'h' || c[1] === 'd';
+  return `<span class="pl-card s-${c[1]}${red ? ' r' : ''}">${c[0]}${SUITS[c[1]]}</span>`;
+}
+
+const nameOf = seat => (state ? state.seats[seat].name : '');
+
+// ---- setup ----
+
+// Fills empty or unknown bot picks with random personalities not already seated.
+function fillBots() {
+  const ids = personalities.map(p => p.id);
+  const bots = setup.bots.slice(0, setup.count).map(b => (ids.includes(b) ? b : null));
+  while (bots.length < setup.count) bots.push(null);
+  for (let i = 0; i < bots.length; i++) {
+    if (bots[i]) continue;
+    const free = ids.filter(id => !bots.includes(id));
+    bots[i] = (free.length ? free : ids)[Math.floor(Math.random() * (free.length || ids.length))];
+  }
+  setup.bots = bots;
+}
+
+function renderSetup() {
+  fillBots();
+  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Play the bots</h1>';
+  h += '<p>No-limit Hold’em against ducy’s bot personalities. Each one plays a different style, and some adapt to how you play.</p></div>';
+  h += '<div class="pl-setup">';
+  h += '<div class="pl-row"><span class="pl-label">Opponents</span><div class="pl-opts">';
+  for (let n = 1; n <= 8; n++) h += `<button class="cc-btn${setup.count === n ? ' on' : ''}" data-count="${n}">${n}</button>`;
+  h += '</div></div>';
+  h += '<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">';
+  for (const [sb, bb] of [[1, 2], [5, 10], [25, 50]]) h += `<button class="cc-btn${setup.bb === bb ? ' on' : ''}" data-blinds="${sb}/${bb}">${sb}/${bb}</button>`;
+  h += '</div></div>';
+  h += '<div class="pl-row"><span class="pl-label">Buy-in</span><div class="pl-opts">';
+  for (const bbs of [50, 100, 200]) h += `<button class="cc-btn${setup.buyIn === bbs * setup.bb ? ' on' : ''}" data-buyin="${bbs}">${bbs} BB</button>`;
+  h += '</div></div>';
+  h += '<div class="pl-bots">';
+  setup.bots.forEach((id, i) => {
+    const p = personalities.find(x => x.id === id);
+    h += `<label class="pl-bot"><span class="pl-seatno">Seat ${i + 2}</span><select data-bot="${i}">`;
+    for (const q of personalities) h += `<option value="${q.id}"${q.id === id ? ' selected' : ''}>${esc(q.name)}</option>`;
+    h += `</select><span class="pl-desc">${esc(p ? p.description : '')}</span></label>`;
+  });
+  h += '</div>';
+  h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
+  h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
+  h += '</div></div>';
+  root.innerHTML = h;
+}
+
+// ---- table ----
+
+function startTable() {
+  saveSetup();
+  table = new BotTable(setup.bots, BigInt(setup.buyIn), BigInt(setup.sb), BigInt(setup.bb), BigInt(Math.floor(Math.random() * 2 ** 32)));
+  nextHand();
+}
+
+function nextHand() {
+  state = table.newHand();
+  raiseTo = 0;
+  render();
+  pace();
+}
+
+// Lets bots act one at a time, with a pause, until it's the player's turn or
+// the hand is over.
+function pace() {
+  clearTimeout(timer);
+  if (!open || !table || !table.botToAct()) return;
+  timer = setTimeout(() => {
+    if (!open) return;
+    state = table.advance();
+    render();
+    pace();
+  }, BOT_DELAY);
+}
+
+function act(kind, amount = 0) {
+  try {
+    state = table.act(kind, BigInt(amount));
+  } catch (e) {
+    console.warn(e);
+    return;
+  }
+  raiseTo = 0;
+  render();
+  pace();
+}
+
+const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
+
+function seatPos(i, n) {
+  // The player (seat 0) sits at the bottom; the rest go clockwise around the oval.
+  const a = Math.PI / 2 + (i / n) * 2 * Math.PI;
+  return {x: 50 + 44 * Math.cos(a), y: 50 + 40 * Math.sin(a)};
+}
+
+function eventText(e) {
+  const who = e.seat != null ? nameOf(e.seat) : '';
+  // "You call" but "Rampart calls".
+  const v = (base, s = base + 's') => (e.seat === 0 ? base : s);
+  const allIn = e.all_in ? ' (all-in)' : '';
+  switch (e.type) {
+    case 'small_blind': return `${who} ${v('post')} the small blind ${num(e.amount)}`;
+    case 'big_blind': return `${who} ${v('post')} the big blind ${num(e.amount)}`;
+    case 'ante': return `${who} ${v('ante')} ${num(e.amount)}`;
+    case 'fold': return `${who} ${v('fold')}`;
+    case 'check': return `${who} ${v('check')}`;
+    case 'call': return `${who} ${v('call')} ${num(e.amount)}${allIn}`;
+    case 'bet': return `${who} ${v('bet')} ${num(e.to)}${allIn}`;
+    case 'raise': return `${who} ${v('raise', 'raises')} to ${num(e.to)}${allIn}`;
+    case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
+    case 'award': return `${who} ${v('win')} ${num(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
+    default: return '';
+  }
+}
+
+// The latest action by each seat on the current street, shown under its name.
+function lastActions() {
+  const out = {};
+  for (const e of state.events) {
+    if (e.type === 'board') { for (const k of Object.keys(out)) if (out[k] !== 'Fold') delete out[k]; continue; }
+    if (e.seat == null || e.type === 'award') continue;
+    const t = {small_blind: 'SB', big_blind: 'BB', ante: 'Ante', fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise'}[e.type];
+    if (t) out[e.seat] = t;
+  }
+  return out;
+}
+
+function renderTable() {
+  const s = state, n = s.seats.length;
+  const last = lastActions();
+  let h = '<div class="pl-wrap pl-play">';
+  h += '<div class="pl-bar">';
+  h += `<span class="pl-meta">Hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
+  h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
+  h += '<div class="pl-felt">';
+  h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
+  h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
+  s.seats.forEach((seat, i) => {
+    const p = seatPos(i, n);
+    const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
+    const shown = seat.cards || (seat.folded ? null : [null, null]);
+    h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
+    if (shown) h += `<div class="pl-hole">${shown.map(cardHtml).join('')}</div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
+    const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.all_in ? 'All-in' : last[i] || '');
+    if (note) h += `<div class="pl-note">${note}</div>`;
+    if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
+    if (s.button === i) h += '<div class="pl-button">D</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  h += controlsHtml();
+  const log = s.events.map(eventText).filter(Boolean);
+  h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
+  h += '</div>';
+  root.innerHTML = h;
+  const lg = root.querySelector('#pl-log');
+  if (lg) lg.scrollTop = lg.scrollHeight;
+}
+
+function controlsHtml() {
+  const s = state;
+  if (s.complete) {
+    const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
+    const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${num(w.won)}`).join(', ');
+    return `<div class="pl-controls done"><span class="pl-result">${text}${s.showdown ? '' : ' (no showdown)'}</span>` +
+      '<button class="tr-start" data-act="next">Next hand <kbd>Space</kbd></button></div>';
+  }
+  const L = s.legal;
+  if (!L) return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span></div>`;
+  const range = L.raise || L.bet;
+  const word = L.raise ? 'Raise to' : 'Bet';
+  let h = '<div class="pl-controls">';
+  if (L.can_fold) h += '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
+  if (L.can_check) h += '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
+  else if (L.call != null) h += `<button class="tr-btn" data-act="call">Call ${num(L.call)} <kbd>C</kbd></button>`;
+  if (range) {
+    const min = num(range.min_to), max = num(range.max_to);
+    if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = min;
+    h += '<div class="pl-raise">';
+    h += `<div class="pl-sizes">${sizeButtons(min, max)}</div>`;
+    h += `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
+    h += `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Pot-fraction sizes: the street total after calling and then adding that
+// fraction of the pot, clamped to the legal range.
+function sizeButtons(min, max) {
+  const s = state, me = s.seats[0];
+  const call = num(s.current_bet) - num(me.street_bet);
+  const potAfterCall = num(s.pot) + call;
+  const size = f => Math.max(min, Math.min(max, num(s.current_bet) + Math.round(potAfterCall * f)));
+  return [['½ pot', size(0.5)], ['¾ pot', size(0.75)], ['Pot', size(1)], ['All-in', max]]
+    .map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
+}
+
+function render() {
+  if (!open) return;
+  if (table && state) renderTable();
+  else renderSetup();
+}
+
+// ---- events ----
+
+function onClick(e) {
+  const el = e.target.closest('[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
+  if (!el) return;
+  if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
+  else if (el.dataset.blinds) {
+    const bbs = setup.buyIn / setup.bb;
+    [setup.sb, setup.bb] = el.dataset.blinds.split('/').map(Number);
+    setup.buyIn = bbs * setup.bb;
+    render();
+  }
+  else if (el.dataset.buyin) { setup.buyIn = +el.dataset.buyin * setup.bb; render(); }
+  else if (el.dataset.size) { raiseTo = +el.dataset.size; render(); }
+  else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
+  else if (el.dataset.act === 'sit') startTable();
+  else if (el.dataset.act === 'next') nextHand();
+  else if (el.dataset.act === 'leave') { clearTimeout(timer); table = null; state = null; render(); }
+  else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
+  else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
+    const max = num((state.legal.raise || state.legal.bet).max_to);
+    act(raiseTo >= max ? 'allin' : el.dataset.act, raiseTo);
+  }
+}
+
+function onInput(e) {
+  if (e.target.id === 'pl-amt') {
+    raiseTo = +e.target.value;
+    const v = root.querySelector('#pl-amtv');
+    if (v) v.textContent = raiseTo;
+  }
+}
+
+function onChange(e) {
+  if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
+}
+
+function onKey(e) {
+  if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
+  const L = state.legal;
+  if (!L) return;
+  if (k === 'f' && L.can_fold) act('fold');
+  else if (k === 'c') act(L.can_check ? 'check' : 'call');
+  else if (k === 'r' && (L.raise || L.bet)) root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
+}
+
+export async function openPlay(el) {
+  if (!root) {
+    root = el;
+    root.addEventListener('click', onClick);
+    root.addEventListener('input', onInput);
+    root.addEventListener('change', onChange);
+    document.addEventListener('keydown', onKey);
+  }
+  open = true;
+  if (!personalities.length) {
+    root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
+    await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
+    personalities = botPersonalities();
+  }
+  render();
+  pace();
+}
+
+export function closePlay() {
+  open = false;
+  clearTimeout(timer);
+}
+
+export function playOpen() {
+  return open;
+}

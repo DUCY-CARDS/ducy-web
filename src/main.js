@@ -3,6 +3,7 @@ import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
+import { openPlay, closePlay, playOpen } from './play.js';
 
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
@@ -1677,14 +1678,14 @@ function stateToHash() {
 }
 
 function syncHash() {
-  if (trainerOpen()) return;
+  if (trainerOpen() || playOpen()) return;
   const h = stateToHash();
   if (location.hash !== h) history.replaceState(null, '', h);
 }
 
 function loadFromHash() {
   const h = location.hash.slice(1);
-  if (h === 'trainer') return;
+  if (h === 'trainer' || h === 'play') return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1743,14 +1744,18 @@ function loadFromHash() {
   dirty();
 }
 
-// Modes: the equity calculator, or the range trainer at #trainer. The trainer
-// doesn't need the engine, so it's set up before the WASM load below.
+// Modes: the equity calculator, the range trainer at #trainer, or the hidden
+// bot table at #play (no tab links to it). The trainer doesn't need the
+// engine, so it's set up before the WASM load below; the bot table loads it.
 function setMode(mode) {
-  const trainer = mode === 'trainer';
+  const trainer = mode === 'trainer', play = mode === 'play';
   document.body.classList.toggle('mode-trainer', trainer);
+  document.body.classList.toggle('mode-play', play);
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
+  if (play) openPlay(document.getElementById('play'));
+  else closePlay();
 }
 
 document.querySelector('.mode-tabs').addEventListener('click', e => {
@@ -1763,11 +1768,13 @@ document.querySelector('.mode-tabs').addEventListener('click', e => {
 
 window.addEventListener('hashchange', () => {
   if (location.hash === '#trainer') { setMode('trainer'); return; }
+  if (location.hash === '#play') { setMode('play'); return; }
   setMode('equity');
   loadFromHash(); render(); updateGameUI();
 });
 
 if (location.hash === '#trainer') setMode('trainer');
+else if (location.hash === '#play') setMode('play');
 
 // Init
 const statusEl = document.getElementById('wasm-status');
