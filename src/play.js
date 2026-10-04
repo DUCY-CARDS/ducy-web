@@ -5,6 +5,8 @@
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
 // thinks.
 
+import { record, countsFor, rates, ratio, loadStats, saveStats } from './play-stats.js';
+
 let worker = null;
 let nextId = 0;
 const pending = new Map();
@@ -50,13 +52,19 @@ let timer = null;
 let raiseTo = 0;
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
+let allTime = loadStats(); // {game: {id: counts}}, kept in localStorage
+let sessionStats = {}; // the same, since sitting down
+let recorded = ''; // the last hand added to the stats, as "session:hand"
+let statsOpen = false;
+let statsSort = {key: 'hands', dir: -1};
+let confirmReset = false;
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'all', ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'all'};
 }
 
 function saveSetup() {
@@ -143,6 +151,7 @@ async function request(op, ...args) {
 function show(snap) {
   state = snap.state;
   botToAct = snap.botToAct;
+  recordHand();
   render();
   pace();
 }
@@ -152,6 +161,7 @@ async function startTable() {
   tableGame = gameOf(setup.game);
   seated = true;
   raiseTo = 0;
+  sessionStats = {};
   const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
@@ -182,6 +192,81 @@ async function act(kind, amount = 0) {
 }
 
 const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
+
+// ---- stats ----
+
+// Adds a finished hand to both scopes, once.
+function recordHand() {
+  const key = `${session}:${num(state.hand_number)}`;
+  if (!state.complete || recorded === key) return;
+  recorded = key;
+  record(sessionStats, tableGame.id, state);
+  record(allTime, tableGame.id, state);
+  saveStats(allTime);
+}
+
+const statsBook = () => (setup.statsScope === 'session' ? sessionStats : allTime);
+const pct = ([n, d]) => (d ? `${Math.round((100 * n) / d)}` : '–');
+const af = ([n, d]) => (d ? (n / d).toFixed(1) : n ? '∞' : '–');
+
+// VPIP / PFR / AF and hands, under a seat.
+function hudHtml(id) {
+  const r = rates(countsFor(statsBook(), tableGame.id, id));
+  return `<div class="pl-hud" title="VPIP / PFR / AF · hands">${pct(r.vpip)}/${pct(r.pfr)}/${af(r.af)} · ${r.hands}</div>`;
+}
+
+// Stats table columns: key, label, title, cell, sort value.
+const rate = ([n, d]) => `${d ? Math.round((100 * n) / d) + '%' : '–'} <em>${n}/${d}</em>`;
+const signed = (v, digits = 0) => (v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(digits)}`);
+const STAT_COLS = [
+  ['name', 'Player', '', r => esc(r.name), r => r.name.toLowerCase()],
+  ['hands', 'Hands', 'Hands dealt', r => r.hands, r => r.hands],
+  ['vpip', 'VPIP', 'Voluntarily put chips in preflop (blinds don’t count)', r => rate(r.vpip), r => ratio(...r.vpip)],
+  ['pfr', 'PFR', 'Raised preflop', r => rate(r.pfr), r => ratio(...r.pfr)],
+  ['threeBet', '3-bet', 'Re-raised a single preflop raise / times faced one', r => rate(r.threeBet), r => ratio(...r.threeBet)],
+  ['af', 'AF', 'Postflop bets and raises per call', r => `${af(r.af)} <em>${r.af[0]}/${r.af[1]}</em>`, r => (r.af[1] ? r.af[0] / r.af[1] : r.af[0] ? Infinity : null)],
+  ['afq', 'AFq', 'Postflop bets and raises / all postflop actions but checks', r => rate(r.afq), r => ratio(...r.afq)],
+  ['foldToBet', 'Fold to bet', 'Folded to a postflop bet or raise', r => rate(r.foldToBet), r => ratio(...r.foldToBet)],
+  ['wtsd', 'WTSD', 'Went to showdown / saw the flop', r => rate(r.wtsd), r => ratio(...r.wtsd)],
+  ['wsd', 'W$SD', 'Won chips at showdown / showdowns', r => rate(r.wsd), r => ratio(...r.wsd)],
+  ['net', 'Net', 'Chips won or lost', r => signed(r.net), r => r.net],
+  ['netBB', 'Net BB', 'Chips won or lost, in big blinds', r => signed(r.netBB, 1), r => r.netBB],
+  ['bb100', 'bb/100', 'Big blinds won per 100 hands', r => signed(r.bb100, 1), r => r.bb100],
+];
+
+// Everyone at the table, with their stats for this game in the chosen scope.
+function statsHtml() {
+  const scope = setup.statsScope;
+  const seen = new Set();
+  const rows = state.seats.filter(x => !seen.has(x.id) && seen.add(x.id))
+    .map(x => ({name: x.name, ...rates(countsFor(statsBook(), tableGame.id, x.id))}));
+  const col = STAT_COLS.find(c => c[0] === statsSort.key) || STAT_COLS[1];
+  // Sorted by the column, with no-sample rows last either way.
+  rows.sort((a, b) => {
+    const x = col[4](a), y = col[4](b);
+    if (x == null || y == null) return (x == null) - (y == null);
+    return (x < y ? -1 : x > y ? 1 : 0) * statsSort.dir;
+  });
+  let h = '<div class="pl-stats"><div class="pl-stats-head"><div class="pl-opts">';
+  for (const [id, label] of [['session', 'This session'], ['all', 'All time']]) h += `<button class="cc-btn${scope === id ? ' on' : ''}" data-scope="${id}">${label}</button>`;
+  h += `</div><span class="pl-meta">${tableGame.label} · raw rates with samples</span>`;
+  const what = `${scope === 'session' ? 'this session’s' : 'all-time'} ${tableGame.label} stats`;
+  h += `<button class="link-btn pl-reset${confirmReset ? ' confirm' : ''}" data-act="stats-reset">${confirmReset ? `Click again to reset ${what}` : `Reset ${what}`}</button></div>`;
+  h += '<div class="pl-stats-scroll"><table class="pl-stats-table"><thead><tr>';
+  for (const [key, label, title] of STAT_COLS) {
+    const on = statsSort.key === key ? (statsSort.dir > 0 ? ' ▲' : ' ▼') : '';
+    h += `<th data-sort="${key}"${title ? ` title="${esc(title)}"` : ''}${on ? ` aria-sort="${statsSort.dir > 0 ? 'ascending' : 'descending'}"` : ''}>${label}${on}</th>`;
+  }
+  h += '</tr></thead><tbody>';
+  for (const r of rows) h += `<tr>${STAT_COLS.map(c => `<td>${c[3](r)}</td>`).join('')}</tr>`;
+  return h + '</tbody></table></div></div>';
+}
+
+function resetStats() {
+  const book = statsBook();
+  delete book[tableGame.id];
+  if (book === allTime) saveStats(allTime);
+}
 
 function seatPos(i, n) {
   // The player (seat 0) sits at the bottom; the rest go clockwise around the oval.
@@ -227,7 +312,9 @@ function renderTable() {
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
   h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
-  h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
+  h += `<span class="pl-tools"><button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
+  h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
+  h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
@@ -238,6 +325,7 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
+    if (setup.hud) h += hudHtml(seat.id);
     const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
@@ -248,6 +336,7 @@ function renderTable() {
   h += controlsHtml();
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
+  if (statsOpen) h += statsHtml();
   h += '</div>';
   root.innerHTML = h;
   const lg = root.querySelector('#pl-log');
@@ -313,8 +402,9 @@ function render() {
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size],[data-scope],[data-sort]');
   if (!el) return;
+  if (el.dataset.act !== 'stats-reset' && confirmReset) { confirmReset = false; render(); }
   if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
   else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
   else if (el.dataset.blinds) {
@@ -328,6 +418,21 @@ function onClick(e) {
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
+  else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
+  else if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
+  else if (el.dataset.sort) {
+    const k = el.dataset.sort;
+    // A new column sorts high to low (names A to Z); the same one flips.
+    statsSort = statsSort.key === k ? {key: k, dir: -statsSort.dir} : {key: k, dir: k === 'name' ? 1 : -1};
+    render();
+  }
+  else if (el.dataset.act === 'stats-reset') {
+    // Two clicks: the first asks for confirmation.
+    if (confirmReset) resetStats();
+    confirmReset = !confirmReset;
+    render();
+  }
   else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {

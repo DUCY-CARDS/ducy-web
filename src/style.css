@@ -724,6 +724,8 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-desc { color: var(--fg-muted); min-width: 0; }
 .pl-actions { display: flex; gap: 10px; align-items: center; }
 .pl-bar { display: flex; justify-content: space-between; align-items: center; }
+.pl-tools { display: flex; align-items: center; gap: 6px; }
+.pl-tools .link-btn { margin-left: 4px; white-space: nowrap; }
 
 .pl-felt {
   position: relative; aspect-ratio: 2 / 1; max-width: 100%; margin: 28px 40px 40px;
@@ -773,7 +775,20 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-raise { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .pl-raise input { width: 180px; accent-color: var(--teal); }
 .pl-sizes { display: flex; gap: 4px; }
+.pl-hud { font-family: var(--font-data); font-size: 10px; color: #e9ecef; background: rgba(0,0,0,0.3); padding: 0 5px; border-radius: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pl-log { max-height: 140px; overflow-y: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); border-top: 1px solid var(--border); padding-top: 8px; }
+.pl-stats { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.pl-stats-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pl-stats-head .pl-reset { margin-left: auto; }
+.pl-reset.confirm { color: var(--red); }
+.pl-stats-scroll { overflow-x: auto; }
+.pl-stats-table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.pl-stats-table th { font-size: 11px; font-weight: 600; color: var(--fg-muted); text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+.pl-stats-table th:hover, .pl-stats-table th[aria-sort] { color: var(--fg-strong); }
+.pl-stats-table td { font-family: var(--font-data); text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; color: var(--fg); }
+.pl-stats-table :is(th, td):first-child { text-align: left; font-family: var(--font-ui); }
+.pl-stats-table td:first-child { color: var(--fg-strong); font-weight: 600; }
+.pl-stats-table td em { font-style: normal; font-size: 10px; color: var(--fg-muted); }
 
 @media (max-width: 640px) {
   .pl-felt { aspect-ratio: 3 / 4; margin: 24px 30px 34px; border-radius: 120px; }
