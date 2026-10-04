@@ -6,6 +6,7 @@
 import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile } from './omaha-rank.js';
+import { OMAHA_MODEL } from './omaha-rank-model.js';
 import { omahaTags, TAG_LABELS } from './omaha-tags.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
@@ -291,6 +292,10 @@ function practiceCard(cards, pct) {
   const cur = st.drill ? all[`${base}:${st.drill}`] : rec;
   let h = '<div class="tr-mode">';
   h += `<div class="tr-mode-row"><div><b>Practice</b><span>Adaptive: easy hands first, closer calls as your score rises.</span></div>${levelChip(cur)}</div>`;
+  if (cur && cur.resetBy === 'model' && !cur.answered) h += '<div class="tr-weak">The hand ranking was updated, so your progress here started over.</div>';
+  if (cur && (cur.score || cur.answered)) {
+    h += `<div class="tr-weak"><button class="link-btn tr-reset${st.confirmReset ? ' confirm' : ''}" data-act="reset-progress">${st.confirmReset ? 'Click again to reset this score to 0' : 'Reset score'}</button></div>`;
+  }
   h += '<div class="tr-group">Hands</div><div class="tr-drills">';
   h += `<button class="tr-drill${st.drill ? '' : ' on'}" data-drill="">All hands</button>`;
   for (const t of tags) {
@@ -316,7 +321,7 @@ function practiceCard(cards, pct) {
 function recordLifetime(pr, tags, correct) {
   try {
     const all = loadProgress();
-    const rec = all[pr.baseKey] ||= {score: 0, best: 0, answered: 0};
+    const rec = all[pr.baseKey] ||= newRecord(pr.baseKey);
     const kinds = rec.kinds ||= {};
     // seen/wrong are lifetime totals; recent is the latest answers as '1' (right) / '0' (wrong).
     for (const t of tags) {
@@ -384,19 +389,60 @@ function isObvious(p, cut) {
 
 const levelFor = score => [...LEVELS].reverse().find(l => score >= l.from);
 
+// Progress is only meaningful for the ranking it was earned on, so each record
+// carries a fingerprint of that ranking (Hold'em, or the Omaha model for its
+// card count). When the ranking changes, the record starts over from 0.
+function fingerprint(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+const modelVersions = {};
+function modelVersion(key) {
+  const cards = key.startsWith('holdem:') ? 2 : +key.split(':')[1];
+  return modelVersions[cards] ||= fingerprint(JSON.stringify(cards === 2 ? HOLDEM_PERCENTILE : OMAHA_MODEL[cards] || null));
+}
+
+/** A fresh record for `key`, stamped with the current ranking. */
+function newRecord(key, extra = {}) {
+  return {score: 0, best: 0, answered: 0, ...extra, model: modelVersion(key)};
+}
+
 function loadProgress() {
+  let all;
   try {
-    const p = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
-    return p && typeof p === 'object' ? p : {};
+    all = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+    if (!all || typeof all !== 'object') return {};
   } catch {
     return {};
   }
+  // Records from an older ranking start over, keeping only the session log.
+  let changed = false;
+  for (const [key, rec] of Object.entries(all)) {
+    if (rec && rec.model !== modelVersion(key)) {
+      all[key] = newRecord(key, {sessions: rec.sessions, resetBy: 'model'});
+      changed = true;
+    }
+  }
+  if (changed) {
+    try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(all)); } catch {}
+  }
+  return all;
 }
 
 function saveProgress(key, rec) {
   try {
     const all = loadProgress();
-    all[key] = rec;
+    all[key] = {...rec, model: modelVersion(key)};
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+/** Starts a target (or one drill of it) over from 0, keeping its session log. */
+function resetProgress(key) {
+  try {
+    const all = loadProgress();
+    all[key] = newRecord(key, {sessions: all[key] && all[key].sessions});
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
   } catch {}
 }
@@ -609,7 +655,8 @@ function answerPractice(yes) {
   const prev = loadProgress()[pr.key] || {};
   saveProgress(pr.key, {...prev, score: pr.score, best: pr.best, answered: pr.total});
   recordLifetime(pr, tags, correct);
-  if (pr.score >= 100) { pr.mastered = true; render(); return; }
+  // Mastery is announced once per session; after that, practice carries on.
+  if (pr.score >= 100 && !pr.masteredShown) { pr.mastered = pr.masteredShown = true; render(); return; }
   if (correct) nextPractice();
   else {
     // Mention the trend only with a long record behind it, when this mistake
@@ -650,8 +697,9 @@ function renderPractice() {
 
   if (pr.mastered) {
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. Try a tighter or looser target, or keep practicing to stay sharp.</p>`;
+    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. Try a tighter or looser target, keep practicing to stay sharp, or start over from 0 and work back up.</p>`;
     h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
+    h += '<button class="tr-btn" data-act="restart-practice">Start over from 0</button>';
     h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
     h += '</div>';
     root.innerHTML = h;
@@ -1067,6 +1115,7 @@ function answer(yes) {
 function onClick(e) {
   const el = e.target.closest('[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
   if (!el) return;
+  if (el.dataset.act !== 'reset-progress') st.confirmReset = false;
   if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
   else if (el.dataset.drillStart) { st.drill = el.dataset.drillStart; startPractice(); }
   else if (el.dataset.tgame) { st.game = el.dataset.tgame; st.edit = null; render(); }
@@ -1084,6 +1133,15 @@ function onClick(e) {
   else if (el.dataset.act === 'practice') startPractice();
   else if (el.dataset.act === 'continue-practice') nextPractice();
   else if (el.dataset.act === 'keep-practicing') { st.practice.mastered = false; nextPractice(); }
+  else if (el.dataset.act === 'restart-practice') { resetProgress(st.practice.key); startPractice(); }
+  else if (el.dataset.act === 'reset-progress') {
+    // Two clicks: the first asks for confirmation.
+    if (!st.confirmReset) { st.confirmReset = true; render(); return; }
+    st.confirmReset = false;
+    const base = practiceKey(st.omaha.cards, st.omaha.pct);
+    resetProgress(st.drill ? `${base}:${st.drill}` : base);
+    render();
+  }
   else if (el.dataset.act === 'end-practice') { st.screen = 'practice-summary'; render(); }
   else if (el.dataset.act === 'new') { startEdit(null); render(); root.querySelector('#tr-ename').focus(); }
   else if (el.dataset.act === 'customize') { startEdit(st.choice); render(); }
