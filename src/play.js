@@ -272,7 +272,8 @@ function controlsHtml() {
   else if (L.call != null) h += `<button class="tr-btn" data-act="call">Call ${num(L.call)} <kbd>C</kbd></button>`;
   if (range) {
     const min = num(range.min_to), max = num(range.max_to);
-    if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = min;
+    // Pot-limit defaults to the pot, no-limit to the minimum.
+    if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
     h += '<div class="pl-raise">';
     h += `<div class="pl-sizes">${sizeButtons(min, max)}</div>`;
     h += `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
@@ -285,16 +286,19 @@ function controlsHtml() {
 
 // Pot-fraction sizes: the street total after calling and then adding that
 // fraction of the pot, clamped to the legal range.
+function potSize(f, min, max) {
+  const s = state, call = num(s.current_bet) - num(s.seats[0].street_bet);
+  return Math.max(min, Math.min(max, num(s.current_bet) + Math.round((num(s.pot) + call) * f)));
+}
+
+// The Pot button's amount (the P key). In pot-limit the largest bet is the
+// pot (the engine's max_to), and it's all-in when the stack can't cover it.
+const potTo = (min, max) => (tableGame.pl ? max : potSize(1, min, max));
+
 function sizeButtons(min, max) {
-  const s = state, me = s.seats[0];
-  const call = num(s.current_bet) - num(me.street_bet);
-  const potAfterCall = num(s.pot) + call;
-  const size = f => Math.max(min, Math.min(max, num(s.current_bet) + Math.round(potAfterCall * f)));
-  // In pot-limit the largest bet is the pot (the engine's max_to), so Pot is
-  // the last button, and it's all-in when the stack can't cover a full pot.
-  const sizes = [['½ pot', size(0.5)], ['¾ pot', size(0.75)]];
-  if (tableGame.pl) sizes.push([max >= allInTo() ? 'All-in' : 'Pot', max]);
-  else sizes.push(['Pot', size(1)], ['All-in', max]);
+  const pot = `${tableGame.pl && max >= allInTo() ? 'All-in' : 'Pot'} <kbd>P</kbd>`;
+  const sizes = [['½ pot', potSize(0.5, min, max)], ['¾ pot', potSize(0.75, min, max)], [pot, potTo(min, max)]];
+  if (!tableGame.pl) sizes.push(['All-in', max]);
   return sizes.map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
 }
 
@@ -353,12 +357,18 @@ function onKey(e) {
   if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
+  // The rest are only for the player's turn.
   const L = state.legal;
   if (!L) return;
+  const range = L.raise || L.bet;
   if (k === 'f' && L.can_fold) act('fold');
   else if (k === 'c') act(L.can_check ? 'check' : 'call');
-  else if (k === 'r' && (L.raise || L.bet)) root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
+  else if (k === 'r' && range) clickBet();
+  else if (k === 'p' && range) { raiseTo = potTo(num(range.min_to), num(range.max_to)); clickBet(); }
 }
+
+// Bets or raises raiseTo through the Bet/Raise button, so all-in is decided there.
+const clickBet = () => root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
 
 export async function openPlay(el) {
   if (!root) {

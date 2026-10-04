@@ -144,7 +144,7 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-start, .tr-btn.yes { background: var(--teal); border-color: var(--teal); color: #fff; }
 .tr-start:hover, .tr-btn.yes:hover { background: var(--teal-hover); border-color: var(--teal-hover); }
 .tr-btn:hover { border-color: var(--fg-muted); }
-.tr-btn kbd {
+.tr-btn kbd, .pl-sizes kbd {
   font-family: var(--font-data); font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px;
   border: 1px solid currentColor; opacity: 0.6;
 }
