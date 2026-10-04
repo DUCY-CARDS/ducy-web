@@ -746,6 +746,11 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-hole { display: flex; gap: 3px; }
 .pl-hole .pl-card { width: 32px; height: 45px; font-size: 13px; }
 .pl-seat.hero .pl-hole .pl-card { width: 40px; height: 56px; font-size: 16px; }
+/* Omaha: bots' 4-6 cards overlap like a fanned hand; yours stay side by side. */
+.pl-seat:not(.hero) .pl-hole.n4 .pl-card + .pl-card { margin-left: -12px; }
+.pl-seat:not(.hero) .pl-hole.n5 .pl-card + .pl-card { margin-left: -16px; }
+.pl-seat:not(.hero) .pl-hole.n6 .pl-card + .pl-card { margin-left: -19px; }
+.pl-seat.hero .pl-hole.n5 .pl-card, .pl-seat.hero .pl-hole.n6 .pl-card { width: 36px; height: 50px; font-size: 15px; }
 .pl-plate {
   display: flex; flex-direction: column; align-items: center; background: var(--bg-raised); border: 1px solid var(--border);
   border-radius: 6px; padding: 3px 8px; min-width: 96px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
@@ -779,6 +784,11 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
   .pl-board { gap: 4px; }
   .pl-seat.hero .pl-hole .pl-card { width: 36px; height: 50px; font-size: 15px; }
   .pl-hole .pl-card { width: 26px; height: 37px; font-size: 11px; }
+  .pl-seat:not(.hero) .pl-hole.n4 .pl-card + .pl-card { margin-left: -10px; }
+  .pl-seat:not(.hero) .pl-hole.n5 .pl-card + .pl-card { margin-left: -13px; }
+  .pl-seat:not(.hero) .pl-hole.n6 .pl-card + .pl-card { margin-left: -15px; }
+  .pl-seat.hero .pl-hole.n5 .pl-card, .pl-seat.hero .pl-hole.n6 .pl-card { width: 30px; height: 42px; font-size: 13px; }
+  .pl-seat.hero .pl-hole.n6 .pl-card + .pl-card { margin-left: -5px; }
   .pl-bot { grid-template-columns: 48px minmax(0, 1fr); }
   .pl-bot .pl-desc { grid-column: 2; }
 }

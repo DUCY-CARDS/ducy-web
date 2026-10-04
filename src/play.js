@@ -1,28 +1,62 @@
-// Hidden page at #play: no-limit Hold'em against ducy's personality bots.
+// Hidden page at #play: no-limit Hold'em or pot-limit Omaha (4, 5 or 6 cards)
+// against ducy's personality bots.
 // The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
-// table, paces the bots' actions, and sends the player's decisions.
+// table, paces the bots' actions, and sends the player's decisions. The table
+// runs in a worker (play-worker.js) so the page stays responsive while a bot
+// thinks.
 
-import init, { BotTable, botPersonalities } from '../wasm/ducy_wasm.js';
+let worker = null;
+let nextId = 0;
+const pending = new Map();
+
+function call(op, ...args) {
+  if (!worker) {
+    worker = new Worker(new URL('./play-worker.js', import.meta.url), {type: 'module'});
+    worker.onmessage = e => {
+      const p = pending.get(e.data.id);
+      if (!p) return;
+      pending.delete(e.data.id);
+      if ('error' in e.data) p.reject(new Error(e.data.error)); else p.resolve(e.data.result);
+    };
+  }
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    pending.set(id, {resolve, reject});
+    worker.postMessage({id, op, args});
+  });
+}
 
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
 const SETUP_KEY = 'ducyPlaySetup';
+// Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
+const GAMES = [
+  {id: 'nlhe', label: 'Hold’em', name: 'No-limit Hold’em', cards: 2, pl: false},
+  {id: 'plo4', label: 'PLO4', name: 'Pot-limit Omaha', cards: 4, pl: true},
+  {id: 'plo5', label: 'PLO5', name: 'Pot-limit Omaha 5', cards: 5, pl: true},
+  {id: 'plo6', label: 'PLO6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
+];
+const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 
 let root = null;
 let open = false;
 let personalities = [];
-let table = null;
+let seated = false; // a table is in play
+let botToAct = false;
+let busy = false; // a request to the table is in flight
+let session = 0; // bumped on leaving, so late replies are ignored
 let state = null;
 let timer = null;
 let raiseTo = 0;
+let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return s;
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', ...s};
   } catch {}
-  return {count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
 }
 
 function saveSetup() {
@@ -59,8 +93,11 @@ function fillBots() {
 function renderSetup() {
   fillBots();
   let h = '<div class="pl-wrap"><div class="pl-head"><h1>Play the bots</h1>';
-  h += '<p>No-limit Hold’em against ducy’s bot personalities. Each one plays a different style, and some adapt to how you play.</p></div>';
+  h += '<p>No-limit Hold’em or pot-limit Omaha against ducy’s bot personalities. Each one plays a different style, and some adapt to how you play.</p></div>';
   h += '<div class="pl-setup">';
+  h += '<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">';
+  for (const g of GAMES) h += `<button class="cc-btn${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}">${g.label}</button>`;
+  h += '</div></div>';
   h += '<div class="pl-row"><span class="pl-label">Opponents</span><div class="pl-opts">';
   for (let n = 1; n <= 8; n++) h += `<button class="cc-btn${setup.count === n ? ' on' : ''}" data-count="${n}">${n}</button>`;
   h += '</div></div>';
@@ -86,42 +123,62 @@ function renderSetup() {
 
 // ---- table ----
 
-function startTable() {
-  saveSetup();
-  table = new BotTable(setup.bots, BigInt(setup.buyIn), BigInt(setup.sb), BigInt(setup.bb), BigInt(Math.floor(Math.random() * 2 ** 32)));
-  nextHand();
-}
-
-function nextHand() {
-  state = table.newHand();
-  raiseTo = 0;
-  render();
-  pace();
-}
-
-// Lets bots act one at a time, with a pause, until it's the player's turn or
-// the hand is over.
-function pace() {
-  clearTimeout(timer);
-  if (!open || !table || !table.botToAct()) return;
-  timer = setTimeout(() => {
-    if (!open) return;
-    state = table.advance();
-    render();
-    pace();
-  }, BOT_DELAY);
-}
-
-function act(kind, amount = 0) {
+// Sends one request to the table and returns its {state, botToAct}, or null
+// if it failed or the player left the table meanwhile.
+async function request(op, ...args) {
+  if (busy) return null;
+  busy = true;
+  const mine = session;
   try {
-    state = table.act(kind, BigInt(amount));
+    const snap = await call(op, ...args);
+    return mine === session ? snap : null;
   } catch (e) {
     console.warn(e);
-    return;
+    return null;
+  } finally {
+    busy = false;
   }
-  raiseTo = 0;
+}
+
+function show(snap) {
+  state = snap.state;
+  botToAct = snap.botToAct;
   render();
   pace();
+}
+
+async function startTable() {
+  saveSetup();
+  tableGame = gameOf(setup.game);
+  seated = true;
+  raiseTo = 0;
+  const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
+  if (snap) show(snap);
+}
+
+async function nextHand() {
+  raiseTo = 0;
+  const snap = await request('newHand');
+  if (snap) show(snap);
+}
+
+// Lets bots act one at a time until it's the player's turn or the hand is
+// over. The bot starts thinking right away; its action is shown once at least
+// BOT_DELAY has passed, so fast decisions still read one at a time.
+async function pace() {
+  clearTimeout(timer);
+  if (!open || !seated || !botToAct || busy) return;
+  const started = performance.now();
+  const snap = await request('advance');
+  if (!snap || !open) return;
+  timer = setTimeout(() => show(snap), Math.max(0, BOT_DELAY - (performance.now() - started)));
+}
+
+async function act(kind, amount = 0) {
+  const snap = await request('act', kind, amount);
+  if (!snap) return;
+  raiseTo = 0;
+  show(snap);
 }
 
 const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
@@ -169,7 +226,7 @@ function renderTable() {
   const last = lastActions();
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  h += `<span class="pl-meta">Hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
+  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
   h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
@@ -177,9 +234,9 @@ function renderTable() {
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
-    const shown = seat.cards || (seat.folded ? null : [null, null]);
+    const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
-    if (shown) h += `<div class="pl-hole">${shown.map(cardHtml).join('')}</div>`;
+    if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
     const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
@@ -233,22 +290,24 @@ function sizeButtons(min, max) {
   const call = num(s.current_bet) - num(me.street_bet);
   const potAfterCall = num(s.pot) + call;
   const size = f => Math.max(min, Math.min(max, num(s.current_bet) + Math.round(potAfterCall * f)));
-  return [['½ pot', size(0.5)], ['¾ pot', size(0.75)], ['Pot', size(1)], ['All-in', max]]
+  // In pot-limit the largest raise is the pot, so the last button is "Max".
+  return [['½ pot', size(0.5)], ['¾ pot', size(0.75)], ['Pot', size(1)], [tableGame.pl ? 'Max' : 'All-in', max]]
     .map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
 }
 
 function render() {
   if (!open) return;
-  if (table && state) renderTable();
+  if (seated && state) renderTable();
   else renderSetup();
 }
 
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
   if (!el) return;
-  if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
+  if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
+  else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
   else if (el.dataset.blinds) {
     const bbs = setup.buyIn / setup.bb;
     [setup.sb, setup.bb] = el.dataset.blinds.split('/').map(Number);
@@ -260,7 +319,7 @@ function onClick(e) {
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
-  else if (el.dataset.act === 'leave') { clearTimeout(timer); table = null; state = null; render(); }
+  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     const max = num((state.legal.raise || state.legal.bet).max_to);
@@ -302,8 +361,7 @@ export async function openPlay(el) {
   open = true;
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
-    await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
-    personalities = botPersonalities();
+    personalities = await call('personalities');
   }
   render();
   pace();
