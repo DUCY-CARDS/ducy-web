@@ -4,6 +4,11 @@
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
 // thinks.
+// With friends (play-net.js), the host's tab runs the table (MultiTable) and
+// relays each player their own view; a guest's tab only draws the views it
+// receives and sends its actions to the host.
+
+import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
 
 let worker = null;
 let nextId = 0;
@@ -51,13 +56,27 @@ let raiseTo = 0;
 let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
+// Multiplayer: 'solo' against bots, 'host' running a table for friends, or
+// 'guest' at someone else's table.
+let mode = 'solo';
+let net = null; // relay connection
+let room = ''; // table code
+let netNote = ''; // connection status, e.g. "Reconnecting…"
+let shownSeq = -1; // state number on screen, so late results are dropped
+let hostChain = Promise.resolve(); // host calls to the worker, in order
+let hostTimer = null; // turn clock for the host
+let clockTimer = null;
+let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
+let openSeats = 0;
+let lastView = null; // a guest's last view from the host
+let joinCode = linkedCode();
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', name: '', open: 1, turnSecs: 30, ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, name: '', open: 1, turnSecs: 30};
 }
 
 function saveSetup() {
@@ -118,8 +137,31 @@ function renderSetup() {
   h += '</div>';
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
-  h += '</div></div>';
+  h += '</div>';
+  if (relayUrl()) h += multiSetupHtml();
+  h += '</div>';
   root.innerHTML = h;
+}
+
+// Hosting uses the game, blinds and opponents above; open seats are bot
+// seats friends can take (the bot plays them until someone joins).
+function multiSetupHtml() {
+  let h = '<div class="pl-setup pl-multi"><h2>Play with friends</h2>';
+  h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
+  h += '<div class="pl-row"><span class="pl-label">Open seats</span><div class="pl-opts">';
+  for (let n = 1; n <= setup.count; n++) h += `<button class="cc-btn${Math.min(setup.open, setup.count) === n ? ' on' : ''}" data-open="${n}">${n}</button>`;
+  h += '</div></div>';
+  h += '<div class="pl-row"><span class="pl-label">Turn time</span><div class="pl-opts">';
+  for (const t of [15, 30, 60, 0]) h += `<button class="cc-btn${setup.turnSecs === t ? ' on' : ''}" data-turn="${t}">${t ? t + 's' : 'None'}</button>`;
+  h += '</div></div>';
+  h += '<p class="pl-desc">Bots play the open seats until friends join, and take them back when they leave.</p>';
+  h += '<div class="pl-actions"><button class="tr-start" data-act="host">Host a table</button></div>';
+  h += '<div class="pl-row"><span class="pl-label">Join</span><div class="pl-opts">';
+  h += `<input class="pl-text" id="pl-code" maxlength="9" placeholder="Table code" value="${esc(joinCode)}">`;
+  h += '<button class="tr-btn" data-act="join">Join table</button></div></div>';
+  if (netNote) h += `<p class="pl-desc pl-neterr">${esc(netNote)}</p>`;
+  h += '</div>';
+  return h;
 }
 
 // ---- table ----
@@ -131,7 +173,7 @@ async function request(op, ...args) {
   busy = true;
   const mine = session;
   try {
-    const snap = await call(op, ...args);
+    const snap = await (mode === 'host' ? hostCall('host' + op[0].toUpperCase() + op.slice(1), ...args) : call(op, ...args));
     return mine === session ? snap : null;
   } catch (e) {
     console.warn(e);
@@ -142,6 +184,12 @@ async function request(op, ...args) {
 }
 
 function show(snap) {
+  if (snap.seq != null) {
+    // A newer state is already on screen (results can arrive out of order).
+    if (snap.seq < shownSeq) { pace(); return; }
+    shownSeq = snap.seq;
+    turnEnds = snap.turnMsLeft != null ? Date.now() + num(snap.turnMsLeft) : 0;
+  }
   state = snap.state;
   botToAct = snap.botToAct;
   if (state.complete || state.seats[0].folded) foldQueued = false;
@@ -170,6 +218,7 @@ function togglePrefold() {
 async function startTable() {
   saveSetup();
   tableGame = gameOf(setup.game);
+  mode = 'solo';
   seated = true;
   raiseTo = 0;
   foldQueued = false;
@@ -178,6 +227,7 @@ async function startTable() {
 }
 
 async function nextHand() {
+  if (mode === 'guest') return; // the host deals
   raiseTo = 0;
   foldQueued = false;
   const snap = await request('newHand');
@@ -198,11 +248,154 @@ async function pace() {
 
 // Resolves to whether the table took the action.
 async function act(kind, amount = 0) {
+  if (mode === 'guest') return guestAct(kind, amount);
   const snap = await request('act', kind, amount);
   if (!snap) return false;
   raiseTo = 0;
   show(snap);
   return true;
+}
+
+// ---- multiplayer ----
+
+// Calls the host's MultiTable in order, and relays the messages it returns.
+function hostCall(op, ...args) {
+  const p = hostChain.then(() => call(op, ...args)).then(r => {
+    for (const m of r.out) net?.send({to: m.to, data: m.data});
+    openSeats = r.openSeats;
+    return r;
+  });
+  hostChain = p.catch(() => {});
+  return p;
+}
+
+// A host call that isn't the player's own request (a message, the clock).
+function hostEvent(op, ...args) {
+  const mine = session;
+  hostCall(op, ...args).then(r => {
+    if (mine === session && mode === 'host' && r.seq !== shownSeq) show(r);
+  }, e => console.warn(e));
+}
+
+function hostTable() {
+  readNameInput();
+  saveSetup();
+  tableGame = gameOf(setup.game);
+  mode = 'host';
+  room = newCode();
+  netNote = '';
+  shownSeq = -1;
+  seated = true;
+  state = null;
+  raiseTo = 0;
+  foldQueued = false;
+  const mine = session;
+  net = connect(room, 'host', null, {
+    onOpen() {},
+    onMessage(m) {
+      if (mine !== session) return;
+      if (m.event === 'close') hostEvent('hostDisconnected', m.from);
+      else if (m.data) hostEvent('hostHandle', m.from, m.data);
+    },
+    onStatus(t) { netNote = t; render(); },
+    onFail(t) { leaveTable(t); },
+  });
+  const open = setup.bots.map((_, i) => i < Math.min(setup.open, setup.count));
+  request('create', setup.bots, open, setup.name, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game, setup.turnSecs * 1000)
+    .then(snap => { if (snap) show(snap); });
+  hostTimer = setInterval(() => { if (turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
+  startClock();
+}
+
+function joinTable() {
+  readNameInput();
+  const code = normCode(root.querySelector('#pl-code')?.value || joinCode);
+  if (!code) { netNote = 'Enter the 8-character table code.'; render(); return; }
+  saveSetup();
+  joinCode = code;
+  mode = 'guest';
+  room = code;
+  netNote = 'Connecting…';
+  shownSeq = -1;
+  seated = true;
+  state = null;
+  lastView = null;
+  raiseTo = 0;
+  foldQueued = false;
+  const mine = session;
+  net = connect(code, 'guest', clientId(), {
+    onOpen() { net.send({type: 'join', name: setup.name}); },
+    onMessage(m) { if (mine === session) guestMessage(m); },
+    onStatus(t) { netNote = t; render(); },
+    onFail(t) { leaveTable(t); },
+  });
+  render();
+  startClock();
+}
+
+function guestMessage(m) {
+  if (m.type === 'state') {
+    lastView = m.view;
+    tableGame = GAMES.find(g => g.cards === num(m.view.hole_cards) && g.pl === m.view.pot_limit) || GAMES[0];
+    netNote = '';
+    show({seq: num(m.seq), state: m.view, botToAct: false, turnMsLeft: m.turn_ms_left});
+  } else if (m.type === 'rejected') {
+    if (m.reason === 'the table is full') { leaveTable('That table is full.'); return; }
+    // Our action didn't count (e.g. the turn moved on): back to the last view.
+    if (lastView) { state = lastView; render(); }
+  } else if (m.type === 'host_gone') {
+    netNote = 'The host is reconnecting…';
+    render();
+  }
+}
+
+// Sends the action to the host; the next view shows the result.
+function guestAct(kind, amount) {
+  if (!state?.legal) return false;
+  net?.send({type: 'act', seq: shownSeq, kind, amount});
+  raiseTo = 0;
+  state = {...state, legal: null};
+  render();
+  return true;
+}
+
+function readNameInput() {
+  const el = root.querySelector('#pl-name');
+  if (el) setup.name = el.value.trim().slice(0, 20);
+}
+
+// Ticks the turn clocks on screen.
+function startClock() {
+  clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    for (const el of root.querySelectorAll('[data-clock]')) el.textContent = clockText();
+  }, 250);
+}
+
+function clockText() {
+  return turnEnds ? Math.max(0, Math.ceil((turnEnds - Date.now()) / 1000)) + 's' : '';
+}
+
+function leaveTable(note = '') {
+  clearTimeout(timer);
+  clearInterval(hostTimer);
+  clearInterval(clockTimer);
+  if (mode === 'guest') net?.send({type: 'leave'});
+  net?.close();
+  net = null;
+  session++;
+  mode = 'solo';
+  seated = false;
+  state = null;
+  foldQueued = false;
+  turnEnds = 0;
+  netNote = note;
+  render();
+}
+
+async function copyLink() {
+  try { await navigator.clipboard.writeText(joinLink(room)); netNote = 'Link copied'; } catch { netNote = joinLink(room); }
+  render();
 }
 
 const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
@@ -250,7 +443,8 @@ function renderTable() {
   const last = lastActions();
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
+  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${num(s.small_blind ?? setup.sb)}/${num(s.big_blind ?? setup.bb)}</span>`;
+  if (mode !== 'solo') h += netBarHtml();
   h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
@@ -262,8 +456,9 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
-    const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.all_in ? 'All-in' : last[i] || '');
+    const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
+    if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
@@ -283,8 +478,12 @@ function controlsHtml() {
   if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${num(w.won)}`).join(', ');
-    return `<div class="pl-controls done"><span class="pl-result">${text}${s.showdown ? '' : ' (no showdown)'}</span>` +
-      '<button class="tr-start" data-act="next">Next hand <kbd>Space</kbd></button></div>';
+    // Before the first hand of a hosted table there's no result yet.
+    const result = num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players';
+    if (mode === 'guest') return `<div class="pl-controls done"><span class="pl-result">${result}</span><span class="pl-meta">The host deals the next hand</span></div>`;
+    const label = num(s.hand_number) ? 'Next hand' : 'Deal';
+    return `<div class="pl-controls done"><span class="pl-result">${result}</span>` +
+      `<button class="tr-start" data-act="next">${label} <kbd>Space</kbd></button></div>`;
   }
   const L = s.legal;
   if (foldQueued) {
@@ -337,16 +536,25 @@ function allInTo() {
   return num(me.street_bet) + num(me.stack);
 }
 
+function netBarHtml() {
+  let h = `<span class="pl-meta">Table <b>${esc(room)}</b>`;
+  if (mode === 'host') h += ` · ${openSeats} open seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
+  else h += '</span>';
+  if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
+  return h;
+}
+
 function render() {
   if (!open) return;
   if (seated && state) renderTable();
+  else if (seated) root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">${esc(netNote || 'Connecting…')}</p><button class="link-btn" data-act="leave">Cancel</button></div>`;
   else renderSetup();
 }
 
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-open],[data-turn],[data-act],[data-size]');
   if (!el) return;
   if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
   else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
@@ -357,11 +565,16 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.buyin) { setup.buyIn = +el.dataset.buyin * setup.bb; render(); }
+  else if (el.dataset.open) { readNameInput(); setup.open = +el.dataset.open; render(); }
+  else if (el.dataset.turn) { readNameInput(); setup.turnSecs = +el.dataset.turn; render(); }
   else if (el.dataset.size) { raiseTo = +el.dataset.size; render(); }
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
-  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; foldQueued = false; render(); }
+  else if (el.dataset.act === 'leave') leaveTable();
+  else if (el.dataset.act === 'host') hostTable();
+  else if (el.dataset.act === 'join') joinTable();
+  else if (el.dataset.act === 'copy') copyLink();
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {

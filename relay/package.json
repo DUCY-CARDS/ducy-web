@@ -1,0 +1,12 @@
+{
+  "name": "ducy-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}

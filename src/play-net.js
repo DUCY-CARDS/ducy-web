@@ -1,0 +1,88 @@
+// Multiplayer plumbing for #play: a WebSocket to the relay (relay/), which
+// forwards messages between the host's tab and each player's tab in a room.
+// The relay knows nothing about poker; the host's tab runs the table.
+//   host  → relay: {to, data}           relay → host:  {from, data} | {from, event: 'open' | 'close'}
+//   guest → relay: data                  relay → guest: data | {type: 'host_gone'}
+
+const RELAY_KEY = 'ducyRelay';
+const CLIENT_KEY = 'ducyPlayClient';
+// The deployed relay, e.g. 'wss://ducy-relay.<account>.workers.dev'. Empty
+// hides multiplayer; ?relay=<url> sets it for this browser (for testing).
+const DEFAULT_RELAY = '';
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
+
+export function relayUrl() {
+  const q = new URLSearchParams(location.search).get('relay');
+  try {
+    if (q) localStorage.setItem(RELAY_KEY, q);
+    return (q || localStorage.getItem(RELAY_KEY) || DEFAULT_RELAY).replace(/\/$/, '');
+  } catch {
+    return (q || DEFAULT_RELAY).replace(/\/$/, '');
+  }
+}
+
+// The table code in the page's link (?table=ABCD-EFGH), if any.
+export function linkedCode() {
+  return normCode(new URLSearchParams(location.search).get('table') || '');
+}
+
+// A link that opens #play ready to join `code`.
+export function joinLink(code) {
+  const u = new URL(location.href);
+  u.search = '';
+  u.searchParams.set('table', code);
+  u.hash = 'play';
+  return u.toString();
+}
+
+export function newCode() {
+  const r = crypto.getRandomValues(new Uint8Array(8));
+  const c = Array.from(r, b => CODE_CHARS[b % CODE_CHARS.length]).join('');
+  return c.slice(0, 4) + '-' + c.slice(4);
+}
+
+export function normCode(s) {
+  const c = String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return c.length === 8 ? c.slice(0, 4) + '-' + c.slice(4) : '';
+}
+
+// Identifies this tab to the host, so a reload gets the same seat back.
+export function clientId() {
+  try {
+    let id = sessionStorage.getItem(CLIENT_KEY);
+    if (!id) { id = crypto.randomUUID(); sessionStorage.setItem(CLIENT_KEY, id); }
+    return id;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+// Opens the room as host or guest and keeps it open, reconnecting with
+// backoff when the connection drops. Handlers: onOpen(), onMessage(obj),
+// onStatus(text) with '' once connected, onFail(reason) when it gives up.
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}) {
+  let ws = null, closed = false, tries = 0, retry = null, joined = false;
+  const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '');
+  const open = () => {
+    ws = new WebSocket(url);
+    ws.onopen = () => { tries = 0; joined = true; onStatus(''); onOpen(); };
+    ws.onmessage = e => { try { onMessage(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
+    ws.onclose = e => {
+      if (closed) return;
+      // 4001: the room already has a host; 4004: no such table. After a drop
+      // a guest keeps trying while the host comes back.
+      if (e.code === 4001 || (e.code === 4004 && !joined) || tries >= 6) {
+        closed = true;
+        onFail(e.code === 4001 ? 'That table code is in use.' : e.code === 4004 ? 'No table with that code.' : 'Lost the connection.');
+        return;
+      }
+      onStatus('Reconnecting…');
+      retry = setTimeout(open, 1000 * 2 ** tries++);
+    };
+  };
+  open();
+  return {
+    send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
+    close() { closed = true; clearTimeout(retry); if (ws) ws.close(1000); },
+  };
+}
