@@ -48,6 +48,7 @@ let session = 0; // bumped on leaving, so late replies are ignored
 let state = null;
 let timer = null;
 let raiseTo = 0;
+let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
 
@@ -143,8 +144,27 @@ async function request(op, ...args) {
 function show(snap) {
   state = snap.state;
   botToAct = snap.botToAct;
+  if (state.complete || state.seats[0].folded) foldQueued = false;
+  // A queued fold folds when facing a bet, and checks (staying queued) when
+  // it's free to see more cards.
+  const L = state.legal;
+  const auto = foldQueued && L ? (L.can_fold ? 'fold' : L.can_check ? 'check' : null) : null;
+  if (L && !auto) foldQueued = false;
   render();
-  pace();
+  if (!auto) { pace(); return; }
+  act(auto).then(ok => { if (!ok) { foldQueued = false; render(); } });
+}
+
+// The player can queue a fold while someone else is to act in a hand they're
+// still in.
+function canPrefold() {
+  const me = state.seats[0];
+  return !state.legal && !state.complete && !me.folded && !me.all_in;
+}
+
+function togglePrefold() {
+  foldQueued = !foldQueued && canPrefold();
+  render();
 }
 
 async function startTable() {
@@ -152,12 +172,14 @@ async function startTable() {
   tableGame = gameOf(setup.game);
   seated = true;
   raiseTo = 0;
+  foldQueued = false;
   const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
 
 async function nextHand() {
   raiseTo = 0;
+  foldQueued = false;
   const snap = await request('newHand');
   if (snap) show(snap);
 }
@@ -174,11 +196,13 @@ async function pace() {
   timer = setTimeout(() => show(snap), Math.max(0, BOT_DELAY - (performance.now() - started)));
 }
 
+// Resolves to whether the table took the action.
 async function act(kind, amount = 0) {
   const snap = await request('act', kind, amount);
-  if (!snap) return;
+  if (!snap) return false;
   raiseTo = 0;
   show(snap);
+  return true;
 }
 
 const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
@@ -233,7 +257,7 @@ function renderTable() {
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
-    const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
+    const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
     const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
@@ -263,7 +287,16 @@ function controlsHtml() {
       '<button class="tr-start" data-act="next">Next hand <kbd>Space</kbd></button></div>';
   }
   const L = s.legal;
-  if (!L) return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span></div>`;
+  if (foldQueued) {
+    // With the turn here, the queued fold (or check) is on its way.
+    if (L) return `<div class="pl-controls wait"><span>${L.can_fold ? 'Folding' : 'Checking'}…</span></div>`;
+    return '<div class="pl-controls wait"><span>Folding when it’s your turn</span>' +
+      '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button></div>';
+  }
+  if (!L) {
+    const fold = canPrefold() ? '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>' : '';
+    return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span>${fold}</div>`;
+  }
   const range = L.raise || L.bet;
   const word = L.raise ? 'Raise to' : 'Bet';
   let h = '<div class="pl-controls">';
@@ -328,7 +361,8 @@ function onClick(e) {
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
-  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
+  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; foldQueued = false; render(); }
+  else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     // Only a bet of the whole stack is "allin"; in pot-limit the top of the
@@ -354,7 +388,12 @@ function onKey(e) {
   const k = e.key.toLowerCase();
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
   const L = state.legal;
-  if (!L) return;
+  if (!L) {
+    // Before the player's turn, F queues a fold (or cancels one) and Esc cancels.
+    if ((k === 'f' && (foldQueued || canPrefold())) || (k === 'escape' && foldQueued)) togglePrefold();
+    return;
+  }
+  if (foldQueued) return; // the queued action is already being sent
   if (k === 'f' && L.can_fold) act('fold');
   else if (k === 'c') act(L.can_check ? 'check' : 'call');
   else if (k === 'r' && (L.raise || L.bet)) root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();

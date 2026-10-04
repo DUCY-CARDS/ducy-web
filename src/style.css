@@ -759,6 +759,7 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-plate span { font-family: var(--font-data); font-size: 12px; color: var(--fg); }
 .pl-seat.acting .pl-plate { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-faint), 0 2px 6px rgba(0,0,0,0.2); }
 .pl-seat.folded { opacity: 0.45; }
+.pl-seat.prefold .pl-hole { opacity: 0.45; }
 .pl-seat.winner .pl-plate { border-color: var(--green); }
 .pl-note { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #e9ecef; background: rgba(0,0,0,0.35); padding: 1px 6px; border-radius: 3px; }
 .pl-seat.winner .pl-note { background: var(--green); }
