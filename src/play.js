@@ -3,11 +3,12 @@
 // The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
-// thinks.
+// thinks. Each finished hand also feeds the stats tracker (play-stats.js).
 // With friends (play-net.js), the host's tab runs the table (MultiTable) and
 // relays each player their own view; a guest's tab only draws the views it
 // receives and sends its actions to the host.
 
+import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
 
 let worker = null;
@@ -34,6 +35,7 @@ function call(op, ...args) {
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
 const SETUP_KEY = 'ducyPlaySetup';
+const STATS_KEY = 'ducyPlayStats';
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
 const GAMES = [
   {id: 'nlhe', label: 'Hold’em', name: 'No-limit Hold’em', cards: 2, pl: false},
@@ -56,6 +58,13 @@ let raiseTo = 0;
 let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
+// Stats per game, each {playerId: counts}: since sitting down, and all time
+// (kept in localStorage).
+let sessionStats = {};
+let allStats = loadStats();
+let recordedHand = 0; // hand_number of the last hand added to the stats
+let statsOpen = false;
+let statsSort = {key: 'seat', dir: 1};
 // Multiplayer: 'solo' against bots, 'host' running a table for friends, or
 // 'guest' at someone else's table.
 let mode = 'solo';
@@ -74,13 +83,25 @@ let joinCode = linkedCode();
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', name: '', open: 1, turnSecs: 30, ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'session', name: '', open: 1, turnSecs: 30, ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, name: '', open: 1, turnSecs: 30};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', name: '', open: 1, turnSecs: 30};
 }
 
 function saveSetup() {
   try { localStorage.setItem(SETUP_KEY, JSON.stringify(setup)); } catch {}
+}
+
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STATS_KEY) || 'null');
+    if (s && typeof s === 'object' && s.v === 1 && s.games && typeof s.games === 'object') return s.games;
+  } catch {}
+  return {};
+}
+
+function saveStats() {
+  try { localStorage.setItem(STATS_KEY, JSON.stringify({v: 1, games: allStats})); } catch {}
 }
 
 function esc(s) {
@@ -190,8 +211,9 @@ function show(snap) {
     shownSeq = snap.seq;
     turnEnds = snap.turnMsLeft != null ? Date.now() + num(snap.turnMsLeft) : 0;
   }
-  state = snap.state;
+  state = mode === 'solo' ? snap.state : withStatIds(snap.state);
   botToAct = snap.botToAct;
+  recordStats();
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -222,6 +244,8 @@ async function startTable() {
   seated = true;
   raiseTo = 0;
   foldQueued = false;
+  sessionStats = {};
+  recordedHand = 0;
   const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
@@ -282,6 +306,8 @@ function hostTable() {
   saveSetup();
   tableGame = gameOf(setup.game);
   mode = 'host';
+  sessionStats = {};
+  recordedHand = 0;
   room = newCode();
   netNote = '';
   shownSeq = -1;
@@ -314,6 +340,8 @@ function joinTable() {
   saveSetup();
   joinCode = code;
   mode = 'guest';
+  sessionStats = {};
+  recordedHand = 0;
   room = code;
   netNote = 'Connecting…';
   shownSeq = -1;
@@ -357,6 +385,12 @@ function guestAct(kind, amount) {
   state = {...state, legal: null};
   render();
   return true;
+}
+
+// Stats follow ids: at a shared table you are 'you' wherever you sit, and
+// friends are kept by name.
+function withStatIds(view) {
+  return {...view, seats: view.seats.map((x, i) => ({...x, id: i === 0 ? 'you' : x.human ? 'friend:' + x.name : x.id}))};
 }
 
 function readNameInput() {
@@ -445,7 +479,10 @@ function renderTable() {
   h += '<div class="pl-bar">';
   h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${num(s.small_blind ?? setup.sb)}/${num(s.big_blind ?? setup.bb)}</span>`;
   if (mode !== 'solo') h += netBarHtml();
-  h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
+  h += '<span class="pl-tools">';
+  h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
+  h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
+  h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
@@ -459,16 +496,22 @@ function renderTable() {
     const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
+    if (setup.hud) h += hudHtml(seatId(i));
     if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
   });
   h += '</div>';
   h += controlsHtml();
+  if (statsOpen) h += statsHtml();
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
   h += '</div>';
+  // Keep the stats table's sideways scroll across re-renders (narrow screens).
+  const scrollX = root.querySelector('.pl-stats-scroll')?.scrollLeft || 0;
   root.innerHTML = h;
+  const sx = root.querySelector('.pl-stats-scroll');
+  if (sx) sx.scrollLeft = scrollX;
   const lg = root.querySelector('#pl-log');
   if (lg) lg.scrollTop = lg.scrollHeight;
 }
@@ -551,12 +594,111 @@ function render() {
   else renderSetup();
 }
 
+// ---- stats ----
+
+// The stats id of a seat: "you", or the bot's personality id.
+const seatId = i => state.seats[i].id || (i === 0 ? 'you' : setup.bots[i - 1]);
+
+// Adds the hand to the stats once it's over (once per hand).
+function recordStats() {
+  if (!state || !state.complete || num(state.hand_number) === recordedHand) return;
+  recordedHand = num(state.hand_number);
+  const g = tableGame.id;
+  const counts = countHand(state);
+  recordHand(sessionStats[g] ||= {}, counts);
+  recordHand(allStats[g] ||= {}, counts);
+  saveStats();
+}
+
+const scopeStats = () => (setup.statsScope === 'all' ? allStats : sessionStats)[tableGame.id] || {};
+
+function hudHtml(id) {
+  const r = rates(scopeStats()[id]);
+  if (!r.hands) return '<div class="pl-hud">no hands yet</div>';
+  const p = x => (x.d ? Math.round(x.v * 100) : '–');
+  return `<div class="pl-hud" title="VPIP / PFR / AF over ${r.hands} hands">${p(r.vpip)}/${p(r.pfr)}/${afText(r.af)} · ${r.hands}</div>`;
+}
+
+// Columns of the stats table: key, header, tooltip, cell text, sort value.
+const signed = (v, d = 0) => (v > 0 ? '+' : '') + v.toFixed(d);
+const STAT_COLS = [
+  ['hands', 'Hands', 'Hands dealt', r => r.hands, r => r.hands],
+  ['vpip', 'VPIP', 'Voluntarily put chips in preflop (blinds don’t count)', r => pct(r.vpip), r => r.vpip.v],
+  ['pfr', 'PFR', 'Raised preflop', r => pct(r.pfr), r => r.pfr.v],
+  ['threeBet', '3-bet', 'Re-raised a single preflop raise, of the chances', r => pct(r.threeBet), r => r.threeBet.v],
+  ['af', 'AF', 'Aggression factor: postflop (bets + raises) / calls', r => afText(r.af), r => r.af.v],
+  ['afq', 'AFq', 'Aggression frequency: postflop (bets + raises) / (bets + raises + calls + folds)', r => pct(r.afq), r => r.afq.v],
+  ['foldToBet', 'Fold to bet', 'Folded to a postflop bet or raise', r => pct(r.foldToBet), r => r.foldToBet.v],
+  ['wtsd', 'WTSD', 'Went to showdown, of the hands that saw the flop', r => pct(r.wtsd), r => r.wtsd.v],
+  ['wsd', 'W$SD', 'Won at showdown', r => pct(r.wsd), r => r.wsd.v],
+  ['net', 'Net', 'Chips won or lost (big blinds)', r => `${signed(r.net)} <small>(${signed(r.netBB, 1)} bb)</small>`, r => r.netBB],
+  ['bb100', 'bb/100', 'Big blinds won per 100 hands', r => (r.bb100 == null ? '—' : signed(r.bb100, 1)), r => r.bb100],
+];
+
+function statsHtml() {
+  const book = scopeStats();
+  const rows = state.seats.map((seat, i) => ({i, name: seat.name, id: seatId(i), r: rates(book[seatId(i)])}));
+  const col = STAT_COLS.find(c => c[0] === statsSort.key);
+  if (col) {
+    // Players without a sample sort last either way.
+    const val = row => { const v = col[4](row.r); return v == null || Number.isNaN(v) ? null : v; };
+    rows.sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (x === y) return a.i - b.i;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return (x < y ? -1 : 1) * statsSort.dir;
+    });
+  } else if (statsSort.dir < 0) rows.reverse();
+  const all = setup.statsScope === 'all';
+  let h = '<div class="pl-stats">';
+  h += `<div class="pl-stats-head"><b>Stats · ${tableGame.name}</b><div class="pl-opts">`;
+  h += `<button class="cc-btn${all ? '' : ' on'}" data-scope="session">This session</button>`;
+  h += `<button class="cc-btn${all ? ' on' : ''}" data-scope="all">All time</button></div>`;
+  h += '<button class="link-btn" data-act="reset-stats">Reset stats</button></div>';
+  h += '<div class="pl-stats-scroll"><table class="pl-stats-table"><thead><tr>';
+  const arrow = key => (statsSort.key === key ? (statsSort.dir > 0 ? ' ▲' : ' ▼') : '');
+  h += `<th data-sort="seat">Player${arrow('seat')}</th>`;
+  for (const [key, label, tip] of STAT_COLS) h += `<th data-sort="${key}" title="${esc(tip)}">${esc(label)}${arrow(key)}</th>`;
+  h += '</tr></thead><tbody>';
+  for (const row of rows) {
+    const adv = tableGame.id === 'nlhe' && ADVERTISED[row.id];
+    h += `<tr${row.i === 0 ? ' class="hero"' : ''}><th scope="row">${esc(row.name)}`;
+    if (adv) h += `<small title="VPIP / PFR measured in ducy-play (6-handed no-limit Hold’em)">expects ${adv[0]}% / ${adv[1]}%</small>`;
+    h += '</th>';
+    for (const c of STAT_COLS) h += `<td>${c[3](row.r)}</td>`;
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+  h += '<p class="pl-meta">Raw rates with the sample size in brackets. Bots are tracked by personality, so their stats follow them to new tables. Each game keeps its own stats.</p>';
+  h += '</div>';
+  return h;
+}
+
+function resetStats() {
+  const all = setup.statsScope === 'all';
+  if (!confirm(`Reset ${all ? 'all-time' : 'this session’s'} ${tableGame.name} stats for everyone?`)) return;
+  if (all) { delete allStats[tableGame.id]; saveStats(); }
+  else delete sessionStats[tableGame.id];
+  render();
+}
+
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-open],[data-turn],[data-act],[data-size]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-open],[data-turn],[data-act],[data-size],[data-scope],[data-sort]');
   if (!el) return;
-  if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
+  if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
+  else if (el.dataset.sort) {
+    const key = el.dataset.sort;
+    // Numbers sort biggest first; the player column goes back to seat order.
+    statsSort = statsSort.key === key ? {key, dir: -statsSort.dir} : {key, dir: key === 'seat' ? 1 : -1};
+    render();
+  }
+  else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
+  else if (el.dataset.act === 'reset-stats') resetStats();
+  else if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
   else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
   else if (el.dataset.blinds) {
     const bbs = setup.buyIn / setup.bb;
