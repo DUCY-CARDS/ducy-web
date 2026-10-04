@@ -290,9 +290,18 @@ function sizeButtons(min, max) {
   const call = num(s.current_bet) - num(me.street_bet);
   const potAfterCall = num(s.pot) + call;
   const size = f => Math.max(min, Math.min(max, num(s.current_bet) + Math.round(potAfterCall * f)));
-  // In pot-limit the largest raise is the pot, so the last button is "Max".
-  return [['½ pot', size(0.5)], ['¾ pot', size(0.75)], ['Pot', size(1)], [tableGame.pl ? 'Max' : 'All-in', max]]
-    .map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
+  // In pot-limit the largest bet is the pot (the engine's max_to), so Pot is
+  // the last button, and it's all-in when the stack can't cover a full pot.
+  const sizes = [['½ pot', size(0.5)], ['¾ pot', size(0.75)]];
+  if (tableGame.pl) sizes.push([max >= allInTo() ? 'All-in' : 'Pot', max]);
+  else sizes.push(['Pot', size(1)], ['All-in', max]);
+  return sizes.map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
+}
+
+// The street total that puts the person all-in.
+function allInTo() {
+  const me = state.seats[0];
+  return num(me.street_bet) + num(me.stack);
 }
 
 function render() {
@@ -322,8 +331,9 @@ function onClick(e) {
   else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
-    const max = num((state.legal.raise || state.legal.bet).max_to);
-    act(raiseTo >= max ? 'allin' : el.dataset.act, raiseTo);
+    // Only a bet of the whole stack is "allin"; in pot-limit the top of the
+    // range is usually the pot, which the engine takes as a plain bet/raise.
+    act(raiseTo >= allInTo() ? 'allin' : el.dataset.act, raiseTo);
   }
 }
 
