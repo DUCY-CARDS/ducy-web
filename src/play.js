@@ -28,6 +28,8 @@ function call(op, ...args) {
 
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
+const DEAL_DELAY = 1500; // ms before auto-dealing after a hand with no showdown
+const SHOWDOWN_DEAL_DELAY = 3000; // ...and after a showdown, to read the hands
 const SETUP_KEY = 'ducyPlaySetup';
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
 const GAMES = [
@@ -47,6 +49,9 @@ let busy = false; // a request to the table is in flight
 let session = 0; // bumped on leaving, so late replies are ignored
 let state = null;
 let timer = null;
+let dealTimer = null; // auto-deal countdown, separate from the bot pacing
+let dealAt = 0; // when the auto-deal fires (performance.now() time)
+const holds = new Set(); // what's pausing the countdown: 'hidden', 'hover', 'user'
 let raiseTo = 0;
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
@@ -54,9 +59,9 @@ let setup = loadSetup();
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', autoDeal: false, ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, autoDeal: false};
 }
 
 function saveSetup() {
@@ -145,6 +150,7 @@ function show(snap) {
   botToAct = snap.botToAct;
   render();
   pace();
+  armDeal();
 }
 
 async function startTable() {
@@ -152,14 +158,68 @@ async function startTable() {
   tableGame = gameOf(setup.game);
   seated = true;
   raiseTo = 0;
+  holds.delete('user');
   const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
 
 async function nextHand() {
+  cancelDeal();
   raiseTo = 0;
   const snap = await request('newHand');
-  if (snap) show(snap);
+  if (!snap) return;
+  holds.delete('user'); // a pause lasts until the next hand
+  show(snap);
+}
+
+// ---- auto-deal ----
+
+function cancelDeal() {
+  clearTimeout(dealTimer);
+  dealTimer = null;
+}
+
+// Starts (or restarts) the countdown to the next hand when a hand is over,
+// auto-deal is on, and nothing is pausing it; otherwise cancels it.
+function armDeal() {
+  cancelDeal();
+  if (!open || !seated || !state || !state.complete || !setup.autoDeal || holds.size) { syncDeal(); return; }
+  dealAt = performance.now() + (state.showdown ? SHOWDOWN_DEAL_DELAY : DEAL_DELAY);
+  const mine = session;
+  const tick = () => {
+    if (mine !== session) return;
+    const left = dealAt - performance.now();
+    if (left <= 0) { dealTimer = null; nextHand(); return; }
+    // Wake when the shown whole second changes.
+    dealTimer = setTimeout(tick, left - (Math.ceil(left / 1000) - 1) * 1000);
+    syncDeal();
+  };
+  tick();
+}
+
+// Pauses (on) or resumes (off) the countdown for one reason; resuming
+// restarts it from the top.
+function hold(why, on) {
+  if (on === holds.has(why)) return;
+  if (on) holds.add(why); else holds.delete(why);
+  armDeal();
+}
+
+function nextLabel() {
+  if (!setup.autoDeal) return 'Next hand';
+  if (holds.size || !dealTimer) return 'Next hand (paused)';
+  return `Next hand in ${Math.max(1, Math.ceil((dealAt - performance.now()) / 1000))}…`;
+}
+
+const pauseLabel = () => (holds.has('user') ? 'Resume' : 'Pause');
+
+// Updates the countdown buttons in place, so the log isn't redrawn under the pointer.
+function syncDeal() {
+  if (!root) return;
+  const next = root.querySelector('#pl-next');
+  if (next) next.textContent = nextLabel();
+  const pause = root.querySelector('#pl-pause');
+  if (pause) pause.firstChild.textContent = pauseLabel() + ' ';
 }
 
 // Lets bots act one at a time until it's the player's turn or the hand is
@@ -227,7 +287,8 @@ function renderTable() {
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
   h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
-  h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
+  h += `<span class="pl-tools"><button class="cc-btn${setup.autoDeal ? ' on' : ''}" data-act="autodeal" aria-pressed="${!!setup.autoDeal}">Auto-deal</button>`;
+  h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
@@ -259,8 +320,10 @@ function controlsHtml() {
   if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${num(w.won)}`).join(', ');
-    return `<div class="pl-controls done"><span class="pl-result">${text}${s.showdown ? '' : ' (no showdown)'}</span>` +
-      '<button class="tr-start" data-act="next">Next hand <kbd>Space</kbd></button></div>';
+    let h = `<div class="pl-controls done"><span class="pl-result">${text}${s.showdown ? '' : ' (no showdown)'}</span>`;
+    h += `<button class="tr-start" data-act="next"><span id="pl-next">${nextLabel()}</span> <kbd>Space</kbd></button>`;
+    if (setup.autoDeal) h += `<button class="btn-small" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
+    return h + '</div>';
   }
   const L = s.legal;
   if (!L) return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span></div>`;
@@ -328,7 +391,9 @@ function onClick(e) {
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
-  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
+  else if (el.dataset.act === 'pause') hold('user', !holds.has('user'));
+  else if (el.dataset.act === 'autodeal') { setup.autoDeal = !setup.autoDeal; saveSetup(); holds.delete('user'); render(); armDeal(); }
+  else if (el.dataset.act === 'leave') { clearTimeout(timer); cancelDeal(); session++; seated = false; state = null; render(); }
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     // Only a bet of the whole stack is "allin"; in pot-limit the top of the
@@ -349,10 +414,22 @@ function onChange(e) {
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
 }
 
+// The countdown waits while a mouse is over the result or the log, so the
+// hand can be read.
+function onPointer(e) {
+  if (e.pointerType !== 'mouse') return;
+  hold('hover', e.type === 'pointerover' && !!e.target.closest('.pl-result, .pl-log'));
+}
+
+function onVisibility() {
+  hold('hidden', document.hidden);
+}
+
 function onKey(e) {
   if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
+  if (state.complete && k === 'p' && setup.autoDeal) { hold('user', !holds.has('user')); return; }
   const L = state.legal;
   if (!L) return;
   if (k === 'f' && L.can_fold) act('fold');
@@ -366,20 +443,26 @@ export async function openPlay(el) {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
+    root.addEventListener('pointerover', onPointer);
+    root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
+    document.addEventListener('visibilitychange', onVisibility);
   }
   open = true;
+  if (document.hidden) holds.add('hidden'); else holds.delete('hidden');
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
   }
   render();
   pace();
+  armDeal();
 }
 
 export function closePlay() {
   open = false;
   clearTimeout(timer);
+  cancelDeal();
 }
 
 export function playOpen() {
