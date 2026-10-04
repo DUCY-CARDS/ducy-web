@@ -1,6 +1,7 @@
 // Builds the Omaha hand ranking and writes src/omaha-rank-model.js.
 //
 //   node scripts/fit-omaha-rank.mjs --data <dir> --bin <omaha_flop_quality> [--iters 2] [--hero 8000] [--blocker-weight 0.15] [--equity mw|hu] [--hu-weight 0.5] [--flop-opts "threebet=0.15"] [--reuse]
+//       [--cards 5,6 --nut-cards 5,6 --w-nut 0.4 --w-loss 0.2]
 //
 // <dir> holds plo4.csv, plo5.csv, plo6.csv from ducy's `omaha_equity_dataset`
 // example (`hand,hu,...`: uniform random hands with raw equity against a
@@ -47,6 +48,26 @@ const FAVORABLE = args.favorable || '0.55';
 const EXTRA_FLOP_OPTS = (args['flop-opts'] || '').split(/\s+/).filter(Boolean);
 const FLOP_OPTS = [`hand_flops=${args['hand-flops'] || 80}`, 'opponents=6', 'runouts=10', `favorable=${FAVORABLE}`, `continue=${CONTINUE}`, ...EXTRA_FLOP_OPTS];
 const VARIANTS = (args.cards || '4,5,6').split(',').map(Number);
+// Nut potential (omaha_flop_quality nuts=1) for the variants in --nut-cards:
+// the target adds w-nut x z(nut_rate) and subtracts w-loss x z(big_loss). With
+// more hole cards someone usually holds the nuts, so second-best hands lose
+// the big pots; this matters most in PLO5 and PLO6.
+const NUT_CARDS = args['nut-cards'] ? args['nut-cards'].split(',').map(Number) : [];
+const W_NUT = +(args['w-nut'] ?? 0.4);
+const W_LOSS = +(args['w-loss'] ?? 0.2);
+const usesNuts = cards => NUT_CARDS.includes(cards);
+const flopOpts = cards => (usesNuts(cards) ? [...FLOP_OPTS, 'nuts=1'] : FLOP_OPTS);
+// The fitting target for one variant from preflop equity and a flop-quality
+// file's rows (aligned with `eq`).
+function targetFor(cards, eq, rows) {
+  const zh = zscore(eq), zf = zscore(rows.map(r => r.favorable));
+  let t = eq.map((_, j) => BLEND.hu * zh[j] + BLEND.favorable * zf[j]);
+  if (usesNuts(cards)) {
+    const zn = zscore(rows.map(r => r.nut_rate)), zl = zscore(rows.map(r => r.big_loss));
+    t = t.map((x, j) => x + W_NUT * zn[j] - W_LOSS * zl[j]);
+  }
+  return t;
+}
 const OUT = args.out || new URL('../src/omaha-rank-model.js', import.meta.url).pathname;
 const RIDGE = 1e-3;
 // Blocker term added after fitting (scripts/omaha-percentiles.mjs).
@@ -118,10 +139,9 @@ for (const cards of VARIANTS) {
   let w = null, prevScores = scores, target = null;
   for (let it = 1; it <= ITERS; it++) {
     writeFileSync(`${work}/range${cards}.txt`, topRange(hands, scores).join('\n') + '\n');
-    if (!REUSE) execFileSync(args.bin, [String(cards), `${work}/hero${cards}.csv`, `${work}/range${cards}.txt`, `${work}/flop${cards}_${it}.csv`, ...FLOP_OPTS, `seed=${it}`], {stdio: ['ignore', 'ignore', 'inherit']});
+    if (!REUSE) execFileSync(args.bin, [String(cards), `${work}/hero${cards}.csv`, `${work}/range${cards}.txt`, `${work}/flop${cards}_${it}.csv`, ...flopOpts(cards), `seed=${it}`], {stdio: ['ignore', 'ignore', 'inherit']});
     const fq = readCsv(`${work}/flop${cards}_${it}.csv`);
-    const zh = zscore(heroIdx.map(i => base[i][EQUITY])), zf = zscore(fq.map(r => r.favorable));
-    target = heroIdx.map((_, j) => BLEND.hu * zh[j] + BLEND.favorable * zf[j]);
+    target = targetFor(cards, heroIdx.map(i => base[i][EQUITY]), fq);
     const train = heroIdx.filter((_, j) => j % 5 !== 0);
     w = fit(train.map(i => X[i]), train.map(j => target[j]));
     scores = X.map(x => dot(w, x));
@@ -140,27 +160,51 @@ for (const cards of VARIANTS) {
   // noisy, so the fair question is how well the model predicts an independent
   // measurement, next to how well one measurement predicts another.
   writeFileSync(`${work}/test${cards}.csv`, 'hand\n' + test.map(i => hands[i]).join('\n') + '\n');
-  if (!REUSE) execFileSync(args.bin, [String(cards), `${work}/test${cards}.csv`, `${work}/range${cards}.txt`, `${work}/retest${cards}.csv`, ...FLOP_OPTS, 'seed=99'], {stdio: ['ignore', 'ignore', 'inherit']});
+  if (!REUSE) execFileSync(args.bin, [String(cards), `${work}/test${cards}.csv`, `${work}/range${cards}.txt`, `${work}/retest${cards}.csv`, ...flopOpts(cards), 'seed=99'], {stdio: ['ignore', 'ignore', 'inherit']});
   const re = readCsv(`${work}/retest${cards}.csv`);
-  const zh2 = zscore(test.map(i => base[i][EQUITY])), zf2 = zscore(re.map(r => r.favorable));
-  const targB = test.map((_, k) => BLEND.hu * zh2[k] + BLEND.favorable * zf2[k]);
+  const targB = targetFor(cards, test.map(i => base[i][EQUITY]), re);
   const rhoModelB = spearman(pred, targB), rhoAB = spearman(targ, targB);
   console.log(`PLO${cards}: vs an independent re-measurement, model rank corr ${rhoModelB.toFixed(3)}; one measurement vs another ${rhoAB.toFixed(3)}`);
 
   model[cards] = finishModel(w, cards, BLOCKER_WEIGHT);
+  // One line per variant in the generated header, so a partial refit can keep
+  // the other variants' descriptions.
+  model[cards].note = `PLO${cards}: ${BLEND.hu} x ${EQUITY === 'mw' ? '3-way' : 'heads-up'} equity + ${BLEND.favorable} x favorable flops (>= ${FAVORABLE} vs opponents with >= ${CONTINUE})` +
+    (usesNuts(cards) ? ` + ${W_NUT} x nut rate - ${W_LOSS} x big-hand losses` : '') +
+    (EXTRA_FLOP_OPTS.length ? `, flops measured with ${EXTRA_FLOP_OPTS.join(' ')}` : '') +
+    `; vs re-measurement ${rhoModelB.toFixed(3)} (measurement vs measurement ${rhoAB.toFixed(3)})`;
   summary.push({cards, rho, meanErr: mean(err), within10: err.filter(e => e <= 10).length / err.length * 100, huRho, rhoModelB, rhoAB});
   console.log(`PLO${cards}: held-out rank corr ${rho.toFixed(3)} (raw equity alone ${huRho.toFixed(3)}), mean percentile error ${mean(err).toFixed(1)}, ` +
     `within 10 pts ${summary.at(-1).within10.toFixed(0)}%  [${((Date.now() - t0) / 1000).toFixed(0)}s]`);
 }
 
+// Variants not refit this run keep their current model and description.
+let previous = {};
+try { previous = (await import('file://' + OUT + '?t=' + Date.now())).OMAHA_MODEL; } catch {}
+let previousHeader = '';
+try { previousHeader = readFileSync(OUT, 'utf8').split('\nexport ')[0]; } catch {}
+for (const [cards, m] of Object.entries(previous)) {
+  if (model[cards]) continue;
+  // Older files have no per-variant note: describe the variant from their header.
+  const acc = previousHeader.match(new RegExp(`PLO${cards} ([0-9.]+) / ([0-9.]+)`));
+  const opts = previousHeader.match(new RegExp(`PLO${cards} measurements add 3-bet pressure \\(omaha_flop_quality (\\S+)\\)`)) ||
+    previousHeader.match(/Flop measurement options: (\S+(?: \S+)*?) \(/);
+  const fav = previousHeader.match(/has >= ([0-9.]+) equity/), cont = previousHeader.match(/>= ([0-9.]+) equity vs a random hand/);
+  const ranking = previousHeader.match(/Ranking: ([^,]+?) \(z-scored\)/) || previousHeader.match(/Ranking: (.+?), where/);
+  const fallback = `PLO${cards}: from an earlier fit` + (ranking ? `: ${ranking[1].replace(/\s+/g, ' ')}` : '') +
+    (fav && cont ? `, favorable flops >= ${fav[1]} vs opponents with >= ${cont[1]}` : '') +
+    (opts ? `, flops measured with ${opts[1]}` : '') + (acc ? `; vs re-measurement ${acc[1]} (measurement vs measurement ${acc[2]})` : '');
+  model[cards] = {note: m.note || fallback, ...m};
+}
+const ordered = Object.fromEntries(Object.keys(model).sort().map(k => [k, model[k]]));
 const header = `// Generated by scripts/fit-omaha-rank.mjs. Do not edit by hand.
-// Ranking: ${BLEND.hu} x raw preflop equity (${EQUITY === 'mw' ? '3-way' : 'heads-up'}) + ${BLEND.favorable} x favorable-flop rate (z-scored), where a
-// flop is favorable when the hand has >= ${FAVORABLE} equity against opponents from the top
-// ${RANGE_TOP * 100}% who give action on that flop (>= ${CONTINUE} equity vs a random hand); ${ITERS} rounds.${EXTRA_FLOP_OPTS.length ? `\n// Flop measurement options: ${EXTRA_FLOP_OPTS.join(' ')} (3-bet pressure: see ducy's omaha_flop_quality).` : ''}
-// Held-out rank corr with an independent re-measurement (model / measurement-vs-measurement):
-// ${summary.map(s => `PLO${s.cards} ${s.rhoModelB.toFixed(3)} / ${s.rhoAB.toFixed(3)}`).join('; ')}.
+// Each variant's score is a linear model over hand features fitted to a z-scored target. A flop
+// is favorable when the hand has at least the stated equity against opponents from the top
+// ${RANGE_TOP * 100}% who give action on it (at least the stated equity vs a random hand there).
+// Per variant: target, and held-out rank corr with an independent re-measurement:
+${Object.values(ordered).map(m => `// - ${m.note}`).join('\n')}
 // Blockers: + ${BLOCKER_WEIGHT} score sd per sd of nut-flush blocking (src/omaha-blockers.js).
 // weights follow FEATURES; cutoffs[i] is the score at the top (i / ${CUTOFF_STEPS} * 100)%.
 `;
-writeFileSync(OUT, header + `export const FEATURES = ${JSON.stringify(FEATURE_NAMES)};\nexport const OMAHA_MODEL = ${JSON.stringify(model)};\n`);
+writeFileSync(OUT, header + `export const FEATURES = ${JSON.stringify(FEATURE_NAMES)};\nexport const OMAHA_MODEL = ${JSON.stringify(ordered)};\n`);
 console.log(`wrote ${OUT}`);
