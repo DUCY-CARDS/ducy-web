@@ -3,7 +3,9 @@
 // The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
-// thinks.
+// thinks. Each finished hand also feeds the stats tracker (play-stats.js).
+
+import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 
 let worker = null;
 let nextId = 0;
@@ -29,6 +31,7 @@ function call(op, ...args) {
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
 const SETUP_KEY = 'ducyPlaySetup';
+const STATS_KEY = 'ducyPlayStats';
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
 const GAMES = [
   {id: 'nlhe', label: 'Hold’em', name: 'No-limit Hold’em', cards: 2, pl: false},
@@ -48,19 +51,39 @@ let session = 0; // bumped on leaving, so late replies are ignored
 let state = null;
 let timer = null;
 let raiseTo = 0;
+let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
 let tableGame = GAMES[0]; // the game of the table in play
 let setup = loadSetup();
+// Stats per game, each {playerId: counts}: since sitting down, and all time
+// (kept in localStorage).
+let sessionStats = {};
+let allStats = loadStats();
+let recordedHand = 0; // hand_number of the last hand added to the stats
+let statsOpen = false;
+let statsSort = {key: 'seat', dir: 1};
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'session', ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session'};
 }
 
 function saveSetup() {
   try { localStorage.setItem(SETUP_KEY, JSON.stringify(setup)); } catch {}
+}
+
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STATS_KEY) || 'null');
+    if (s && typeof s === 'object' && s.v === 1 && s.games && typeof s.games === 'object') return s.games;
+  } catch {}
+  return {};
+}
+
+function saveStats() {
+  try { localStorage.setItem(STATS_KEY, JSON.stringify({v: 1, games: allStats})); } catch {}
 }
 
 function esc(s) {
@@ -143,8 +166,28 @@ async function request(op, ...args) {
 function show(snap) {
   state = snap.state;
   botToAct = snap.botToAct;
+  recordStats();
+  if (state.complete || state.seats[0].folded) foldQueued = false;
+  // A queued fold folds when facing a bet, and checks (staying queued) when
+  // it's free to see more cards.
+  const L = state.legal;
+  const auto = foldQueued && L ? (L.can_fold ? 'fold' : L.can_check ? 'check' : null) : null;
+  if (L && !auto) foldQueued = false;
   render();
-  pace();
+  if (!auto) { pace(); return; }
+  act(auto).then(ok => { if (!ok) { foldQueued = false; render(); } });
+}
+
+// The player can queue a fold while someone else is to act in a hand they're
+// still in.
+function canPrefold() {
+  const me = state.seats[0];
+  return !state.legal && !state.complete && !me.folded && !me.all_in;
+}
+
+function togglePrefold() {
+  foldQueued = !foldQueued && canPrefold();
+  render();
 }
 
 async function startTable() {
@@ -152,12 +195,16 @@ async function startTable() {
   tableGame = gameOf(setup.game);
   seated = true;
   raiseTo = 0;
+  foldQueued = false;
+  sessionStats = {};
+  recordedHand = 0;
   const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
 
 async function nextHand() {
   raiseTo = 0;
+  foldQueued = false;
   const snap = await request('newHand');
   if (snap) show(snap);
 }
@@ -174,11 +221,13 @@ async function pace() {
   timer = setTimeout(() => show(snap), Math.max(0, BOT_DELAY - (performance.now() - started)));
 }
 
+// Resolves to whether the table took the action.
 async function act(kind, amount = 0) {
   const snap = await request('act', kind, amount);
-  if (!snap) return;
+  if (!snap) return false;
   raiseTo = 0;
   show(snap);
+  return true;
 }
 
 const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very large)
@@ -227,29 +276,38 @@ function renderTable() {
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
   h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${setup.sb}/${setup.bb}</span>`;
-  h += '<button class="link-btn" data-act="leave">Leave table</button></div>';
+  h += '<span class="pl-tools">';
+  h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
+  h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
+  h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
-    const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
+    const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
     const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
     const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
+    if (setup.hud) h += hudHtml(seatId(i));
     if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
   });
   h += '</div>';
   h += controlsHtml();
+  if (statsOpen) h += statsHtml();
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
   h += '</div>';
+  // Keep the stats table's sideways scroll across re-renders (narrow screens).
+  const scrollX = root.querySelector('.pl-stats-scroll')?.scrollLeft || 0;
   root.innerHTML = h;
+  const sx = root.querySelector('.pl-stats-scroll');
+  if (sx) sx.scrollLeft = scrollX;
   const lg = root.querySelector('#pl-log');
   if (lg) lg.scrollTop = lg.scrollHeight;
 }
@@ -263,7 +321,16 @@ function controlsHtml() {
       '<button class="tr-start" data-act="next">Next hand <kbd>Space</kbd></button></div>';
   }
   const L = s.legal;
-  if (!L) return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span></div>`;
+  if (foldQueued) {
+    // With the turn here, the queued fold (or check) is on its way.
+    if (L) return `<div class="pl-controls wait"><span>${L.can_fold ? 'Folding' : 'Checking'}…</span></div>`;
+    return '<div class="pl-controls wait"><span>Folding when it’s your turn</span>' +
+      '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button></div>';
+  }
+  if (!L) {
+    const fold = canPrefold() ? '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>' : '';
+    return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span>${fold}</div>`;
+  }
   const range = L.raise || L.bet;
   const word = L.raise ? 'Raise to' : 'Bet';
   let h = '<div class="pl-controls">';
@@ -314,12 +381,111 @@ function render() {
   else renderSetup();
 }
 
+// ---- stats ----
+
+// The stats id of a seat: "you", or the bot's personality id.
+const seatId = i => state.seats[i].id || (i === 0 ? 'you' : setup.bots[i - 1]);
+
+// Adds the hand to the stats once it's over (once per hand).
+function recordStats() {
+  if (!state || !state.complete || num(state.hand_number) === recordedHand) return;
+  recordedHand = num(state.hand_number);
+  const g = tableGame.id;
+  const counts = countHand(state);
+  recordHand(sessionStats[g] ||= {}, counts);
+  recordHand(allStats[g] ||= {}, counts);
+  saveStats();
+}
+
+const scopeStats = () => (setup.statsScope === 'all' ? allStats : sessionStats)[tableGame.id] || {};
+
+function hudHtml(id) {
+  const r = rates(scopeStats()[id]);
+  if (!r.hands) return '<div class="pl-hud">no hands yet</div>';
+  const p = x => (x.d ? Math.round(x.v * 100) : '–');
+  return `<div class="pl-hud" title="VPIP / PFR / AF over ${r.hands} hands">${p(r.vpip)}/${p(r.pfr)}/${afText(r.af)} · ${r.hands}</div>`;
+}
+
+// Columns of the stats table: key, header, tooltip, cell text, sort value.
+const signed = (v, d = 0) => (v > 0 ? '+' : '') + v.toFixed(d);
+const STAT_COLS = [
+  ['hands', 'Hands', 'Hands dealt', r => r.hands, r => r.hands],
+  ['vpip', 'VPIP', 'Voluntarily put chips in preflop (blinds don’t count)', r => pct(r.vpip), r => r.vpip.v],
+  ['pfr', 'PFR', 'Raised preflop', r => pct(r.pfr), r => r.pfr.v],
+  ['threeBet', '3-bet', 'Re-raised a single preflop raise, of the chances', r => pct(r.threeBet), r => r.threeBet.v],
+  ['af', 'AF', 'Aggression factor: postflop (bets + raises) / calls', r => afText(r.af), r => r.af.v],
+  ['afq', 'AFq', 'Aggression frequency: postflop (bets + raises) / (bets + raises + calls + folds)', r => pct(r.afq), r => r.afq.v],
+  ['foldToBet', 'Fold to bet', 'Folded to a postflop bet or raise', r => pct(r.foldToBet), r => r.foldToBet.v],
+  ['wtsd', 'WTSD', 'Went to showdown, of the hands that saw the flop', r => pct(r.wtsd), r => r.wtsd.v],
+  ['wsd', 'W$SD', 'Won at showdown', r => pct(r.wsd), r => r.wsd.v],
+  ['net', 'Net', 'Chips won or lost (big blinds)', r => `${signed(r.net)} <small>(${signed(r.netBB, 1)} bb)</small>`, r => r.netBB],
+  ['bb100', 'bb/100', 'Big blinds won per 100 hands', r => (r.bb100 == null ? '—' : signed(r.bb100, 1)), r => r.bb100],
+];
+
+function statsHtml() {
+  const book = scopeStats();
+  const rows = state.seats.map((seat, i) => ({i, name: seat.name, id: seatId(i), r: rates(book[seatId(i)])}));
+  const col = STAT_COLS.find(c => c[0] === statsSort.key);
+  if (col) {
+    // Players without a sample sort last either way.
+    const val = row => { const v = col[4](row.r); return v == null || Number.isNaN(v) ? null : v; };
+    rows.sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (x === y) return a.i - b.i;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return (x < y ? -1 : 1) * statsSort.dir;
+    });
+  } else if (statsSort.dir < 0) rows.reverse();
+  const all = setup.statsScope === 'all';
+  let h = '<div class="pl-stats">';
+  h += `<div class="pl-stats-head"><b>Stats · ${tableGame.name}</b><div class="pl-opts">`;
+  h += `<button class="cc-btn${all ? '' : ' on'}" data-scope="session">This session</button>`;
+  h += `<button class="cc-btn${all ? ' on' : ''}" data-scope="all">All time</button></div>`;
+  h += '<button class="link-btn" data-act="reset-stats">Reset stats</button></div>';
+  h += '<div class="pl-stats-scroll"><table class="pl-stats-table"><thead><tr>';
+  const arrow = key => (statsSort.key === key ? (statsSort.dir > 0 ? ' ▲' : ' ▼') : '');
+  h += `<th data-sort="seat">Player${arrow('seat')}</th>`;
+  for (const [key, label, tip] of STAT_COLS) h += `<th data-sort="${key}" title="${esc(tip)}">${esc(label)}${arrow(key)}</th>`;
+  h += '</tr></thead><tbody>';
+  for (const row of rows) {
+    const adv = tableGame.id === 'nlhe' && ADVERTISED[row.id];
+    h += `<tr${row.i === 0 ? ' class="hero"' : ''}><th scope="row">${esc(row.name)}`;
+    if (adv) h += `<small title="VPIP / PFR measured in ducy-play (6-handed no-limit Hold’em)">expects ${adv[0]}% / ${adv[1]}%</small>`;
+    h += '</th>';
+    for (const c of STAT_COLS) h += `<td>${c[3](row.r)}</td>`;
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+  h += '<p class="pl-meta">Raw rates with the sample size in brackets. Bots are tracked by personality, so their stats follow them to new tables. Each game keeps its own stats.</p>';
+  h += '</div>';
+  return h;
+}
+
+function resetStats() {
+  const all = setup.statsScope === 'all';
+  if (!confirm(`Reset ${all ? 'all-time' : 'this session’s'} ${tableGame.name} stats for everyone?`)) return;
+  if (all) { delete allStats[tableGame.id]; saveStats(); }
+  else delete sessionStats[tableGame.id];
+  render();
+}
+
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-act],[data-size],[data-scope],[data-sort]');
   if (!el) return;
-  if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
+  if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
+  else if (el.dataset.sort) {
+    const key = el.dataset.sort;
+    // Numbers sort biggest first; the player column goes back to seat order.
+    statsSort = statsSort.key === key ? {key, dir: -statsSort.dir} : {key, dir: key === 'seat' ? 1 : -1};
+    render();
+  }
+  else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
+  else if (el.dataset.act === 'reset-stats') resetStats();
+  else if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
   else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
   else if (el.dataset.blinds) {
     const bbs = setup.buyIn / setup.bb;
@@ -332,7 +498,8 @@ function onClick(e) {
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
-  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; render(); }
+  else if (el.dataset.act === 'leave') { clearTimeout(timer); session++; seated = false; state = null; foldQueued = false; render(); }
+  else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     // Only a bet of the whole stack is "allin"; in pot-limit the top of the
@@ -359,7 +526,12 @@ function onKey(e) {
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
   // The rest are only for the player's turn.
   const L = state.legal;
-  if (!L) return;
+  if (!L) {
+    // Before the player's turn, F queues a fold (or cancels one) and Esc cancels.
+    if ((k === 'f' && (foldQueued || canPrefold())) || (k === 'escape' && foldQueued)) togglePrefold();
+    return;
+  }
+  if (foldQueued) return; // the queued action is already being sent
   const range = L.raise || L.bet;
   if (k === 'f' && L.can_fold) act('fold');
   else if (k === 'c') act(L.can_check ? 'check' : 'call');
