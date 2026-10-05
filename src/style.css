@@ -771,6 +771,7 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-controls.wait, .pl-result { color: var(--fg-muted); font-size: 13px; }
 .pl-result { color: var(--fg-strong); font-weight: 600; }
 .pl-controls .tr-btn { min-width: 110px; }
+.pl-controls .btn-small { gap: 6px; }
 .pl-raise { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .pl-raise input { width: 180px; accent-color: var(--teal); }
 .pl-sizes { display: flex; gap: 4px; }
