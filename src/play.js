@@ -616,15 +616,15 @@ function renderTable() {
 }
 
 // The action bar keeps every control in a fixed slot, whatever the state:
-// a status line, then fold, check/call, and the bet/raise area. An action
-// that isn't available leaves its slot blank, so a button never moves under
-// the pointer: a click aimed at Fold can't land on Call or Raise because the
-// screen changed. Between hands the fold and call slots stay empty and Next
-// hand sits in the raise area.
+// a status line, then a row of Fold, Check/Call and Bet/Raise, then the bet
+// sizes (½ pot, ¾ pot, Pot, All-in), then the amount slider. An action that
+// isn't available leaves its slot blank, so a button never moves under the
+// pointer: a click aimed at Fold can't land on Call or Raise because the
+// screen changed. Between hands Next hand sits in the Raise slot.
 function controlsHtml() {
   const s = state;
   const blank = '<span class="pl-slot" aria-hidden="true"></span>';
-  let status = '', fold = blank, call = blank, raise = blank;
+  let status = '', fold = blank, call = blank, raise = blank, sizes = blank, amount = blank;
   const L = s.legal;
   if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
@@ -632,12 +632,11 @@ function controlsHtml() {
     // Before the first hand of a hosted table there's no result yet.
     status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
     if (mode === 'guest') {
-      raise = '<span class="pl-slot pl-raise"><span class="pl-meta">The host deals the next hand</span></span>';
+      status += ' <span class="pl-meta">· The host deals the next hand</span>';
     } else {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
-      raise = `<span class="pl-raise"><span class="pl-sizes"></span><button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
-      raise += setup.autoDeal && num(s.hand_number) ? `<button class="btn-small" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>` : '';
-      raise += '</span>';
+      raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
+      if (setup.autoDeal && num(s.hand_number)) call = `<button class="tr-btn" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
     }
   } else if (foldQueued) {
     if (L) {
@@ -661,15 +660,14 @@ function controlsHtml() {
       // Pot-limit defaults to the pot, no-limit to the minimum.
       if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
       const word = L.raise ? 'Raise to' : 'Bet';
-      raise = '<span class="pl-raise">';
-      raise += `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
-      raise += `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
-      raise += `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
-      raise += '</span>';
+      raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
+      sizes = `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
+      amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
     }
   }
   return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
-    `<div class="pl-act-fold">${fold}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div></div>`;
+    `<div class="pl-act-fold">${fold}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div>` +
+    `<div class="pl-act-sizes">${sizes}</div><div class="pl-act-amount">${amount}</div></div>`;
 }
 
 // Pot-fraction sizes: the street total after calling and then adding that
