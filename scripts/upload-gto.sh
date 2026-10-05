@@ -9,6 +9,10 @@
 # gto/current.json is pointed at them last, so visitors switch to the new
 # model only once it's fully uploaded. Use a new <name> for every model:
 # browsers keep the files for good, keyed by that folder.
+#
+# The deploy workflow runs this for the newest gto-<name> release of the
+# ducy repo, so publishing a model is: create that release with the two
+# files attached, then deploy.
 set -euo pipefail
 
 CARDS="${1:?usage: upload-gto.sh <cards.bin> <blueprint.bin> <name> <rsync-target>}"
