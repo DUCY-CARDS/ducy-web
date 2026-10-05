@@ -901,7 +901,10 @@ function onKey(e) {
 // Bets or raises raiseTo through the Bet/Raise button, so all-in is decided there.
 const clickBet = () => root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
 
-export async function openPlay(el) {
+// `shortcut` 'gto' sits straight down heads-up No-limit Hold'em against the
+// GTO bot with a 100 big blind buy-in (from #codedoug), unless a table is
+// already in play.
+export async function openPlay(el, shortcut) {
   if (!root) {
     root = el;
     root.addEventListener('click', onClick);
@@ -918,6 +921,14 @@ export async function openPlay(el) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
     try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
+  }
+  if (shortcut === 'gto' && !seated) {
+    setup.game = 'nlhe';
+    setup.count = 1;
+    setup.bots = ['gto'];
+    setup.buyIn = 100 * setup.bb;
+    if (gtoAvailable) { startTable(); return; }
+    setupNote = 'The GTO bot isn’t available right now.';
   }
   render();
   pace();
