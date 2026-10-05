@@ -5,8 +5,18 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 AddType application/wasm .wasm
 
 # Revalidate on every load so a deploy never mixes old and new JS/WASM
+# (and so gto/current.json picks up a newly published model)
 <IfModule mod_headers.c>
-  <FilesMatch "\.(html|js|css|wasm)$">
+  <FilesMatch "\.(html|js|css|wasm|json)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
+  # The GTO bot's model files never change: a new model gets a new folder.
+  <FilesMatch "\.bin$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Compress the model files (6 MB becomes under 3 MB)
+<IfModule mod_deflate.c>
+  AddOutputFilter DEFLATE bin
 </IfModule>
