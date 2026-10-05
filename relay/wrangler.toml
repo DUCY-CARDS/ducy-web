@@ -1,0 +1,18 @@
+# Cloudflare Worker that relays multiplayer messages for the #play page.
+# Deploy: see README.md.
+name = "ducy-relay"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[vars]
+# Comma-separated page origins allowed to connect, e.g. "https://ducy.example".
+# Empty allows any origin.
+ALLOWED_ORIGINS = ""

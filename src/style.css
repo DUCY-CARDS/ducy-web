@@ -793,6 +793,12 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-stats-table td small { color: var(--fg-muted); }
 .pl-stats-table tr.hero th { color: var(--teal); }
 .pl-log { max-height: 140px; overflow-y: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); border-top: 1px solid var(--border); padding-top: 8px; }
+.pl-multi { border-top: 1px solid var(--border); padding-top: 14px; }
+.pl-multi h2 { font-size: 16px; color: var(--fg-strong); margin: 0; }
+.pl-text { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg); width: 180px; max-width: 100%; }
+.pl-bar { gap: 12px; flex-wrap: wrap; }
+.pl-neterr { color: var(--red); }
+.pl-clock { font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e9ecef; border-radius: 999px; padding: 0 7px; }
 
 @media (max-width: 640px) {
   .pl-felt { aspect-ratio: 3 / 4; margin: 24px 30px 34px; border-radius: 120px; }
