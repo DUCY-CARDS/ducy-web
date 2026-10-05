@@ -62,8 +62,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
         run: |
-          TAG="$(gh release list -R allenpiscitello/ducy --limit 100 --json tagName,createdAt \
-            -q '[.[] | select(.tagName | startswith("gto-"))] | sort_by(.createdAt) | last | .tagName // empty')"
+          TAG="$(gh release list -R allenpiscitello/ducy --limit 100 --json tagName,publishedAt \
+            -q '[.[] | select(.tagName | startswith("gto-"))] | sort_by(.publishedAt) | last | .tagName // empty')"
           if [ -z "$TAG" ]; then echo "no GTO model release yet"; exit 0; fi
           if rsync --list-only "$TARGET/gto/$TAG/blueprint.bin" >/dev/null 2>&1; then
             echo "$TAG is already published"
