@@ -34,8 +34,8 @@ function call(op, ...args) {
 
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
-const DEAL_DELAY = 1500; // ms before auto-dealing after a hand with no showdown
-const SHOWDOWN_DEAL_DELAY = 3000; // ...and after a showdown, to read the hands
+// Seconds before auto-dealing the next hand, picked in the table bar.
+const DEAL_DELAYS = [0.5, 1, 2, 3];
 const SETUP_KEY = 'ducyPlaySetup';
 const STATS_KEY = 'ducyPlayStats';
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
@@ -96,9 +96,9 @@ let joinCode = linkedCode();
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'session', autoDeal: false, name: '', open: 1, turnSecs: 30, ...s};
+    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', open: 1, turnSecs: 30, ...s};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, name: '', open: 1, turnSecs: 30};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', open: 1, turnSecs: 30};
 }
 
 function saveSetup() {
@@ -314,7 +314,7 @@ function armDeal() {
   cancelDeal();
   // A hosted table waits for the host's first deal; guests never deal.
   if (!open || !seated || !state || !state.complete || !setup.autoDeal || holds.size || mode === 'guest' || !num(state.hand_number)) { syncDeal(); return; }
-  dealAt = performance.now() + (state.showdown ? SHOWDOWN_DEAL_DELAY : DEAL_DELAY);
+  dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
   const mine = session;
   const tick = () => {
     if (mine !== session) return;
@@ -578,6 +578,7 @@ function renderTable() {
   if (mode !== 'solo') h += netBarHtml();
   h += '<span class="pl-tools">';
   h += `<button class="cc-btn${setup.autoDeal ? ' on' : ''}" data-act="autodeal" aria-pressed="${!!setup.autoDeal}">Auto-deal</button>`;
+  if (setup.autoDeal) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
   h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
@@ -614,49 +615,61 @@ function renderTable() {
   if (lg) lg.scrollTop = lg.scrollHeight;
 }
 
+// The action bar keeps every control in a fixed slot, whatever the state:
+// a status line, then fold, check/call, and the bet/raise area. An action
+// that isn't available leaves its slot blank, so a button never moves under
+// the pointer: a click aimed at Fold can't land on Call or Raise because the
+// screen changed. Between hands the fold and call slots stay empty and Next
+// hand sits in the raise area.
 function controlsHtml() {
   const s = state;
+  const blank = '<span class="pl-slot" aria-hidden="true"></span>';
+  let status = '', fold = blank, call = blank, raise = blank;
+  const L = s.legal;
   if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${num(w.won)}`).join(', ');
     // Before the first hand of a hosted table there's no result yet.
-    const result = num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players';
-    if (mode === 'guest') return `<div class="pl-controls done"><span class="pl-result">${result}</span><span class="pl-meta">The host deals the next hand</span></div>`;
-    const label = num(s.hand_number) ? nextLabel() : 'Deal';
-    let h = `<div class="pl-controls done"><span class="pl-result">${result}</span>`;
-    h += `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
-    if (setup.autoDeal && num(s.hand_number)) h += `<button class="btn-small" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
-    return h + '</div>';
+    status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
+    if (mode === 'guest') {
+      raise = '<span class="pl-slot pl-raise"><span class="pl-meta">The host deals the next hand</span></span>';
+    } else {
+      const label = num(s.hand_number) ? nextLabel() : 'Deal';
+      raise = `<span class="pl-raise"><span class="pl-sizes"></span><button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
+      raise += setup.autoDeal && num(s.hand_number) ? `<button class="btn-small" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>` : '';
+      raise += '</span>';
+    }
+  } else if (foldQueued) {
+    if (L) {
+      // With the turn here, the queued fold (or check) is on its way.
+      status = `${L.can_fold ? 'Folding' : 'Checking'}…`;
+    } else {
+      status = 'Folding when it’s your turn';
+      fold = '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button>';
+    }
+  } else if (!L) {
+    status = `${esc(nameOf(s.to_act))} is thinking…`;
+    if (canPrefold()) fold = '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>';
+  } else {
+    status = 'Your turn';
+    if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
+    if (L.can_check) call = '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
+    else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${num(L.call)} <kbd>C</kbd></button>`;
+    const range = L.raise || L.bet;
+    if (range) {
+      const min = num(range.min_to), max = num(range.max_to);
+      // Pot-limit defaults to the pot, no-limit to the minimum.
+      if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
+      const word = L.raise ? 'Raise to' : 'Bet';
+      raise = '<span class="pl-raise">';
+      raise += `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
+      raise += `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
+      raise += `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
+      raise += '</span>';
+    }
   }
-  const L = s.legal;
-  if (foldQueued) {
-    // With the turn here, the queued fold (or check) is on its way.
-    if (L) return `<div class="pl-controls wait"><span>${L.can_fold ? 'Folding' : 'Checking'}…</span></div>`;
-    return '<div class="pl-controls wait"><span>Folding when it’s your turn</span>' +
-      '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button></div>';
-  }
-  if (!L) {
-    const fold = canPrefold() ? '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>' : '';
-    return `<div class="pl-controls wait"><span>${esc(nameOf(s.to_act))} is thinking…</span>${fold}</div>`;
-  }
-  const range = L.raise || L.bet;
-  const word = L.raise ? 'Raise to' : 'Bet';
-  let h = '<div class="pl-controls">';
-  if (L.can_fold) h += '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
-  if (L.can_check) h += '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
-  else if (L.call != null) h += `<button class="tr-btn" data-act="call">Call ${num(L.call)} <kbd>C</kbd></button>`;
-  if (range) {
-    const min = num(range.min_to), max = num(range.max_to);
-    // Pot-limit defaults to the pot, no-limit to the minimum.
-    if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
-    h += '<div class="pl-raise">';
-    h += `<div class="pl-sizes">${sizeButtons(min, max)}</div>`;
-    h += `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
-    h += `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
-    h += '</div>';
-  }
-  h += '</div>';
-  return h;
+  return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
+    `<div class="pl-act-fold">${fold}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div></div>`;
 }
 
 // Pot-fraction sizes: the street total after calling and then adding that
@@ -674,7 +687,9 @@ function sizeButtons(min, max) {
   const pot = `${tableGame.pl && max >= allInTo() ? 'All-in' : 'Pot'} <kbd>P</kbd>`;
   const sizes = [['½ pot', potSize(0.5, min, max)], ['¾ pot', potSize(0.75, min, max)], [pot, potTo(min, max)]];
   if (!tableGame.pl) sizes.push(['All-in', max]);
-  return sizes.map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('');
+  // Always four slots, so the sizes never shift (pot-limit has no separate All-in).
+  return sizes.map(([t, v]) => `<button class="btn-small" data-size="${v}">${t}</button>`).join('') +
+    '<span class="pl-size-slot" aria-hidden="true"></span>'.repeat(4 - sizes.length);
 }
 
 // The street total that puts the person all-in.
@@ -818,6 +833,14 @@ function onClick(e) {
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'next') nextHand();
   else if (el.dataset.act === 'pause') hold('user', !holds.has('user'));
+  else if (el.dataset.act === 'dealdelay') {
+    // Cycles through the delays; restarts a running countdown with the new one.
+    const i = DEAL_DELAYS.indexOf(setup.dealSecs);
+    setup.dealSecs = DEAL_DELAYS[(i + 1) % DEAL_DELAYS.length];
+    saveSetup();
+    render();
+    armDeal();
+  }
   else if (el.dataset.act === 'autodeal') { setup.autoDeal = !setup.autoDeal; saveSetup(); holds.delete('user'); render(); armDeal(); }
   else if (el.dataset.act === 'leave') leaveTable();
   else if (el.dataset.act === 'host') hostTable();
