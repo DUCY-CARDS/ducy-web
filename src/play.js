@@ -44,6 +44,14 @@ const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 let root = null;
 let open = false;
 let personalities = [];
+// The GTO bot: a solver-trained strategy for heads-up No-limit Hold'em. Its
+// files are hosted at gto/ (see scripts/upload-gto.sh); it's offered when
+// they're there.
+const GTO_MANIFEST = new URL('gto/current.json', document.baseURI).href;
+const GTO = {id: 'gto', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
+let gtoAvailable = false;
+let gtoReady = false;
+let setupNote = '';
 let seated = false; // a table is in play
 let botToAct = false;
 let busy = false; // a request to the table is in flight
@@ -100,10 +108,15 @@ const nameOf = seat => (state ? state.seats[seat].name : '');
 
 // ---- setup ----
 
+// The GTO bot plays heads-up No-limit Hold'em only.
+const gtoAllowed = () => gtoAvailable && setup.game === 'nlhe' && setup.count === 1;
+const botChoices = () => (gtoAllowed() ? [GTO, ...personalities] : personalities);
+
 // Fills empty or unknown bot picks with random personalities not already seated.
 function fillBots() {
   const ids = personalities.map(p => p.id);
-  const bots = setup.bots.slice(0, setup.count).map(b => (ids.includes(b) ? b : null));
+  const valid = botChoices().map(p => p.id);
+  const bots = setup.bots.slice(0, setup.count).map(b => (valid.includes(b) ? b : null));
   while (bots.length < setup.count) bots.push(null);
   for (let i = 0; i < bots.length; i++) {
     if (bots[i]) continue;
@@ -132,12 +145,14 @@ function renderSetup() {
   h += '</div></div>';
   h += '<div class="pl-bots">';
   setup.bots.forEach((id, i) => {
-    const p = personalities.find(x => x.id === id);
+    const p = botChoices().find(x => x.id === id);
     h += `<label class="pl-bot"><span class="pl-seatno">Seat ${i + 2}</span><select data-bot="${i}">`;
-    for (const q of personalities) h += `<option value="${q.id}"${q.id === id ? ' selected' : ''}>${esc(q.name)}</option>`;
+    for (const q of botChoices()) h += `<option value="${q.id}"${q.id === id ? ' selected' : ''}>${esc(q.name)}</option>`;
     h += `</select><span class="pl-desc">${esc(p ? p.description : '')}</span></label>`;
   });
   h += '</div>';
+  if (gtoAvailable && !gtoAllowed()) h += '<p class="pl-desc">Play heads-up No-limit Hold’em (1 opponent) to face the GTO bot.</p>';
+  if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
   h += '</div></div>';
@@ -190,7 +205,25 @@ function togglePrefold() {
   render();
 }
 
+// Downloads (the first time) and loads the GTO bot's files in the worker.
+async function prepareGto() {
+  if (gtoReady || !setup.bots.includes('gto')) return true;
+  root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about 3 MB the first time, then it’s kept on this device)…</p></div>';
+  try { navigator.storage?.persist?.(); } catch {}
+  try {
+    await call('loadGto', GTO_MANIFEST);
+    gtoReady = true;
+    return true;
+  } catch (e) {
+    console.warn(e);
+    setupNote = 'The GTO bot couldn’t be loaded. Try again, or pick another opponent.';
+    return false;
+  }
+}
+
 async function startTable() {
+  setupNote = '';
+  if (!await prepareGto()) { render(); return; }
   saveSetup();
   tableGame = gameOf(setup.game);
   seated = true;
@@ -544,6 +577,7 @@ export async function openPlay(el) {
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
+    try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
   }
   render();
   pace();
