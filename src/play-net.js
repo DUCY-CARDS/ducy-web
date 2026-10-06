@@ -6,18 +6,27 @@
 
 const RELAY_KEY = 'ducyRelay';
 const CLIENT_KEY = 'ducyPlayClient';
-// The deployed relay, e.g. 'wss://ducy-relay.<account>.workers.dev'. Empty
-// hides multiplayer; ?relay=<url> sets it for this browser (for testing).
-const DEFAULT_RELAY = '';
+// The deployed relay (relay/ on Cloudflare Workers). Empty hides
+// multiplayer. ?relay=<url> uses another one in this browser (for testing;
+// the https:// URL wrangler prints works too), and ?relay=default goes back
+// to this one.
+const DEFAULT_RELAY = 'wss://ducy-relay.ducy.workers.dev';
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 
+// A relay address as a WebSocket URL: https:// becomes wss://, http://
+// becomes ws://, and a trailing slash goes.
+export function wsUrl(u) {
+  return String(u).trim().replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '');
+}
+
 export function relayUrl() {
-  const q = new URLSearchParams(location.search).get('relay');
+  let q = new URLSearchParams(location.search).get('relay');
   try {
+    if (q === 'default') { localStorage.removeItem(RELAY_KEY); q = null; }
     if (q) localStorage.setItem(RELAY_KEY, q);
-    return (q || localStorage.getItem(RELAY_KEY) || DEFAULT_RELAY).replace(/\/$/, '');
+    return wsUrl(q || localStorage.getItem(RELAY_KEY) || DEFAULT_RELAY);
   } catch {
-    return (q || DEFAULT_RELAY).replace(/\/$/, '');
+    return wsUrl(q && q !== 'default' ? q : DEFAULT_RELAY);
   }
 }
 
@@ -26,11 +35,14 @@ export function linkedCode() {
   return normCode(new URLSearchParams(location.search).get('table') || '');
 }
 
-// A link that opens #play ready to join `code`.
+// A link that opens #play ready to join `code`. It names the relay too when
+// it isn't the default, so friends reach the same one.
 export function joinLink(code) {
   const u = new URL(location.href);
   u.search = '';
   u.searchParams.set('table', code);
+  const relay = relayUrl();
+  if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
   u.hash = 'play';
   return u.toString();
 }

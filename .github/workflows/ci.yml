@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Unit tests
-        run: node --test test/play-stats.test.mjs
+        run: node --test test/play-stats.test.mjs test/play-net.test.mjs
 
       - name: Checkout ducy
         uses: actions/checkout@v4
