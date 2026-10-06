@@ -1,9 +1,13 @@
 // Runs the bot table (ducy-wasm's BotTable) off the main thread, so the page
 // stays responsive while a bot thinks; Omaha decisions can take a second or
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
-//   ops: personalities | create(bots, buyIn, sb, bb, seed, game) | newHand |
-//        advance | act(kind, amount) | loadGto(manifestUrl)
-// Every table op returns {state, botToAct}.
+//   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
+//        newHand(reset) | advance | act(kind, amount) | loadGto(manifestUrl) |
+//        review
+// Every table op returns {state, botToAct}. newHand(true) puts every stack
+// back to the buy-in first (GTO training plays every hand at 100 BB).
+// review returns the last finished hand's review against the GTO bot (see
+// play-review.js), or null.
 // Hosting a table for friends uses MultiTable (ops starting with "host"):
 //   hostFriends(seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed,
 //     game, turnMs) | hostNewHand | hostAdvance | hostAct(kind, amount) |
@@ -65,7 +69,13 @@ const ops = {
     table = new BotTable(bots, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game);
     return snapshot(table.newHand());
   },
-  newHand: () => snapshot(table.newHand()),
+  // resetStacks and reviewLastHand came with ducy's hand review; with an
+  // older ducy-wasm, stacks carry over and there's no review.
+  newHand: reset => {
+    if (reset && table.resetStacks) table.resetStacks();
+    return snapshot(table.newHand());
+  },
+  review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   loadGto: manifestUrl => loadGtoModel(manifestUrl),
