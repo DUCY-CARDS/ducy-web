@@ -6,7 +6,9 @@
 // thinks. Each finished hand also feeds the stats tracker (play-stats.js).
 // With friends (play-net.js), the host's tab runs the table (MultiTable) and
 // relays each player their own view; a guest's tab only draws the views it
-// receives and sends its actions to the host.
+// receives and sends its actions to the host. A friends table has no bots:
+// seats stay empty until people join, and chips are real, handed out by the
+// host on request within the table's buy-in limits.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
@@ -46,6 +48,12 @@ const GAMES = [
   {id: 'plo6', label: 'PLO6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
 ];
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
+// A friends table: game, blinds, seats in all (the host's included) and the
+// buy-in limits in big blinds.
+const FRIENDS_DEFAULT = {game: 'nlhe', sb: 1, bb: 2, seats: 6, minBB: 50, maxBB: 200};
+const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+const MIN_BUY_INS = [20, 40, 50, 100];
+const MAX_BUY_INS = [100, 200, 300, 500];
 
 let root = null;
 let open = false;
@@ -90,15 +98,24 @@ let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
 let openSeats = 0;
+// The host's side of a friends table: who's in, chip requests, limits.
+let hostInfo = {playersIn: 0, chipRequests: [], buyIn: null, hostPendingChips: 0};
+// A guest's chips at a friends table: {min, max, requested, approved}.
+let myChips = null;
+let chipAsk = 0; // the amount in a guest's request box
 let lastView = null; // a guest's last view from the host
 let joinCode = linkedCode();
+
+function defaultSetup() {
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, tab: 'bots', friends: {...FRIENDS_DEFAULT}};
+}
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {game: 'nlhe', hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', open: 1, turnSecs: 30, ...s};
+    if (s && Array.isArray(s.bots)) return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
   } catch {}
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', open: 1, turnSecs: 30};
+  return defaultSetup();
 }
 
 function saveSetup() {
@@ -149,23 +166,35 @@ function fillBots() {
   setup.bots = bots;
 }
 
+// The setup screen: playing the bots, or (with a relay) a table for friends.
 function renderSetup() {
+  const tabs = !!relayUrl();
+  const friends = tabs && setup.tab === 'friends';
+  let h = '<div class="pl-wrap">';
+  if (tabs) {
+    const tab = (id, label) => `<button class="pl-tab${(id === 'friends') === friends ? ' on' : ''}" role="tab" aria-selected="${(id === 'friends') === friends}" data-tab="${id}">${label}</button>`;
+    h += `<div class="pl-tabs" role="tablist">${tab('bots', 'Play the bots')}${tab('friends', 'Play with friends')}</div>`;
+  }
+  h += friends ? friendsSetupHtml() : botsSetupHtml();
+  h += '</div>';
+  root.innerHTML = h;
+}
+
+function optsRow(label, items) {
+  return `<div class="pl-row"><span class="pl-label">${label}</span><div class="pl-opts">${items.join('')}</div></div>`;
+}
+
+const optBtn = (on, attr, value, text) => `<button class="cc-btn${on ? ' on' : ''}" ${attr}="${value}">${text}</button>`;
+
+function botsSetupHtml() {
   fillBots();
-  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Play the bots</h1>';
+  let h = '<div class="pl-head"><h1>Play the bots</h1>';
   h += '<p>No-limit Hold’em or pot-limit Omaha against ducy’s bot personalities. Each one plays a different style, and some adapt to how you play.</p></div>';
   h += '<div class="pl-setup">';
-  h += '<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">';
-  for (const g of GAMES) h += `<button class="cc-btn${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}">${g.label}</button>`;
-  h += '</div></div>';
-  h += '<div class="pl-row"><span class="pl-label">Opponents</span><div class="pl-opts">';
-  for (let n = 1; n <= 8; n++) h += `<button class="cc-btn${setup.count === n ? ' on' : ''}" data-count="${n}">${n}</button>`;
-  h += '</div></div>';
-  h += '<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">';
-  for (const [sb, bb] of [[1, 2], [5, 10], [25, 50]]) h += `<button class="cc-btn${setup.bb === bb ? ' on' : ''}" data-blinds="${sb}/${bb}">${sb}/${bb}</button>`;
-  h += '</div></div>';
-  h += '<div class="pl-row"><span class="pl-label">Buy-in</span><div class="pl-opts">';
-  for (const bbs of [50, 100, 200]) h += `<button class="cc-btn${setup.buyIn === bbs * setup.bb ? ' on' : ''}" data-buyin="${bbs}">${bbs} BB</button>`;
-  h += '</div></div>';
+  h += optsRow('Game', GAMES.map(g => optBtn(setup.game === g.id, 'data-pgame', g.id, g.label)));
+  h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
+  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${sb}/${bb}`)));
+  h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   h += '<div class="pl-bots">';
   setup.bots.forEach((id, i) => {
     const p = botChoices().find(x => x.id === id);
@@ -179,26 +208,28 @@ function renderSetup() {
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
   h += '</div>';
-  if (relayUrl()) h += multiSetupHtml();
-  h += '</div>';
-  root.innerHTML = h;
+  return h;
 }
 
-// Hosting uses the game, blinds and opponents above; open seats are bot
-// seats friends can take (the bot plays them until someone joins).
-function multiSetupHtml() {
-  let h = '<div class="pl-setup pl-multi"><h2>Play with friends</h2>';
+// A table for friends: no bots, seats stay empty until people join, and
+// everyone asks the host for chips within the buy-in limits.
+function friendsSetupHtml() {
+  const f = setup.friends;
+  let h = '<div class="pl-head"><h1>Play with friends</h1>';
+  h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them.</p></div>';
+  h += '<div class="pl-setup pl-multi">';
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
-  h += '<div class="pl-row"><span class="pl-label">Open seats</span><div class="pl-opts">';
-  for (let n = 1; n <= setup.count; n++) h += `<button class="cc-btn${Math.min(setup.open, setup.count) === n ? ' on' : ''}" data-open="${n}">${n}</button>`;
-  h += '</div></div>';
-  h += '<div class="pl-row"><span class="pl-label">Turn time</span><div class="pl-opts">';
-  for (const t of [15, 30, 60, 0]) h += `<button class="cc-btn${setup.turnSecs === t ? ' on' : ''}" data-turn="${t}">${t ? t + 's' : 'None'}</button>`;
-  h += '</div></div>';
-  h += '<p class="pl-desc">Bots play the open seats until friends join, and take them back when they leave.</p>';
+  h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
+  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(f.bb === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)));
+  h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
+  h += optsRow('Min buy-in', MIN_BUY_INS.map(n => optBtn(f.minBB === n, 'data-fmin', n, `${n} BB`)));
+  h += optsRow('Max buy-in', MAX_BUY_INS.map(n => optBtn(f.maxBB === n, 'data-fmax', n, `${n} BB`)));
+  h += optsRow('Turn time', [15, 30, 60, 0].map(t => optBtn(setup.turnSecs === t, 'data-turn', t, t ? t + 's' : 'None')));
+  h += `<p class="pl-desc">Up to ${f.seats} players, you included. Everyone, you too, holds between ${f.minBB * f.bb} and ${f.maxBB * f.bb} chips after a top-up (${f.minBB}–${f.maxBB} BB); chips carry over from hand to hand.</p>`;
   h += '<div class="pl-actions"><button class="tr-start" data-act="host">Host a table</button></div>';
-  h += '<div class="pl-row"><span class="pl-label">Join</span><div class="pl-opts">';
-  h += `<input class="pl-text" id="pl-code" maxlength="9" placeholder="Table code" value="${esc(joinCode)}">`;
+  h += '<h2>Join a table</h2>';
+  h += '<div class="pl-row"><span class="pl-label">Table code</span><div class="pl-opts">';
+  h += `<input class="pl-text" id="pl-code" maxlength="9" placeholder="ABCD-EFGH" value="${esc(joinCode)}">`;
   h += '<button class="tr-btn" data-act="join">Join table</button></div></div>';
   if (netNote) h += `<p class="pl-desc pl-neterr">${esc(netNote)}</p>`;
   h += '</div>';
@@ -250,7 +281,7 @@ function show(snap) {
 // still in.
 function canPrefold() {
   const me = state.seats[0];
-  return !state.legal && !state.complete && !me.folded && !me.all_in;
+  return !state.legal && !state.complete && !me.folded && !me.all_in && !me.sitting_out && !me.empty;
 }
 
 function togglePrefold() {
@@ -292,6 +323,7 @@ async function startTable() {
 
 async function nextHand() {
   if (mode === 'guest') return; // the host deals
+  if (mode === 'host' && hostInfo.playersIn < 2) return; // no one to deal to
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
@@ -381,6 +413,12 @@ function hostCall(op, ...args) {
   const p = hostChain.then(() => call(op, ...args)).then(r => {
     for (const m of r.out) net?.send({to: m.to, data: m.data});
     openSeats = r.openSeats;
+    hostInfo = {
+      playersIn: r.playersIn ?? 0,
+      chipRequests: r.chipRequests || [],
+      buyIn: r.buyIn ? {min: num(r.buyIn.min), max: num(r.buyIn.max)} : null,
+      hostPendingChips: num(r.hostPendingChips || 0),
+    };
     return r;
   });
   hostChain = p.catch(() => {});
@@ -398,10 +436,11 @@ function hostEvent(op, ...args) {
 async function hostTable() {
   readNameInput();
   setupNote = '';
-  if (!await prepareGto()) { render(); return; }
   saveSetup();
-  tableGame = gameOf(setup.game);
+  const f = setup.friends;
+  tableGame = gameOf(f.game);
   mode = 'host';
+  hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
   sessionStats = {};
   recordedHand = 0;
   room = newCode();
@@ -422,8 +461,10 @@ async function hostTable() {
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
   });
-  const open = setup.bots.map((_, i) => i < Math.min(setup.open, setup.count));
-  request('create', setup.bots, open, setup.name, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game, setup.turnSecs * 1000)
+  // The host starts with 100 BB, kept within the table's limits.
+  const min = f.minBB * f.bb, max = f.maxBB * f.bb;
+  const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
+  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, Math.floor(Math.random() * 2 ** 32), f.game, setup.turnSecs * 1000)
     .then(snap => { if (snap) show(snap); });
   hostTimer = setInterval(() => { if (turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
   startClock();
@@ -436,6 +477,8 @@ function joinTable() {
   saveSetup();
   joinCode = code;
   mode = 'guest';
+  myChips = null;
+  chipAsk = 0;
   sessionStats = {};
   recordedHand = 0;
   room = code;
@@ -460,6 +503,7 @@ function joinTable() {
 function guestMessage(m) {
   if (m.type === 'state') {
     lastView = m.view;
+    myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
     tableGame = GAMES.find(g => g.cards === num(m.view.hole_cards) && g.pl === m.view.pot_limit) || GAMES[0];
     netNote = '';
     show({seq: num(m.seq), state: m.view, botToAct: false, turnMsLeft: m.turn_ms_left});
@@ -587,6 +631,17 @@ function renderTable() {
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
+    if (seat.empty) {
+      h += `<div class="pl-seat empty" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>Empty seat</b></div>`;
+      if (s.button === i) h += '<div class="pl-button">D</div>';
+      h += '</div>';
+      return;
+    }
+    if (seat.sitting_out) {
+      const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
+      return;
+    }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
     const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
@@ -602,6 +657,7 @@ function renderTable() {
   });
   h += '</div>';
   h += controlsHtml();
+  h += chipsHtml();
   if (statsOpen) h += statsHtml();
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
@@ -633,6 +689,8 @@ function controlsHtml() {
     status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
     if (mode === 'guest') {
       status += ' <span class="pl-meta">· The host deals the next hand</span>';
+    } else if (mode === 'host' && hostInfo.playersIn < 2) {
+      status += ' <span class="pl-meta">· Dealing needs two players with chips</span>';
     } else {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
       raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
@@ -696,9 +754,73 @@ function allInTo() {
   return num(me.street_bet) + num(me.stack);
 }
 
+// ---- chips at a friends table ----
+
+// The host's panel: chip requests to approve, the people seated (to remove),
+// and the host's own top-up. A guest's: their chips and a request.
+function chipsHtml() {
+  if (mode === 'host' && hostInfo.buyIn) return hostChipsHtml();
+  if (mode === 'guest' && myChips) return guestChipsHtml();
+  return '';
+}
+
+function hostChipsHtml() {
+  const {min, max} = hostInfo.buyIn;
+  let h = '<div class="pl-chips">';
+  if (hostInfo.chipRequests.length) {
+    h += '<div class="pl-chips-head"><b>Chip requests</b></div><ul class="pl-chip-list">';
+    for (const r of hostInfo.chipRequests) {
+      h += `<li><span><b>${esc(r.name)}</b> asks for ${num(r.amount)} chips <span class="pl-meta">(has ${num(r.stack)})</span></span>`;
+      h += `<span class="pl-chip-acts"><button class="tr-btn yes" data-approve="${r.seat}">Approve</button><button class="tr-btn" data-deny="${r.seat}">Deny</button></span></li>`;
+    }
+    h += '</ul>';
+  }
+  const people = state.seats.map((x, i) => ({...x, i})).filter(x => x.i > 0 && x.human && !x.empty);
+  if (people.length) {
+    h += '<div class="pl-chips-head"><b>Players</b></div><ul class="pl-chip-list">';
+    for (const p of people) {
+      const note = p.away ? ' · away' : p.sitting_out ? (num(p.stack) === 0 ? ' · needs chips' : ' · sitting out') : '';
+      h += `<li><span>${esc(p.name)} <span class="pl-meta">${num(p.stack)} chips${note}</span></span><button class="link-btn" data-remove="${p.i}">Remove</button></li>`;
+    }
+    h += '</ul>';
+  }
+  const mine = num(state.seats[0].stack) + hostInfo.hostPendingChips;
+  const room = max - mine;
+  h += '<div class="pl-chips-head"><b>Your chips</b>';
+  h += `<span class="pl-meta">${num(state.seats[0].stack)}${hostInfo.hostPendingChips ? ` (+${hostInfo.hostPendingChips} next hand)` : ''} · stacks ${min}–${max} after a top-up</span></div>`;
+  if (room > 0) {
+    const lo = Math.max(1, min - mine);
+    const v = Math.max(lo, Math.min(room, chipAsk || room));
+    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${lo}" max="${room}" value="${v}" aria-label="Chips to add"><button class="tr-btn" data-act="hostchips">Add chips</button></div>`;
+  }
+  return h + '</div>';
+}
+
+function guestChipsHtml() {
+  const {min, max, requested, approved} = myChips;
+  const stack = num(state.seats[0].stack) + approved;
+  let h = '<div class="pl-chips"><div class="pl-chips-head"><b>Your chips</b>';
+  h += `<span class="pl-meta">${num(state.seats[0].stack)}${approved ? ` (+${approved} next hand)` : ''} · stacks ${min}–${max} after a top-up</span></div>`;
+  if (requested) {
+    h += `<div class="pl-chip-ask"><span>Asked the host for ${requested} chips…</span><button class="link-btn" data-act="cancelchips">Cancel</button></div>`;
+  } else if (stack < max) {
+    const lo = Math.max(1, min - stack), hi = max - stack;
+    const v = Math.max(lo, Math.min(hi, chipAsk || hi));
+    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${lo}" max="${hi}" value="${v}" aria-label="Chips to ask for"><button class="tr-btn yes" data-act="askchips">Ask for chips</button></div>`;
+    if (stack === 0) h += '<p class="pl-meta">You’ll be dealt in once the host approves your chips.</p>';
+  }
+  return h + '</div>';
+}
+
+// The amount in the chips box.
+function chipAmount() {
+  const el = root.querySelector('#pl-chipamt');
+  return el ? Math.floor(+el.value) || 0 : 0;
+}
+
 function netBarHtml() {
   let h = `<span class="pl-meta">Table <b>${esc(room)}</b>`;
-  if (mode === 'host') h += ` · ${openSeats} open seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
+  if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
   else h += '</span>';
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
   return h;
@@ -721,7 +843,8 @@ function recordStats() {
   if (!state || !state.complete || num(state.hand_number) === recordedHand) return;
   recordedHand = num(state.hand_number);
   const g = tableGame.id;
-  const counts = countHand(state);
+  // Empty seats and people sitting out weren't in the hand.
+  const counts = countHand(state).filter((_, i) => !state.seats[i].empty && !state.seats[i].sitting_out);
   recordHand(sessionStats[g] ||= {}, counts);
   recordHand(allStats[g] ||= {}, counts);
   saveStats();
@@ -803,8 +926,33 @@ function resetStats() {
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-open],[data-turn],[data-act],[data-size],[data-scope],[data-sort]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-tab],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove]');
   if (!el) return;
+  const d = el.dataset;
+  if (d.tab) { readNameInput(); setup.tab = d.tab; saveSetup(); render(); return; }
+  const f = setup.friends;
+  if (d.fgame || d.fblinds || d.fseats || d.fmin || d.fmax) {
+    readNameInput();
+    if (d.fgame) f.game = d.fgame;
+    if (d.fblinds) [f.sb, f.bb] = d.fblinds.split('/').map(Number);
+    if (d.fseats) f.seats = +d.fseats;
+    // Keep min ≤ max.
+    if (d.fmin) { f.minBB = +d.fmin; f.maxBB = Math.max(f.maxBB, f.minBB); }
+    if (d.fmax) { f.maxBB = +d.fmax; f.minBB = Math.min(f.minBB, f.maxBB); }
+    saveSetup();
+    render();
+    return;
+  }
+  if (d.approve != null) { hostEvent('hostApprove', +d.approve); return; }
+  if (d.deny != null) { hostEvent('hostDeny', +d.deny); return; }
+  if (d.remove != null) {
+    const who = state?.seats[+d.remove]?.name || 'this player';
+    if (confirm(`Remove ${who} from the table? They fold out of this hand, and their chips leave with them.`)) hostEvent('hostRemove', +d.remove);
+    return;
+  }
+  if (d.act === 'hostchips') { chipAsk = chipAmount(); hostEvent('hostChips', chipAsk); return; }
+  if (d.act === 'askchips') { chipAsk = chipAmount(); net?.send({type: 'request_chips', amount: chipAsk}); return; }
+  if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
   if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
   else if (el.dataset.sort) {
     const key = el.dataset.sort;
@@ -824,7 +972,6 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.buyin) { setup.buyIn = +el.dataset.buyin * setup.bb; render(); }
-  else if (el.dataset.open) { readNameInput(); setup.open = +el.dataset.open; render(); }
   else if (el.dataset.turn) { readNameInput(); setup.turnSecs = +el.dataset.turn; render(); }
   else if (el.dataset.size) { raiseTo = +el.dataset.size; render(); }
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
@@ -854,6 +1001,7 @@ function onClick(e) {
 }
 
 function onInput(e) {
+  if (e.target.id === 'pl-chipamt') chipAsk = Math.floor(+e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
     raiseTo = +e.target.value;
     const v = root.querySelector('#pl-amtv');
@@ -914,6 +1062,8 @@ export async function openPlay(el, shortcut) {
     document.addEventListener('visibilitychange', onVisibility);
   }
   open = true;
+  // An invite link opens on the friends tab, with the code filled in.
+  if (joinCode && !seated && relayUrl()) setup.tab = 'friends';
   if (document.hidden) holds.add('hidden'); else holds.delete('hidden');
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';

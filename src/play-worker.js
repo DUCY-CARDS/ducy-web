@@ -5,11 +5,13 @@
 //        advance | act(kind, amount) | loadGto(manifestUrl)
 // Every table op returns {state, botToAct}.
 // Hosting a table for friends uses MultiTable (ops starting with "host"):
-//   hostCreate(bots, open, name, buyIn, sb, bb, seed, game, turnMs) |
-//   hostNewHand | hostAdvance | hostAct(kind, amount) | hostHandle(client, msg) |
-//   hostDisconnected(client) | hostTick
-// Those return {seq, state, botToAct, turnMsLeft, openSeats, out}, where out
-// lists {to, data} messages for the page to relay to each player.
+//   hostFriends(seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed,
+//     game, turnMs) | hostNewHand | hostAdvance | hostAct(kind, amount) |
+//   hostHandle(client, msg) | hostDisconnected(client) | hostTick |
+//   hostApprove(seat) | hostDeny(seat) | hostChips(amount) | hostRemove(seat)
+// Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
+// chipRequests, buyIn, hostPendingChips, out}, where out lists {to, data}
+// messages for the page to relay to each player.
 import init, { BotTable, MultiTable, botPersonalities, loadGto } from '../wasm/ducy_wasm.js';
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
@@ -71,6 +73,16 @@ const ops = {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(Date.now()); // deal once the players are in
   },
+  // Friends: empty seats people take as they join, and real chips the host
+  // hands out on request.
+  hostFriends: (seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
+    host = MultiTable.friends(seats, name, BigInt(hostChips), BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
+    return host.state(Date.now());
+  },
+  hostApprove: seat => host.approveChips(seat, Date.now()),
+  hostDeny: seat => host.denyChips(seat, Date.now()),
+  hostChips: amount => host.hostChips(BigInt(amount), Date.now()),
+  hostRemove: seat => host.remove(seat, Date.now()),
   hostNewHand: () => host.newHand(Date.now()),
   hostAdvance: () => host.advance(Date.now()),
   hostAct: (kind, amount) => host.act(kind, BigInt(amount), Date.now()),

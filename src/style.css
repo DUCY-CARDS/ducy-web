@@ -838,3 +838,28 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
   .pl-bot { grid-template-columns: 48px minmax(0, 1fr); }
   .pl-bot .pl-desc { grid-column: 2; }
 }
+
+/* Setup tabs: play the bots, or host a table for friends. */
+.pl-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.pl-tab { font: inherit; font-size: 14px; font-weight: 600; color: var(--fg-muted); background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; cursor: pointer; }
+.pl-tab:hover { color: var(--fg-strong); }
+.pl-tab.on { color: var(--teal); border-bottom-color: var(--teal); }
+.pl-tab:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.pl-multi h2 { margin-top: 8px; }
+
+/* Friends tables: empty seats and people sitting out. */
+.pl-seat.empty .pl-plate { background: transparent; border: 1px dashed var(--felt-border); color: var(--fg-muted); box-shadow: none; }
+.pl-seat.empty .pl-plate b { color: var(--fg-muted); font-weight: 500; }
+.pl-seat.out { opacity: 0.6; }
+
+/* Chips at a friends table: requests, players, top-ups. */
+.pl-chips { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 13px; }
+.pl-chips-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; color: var(--fg-strong); }
+.pl-chip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pl-chip-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 4px 8px; background: var(--bg-raised); border-radius: var(--radius); }
+.pl-chip-acts { display: flex; gap: 6px; }
+.pl-chip-acts .tr-btn { padding: 4px 12px; font-size: 13px; }
+.pl-chip-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pl-chip-ask .pl-text { width: 110px; }
+.pl-chip-ask .tr-btn { padding: 4px 12px; font-size: 13px; }
+
