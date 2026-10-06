@@ -36,8 +36,13 @@ Then:
 2. Optionally set `ALLOWED_ORIGINS` in `wrangler.toml` to the site's origin,
    so only your page can use the relay, and deploy again.
 
-To try a relay without changing the code, open the page with
-`?relay=wss://…#play`. The browser remembers it.
+The site's relay is `wss://ducy-relay.ducy.workers.dev`.
+
+To try another relay without changing the code, open the page with
+`?relay=wss://…#play` (the `https://` URL wrangler prints works too). The
+browser remembers it, and invite links from that browser carry it, so
+friends reach the same relay. `?relay=default#play` goes back to the
+site's relay.
 
 ## Local development
 
