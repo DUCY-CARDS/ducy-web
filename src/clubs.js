@@ -338,12 +338,28 @@ function reconnectAll() {
   render();
 }
 
+// Another tab of this browser changed the club or the memberships (only one
+// tab can host, but any tab can show the club): show what it saved.
+function onStorage(e) {
+  if (e.key === CLUB_KEY) {
+    club = load(CLUB_KEY, null);
+    verifier = new Verifier(load(SENDERS_KEY, {}));
+    if (!club) { hostNet?.close(); hostNet = null; hostOnline = false; }
+  } else if (e.key === MEMBERSHIPS_KEY) {
+    const saved = load(MEMBERSHIPS_KEY, []);
+    // Keep this tab's connection state; take the other tab's data.
+    memberships = saved.map(s => Object.assign(memberships.find(m => m.code === s.code) || {}, s));
+  } else return;
+  render();
+}
+
 export async function openClubs(el) {
   if (!root) {
     root = el;
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
     window.addEventListener('pagehide', disconnectAll);
+    window.addEventListener('storage', onStorage);
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     club = load(CLUB_KEY, null);
     verifier = new Verifier(load(SENDERS_KEY, {}));
