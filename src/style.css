@@ -940,6 +940,9 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .pl-seat.out { opacity: 0.6; }
 
 /* Chips at a friends table: requests, players, top-ups. */
+.pl-sitout { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.pl-sitout.on { border: 1px solid var(--amber); background: var(--amber-faint); border-radius: var(--radius); padding: 10px; }
+.pl-sitout-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 .pl-chips { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 13px; }
 .pl-chips-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; color: var(--fg-strong); }
 .pl-chip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }

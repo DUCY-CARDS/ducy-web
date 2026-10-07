@@ -100,3 +100,12 @@ test('when the host’s page comes back, everyone seated is cashed out with thei
   assert.equal(openTables(club).length, 0);
   assert.ok(totals(club).conserved);
 });
+
+test('sit-out limit: per table, defaulting to the club setting (10 minutes)', () => {
+  const club = clubWith();
+  assert.equal(newTable(club).sitOutMins, 10);
+  club.sitOutMins = 30;
+  assert.equal(newTable(club).sitOutMins, 30);
+  assert.equal(newTable(club, {sitOutMins: 0}).sitOutMins, 0, 'no limit');
+  assert.throws(() => newTable(club, {sitOutMins: -1}), /sit-out limit/);
+});

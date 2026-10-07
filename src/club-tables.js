@@ -23,6 +23,9 @@ export const GAMES = [
 ];
 export const MAX_TABLE_NAME = 30;
 export const MAX_SEATS = 10;
+// How long someone may sit out before their seat is given up (#70): set per
+// table, defaulting to the club's setting, which starts at 10 minutes. 0: no limit.
+export const DEFAULT_SIT_OUT_MINS = 10;
 
 const whole = n => Number.isSafeInteger(n) && n > 0;
 
@@ -31,17 +34,18 @@ function tableId() {
 }
 
 // Adds a table to the club from the host's choices; throws on bad input.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = MAX_SEATS, turnSecs = 30} = {}, now = Date.now()) {
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = MAX_SEATS, turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
   ensureTables(club);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
   if (!whole(sb) || !whole(bb) || bb < sb) throw new Error('The big blind must be at least the small blind, both above 0.');
   if (!whole(minBB) || !whole(maxBB) || maxBB < minBB) throw new Error('The maximum buy-in must be at least the minimum.');
   if (!Number.isSafeInteger(seats) || seats < 2 || seats > MAX_SEATS) throw new Error(`A table seats 2 to ${MAX_SEATS}.`);
   if (!Number.isSafeInteger(turnSecs) || turnSecs < 0) throw new Error('Pick a turn time.');
+  if (!Number.isSafeInteger(sitOutMins) || sitOutMins < 0) throw new Error('Pick a sit-out limit.');
   const n = club.tables.length + 1;
   const t = {
     id: tableId(), name: String(name).trim().slice(0, MAX_TABLE_NAME) || `Table ${n}`,
-    game, sb, bb, minBB, maxBB, seats, turnSecs, status: 'open', createdAt: now,
+    game, sb, bb, minBB, maxBB, seats, turnSecs, sitOutMins, status: 'open', createdAt: now,
   };
   club.tables.push(t);
   return t;
@@ -49,6 +53,7 @@ export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB 
 
 export function ensureTables(club) {
   club.tables ??= [];
+  club.sitOutMins ??= DEFAULT_SIT_OUT_MINS;
   return ensureChips(club);
 }
 
