@@ -604,7 +604,7 @@ function toggleHistory(code, who) {
 }
 
 const SUIT = {s: '♠', h: '♥', d: '♦', c: '♣'};
-const cardSpan = c => (c ? `<span class="cl-card s-${c[1]}">${esc(c[0])}${SUIT[c[1]] || ''}</span>` : '<span class="cl-card back"></span>');
+const cardSpan = c => (c ? `<span class="cl-pc s-${c[1]}">${esc(c[0])}${SUIT[c[1]] || ''}</span>` : '<span class="cl-pc back"></span>');
 
 // A club's stored hands for `who`, with a table filter, as a list to replay.
 function handsHtml(code, who, label) {
@@ -686,7 +686,7 @@ function replayHtml() {
   const starts = streetStarts(frames);
   let h = '<div class="cl-replay-bg" data-cl="replay-close"></div><div class="cl-replay" role="dialog" aria-label="Hand replay">';
   h += `<div class="cl-replay-head"><b>${esc(rec.tableName)} · hand ${rec.hand}</b><span class="pl-meta">${new Date(rec.at).toLocaleString()} · blinds ${rec.sb}/${rec.bb}</span><button class="link-btn" data-cl="replay-close">Close</button></div>`;
-  h += `<div class="cl-replay-board">${[0, 1, 2, 3, 4].map(k => (f.board[k] ? cardSpan(f.board[k]) : '<span class="cl-card slot"></span>')).join('')}<span class="cl-chips">Pot ${chips(f.pot)}</span></div>`;
+  h += `<div class="cl-replay-board">${[0, 1, 2, 3, 4].map(k => (f.board[k] ? cardSpan(f.board[k]) : '<span class="cl-pc slot"></span>')).join('')}<span class="cl-chips">Pot ${chips(f.pot)}</span></div>`;
   h += '<ul class="cl-replay-seats">';
   f.seats.forEach((s, k) => {
     if (!s.inHand) return;
