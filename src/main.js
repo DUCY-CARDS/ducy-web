@@ -1788,6 +1788,11 @@ window.addEventListener('hashchange', () => {
   loadFromHash(); render(); updateGameUI();
 });
 
+// A club invite opens #clubs even if the #clubs on the end of the link was
+// lost (some apps cut links at the #).
+const q = new URLSearchParams(location.search);
+if (q.has('club') && q.has('invite') && location.hash !== '#clubs') history.replaceState(null, '', location.pathname + location.search + '#clubs');
+
 if (location.hash === '#trainer') setMode('trainer');
 else if (location.hash === '#play') setMode('play');
 else if (location.hash === '#clubs') setMode('clubs');
