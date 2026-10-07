@@ -123,6 +123,8 @@ function connectMembership(mem) {
   const entry = {net: null, online: false, hostHere: false};
   playerNets.set(mem.code, entry);
   const greet = async () => {
+    // Never ask to join without a name: the host would see a nameless player.
+    if (mem.status === 'new' && !myName()) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
     const body = mem.status === 'new'
       ? {type: 'join', club: mem.code, invite: mem.invite, name: myName()}
       : {type: 'hello', club: mem.code, name: myName()};
@@ -167,6 +169,23 @@ function joinFromInvite(name) {
   const existing = playerNets.get(mem.code);
   if (existing) { existing.net.close(); playerNets.delete(mem.code); }
   connectMembership(mem);
+  render();
+}
+
+// Saves the display name and tells each club's host: a pending request is
+// sent (or re-sent) with it, and members' names are updated.
+async function setName(name) {
+  const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
+  if (!n) { alert('Enter a name.'); return; }
+  try { localStorage.setItem(NAME_KEY, n); } catch {}
+  for (const m of memberships) {
+    m.error = '';
+    const body = m.status === 'new'
+      ? {type: 'join', club: m.code, invite: m.invite, name: n}
+      : {type: 'hello', club: m.code, name: n};
+    const net = playerNets.get(m.code)?.net;
+    if (net) net.send(await signMessage(me, body));
+  }
   render();
 }
 
@@ -275,7 +294,9 @@ function hostHtml() {
 
 function membershipsHtml() {
   if (!memberships.length) return '';
-  let h = '<section class="cl-card"><h2>Clubs you’ve joined</h2><ul class="cl-list">';
+  let h = '<section class="cl-card"><h2>Clubs you’ve joined</h2>';
+  h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="cl-myname" maxlength="${MAX_PLAYER_NAME}" placeholder="Name" value="${esc(myName())}">`;
+  h += '<button class="btn-small" data-cl="setname">Save</button><span class="pl-desc">What hosts see.</span></div><ul class="cl-list">';
   for (const m of memberships) {
     const n = playerNets.get(m.code);
     const live = n?.online ? (n.hostHere ? 'Host online' : 'Host away') : 'Offline';
@@ -310,6 +331,7 @@ async function onClick(e) {
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
   else if (act === 'forget') leaveMembership(b.dataset.code);
+  else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
 }
@@ -318,6 +340,7 @@ function onKey(e) {
   if (e.key !== 'Enter') return;
   if (e.target.id === 'cl-clubname') root.querySelector('[data-cl="create"]')?.click();
   if (e.target.id === 'cl-name') root.querySelector('[data-cl="join"]')?.click();
+  if (e.target.id === 'cl-myname') root.querySelector('[data-cl="setname"]')?.click();
 }
 
 // Leaving the site can keep this page frozen in the back/forward cache with
