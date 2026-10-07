@@ -40,6 +40,7 @@ function eventText(rec, e) {
     case 'ante': return `${who} antes ${num(e.amount)}`;
     case 'small_blind': return `${who} posts the small blind ${num(e.amount)}`;
     case 'big_blind': return `${who} posts the big blind ${num(e.amount)}`;
+    case 'post': return `${who} posts missed blinds: ${[num(e.dead) && `${num(e.dead)} dead`, num(e.live) && `${num(e.live)} live`].filter(Boolean).join(' + ')}`;
     case 'fold': return `${who} folds`;
     case 'check': return `${who} checks`;
     case 'call': return `${who} calls ${num(e.amount)}${e.all_in ? ' (all-in)' : ''}`;
@@ -71,6 +72,8 @@ export function replayFrames(rec) {
     const s = seats[e.seat];
     switch (e.type) {
       case 'ante': s.stack -= num(e.amount); pot += num(e.amount); break;
+      // Missed blinds (#70): the dead part goes in the pot, the live part is a bet.
+      case 'post': s.stack -= num(e.dead) + num(e.live); pot += num(e.dead); s.bet += num(e.live); break;
       case 'small_blind': case 'big_blind': case 'call':
         s.stack -= num(e.amount); s.bet += num(e.amount); if (e.all_in || s.stack === 0) s.allIn = s.stack === 0; break;
       case 'bet': case 'raise': {

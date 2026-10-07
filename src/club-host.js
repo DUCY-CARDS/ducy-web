@@ -114,7 +114,8 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
       if (ok) chipsChanged(who);
       else if (who) sendTable(who, {type: 'table', table: tid, update: {type: 'rejected', reason: why, chips: true}});
     }
-    if (changed || r.complete) save();
+    // Save when chips moved or a hand ended, not on every tick.
+    if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }
     if (before !== r.players.length) tablesChanged();
     pace(tid, res);
     if (t.status === 'closing' && !r.players.length) drop(tid);
@@ -148,7 +149,10 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true};
     running.set(t.id, r);
     r.chain = call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000)
+      .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
       .catch(e => { console.warn(e); running.delete(t.id); });
+    // The sit-out limit is checked on tick; tick regularly, not only on the turn clock.
+    r.sweep = setInterval(() => run(t.id, 'tick'), 5_000);
     await r.chain;
   }
 
@@ -163,7 +167,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
 
   function drop(tid) {
     const r = running.get(tid);
-    if (r) for (const k of Object.keys(r.timers)) clear(r, k);
+    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); clearInterval(r.sweep); }
     running.delete(tid);
     call('clubDrop', tid).catch(() => {});
     // Anyone watching is told the table closed.

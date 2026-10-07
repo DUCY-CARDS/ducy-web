@@ -256,6 +256,10 @@ function tableFormHtml(code = '') {
   h += '<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="100"></label>';
   h += `<label>Seats<input class="pl-text" name="seats" type="number" required min="2" max="${MAX_SEATS}" step="1" value="${MAX_SEATS}"></label>`;
   h += `<label>Turn time<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === 30 ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
+  // Sit-out limit (#70): this table's, starting from the club's default (an
+  // assistant's browser doesn't have the club, so theirs starts at 10 minutes).
+  const defOut = club?.sitOutMins ?? 10;
+  h += `<label>Sit-out limit<select class="pl-text" name="sitOutMins">${[5, 10, 15, 30, 0].map(m => `<option value="${m}"${m === defOut ? ' selected' : ''}>${m ? m + ' min' : 'None'}</option>`).join('')}</select></label>`;
   h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button><button class="btn-small" type="button" data-cl="cancel-table">Cancel</button></div></form>';
   return h;
 }
@@ -265,6 +269,7 @@ function submitTable(f) {
   const settings = {
     name: v('name'), game: v('game'), sb: Number(v('sb')), bb: Number(v('bb')),
     minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats: Number(v('seats')), turnSecs: Number(v('turnSecs')),
+    sitOutMins: Number(v('sitOutMins')),
   };
   // An assistant's: the host opens it.
   if (f.dataset.code) {
@@ -863,6 +868,9 @@ function hostHtml() {
   h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
   h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
   h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
+  h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
+  h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
+  h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
   // Hand history and results (#71): the host's hands show no hidden cards.
   h += '<h3>History</h3>';
   h += handsHtml(club.code, 'host', 'Hands at your tables');
@@ -1163,6 +1171,7 @@ async function onClick(e) {
   else if (act === 'grant') { chipForm = null; chipAction(b.dataset.id, () => grantRequest(club, b.dataset.id)); }
   else if (act === 'deny') chipAction(b.dataset.id, () => { declineRequest(club, b.dataset.id); return null; });
   else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
+  else if (act === 'sitout-mins') { club.sitOutMins = Number(b.dataset.mins); saveClub(); render(); }
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The host: agents.

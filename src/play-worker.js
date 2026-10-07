@@ -117,6 +117,8 @@ const ops = {
     return t[method](...args, Date.now());
   },
   clubDrop: id => { clubTables.get(id)?.free(); return clubTables.delete(id); },
+  // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
+  clubSitOutLimit: (id, ms) => { clubTables.get(id)?.setSitOutLimit(ms); return true; },
 };
 
 const clubTables = new Map();

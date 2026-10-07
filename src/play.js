@@ -121,6 +121,9 @@ let openSeats = 0;
 let hostInfo = {playersIn: 0, chipRequests: [], buyIn: null, hostPendingChips: 0};
 // A guest's chips at a friends table: {min, max, requested, approved}.
 let myChips = null;
+// A guest's own seat (#70): {sitting_out, waiting_for_big_blind, missed_small_blind,
+// missed_big_blind, outEnds}, from the host's updates.
+let mySeat = null;
 let chipAsk = 0; // the amount in a guest's request box
 let lastView = null; // a guest's last view from the host
 let joinCode = linkedCode();
@@ -685,6 +688,7 @@ let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the las
 function startGuest(code) {
   mode = 'guest';
   myChips = null;
+  mySeat = null;
   chipAsk = 0;
   gtoTable = false;
   review = null;
@@ -704,11 +708,14 @@ function guestMessage(m) {
   if (m.type === 'state') {
     lastView = m.view;
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
+    // Sitting out (#70): out or not, missed blinds, time left before the seat goes.
+    mySeat = m.me ? {...m.me, outEnds: m.me.out_ms_left != null ? Date.now() + num(m.me.out_ms_left) : 0} : null;
     tableGame = GAMES.find(g => g.cards === num(m.view.hole_cards) && g.pl === m.view.pot_limit) || GAMES[0];
     if (Date.now() > noteUntil) netNote = '';
     show({seq: num(m.seq), state: m.view, botToAct: false, turnMsLeft: m.turn_ms_left});
   } else if (m.type === 'rejected') {
     if (m.reason === 'the table is full') { leaveTable('That table is full.'); return; }
+    if (/sat out too long/.test(m.reason || '')) { leaveTable('You sat out too long, so your seat was given up. Your chips went back to you.'); return; }
     // A chip request the host turned down, with why (a club table: not
     // enough chips in the club, the rathole rule).
     if (m.chips) { netNote = m.reason; noteUntil = Date.now() + 6000; render(); return; }
@@ -746,6 +753,7 @@ function startClock() {
   clearInterval(clockTimer);
   clockTimer = setInterval(() => {
     for (const el of root.querySelectorAll('[data-clock]')) el.textContent = clockText();
+    for (const el of root.querySelectorAll('[data-outclock]')) el.textContent = outClockText();
   }, 250);
 }
 
@@ -800,6 +808,8 @@ function eventText(e) {
   switch (e.type) {
     case 'small_blind': return `${who} ${v('post')} the small blind ${num(e.amount)}`;
     case 'big_blind': return `${who} ${v('post')} the big blind ${num(e.amount)}`;
+    // Coming back after sitting out (#70): missed blinds, dead and live.
+    case 'post': return `${who} ${v('post')} missed blinds: ${[num(e.dead) && `${num(e.dead)} dead`, num(e.live) && `${num(e.live)} live`].filter(Boolean).join(' + ')}`;
     case 'ante': return `${who} ${v('ante')} ${num(e.amount)}`;
     case 'fold': return `${who} ${v('fold')}`;
     case 'check': return `${who} ${v('check')}`;
@@ -869,6 +879,7 @@ function renderTable() {
   });
   h += '</div>';
   h += controlsHtml();
+  h += sitOutHtml();
   h += chipsHtml();
   h += reviewHtml();
   if (statsOpen) h += statsHtml();
@@ -971,6 +982,34 @@ function allInTo() {
 
 // The host's panel: chip requests to approve, the people seated (to remove),
 // and the host's own top-up. A guest's: their chips and a request.
+// Sitting out at a friends or club table (#70): a Sit out button, and while
+// out, how to come back. Missed blinds are posted at once (one small blind
+// dead, one big blind live) or by waiting for the big blind.
+function sitOutHtml() {
+  if (mode !== 'guest' || !mySeat || watching) return '';
+  if (mySeat.waiting_for_big_blind) {
+    return '<div class="pl-sitout"><span>You’re back: you’ll be dealt in when the big blind reaches you.</span></div>';
+  }
+  if (!mySeat.sitting_out) {
+    return '<div class="pl-sitout"><button class="link-btn" data-act="sitout">Sit out next hand</button></div>';
+  }
+  const owed = [mySeat.missed_small_blind && 'the small blind', mySeat.missed_big_blind && 'the big blind'].filter(Boolean);
+  let h = '<div class="pl-sitout on"><b>You’re sitting out.</b> No blinds while you’re out.';
+  if (mySeat.outEnds) h += ` <span class="pl-meta">Your seat is given up in <span data-outclock>${outClockText()}</span>.</span>`;
+  h += '<div class="pl-sitout-acts">';
+  if (owed.length) {
+    h += `<button class="tr-btn yes" data-act="sitin" data-wait="0">Post ${owed.join(' and ')} now</button>`;
+    h += '<button class="tr-btn" data-act="sitin" data-wait="1">Wait for the big blind</button>';
+  } else h += '<button class="tr-btn yes" data-act="sitin" data-wait="0">Sit back in</button>';
+  return h + '</div></div>';
+}
+
+function outClockText() {
+  if (!mySeat?.outEnds) return '';
+  const s = Math.max(0, Math.ceil((mySeat.outEnds - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 function chipsHtml() {
   if (mode === 'host' && hostInfo.buyIn) return hostChipsHtml();
   if (mode === 'guest' && myChips) return guestChipsHtml();
@@ -1268,6 +1307,8 @@ function onClick(e) {
   }
   if (d.act === 'hostchips') { chipAsk = chipAmount(); hostEvent('hostChips', chipAsk); return; }
   if (d.act === 'askchips') { chipAsk = chipAmount(); net?.send({type: 'request_chips', amount: chipAsk}); return; }
+  if (d.act === 'sitout') { net?.send({type: 'sit_out'}); return; }
+  if (d.act === 'sitin') { net?.send({type: 'sit_in', wait_for_big_blind: d.wait === '1'}); return; }
   if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
   if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
   else if (el.dataset.sort) {

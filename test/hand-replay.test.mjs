@@ -82,3 +82,26 @@ test('table sessions and totals come from the ledger', () => {
   ]);
   assert.deepEqual(totalsByMember(s), {ann: 0});
 });
+
+test('missed blinds posted on coming back replay as dead (pot) and live (bet)', () => {
+  const rec = handRecord({club: 'c', table: 't', tableName: 'T', game: 'nlhe', who: 'host', view: {
+    hand_number: 9, small_blind: 1, big_blind: 2, button: 2, hole_cards: 2, board: [], showdown: false, pots: [{amount: 6}],
+    events: [
+      {type: 'small_blind', seat: 0, amount: 1}, {type: 'big_blind', seat: 1, amount: 2},
+      {type: 'post', seat: 2, dead: 1, live: 2},
+      {type: 'fold', seat: 2}, {type: 'fold', seat: 0},
+      {type: 'award', seat: 1, pot: 0, amount: 6},
+    ],
+    seats: [
+      {name: 'A', stack: 99, net: -1, won: 0, folded: true, cards: null, empty: false, sitting_out: false},
+      {name: 'B', stack: 104, net: 4, won: 6, folded: false, cards: null, empty: false, sitting_out: false},
+      {name: 'C', stack: 97, net: -3, won: 0, folded: true, cards: null, empty: false, sitting_out: false},
+    ],
+  }});
+  const f = replayFrames(rec);
+  const afterPost = f[3];
+  assert.equal(afterPost.text, 'C posts missed blinds: 1 dead + 2 live');
+  assert.equal(afterPost.pot, 1, 'the dead blind is in the pot');
+  assert.deepEqual([afterPost.seats[2].stack, afterPost.seats[2].bet], [97, 2]);
+  assert.deepEqual(f.at(-1).seats.map(s => s.stack), [99, 104, 97], 'ends at the final stacks');
+});
