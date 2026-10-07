@@ -13,7 +13,7 @@ jobs:
         run: npm ci --prefix relay
 
       - name: Unit tests
-        run: node --test test/play-stats.test.mjs test/play-net.test.mjs test/identity.test.mjs test/club.test.mjs test/relay-queue.test.mjs
+        run: node --test test/play-stats.test.mjs test/play-net.test.mjs test/identity.test.mjs test/club.test.mjs test/club-chips.test.mjs test/relay-queue.test.mjs
 
       - name: Checkout ducy
         uses: actions/checkout@v4

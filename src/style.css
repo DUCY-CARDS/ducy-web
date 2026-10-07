@@ -731,6 +731,19 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .cl-acts { margin-left: auto; display: flex; gap: 6px; }
 .cl-status { color: var(--fg-muted); }
 .cl-err { flex-basis: 100%; font-size: 12px; }
+.cl-chips { font-family: var(--font-data); font-size: 12px; color: var(--fg-strong); }
+.cl-account { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; padding: 8px 0 0 12px; border-left: 2px solid var(--border); }
+.cl-balance { display: flex; gap: 10px; align-items: baseline; }
+.cl-balance .cl-chips { font-size: 15px; font-weight: 600; }
+.cl-chipform { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; background: var(--bg-inset); border-radius: var(--radius); }
+.cl-chipform .pl-text { width: 120px; }
+.cl-chipform .pl-text[name="note"] { width: 200px; }
+.cl-chipform .pl-text:invalid:not(:placeholder-shown) { border-color: var(--red); }
+.cl-formlabel { font-size: 12px; font-weight: 600; color: var(--fg); }
+.cl-ask .pl-text { width: 120px; }
+.cl-ask .pl-text[data-ask-note] { width: 200px; }
+.cl-history summary { cursor: pointer; font-size: 12px; color: var(--fg-muted); }
+.cl-history ul { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
 .cl-status.cl-member { color: var(--teal); font-weight: 600; }
 .cl-status.cl-declined, .cl-status.cl-removed, .cl-status.cl-bad_invite { color: var(--red, #c0392b); }
 .pl-wrap { max-width: 980px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }

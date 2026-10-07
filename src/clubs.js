@@ -12,9 +12,10 @@
 import { loadIdentity, signMessage, Verifier } from './identity.js';
 import { connect, DEFAULT_RELAY, newCode, relayUrl, wsUrl } from './play-net.js';
 import {
-  approve, decline, hostReceive, inviteLink, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
+  account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, parseInvite, playerReceive, removeMember, revokeInvite,
 } from './club.js';
+import { declineRequest, ensureChips, grantRequest, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
 
@@ -94,7 +95,66 @@ async function decide(fn, id) {
   if (!rep) return;
   saveClub();
   render();
-  await sendToPlayer(rep);
+  for (const r of [rep].flat()) await sendToPlayer(r);
+}
+
+const chips = n => Number(n || 0).toLocaleString();
+
+// The host's open chip form, under a member's row: {kind, id}, kind 'give',
+// 'take' or 'grant' (a request, for another amount). One at a time.
+let chipForm = null;
+
+const FORM_TEXT = {
+  give: m => ({label: `Give ${m.name}`, submit: 'Give', value: '', max: null, note: true}),
+  take: m => ({label: `Take back from ${m.name} (has ${chips(m.balance)})`, submit: 'Take back', value: m.balance, max: m.balance, note: true}),
+  grant: m => ({label: `Give ${m.name} (asked for ${chips(m.request?.amount)})`, submit: 'Give', value: m.request?.amount ?? '', max: null, note: false}),
+};
+
+// A native form: the browser checks the amount (required, whole, at least
+// 1, at most the balance when taking back) before it submits.
+function chipFormHtml(m) {
+  if (!chipForm || chipForm.id !== m.id) return '';
+  const t = FORM_TEXT[chipForm.kind](m);
+  let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
+  h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
+  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="numeric" required min="1" step="1"${t.max != null ? ` max="${t.max}"` : ''} value="${esc(t.value)}" placeholder="Chips">`;
+  if (t.note) h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Note (optional)">`;
+  h += `<button class="btn-small primary" type="submit">${t.submit}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></form>`;
+  return h;
+}
+
+function openChipForm(kind, id) {
+  chipForm = chipForm?.kind === kind && chipForm.id === id ? null : {kind, id};
+  render();
+  const input = root.querySelector('#cl-amt');
+  if (input) { input.focus(); input.select(); }
+}
+
+function onSubmit(e) {
+  const f = e.target.closest('form[data-chipform]');
+  if (!f) return;
+  e.preventDefault();
+  const id = f.dataset.id, kind = f.dataset.chipform;
+  const amount = Number(f.elements.amount.value);
+  const why = f.elements.note?.value || '';
+  chipForm = null;
+  if (kind === 'give') chipAction(id, () => issue(club, id, amount, Date.now(), why));
+  else if (kind === 'take') chipAction(id, () => reclaim(club, id, amount, Date.now(), why));
+  else if (kind === 'grant') chipAction(id, () => grantRequest(club, id, amount));
+}
+
+// Runs a chip change for member `id`, then sends them their updated account.
+async function chipAction(id, fn) {
+  let e;
+  try {
+    e = fn();
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+  saveClub();
+  render();
+  await sendToPlayer(account(club, id, e?.n ? e.n - 1 : Infinity));
 }
 
 function closeClub() {
@@ -127,7 +187,7 @@ function connectMembership(mem) {
     if (mem.status === 'new' && !myName()) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
     const body = mem.status === 'new'
       ? {type: 'join', club: mem.code, invite: mem.invite, name: myName()}
-      : {type: 'hello', club: mem.code, name: myName()};
+      : {type: 'hello', club: mem.code, name: myName(), since: lastEntry(mem)};
     entry.net?.send(await signMessage(me, body));
   };
   entry.net = connect(mem.code, 'guest', me.id, {
@@ -224,7 +284,15 @@ function render() {
   h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(me.id)}</code>. Back it up from Play → Play with friends.</p>`;
   h += relayHtml();
   h += '</div>';
+  // Messages arriving redraw the page; keep what the host is typing in an open form.
+  const typing = root.querySelector('form[data-chipform]');
+  const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
   root.innerHTML = h;
+  const form = root.querySelector('form[data-chipform]');
+  if (kept && form && form.dataset.chipform + form.dataset.id === kept.key) {
+    [...form.elements].forEach((el, i) => { if (kept.values[i] != null && el.tagName === 'INPUT') el.value = kept.values[i]; });
+    if (kept.focus) form.elements[kept.focus]?.focus();
+  }
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -278,16 +346,39 @@ function hostHtml() {
     }
     h += '</ul>';
   }
+  const asking = members.filter(m => m.request).sort((a, b) => a.request.at - b.request.at);
+  if (asking.length) {
+    h += `<h3>Chip requests (${asking.length})</h3><ul class="cl-list">`;
+    for (const m of asking) {
+      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
+      if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
+      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
+      h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other amount</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
+      if (chipForm?.kind === 'grant') h += chipFormHtml(m);
+      h += '</li>';
+    }
+    h += '</ul>';
+  }
   h += `<h3>Members${members.length ? ` (${members.length})` : ''}</h3>`;
   if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
   else {
     h += '<ul class="cl-list">';
     for (const m of members) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="pl-meta">joined ${when(m.joinedAt)}</span>`;
-      h += `<span class="cl-acts"><button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span></li>`;
+      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
+      if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
+      h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
+      h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance ? '' : ' disabled'}>Take back</button>`;
+      h += `<button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span>`;
+      if (chipForm && chipForm.kind !== 'grant') h += chipFormHtml(m);
+      h += '</li>';
     }
     h += '</ul>';
   }
+  const t = totals(club);
+  h += `<p class="pl-meta">Chips out: ${chips(t.issued - t.reclaimed)} (given ${chips(t.issued)}, taken back ${chips(t.reclaimed)}) · in balances ${chips(t.balances)} · on tables ${chips(t.onTables)}${t.conserved ? '' : ' · <span class="pl-neterr">doesn’t add up</span>'}</p>`;
+  h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
+  h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
+  h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
   h += '<div class="pl-actions"><button class="link-btn" data-cl="close">Close this club</button></div></section>';
   return h;
 }
@@ -305,10 +396,45 @@ function membershipsHtml() {
     if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
     h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button></span>`;
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
+    if (m.status === 'member') h += accountHtml(m, !!n?.hostHere);
     h += '</li>';
   }
   h += '</ul></section>';
   return h;
+}
+
+const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', cash_out: 'Cashed out'};
+
+// A member's chips in a club: balance, a request, and their own ledger copy.
+function accountHtml(m, hostHere) {
+  let h = '<div class="cl-account">';
+  h += `<div class="cl-balance"><span class="cl-chips">${chips(m.balance)} chips</span>`;
+  if (m.entries?.length) h += m.ledgerOk === false
+    ? '<span class="pl-neterr" title="Your copy of the ledger doesn’t add up to the balance the host reports">✗ doesn’t match your records</span>'
+    : '<span class="pl-meta" title="Your copy of the ledger adds up to this balance">✓ matches your records</span>';
+  h += '</div>';
+  if (m.request) {
+    h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
+    h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Cancel</button></div>`;
+  } else {
+    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="1" step="1" placeholder="Chips" data-ask-amt="${esc(m.code)}">`;
+    h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
+    h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
+  }
+  if (m.entries?.length) {
+    h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
+    for (const e of [...m.entries].reverse().slice(0, 50)) {
+      const sign = ['reclaim', 'buy_in', 'top_up'].includes(e.kind) ? '−' : '+';
+      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+    }
+    h += '</ul></details>';
+  }
+  return h + '</div>';
+}
+
+async function sendToHost(code, body) {
+  const n = playerNets.get(code);
+  if (n?.net) n.net.send(await signMessage(me, body));
 }
 
 // ---- events ----
@@ -334,9 +460,24 @@ async function onClick(e) {
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
+  else if (act === 'give') openChipForm('give', b.dataset.id);
+  else if (act === 'take') openChipForm('take', b.dataset.id);
+  else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
+  else if (act === 'cancel-form') { chipForm = null; render(); }
+  else if (act === 'grant') { chipForm = null; chipAction(b.dataset.id, () => grantRequest(club, b.dataset.id)); }
+  else if (act === 'deny') chipAction(b.dataset.id, () => { declineRequest(club, b.dataset.id); return null; });
+  else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
+  else if (act === 'ask') {
+    const code = b.dataset.code;
+    const amount = Number(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
+    const why = root.querySelector(`[data-ask-note="${code}"]`)?.value || '';
+    if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter a whole number of chips above 0.'); return; }
+    sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
+  } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
 }
 
 function onKey(e) {
+  if (e.key === 'Escape' && chipForm && e.target.closest('form[data-chipform]')) { chipForm = null; render(); return; }
   if (e.key !== 'Enter') return;
   if (e.target.id === 'cl-clubname') root.querySelector('[data-cl="create"]')?.click();
   if (e.target.id === 'cl-name') root.querySelector('[data-cl="join"]')?.click();
@@ -382,10 +523,12 @@ export async function openClubs(el) {
     root = el;
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
+    root.addEventListener('submit', onSubmit);
     window.addEventListener('pagehide', disconnectAll);
     window.addEventListener('storage', onStorage);
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     club = load(CLUB_KEY, null);
+    if (club) ensureChips(club);
     verifier = new Verifier(load(SENDERS_KEY, {}));
     memberships = load(MEMBERSHIPS_KEY, []);
   }
