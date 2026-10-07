@@ -748,6 +748,9 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .cl-tableform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--fg); }
 .cl-tableform .pl-text { width: 100%; }
 .cl-formacts { grid-column: 1 / -1; display: flex; gap: 6px; }
+.cl-offer { border-left-color: var(--teal); flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.cl-admin { border-left-color: var(--teal); }
+.cl-admin .cl-list li { padding: 6px 0; }
 .cl-tables { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .cl-tables li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
 .cl-tables li .btn-small { margin-left: auto; }
