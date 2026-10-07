@@ -773,6 +773,9 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .cl-bet { font-family: var(--font-data); font-size: 12px; color: var(--teal); }
 .cl-replay-text { margin: 0; font-weight: 600; min-height: 1.4em; }
 .cl-replay-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cl-list li.cl-under { padding-left: 20px; border-left: 2px solid var(--border); }
+.cl-assign { display: inline-flex; align-items: center; gap: 6px; }
+.cl-assign .pl-text { width: auto; padding: 2px 6px; }
 .cl-offer { border-left-color: var(--teal); flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 .cl-admin { border-left-color: var(--teal); }
 .cl-admin .cl-list li { padding: 6px 0; }

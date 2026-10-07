@@ -99,12 +99,13 @@ export const declineRequest = (club, id) => cancelRequest(club, id);
 
 // One member gives chips to another from their own club balance (a game
 // assistant, #62): two entries, so each sees their side. Total chips don't
-// change. Returns [out, in].
-export function transfer(club, from, to, amt, now = Date.now(), why = '') {
+// change. `floor` is the lowest balance the giver may end at: 0, or below
+// zero for an agent drawing on credit (#76). Returns [out, in].
+export function transfer(club, from, to, amt, now = Date.now(), why = '', {floor = 0} = {}) {
   const a = member(club, from), b = member(club, to);
   amount(amt);
   if (from === to) throw new Error('Pick someone else.');
-  if (amt > a.balance) throw new Error(`You have ${a.balance} chips in the club.`);
+  if (a.balance - amt < floor) throw new Error(floor < 0 ? `That's more than your balance plus credit allows (${Math.max(0, a.balance - floor)}).` : `You have ${a.balance} chips in the club.`);
   a.balance -= amt;
   b.balance += amt;
   return [
@@ -192,7 +193,7 @@ export function accountBody(club, id, since = 0) {
 // The change an entry makes to a member's club balance.
 export function balanceChange(e) {
   return {
-    issue: e.amount, grant: e.amount, cash_out: e.amount, transfer_in: e.amount,
+    issue: e.amount, grant: e.amount, settle: e.amount, cash_out: e.amount, transfer_in: e.amount,
     reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
   }[e.kind] || 0;
 }
