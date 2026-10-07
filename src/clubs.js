@@ -203,8 +203,19 @@ function render() {
   h += hostHtml();
   h += membershipsHtml();
   h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(me.id)}</code>. Back it up from Play → Play with friends.</p>`;
+  h += relayHtml();
   h += '</div>';
   root.innerHTML = h;
+}
+
+// Which relay this page uses. A page served locally but using the site's
+// relay is almost always a mistake when testing, so it says so.
+function relayHtml() {
+  const relay = relayUrl();
+  const live = relay === wsUrl(DEFAULT_RELAY);
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if (live && local) return `<p class="pl-desc pl-neterr">This local page is using the live relay (${esc(relay)}). To test against a local relay, open it with <code>?relay=ws://localhost:8788</code>; invite links then carry it.</p>`;
+  return `<p class="pl-meta">Relay: ${esc(relay)}</p>`;
 }
 
 function inviteHtml() {
