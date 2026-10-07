@@ -97,6 +97,22 @@ export function grantRequest(club, id, amt, now = Date.now()) {
 
 export const declineRequest = (club, id) => cancelRequest(club, id);
 
+// One member gives chips to another from their own club balance (a game
+// assistant, #62): two entries, so each sees their side. Total chips don't
+// change. Returns [out, in].
+export function transfer(club, from, to, amt, now = Date.now(), why = '') {
+  const a = member(club, from), b = member(club, to);
+  amount(amt);
+  if (from === to) throw new Error('Pick someone else.');
+  if (amt > a.balance) throw new Error(`You have ${a.balance} chips in the club.`);
+  a.balance -= amt;
+  b.balance += amt;
+  return [
+    record(club, a, 'transfer_out', amt, now, {note: note(why), to}),
+    record(club, b, 'transfer_in', amt, now, {note: note(why), from}),
+  ];
+}
+
 // The smallest buy-in allowed at `table` because of the rathole rule (#67):
 // someone who left with S chips must come back with at least S until the
 // club's rathole window has passed. 0 when the rule doesn't apply.
@@ -175,7 +191,10 @@ export function accountBody(club, id, since = 0) {
 
 // The change an entry makes to a member's club balance.
 export function balanceChange(e) {
-  return {issue: e.amount, grant: e.amount, cash_out: e.amount, reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount}[e.kind] || 0;
+  return {
+    issue: e.amount, grant: e.amount, cash_out: e.amount, transfer_in: e.amount,
+    reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
+  }[e.kind] || 0;
 }
 
 // A player's check of their own copy: the entries add up to the balance the

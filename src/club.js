@@ -17,11 +17,16 @@
 //   {type: 'cancel_request', club}
 //   {type: 'table', club, table, cmd}    a command for a club table (#68): join, act,
 //                                        sit_in, leave, request_chips
+//   {type: 'role_reply', club, accept}   answer to an assistant offer (#62)
+//   {type: 'admin_cmd', club, cmd}       an assistant's command (club-roles.js)
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
 //   {type: 'account', club, balance, request, entries}   see club-chips.js
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
+//   {type: 'role', club, role}           'offered' | 'assistant' | null (#62)
+//   {type: 'admin', club, pending, members, tables}   an assistant's view
+//   {type: 'admin_result', club, error}  how an assistant's command went
 // Table updates go to players unsigned as {type: 'table', table, update}:
 // only the host can send to a player through the relay.
 
@@ -112,6 +117,12 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (m?.status === 'member') replies.push(account(club, id, body.since));
     return {replies, changed};
   }
+  // Game assistants (#62): an answer to a role offer, or an assistant's
+  // command. The caller handles them (club-roles.js).
+  if (body.type === 'role_reply' || body.type === 'admin_cmd') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    return {replies: [], changed: false, admin: {type: body.type, from: id, body}};
+  }
   // A command for one of the club's tables (#68): signed, so a player can
   // prove what they did. The caller runs it (club-host.js).
   if (body.type === 'table') {
@@ -199,6 +210,22 @@ export async function playerReceive(mem, env) {
   if (b.type === 'tables') {
     mem.hostSeq = env.seq;
     mem.tables = Array.isArray(b.tables) ? b.tables : [];
+    return true;
+  }
+  if (b.type === 'role') {
+    mem.hostSeq = env.seq;
+    mem.role = b.role || null;
+    if (mem.role !== 'assistant') mem.admin = null;
+    return true;
+  }
+  if (b.type === 'admin') {
+    mem.hostSeq = env.seq;
+    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || []};
+    return true;
+  }
+  if (b.type === 'admin_result') {
+    mem.hostSeq = env.seq;
+    mem.adminNote = b.error ? String(b.error) : '';
     return true;
   }
   if (b.type === 'account') {
