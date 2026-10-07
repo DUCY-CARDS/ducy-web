@@ -244,6 +244,7 @@ function hostHtml() {
   let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${hostOnline ? ' on' : ''}">${badge}</span>`;
   if (!hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
   h += '</div>';
+  if (!hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
   h += `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
   h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
   h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
