@@ -11,6 +11,8 @@
   --red: #a04040;
   --blue: #2f5fa8;
   --green: #2e7a3c;
+  --amber: #8a5a00;
+  --amber-faint: rgba(214,150,30,0.14);
   --border: #ced0d4;
   --card-face: #fff;
   --card-ink: #16191e;
@@ -37,6 +39,8 @@
     --red: #c65858;
     --blue: #4f82d4;
     --green: #3f9c52;
+    --amber: #e0a64a;
+    --amber-faint: rgba(224,166,74,0.14);
     --border: #323840;
     --card-face: #f3f3f1;
     color-scheme: dark;
@@ -55,6 +59,8 @@
   --red: #c65858;
   --blue: #4f82d4;
   --green: #3f9c52;
+  --amber: #e0a64a;
+  --amber-faint: rgba(224,166,74,0.14);
   --border: #323840;
   --card-face: #f3f3f1;
   color-scheme: dark;
@@ -71,6 +77,13 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 .wasm-status {
   margin-left: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted);
 }
+/* Beta notice: every page except the equity calculator. */
+.beta-notice {
+  display: none; margin: 0; padding: 8px 20px; font-size: 12px; line-height: 1.45;
+  color: var(--amber); background: var(--amber-faint); border-bottom: 1px solid var(--border);
+}
+.beta-notice strong { font-weight: 700; }
+body:is(.mode-trainer, .mode-play, .mode-clubs) .beta-notice { display: block; }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 
