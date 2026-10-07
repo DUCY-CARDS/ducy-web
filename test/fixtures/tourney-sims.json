@@ -1,0 +1,1380 @@
+{
+ "about": "Mean minutes to a winner in bot-only tournaments, from ducy-play's tourney_time example (personality bots). \"presets\": the structure under preset-stack in \"structures\", as simulated; \"custom\": a hand-made structure the estimate wasn't fitted to.",
+ "structures": {
+  "turbo-1500": [
+   {
+    "sb": 15,
+    "bb": 30,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 25,
+    "bb": 50,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 40,
+    "bb": 80,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 60,
+    "bb": 120,
+    "ante": 15,
+    "minutes": 8
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 25,
+    "minutes": 8
+   },
+   {
+    "sb": 150,
+    "bb": 300,
+    "ante": 30,
+    "minutes": 8
+   },
+   {
+    "sb": 250,
+    "bb": 500,
+    "ante": 60,
+    "minutes": 8
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 8
+   },
+   {
+    "sb": 600,
+    "bb": 1200,
+    "ante": 150,
+    "minutes": 8
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 8
+   },
+   {
+    "sb": 1500,
+    "bb": 3000,
+    "ante": 300,
+    "minutes": 8
+   },
+   {
+    "sb": 2500,
+    "bb": 5000,
+    "ante": 600,
+    "minutes": 8
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 8
+   }
+  ],
+  "turbo-10000": [
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 150,
+    "bb": 300,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 250,
+    "bb": 500,
+    "ante": 0,
+    "minutes": 8
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 8
+   },
+   {
+    "sb": 600,
+    "bb": 1200,
+    "ante": 150,
+    "minutes": 8
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 8
+   },
+   {
+    "sb": 1500,
+    "bb": 3000,
+    "ante": 300,
+    "minutes": 8
+   },
+   {
+    "sb": 2500,
+    "bb": 5000,
+    "ante": 600,
+    "minutes": 8
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 8
+   },
+   {
+    "sb": 6000,
+    "bb": 12000,
+    "ante": 1500,
+    "minutes": 8
+   },
+   {
+    "sb": 10000,
+    "bb": 20000,
+    "ante": 2500,
+    "minutes": 8
+   },
+   {
+    "sb": 15000,
+    "bb": 30000,
+    "ante": 3000,
+    "minutes": 8
+   },
+   {
+    "sb": 25000,
+    "bb": 50000,
+    "ante": 6000,
+    "minutes": 8
+   }
+  ],
+  "regular-1500": [
+   {
+    "sb": 7,
+    "bb": 15,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 10,
+    "bb": 20,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 15,
+    "bb": 30,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 20,
+    "bb": 40,
+    "ante": 5,
+    "minutes": 15
+   },
+   {
+    "sb": 30,
+    "bb": 60,
+    "ante": 6,
+    "minutes": 15
+   },
+   {
+    "sb": 40,
+    "bb": 80,
+    "ante": 10,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 60,
+    "bb": 120,
+    "ante": 15,
+    "minutes": 15
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 25,
+    "minutes": 15
+   },
+   {
+    "sb": 150,
+    "bb": 300,
+    "ante": 30,
+    "minutes": 15
+   },
+   {
+    "sb": 200,
+    "bb": 400,
+    "ante": 50,
+    "minutes": 15
+   },
+   {
+    "sb": 300,
+    "bb": 600,
+    "ante": 60,
+    "minutes": 15
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 600,
+    "bb": 1200,
+    "ante": 150,
+    "minutes": 15
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 15
+   },
+   {
+    "sb": 1500,
+    "bb": 3000,
+    "ante": 300,
+    "minutes": 15
+   },
+   {
+    "sb": 2000,
+    "bb": 4000,
+    "ante": 500,
+    "minutes": 15
+   },
+   {
+    "sb": 3000,
+    "bb": 6000,
+    "ante": 600,
+    "minutes": 15
+   }
+  ],
+  "regular-10000": [
+   {
+    "sb": 50,
+    "bb": 100,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 75,
+    "bb": 150,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 150,
+    "bb": 300,
+    "ante": 30,
+    "minutes": 15
+   },
+   {
+    "sb": 200,
+    "bb": 400,
+    "ante": 50,
+    "minutes": 15
+   },
+   {
+    "sb": 300,
+    "bb": 600,
+    "ante": 60,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 15
+   },
+   {
+    "sb": 600,
+    "bb": 1200,
+    "ante": 150,
+    "minutes": 15
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 15
+   },
+   {
+    "sb": 1500,
+    "bb": 3000,
+    "ante": 300,
+    "minutes": 15
+   },
+   {
+    "sb": 2000,
+    "bb": 4000,
+    "ante": 500,
+    "minutes": 15
+   },
+   {
+    "sb": 3000,
+    "bb": 6000,
+    "ante": 600,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 15
+   },
+   {
+    "sb": 6000,
+    "bb": 12000,
+    "ante": 1500,
+    "minutes": 15
+   },
+   {
+    "sb": 10000,
+    "bb": 20000,
+    "ante": 2500,
+    "minutes": 15
+   },
+   {
+    "sb": 15000,
+    "bb": 30000,
+    "ante": 3000,
+    "minutes": 15
+   },
+   {
+    "sb": 20000,
+    "bb": 40000,
+    "ante": 5000,
+    "minutes": 15
+   }
+  ],
+  "deep-1500": [
+   {
+    "sb": 4,
+    "bb": 8,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 5,
+    "bb": 10,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 7,
+    "bb": 15,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 10,
+    "bb": 20,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 12,
+    "bb": 25,
+    "ante": 3,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 20,
+    "bb": 40,
+    "ante": 5,
+    "minutes": 20
+   },
+   {
+    "sb": 25,
+    "bb": 50,
+    "ante": 6,
+    "minutes": 20
+   },
+   {
+    "sb": 40,
+    "bb": 80,
+    "ante": 10,
+    "minutes": 20
+   },
+   {
+    "sb": 50,
+    "bb": 100,
+    "ante": 12,
+    "minutes": 20
+   },
+   {
+    "sb": 75,
+    "bb": 150,
+    "ante": 15,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 25,
+    "minutes": 20
+   },
+   {
+    "sb": 125,
+    "bb": 250,
+    "ante": 30,
+    "minutes": 20
+   },
+   {
+    "sb": 200,
+    "bb": 400,
+    "ante": 50,
+    "minutes": 20
+   },
+   {
+    "sb": 250,
+    "bb": 500,
+    "ante": 60,
+    "minutes": 20
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 500,
+    "bb": 1000,
+    "ante": 120,
+    "minutes": 20
+   },
+   {
+    "sb": 750,
+    "bb": 1500,
+    "ante": 150,
+    "minutes": 20
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 20
+   },
+   {
+    "sb": 1250,
+    "bb": 2500,
+    "ante": 300,
+    "minutes": 20
+   },
+   {
+    "sb": 2000,
+    "bb": 4000,
+    "ante": 500,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 2500,
+    "bb": 5000,
+    "ante": 600,
+    "minutes": 20
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 20
+   }
+  ],
+  "deep-10000": [
+   {
+    "sb": 25,
+    "bb": 50,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 40,
+    "bb": 80,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 50,
+    "bb": 100,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 75,
+    "bb": 150,
+    "ante": 0,
+    "minutes": 20
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 25,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 125,
+    "bb": 250,
+    "ante": 30,
+    "minutes": 20
+   },
+   {
+    "sb": 200,
+    "bb": 400,
+    "ante": 50,
+    "minutes": 20
+   },
+   {
+    "sb": 250,
+    "bb": 500,
+    "ante": 60,
+    "minutes": 20
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 20
+   },
+   {
+    "sb": 500,
+    "bb": 1000,
+    "ante": 120,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 750,
+    "bb": 1500,
+    "ante": 150,
+    "minutes": 20
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 250,
+    "minutes": 20
+   },
+   {
+    "sb": 1250,
+    "bb": 2500,
+    "ante": 300,
+    "minutes": 20
+   },
+   {
+    "sb": 2000,
+    "bb": 4000,
+    "ante": 500,
+    "minutes": 20
+   },
+   {
+    "sb": 2500,
+    "bb": 5000,
+    "ante": 600,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 20
+   },
+   {
+    "sb": 5000,
+    "bb": 10000,
+    "ante": 1200,
+    "minutes": 20
+   },
+   {
+    "sb": 7500,
+    "bb": 15000,
+    "ante": 1500,
+    "minutes": 20
+   },
+   {
+    "sb": 10000,
+    "bb": 20000,
+    "ante": 2500,
+    "minutes": 20
+   },
+   {
+    "sb": 12500,
+    "bb": 25000,
+    "ante": 3000,
+    "minutes": 20
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 20000,
+    "bb": 40000,
+    "ante": 5000,
+    "minutes": 20
+   }
+  ]
+ },
+ "presets": [
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 55.1
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 69.8
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 81.2
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 92
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 100
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 49.6
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 58.6
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 73.4
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 82.8
+  },
+  {
+   "preset": "turbo",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 91
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 55.6
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 69.5
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 78.7
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 91.3
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 99
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 50.8
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 57.9
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 73.9
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 84.8
+  },
+  {
+   "preset": "turbo",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 92.6
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 123.3
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 149.9
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 182.8
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 216.9
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 235.2
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 120.6
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 136
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 178.1
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 194.7
+  },
+  {
+   "preset": "regular",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 219.4
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 118.4
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 140.9
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 185.8
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 210.8
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 238.3
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 108.6
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 136.4
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 180.6
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 187.8
+  },
+  {
+   "preset": "regular",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 223.7
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 190
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 231.8
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 284.1
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 336.8
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 372.2
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 174.6
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 204.9
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 255.8
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 312.9
+  },
+  {
+   "preset": "deep",
+   "stack": 1500,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 347.7
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 6,
+   "runs": 40,
+   "minutes": 195
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 9,
+   "runs": 40,
+   "minutes": 226.6
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 18,
+   "runs": 40,
+   "minutes": 267.1
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 27,
+   "runs": 40,
+   "minutes": 325.8
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 30,
+   "tableSize": 9,
+   "players": 45,
+   "runs": 40,
+   "minutes": 370.2
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 6,
+   "runs": 40,
+   "minutes": 169.7
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 9,
+   "runs": 40,
+   "minutes": 199.2
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 18,
+   "runs": 40,
+   "minutes": 260.5
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 27,
+   "runs": 40,
+   "minutes": 298.9
+  },
+  {
+   "preset": "deep",
+   "stack": 10000,
+   "handsPerHour": 40,
+   "tableSize": 6,
+   "players": 45,
+   "runs": 40,
+   "minutes": 325.8
+  }
+ ],
+ "custom": {
+  "levels": [
+   {
+    "sb": 25,
+    "bb": 50,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 50,
+    "bb": 100,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 75,
+    "bb": 150,
+    "ante": 0,
+    "minutes": 15
+   },
+   {
+    "sb": 100,
+    "bb": 200,
+    "ante": 25,
+    "minutes": 15
+   },
+   {
+    "sb": 150,
+    "bb": 300,
+    "ante": 25,
+    "minutes": 15
+   },
+   {
+    "sb": 200,
+    "bb": 400,
+    "ante": 50,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 300,
+    "bb": 600,
+    "ante": 75,
+    "minutes": 15
+   },
+   {
+    "sb": 400,
+    "bb": 800,
+    "ante": 100,
+    "minutes": 15
+   },
+   {
+    "sb": 500,
+    "bb": 1000,
+    "ante": 100,
+    "minutes": 15
+   },
+   {
+    "sb": 600,
+    "bb": 1200,
+    "ante": 200,
+    "minutes": 15
+   },
+   {
+    "sb": 800,
+    "bb": 1600,
+    "ante": 200,
+    "minutes": 15
+   },
+   {
+    "sb": 1000,
+    "bb": 2000,
+    "ante": 300,
+    "minutes": 15
+   },
+   {
+    "break": true,
+    "minutes": 10
+   },
+   {
+    "sb": 1500,
+    "bb": 3000,
+    "ante": 400,
+    "minutes": 15
+   },
+   {
+    "sb": 2000,
+    "bb": 4000,
+    "ante": 500,
+    "minutes": 15
+   },
+   {
+    "sb": 3000,
+    "bb": 6000,
+    "ante": 1000,
+    "minutes": 15
+   },
+   {
+    "sb": 4000,
+    "bb": 8000,
+    "ante": 1000,
+    "minutes": 15
+   },
+   {
+    "sb": 5000,
+    "bb": 10000,
+    "ante": 1500,
+    "minutes": 15
+   },
+   {
+    "sb": 6000,
+    "bb": 12000,
+    "ante": 2000,
+    "minutes": 15
+   },
+   {
+    "sb": 8000,
+    "bb": 16000,
+    "ante": 2000,
+    "minutes": 15
+   },
+   {
+    "sb": 10000,
+    "bb": 20000,
+    "ante": 3000,
+    "minutes": 15
+   },
+   {
+    "sb": 15000,
+    "bb": 30000,
+    "ante": 4000,
+    "minutes": 15
+   },
+   {
+    "sb": 20000,
+    "bb": 40000,
+    "ante": 5000,
+    "minutes": 15
+   }
+  ],
+  "stack": 10000,
+  "handsPerHour": 30,
+  "tableSize": 9,
+  "runs": 40,
+  "minutes": {
+   "6": 138.7,
+   "9": 175.4,
+   "18": 211.6,
+   "27": 251.8,
+   "45": 283.1
+  }
+ }
+}
