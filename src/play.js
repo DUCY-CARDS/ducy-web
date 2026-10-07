@@ -575,9 +575,12 @@ function joinTable() {
 // handlers.onStatus(text) and handlers.onFail(reason). Leaving the table
 // calls `onLeave`.
 let leaveHook = null;
-export function joinTableVia(open, {label = '', onLeave = null} = {}) {
+// With `watch`, only watch the table (a club host, #73): no seat, nothing to
+// act on, and the hands aren't added to your stats.
+export function joinTableVia(open, {label = '', onLeave = null, watch = false} = {}) {
   if (seated) leaveTable();
   startGuest(label);
+  watching = watch;
   leaveHook = onLeave;
   const mine = session;
   net = open({
@@ -585,10 +588,11 @@ export function joinTableVia(open, {label = '', onLeave = null} = {}) {
     onStatus(t) { if (mine === session) { netNote = t; render(); } },
     onFail(t) { if (mine === session) leaveTable(t); },
   });
-  net.send({type: 'join', name: setup.name});
+  if (!watch) net.send({type: 'join', name: setup.name});
   render();
   startClock();
 }
+let watching = false;
 
 function startGuest(code) {
   mode = 'guest';
@@ -666,7 +670,8 @@ function leaveTable(note = '') {
   cancelDeal();
   clearInterval(hostTimer);
   clearInterval(clockTimer);
-  if (mode === 'guest') net?.send({type: 'leave'});
+  if (mode === 'guest' && !watching) net?.send({type: 'leave'});
+  watching = false;
   net?.close();
   net = null;
   session++;
@@ -740,7 +745,7 @@ function renderTable() {
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   if (gtoTable && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
-  h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
+  h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
@@ -956,7 +961,7 @@ const seatId = i => state.seats[i].id || (i === 0 ? 'you' : setup.bots[i - 1]);
 
 // Adds the hand to the stats once it's over (once per hand).
 function recordStats() {
-  if (!state || !state.complete || num(state.hand_number) === recordedHand) return;
+  if (watching || !state || !state.complete || num(state.hand_number) === recordedHand) return;
   recordedHand = num(state.hand_number);
   const g = tableGame.id;
   // Empty seats and people sitting out weren't in the hand.

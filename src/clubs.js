@@ -224,6 +224,22 @@ function submitTable(f) {
   render();
 }
 
+// The host watches a table (#73) on the #play page: a spectator's view from
+// the engine (no one's cards before they're shown down), nothing to act on.
+function watchTable(id) {
+  const t = tableById(club, id);
+  if (!t || !tableHost?.running(id)) return;
+  joinTableVia(handlers => {
+    const stop = tableHost.watch(id, u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u)));
+    return {send() {}, close: stop};
+  }, {
+    label: `${club.name} · ${t.name} (watching)`,
+    watch: true,
+    onLeave: why => { note = why || ''; location.hash = 'clubs'; },
+  });
+  location.hash = 'play';
+}
+
 function closeTable(id) {
   const t = club.tables.find(x => x.id === id);
   if (!t || !confirm(`Close ${t.name}? Everyone is cashed out at the end of the hand.`)) return;
@@ -244,7 +260,7 @@ function tablesHtml() {
       h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
       h += t.status === 'closing'
         ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
-        : `<span class="cl-acts"><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
+        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableHost?.running(t.id) ? "" : " disabled"}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
       if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
       h += '</li>';
@@ -808,6 +824,7 @@ async function onClick(e) {
   else if (act === 'a-hide-table') adminCmd(b.dataset.code, {op: 'hide_table', table: b.dataset.table});
   else if (act === 'a-new-table') { tableForm = b.dataset.code; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'close-table') closeTable(b.dataset.table);
+  else if (act === 'watch') watchTable(b.dataset.table);
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
   else if (act === 'to-table') location.hash = 'play';
   else if (act === 'ask') {

@@ -42,6 +42,16 @@ const num = v => Number(v);
 export function createTableHost({club, save, sendTable, chipsChanged, tablesChanged}) {
   const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
   const at = new Map(); // member id → table id
+  const watchers = new Map(); // table id → Set(fn(update))
+
+  // Calls fn with the table's spectator view now and after every change.
+  // Returns a function that stops watching.
+  function watch(tid, fn) {
+    if (!watchers.has(tid)) watchers.set(tid, new Set());
+    watchers.get(tid).add(fn);
+    run(tid, 'state');
+    return () => watchers.get(tid)?.delete(fn);
+  }
 
   function clear(r, name) { clearTimeout(r.timers[name]); r.timers[name] = null; }
 
@@ -64,6 +74,8 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     const t = tableById(club(), tid);
     if (!r || !t) return;
     for (const m of res.out) sendTable(m.to, {type: 'table', table: tid, update: m.data});
+    // The host watching (#73): the engine's host view shows no hidden cards.
+    for (const fn of watchers.get(tid) || []) fn({type: 'state', seq: res.seq, view: res.state, turn_ms_left: res.turnMsLeft});
     const before = r.players.length;
     r.players = res.players || [];
     for (const p of r.players) at.set(p.client_id, tid);
@@ -148,6 +160,9 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     if (r) for (const k of Object.keys(r.timers)) clear(r, k);
     running.delete(tid);
     call('clubDrop', tid).catch(() => {});
+    // Anyone watching is told the table closed.
+    for (const fn of watchers.get(tid) || []) fn({type: 'closed'});
+    watchers.delete(tid);
     const t = tableById(club(), tid);
     if (t && t.status === 'closing') { t.status = 'closed'; save(); }
     tablesChanged();
@@ -177,5 +192,5 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
 
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.players.length]));
 
-  return {start, close, handle, disconnected, seatedCounts, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
+  return {start, close, handle, disconnected, seatedCounts, watch, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
 }
