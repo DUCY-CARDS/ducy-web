@@ -292,11 +292,32 @@ function onKey(e) {
   if (e.target.id === 'cl-name') root.querySelector('[data-cl="join"]')?.click();
 }
 
+// Leaving the site can keep this page frozen in the back/forward cache with
+// its sockets open, and the relay would keep handing messages to a host that
+// isn't there. So the connections close when the page is hidden for good and
+// reopen if it comes back.
+function disconnectAll() {
+  hostNet?.close();
+  hostNet = null;
+  hostOnline = false;
+  for (const n of playerNets.values()) n.net?.close();
+  playerNets.clear();
+}
+
+function reconnectAll() {
+  if (!me) return;
+  startHosting();
+  for (const m of memberships) connectMembership(m);
+  render();
+}
+
 export async function openClubs(el) {
   if (!root) {
     root = el;
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
+    window.addEventListener('pagehide', disconnectAll);
+    window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     club = load(CLUB_KEY, null);
     verifier = new Verifier(load(SENDERS_KEY, {}));
     memberships = load(MEMBERSHIPS_KEY, []);
@@ -314,9 +335,7 @@ export async function openClubs(el) {
       return;
     }
   }
-  startHosting();
-  for (const m of memberships) connectMembership(m);
-  render();
+  reconnectAll();
 }
 
 // Leaving the page keeps the connections open, so a host's club stays
