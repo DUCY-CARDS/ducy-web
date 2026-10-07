@@ -730,6 +730,7 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .cl-name { font-weight: 600; color: var(--fg-strong); }
 .cl-acts { margin-left: auto; display: flex; gap: 6px; }
 .cl-status { color: var(--fg-muted); }
+.cl-err { flex-basis: 100%; font-size: 12px; }
 .cl-status.cl-member { color: var(--teal); font-weight: 600; }
 .cl-status.cl-declined, .cl-status.cl-removed, .cl-status.cl-bad_invite { color: var(--red, #c0392b); }
 .pl-wrap { max-width: 980px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }

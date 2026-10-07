@@ -129,7 +129,7 @@ function connectMembership(mem) {
     entry.net?.send(await signMessage(me, body));
   };
   entry.net = connect(mem.code, 'guest', me.id, {
-    onOpen() { entry.online = true; entry.hostHere = true; greet(); render(); },
+    onOpen() { entry.online = true; entry.hostHere = true; mem.error = ''; greet(); render(); },
     async onMessage(msg) {
       if (msg?.type === 'host_away' || msg?.type === 'host_gone') { entry.hostHere = false; render(); return; }
       if (msg?.type === 'host_back') { entry.hostHere = true; greet(); render(); return; }
@@ -137,7 +137,14 @@ function connectMembership(mem) {
       if (await playerReceive(mem, msg)) { saveMemberships(); render(); }
     },
     onStatus(s) { entry.online = !s; render(); },
-    onFail() { entry.online = false; playerNets.delete(mem.code); render(); },
+    // 4004 means the relay had no host and doesn't hold requests (a relay
+    // older than queue mode).
+    onFail(reason) {
+      entry.online = false;
+      playerNets.delete(mem.code);
+      mem.error = /No table/.test(reason) ? 'The host isn’t online, and this relay can’t hold your request. Try again when the host is online.' : reason;
+      render();
+    },
   }, {queue: true});
 }
 
@@ -258,7 +265,11 @@ function membershipsHtml() {
     const n = playerNets.get(m.code);
     const live = n?.online ? (n.hostHere ? 'Host online' : 'Host away') : 'Offline';
     h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${esc(STATUS_TEXT[m.status] || m.status)}</span>`;
-    h += `<span class="pl-meta">${live}</span><span class="cl-acts"><button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button></span></li>`;
+    h += `<span class="pl-meta">${live}</span><span class="cl-acts">`;
+    if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
+    h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button></span>`;
+    if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
+    h += '</li>';
   }
   h += '</ul></section>';
   return h;
@@ -284,6 +295,7 @@ async function onClick(e) {
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
   else if (act === 'forget') leaveMembership(b.dataset.code);
+  else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
 }
 
 function onKey(e) {
