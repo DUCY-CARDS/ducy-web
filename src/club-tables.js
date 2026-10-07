@@ -115,13 +115,29 @@ export function syncStacks(club, players) {
 
 // The host's page opened after closing with people at tables: those tables
 // stopped, and any hand in progress didn't count. Everyone seated gets back
-// the stack the ledger last had for them (from before that hand).
-export function cashOutEveryone(club, now = Date.now()) {
+// the stack the ledger last had for them (from before that hand), except at
+// tables in `keep`, which may resume where they were (#107): those are
+// settled by cashOutTable if they can't.
+export function cashOutEveryone(club, now = Date.now(), keep = new Set()) {
   ensureTables(club);
   const entries = [];
   for (const m of Object.values(club.members)) {
-    if (m.seat) entries.push(cashOut(club, m.id, now));
+    if (m.seat && !keep.has(m.seat.table)) entries.push(cashOut(club, m.id, now));
   }
   for (const t of club.tables) if (t.status === 'closing') t.status = 'closed';
   return entries;
+}
+
+// Like cashOutEveryone, for the members seated at table `tid` only.
+export function cashOutTable(club, tid, now = Date.now()) {
+  return Object.values(club.members).filter(m => m.seat?.table === tid).map(m => cashOut(club, m.id, now));
+}
+
+// The newest ledger entry that moved chips to or from table `tid` (a buy-in,
+// top-up or cash-out), or 0. A saved table whose snapshot was taken before
+// that entry is out of step with the ledger and isn't resumed.
+export function tableLedgerN(club, tid) {
+  let n = 0;
+  for (const e of club.chips?.ledger || []) if (e.table === tid && e.n > n) n = e.n;
+  return n;
 }

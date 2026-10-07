@@ -19,10 +19,15 @@
 // folded or sat out, no hand is dealt, until someone is back (an outage
 // shouldn't fold everyone).
 
-import { canJoin, chipsForTable, leftTable, limits, syncStacks, tableById } from './club-tables.js';
+import { canJoin, cashOutTable, chipsForTable, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
+import { dropTable, getTable, putTable } from './table-store.js';
 
 const NEXT_HAND_MS = 3000;
 const BOT_PACE_MS = 700;
+// A table resumed after the host's page reopened (#107) waits this long for
+// the people at it to come back; then whoever isn't back counts as
+// disconnected, and the clocks run again.
+const RESUME_GRACE_MS = 60_000;
 
 let worker = null, nextId = 0;
 const pending = new Map();
@@ -89,20 +94,49 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     const p = r.chain.then(async () => {
       if (!running.has(tid)) return null;
       const res = await call('clubCall', tid, method, ...args);
-      after(tid, res);
+      // The ledger first, then the table on disk, then the messages: after
+      // a crash the table is never behind what anyone was shown (#107).
+      const t = after(tid, res);
+      if (t) {
+        await persist(tid, res);
+        send(tid, res);
+        pace(tid, res);
+        if (t.status === 'closing' && !r.players.length) drop(tid);
+      }
       return res;
     });
     r.chain = p.catch(e => console.warn(`table ${tid} ${method}:`, e));
     return p;
   }
 
-  function after(tid, res) {
+  // Saves the table (#107) when its state changed, so a hand in progress
+  // can resume if the page closes. A table that can't be saved (an older
+  // ducy-wasm, or storage blocked) just plays on, as before.
+  async function persist(tid, res) {
     const r = running.get(tid);
-    const t = tableById(club(), tid);
-    if (!r || !t) return;
+    if (!r || r.noSave || res.seq === r.savedSeq) return;
+    try {
+      const json = await call('clubSave', tid);
+      if (json == null) { r.noSave = true; return; }
+      await putTable(club().code, tid, {json, ledgerN: tableLedgerN(club(), tid), seq: res.seq, at: Date.now()});
+      r.savedSeq = res.seq;
+    } catch (e) {
+      console.warn(`table ${tid}: not saved:`, e);
+    }
+  }
+
+  function send(tid, res) {
     for (const m of res.out) sendTable(m.to, {type: 'table', table: tid, update: m.data});
     // The host watching (#73): the engine's host view shows no hidden cards.
     for (const fn of watchers.get(tid) || []) fn({type: 'state', seq: res.seq, view: res.state, turn_ms_left: res.turnMsLeft});
+  }
+
+  // Takes in an engine result: who's seated, chips that came and went, the
+  // hand that finished. Returns the table, or null if it's gone.
+  function after(tid, res) {
+    const r = running.get(tid);
+    const t = tableById(club(), tid);
+    if (!r || !t) return null;
     const before = r.players.length;
     r.players = res.players || [];
     for (const p of r.players) at.set(p.client_id, tid);
@@ -144,8 +178,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }
     if (before !== r.players.length) tablesChanged();
     syncClock(tid);
-    pace(tid, res);
-    if (t.status === 'closing' && !r.players.length) drop(tid);
+    return t;
   }
 
   // What happens next at a table: an away player's or the clock's move, or
@@ -160,7 +193,8 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
       clear(r, 'advance');
       r.timers.advance = setTimeout(() => run(tid, 'advance'), BOT_PACE_MS);
     }
-    if (r.complete && !r.timers.deal && t.status === 'open' && num(res.playersIn) >= 2) {
+    // A resumed table deals no new hand until its people are back.
+    if (r.complete && !r.paused && !r.timers.deal && t.status === 'open' && num(res.playersIn) >= 2) {
       r.timers.deal = setTimeout(async () => {
         r.timers.deal = null;
         // If people left meanwhile the engine refuses; the next change
@@ -170,17 +204,71 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     }
   }
 
-  async function start(t) {
+  // Starts table `t`. With `resume` (the host's page just opened), a table
+  // saved with a hand in progress picks up where it was (#107); one that
+  // can't (none saved, out of step with the ledger, unreadable) starts
+  // afresh, and whoever was seated there gets the chips the ledger last had
+  // for them, as before.
+  async function start(t, {resume = false} = {}) {
     if (running.has(t.id)) return;
     const {min, max} = limits(t);
     const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true};
     running.set(t.id, r);
-    r.chain = call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000)
+    const fresh = () => call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000);
+    r.chain = (resume ? restore(t, r).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))
+      .then(resumed => {
+        if (resumed) return;
+        if (resume && cashOutTable(club(), t.id).length) save();
+        return fresh();
+      })
       .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
-      .catch(e => { console.warn(e); running.delete(t.id); });
+      .catch(e => {
+        console.warn(e);
+        running.delete(t.id);
+        if (resume && cashOutTable(club(), t.id).length) save();
+      });
     // The sit-out limit is checked on tick; tick regularly, not only on the turn clock.
     r.sweep = setInterval(() => { if (!r.stopped) run(t.id, 'tick'); }, 5_000);
     await r.chain;
+    // The resumed table's state: who's seated, for joins and the host's view.
+    if (r.paused) await run(t.id, 'state');
+  }
+
+  // Loads table `t`'s saved snapshot, if it's usable. Resolves to whether
+  // the table was resumed.
+  async function restore(t, r) {
+    const rec = await getTable(club().code, t.id);
+    if (!rec) return false;
+    if (rec.ledgerN !== tableLedgerN(club(), t.id)) {
+      console.warn(`table ${t.id}: the saved hand is out of step with the ledger; not resumed`);
+      return false;
+    }
+    await call('clubRestore', t.id, rec.json);
+    r.paused = true;
+    r.back = new Set();
+    r.savedSeq = rec.seq;
+    // People get a while to come back; then the table goes on without them.
+    r.timers.grace = setTimeout(() => wake(t.id), RESUME_GRACE_MS);
+    return true;
+  }
+
+  // A resumed table's clocks run again: everyone not back yet counts as
+  // disconnected (they check or fold, and the sit-out limit counts).
+  async function wake(tid) {
+    const r = running.get(tid);
+    if (!r?.paused) return;
+    r.paused = false;
+    clear(r, 'grace');
+    for (const p of r.players) if (!r.back.has(p.client_id)) await run(tid, 'disconnected', p.client_id);
+    await run(tid, 'resume');
+  }
+
+  // Someone at a resumed table is back: once everyone is, play goes on.
+  function cameBack(tid, id) {
+    const r = running.get(tid);
+    if (!r?.paused) return;
+    r.back.add(id);
+    if (r.players.every(p => r.back.has(p.client_id))) wake(tid);
   }
 
   // Stops taking players, removes everyone (they leave at the end of the
@@ -197,6 +285,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     if (r) { for (const k of Object.keys(r.timers)) clear(r, k); clearInterval(r.sweep); }
     running.delete(tid);
     call('clubDrop', tid).catch(() => {});
+    dropTable(club().code, tid).catch(() => {});
     // Anyone watching is told the table closed.
     for (const fn of watchers.get(tid) || []) fn({type: 'closed'});
     watchers.delete(tid);
@@ -220,6 +309,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
       return;
     }
     await run(tid, 'handle', id, cmd);
+    if (cmd.type === 'join') cameBack(tid, id);
   }
 
   function disconnected(id) {

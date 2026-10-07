@@ -129,10 +129,11 @@ function handleAdmin({type, from, body}) {
 
 function startHosting() {
   if (!club || hostNet) return;
-  startTables();
   hostNet = connect(club.code, 'host', '', {
-    // The relay tells us again who's connected.
-    onOpen() { hostOnline = true; online.clear(); render(); },
+    // The relay tells us again who's connected. Tables start once this tab is
+    // the club's host: a second tab, refused by the relay, never runs (or
+    // resumes) them.
+    onOpen() { hostOnline = true; online.clear(); startTables(); render(); },
     onMessage: hostMessage,
     onStatus(s) { hostOnline = !s; render(); },
     onFail(reason) { hostNet = null; hostOnline = false; tableHost?.setLink(false); note = reason; render(); },
@@ -142,11 +143,14 @@ function startHosting() {
 }
 
 // The club's tables (#68). The page opening again means any tables that were
-// running stopped: everyone seated is cashed out first (club-tables.js).
+// running stopped. Open tables saved with a hand in progress resume it
+// (#107, club-host.js); everyone seated anywhere else is cashed out first
+// (club-tables.js).
 function startTables() {
   if (tableHost) return;
   ensureTables(club);
-  const back = cashOutEveryone(club);
+  const open = openTables(club).filter(t => t.status === 'open');
+  const back = cashOutEveryone(club, Date.now(), new Set(open.map(t => t.id)));
   if (back.length) saveClub();
   tableHost = createTableHost({
     club: () => club,
@@ -164,9 +168,7 @@ function startTables() {
         {days: club.keepDays ?? HOST_KEEP_DAYS});
     },
   });
-  for (const t of openTables(club)) {
-    if (t.status === 'open') tableHost.start(t);
-  }
+  for (const t of open) tableHost.start(t, {resume: true}).then(() => { broadcastTables(); render(); });
 }
 
 function broadcastTables() {
