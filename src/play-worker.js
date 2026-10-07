@@ -16,16 +16,17 @@
 // Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
 // chipRequests, buyIn, hostPendingChips, out}, where out lists {to, data}
 // messages for the page to relay to each player.
-// A club's tables (clubs.js) are MultiTable.club instances kept by id:
-//   clubCreate(id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) |
-//   clubCall(id, method, ...args) for handle, disconnected, newHand,
-//     advance, tick, approveChips, denyChips, remove, state (the time is
-//     added) | clubDrop(id) | clubSave(id) | clubRestore(id, json); resume
-//     is a clubCall method too
-// clubCall results also carry `players` and `departed`.
+// A club's tables (club-host.js) use the ops in club-engine.js (clubCreate,
+// clubCall, clubSave, clubRestore, ...), the same code an always-on club
+// runs in the relay's Worker.
 import init, { BotTable, MultiTable, botPersonalities, loadGto } from '../wasm/ducy_wasm.js';
+import { clubEngine } from './club-engine.js';
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
+// Club tables, and the clocks every hosted table runs on (the friends
+// table's is 'host').
+const clubs = clubEngine(MultiTable);
+const now = clubs.now;
 let table = null;
 let host = null;
 
@@ -93,7 +94,7 @@ const ops = {
   // Friends: empty seats people take as they join, and real chips the host
   // hands out on request.
   hostFriends: (seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
-    clocks.delete('host');
+    clubs.clocks.delete('host');
     host = MultiTable.friends(seats, name, BigInt(hostChips), BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(now('host'));
   },
@@ -105,7 +106,7 @@ const ops = {
   hostRestore: json => {
     if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
     const t = MultiTable.restore(json, Date.now());
-    clocks.delete('host');
+    clubs.clocks.delete('host');
     host?.free();
     host = t;
     return host.state(now('host'));
@@ -121,55 +122,9 @@ const ops = {
   hostHandle: (client, msg) => host.handle(client, msg, now('host')),
   hostDisconnected: client => host.disconnected(client, now('host')),
   hostTick: () => host.tick(now('host')),
-  clubCreate: (id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
-    clubTables.get(id)?.free();
-    const t = MultiTable.club(seats, BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-    clubTables.set(id, t);
-    return t.state(now(id));
-  },
-  clubCall: (id, method, ...args) => {
-    const t = clubTables.get(id);
-    if (!t || !CLUB_METHODS.has(method)) throw new Error(`no table ${id} or method ${method}`);
-    return t[method](...args, now(id));
-  },
-  clubDrop: id => { clubTables.get(id)?.free(); clocks.delete(id); return clubTables.delete(id); },
-  // The table as JSON for resuming it after a restart (#107); null with an
-  // older ducy-wasm, which can't save tables.
-  clubSave: id => { const t = clubTables.get(id); return t?.save ? t.save(now(id)) : null; },
-  // A table saved with clubSave, paused until resume (throws if it can't be loaded).
-  clubRestore: (id, json) => {
-    if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
-    // Times in the snapshot are time left, so the restored table starts a fresh clock.
-    clocks.delete(id);
-    const t = MultiTable.restore(json, Date.now());
-    clubTables.get(id)?.free();
-    clubTables.set(id, t);
-    return t.state(Date.now());
-  },
-  // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
-  clubSitOutLimit: (id, ms) => { clubTables.get(id)?.setSitOutLimit(ms); return true; },
-  // Stops (on) or restarts a table's clock: 'host' for the friends table,
-  // else a club table's id. While stopped no time passes for it, so no turn
-  // runs out and no sit-out expires; it resumes with the time that was left.
-  clockPause: (key, on) => {
-    const c = clocks.get(key) || {at: null, lost: 0};
-    if (on && c.at == null) c.at = Date.now();
-    if (!on && c.at != null) { c.lost += Date.now() - c.at; c.at = null; }
-    clocks.set(key, c);
-    return true;
-  },
+  // A club's tables (club-engine.js).
+  ...clubs.ops,
 };
-
-const clubTables = new Map();
-
-// The time each table's engine sees: real time, minus the time its clock was
-// stopped (clockPause) because the host couldn't reach anyone.
-const clocks = new Map();
-function now(key) {
-  const c = clocks.get(key);
-  return c ? (c.at ?? Date.now()) - c.lost : Date.now();
-}
-const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state', 'resume']);
 
 self.onmessage = async e => {
   const {id, op, args = []} = e.data;

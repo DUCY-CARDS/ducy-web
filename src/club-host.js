@@ -32,7 +32,8 @@ const RESUME_GRACE_MS = 60_000;
 let worker = null, nextId = 0;
 const pending = new Map();
 
-function call(op, ...args) {
+// The page's engine: play-worker.js in a Web Worker.
+function workerCall(op, ...args) {
   if (!worker) {
     worker = new Worker(new URL('./play-worker.js', import.meta.url), {type: 'module'});
     worker.onmessage = e => {
@@ -51,7 +52,13 @@ function call(op, ...args) {
 
 const num = v => Number(v);
 
-export function createTableHost({club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true}) {
+// `call(op, ...args)` runs club-engine.js ops (by default in the page's
+// worker), and `store` keeps saved tables (by default in IndexedDB,
+// table-store.js); an always-on club passes its own (#93).
+export function createTableHost({
+  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true,
+  call = workerCall, store = {get: getTable, put: putTable, drop: dropTable},
+}) {
   const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
   const at = new Map(); // member id → table id
   const watchers = new Map(); // table id → Set(fn(update))
@@ -118,7 +125,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     try {
       const json = await call('clubSave', tid);
       if (json == null) { r.noSave = true; return; }
-      await putTable(club().code, tid, {json, ledgerN: tableLedgerN(club(), tid), seq: res.seq, at: Date.now()});
+      await store.put(club().code, tid, {json, ledgerN: tableLedgerN(club(), tid), seq: res.seq, at: Date.now()});
       r.savedSeq = res.seq;
     } catch (e) {
       console.warn(`table ${tid}: not saved:`, e);
@@ -247,7 +254,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
   // Loads table `t`'s saved snapshot, if it's usable. Resolves to whether
   // the table was resumed.
   async function restore(t, r) {
-    const rec = await getTable(club().code, t.id);
+    const rec = await store.get(club().code, t.id);
     if (!rec) return false;
     if (rec.ledgerN !== tableLedgerN(club(), t.id)) {
       console.warn(`table ${t.id}: the saved hand is out of step with the ledger; not resumed`);
@@ -295,7 +302,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     if (r) { for (const k of Object.keys(r.timers)) clear(r, k); clearInterval(r.sweep); }
     running.delete(tid);
     call('clubDrop', tid).catch(() => {});
-    dropTable(club().code, tid).catch(() => {});
+    store.drop(club().code, tid).catch(() => {});
     // Anyone watching is told the table closed.
     for (const fn of watchers.get(tid) || []) fn({type: 'closed'});
     watchers.delete(tid);
