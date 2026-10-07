@@ -10,7 +10,7 @@ const CLIENT_KEY = 'ducyPlayClient';
 // multiplayer. ?relay=<url> uses another one in this browser (for testing;
 // the https:// URL wrangler prints works too), and ?relay=default goes back
 // to this one.
-const DEFAULT_RELAY = 'wss://ducy-relay.ducy.workers.dev';
+export const DEFAULT_RELAY = 'wss://ducy-relay.ducy.workers.dev';
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 
 // A relay address as a WebSocket URL: https:// becomes wss://, http://
@@ -72,9 +72,11 @@ export function clientId() {
 // Opens the room as host or guest and keeps it open, reconnecting with
 // backoff when the connection drops. Handlers: onOpen(), onMessage(obj),
 // onStatus(text) with '' once connected, onFail(reason) when it gives up.
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}) {
+// With `queue` (clubs), a guest can connect while the host is away, and the
+// relay keeps its messages until the host comes back (see relay/README.md).
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {queue = false} = {}) {
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
-  const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '');
+  const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '') + (queue ? '&queue=1' : '');
   const open = () => {
     ws = new WebSocket(url);
     ws.onopen = () => { tries = 0; joined = true; onStatus(''); onOpen(); };

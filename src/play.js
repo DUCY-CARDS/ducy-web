@@ -220,7 +220,7 @@ function botsSetupHtml() {
 function friendsSetupHtml() {
   const f = setup.friends;
   let h = '<div class="pl-head"><h1>Play with friends</h1>';
-  h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them.</p></div>';
+  h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them. Running a regular game? <a href="#clubs">Start a club</a>.</p></div>';
   h += '<div class="pl-setup pl-multi">';
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
   h += identityRowHtml();
