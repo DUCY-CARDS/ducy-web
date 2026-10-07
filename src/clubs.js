@@ -9,7 +9,7 @@
 //   ducyClubs         clubs this browser has asked to join
 //   ducyClubName      the display name sent with join requests
 
-import { loadIdentity, signMessage, Verifier } from './identity.js';
+import { loadIdentity, showId, signMessage, Verifier } from './identity.js';
 import { connect, DEFAULT_RELAY, newCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -776,7 +776,7 @@ function render() {
   if (memberships.length) {
     h += `<p class="pl-meta">Keep your last ${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-cl="keep-hands" data-n="${n}">${n}</button>`).join(' ')} hands in each club.</p>`;
   }
-  h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(me.id)}</code>. Back it up from Play → Play with friends.</p>`;
+  h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(showId(me.id))}</code>. Back it up from Play → Play with friends.</p>`;
   h += relayHtml();
   if (replay) h += replayHtml();
   h += '</div>';
@@ -807,7 +807,7 @@ function inviteHtml() {
     h += '<p class="pl-desc">That’s an invite to your own club.</p><div class="pl-actions"><button class="btn-small" data-cl="dismiss">OK</button></div></section>';
     return h;
   }
-  h += `<p class="pl-desc">Ask to join club <strong>${esc(invite.code)}</strong>, hosted by player <code>${esc(invite.hostId)}</code>. The host sees your name and player ID and approves your request.</p>`;
+  h += `<p class="pl-desc">Ask to join club <strong>${esc(invite.code)}</strong>, hosted by player <code>${esc(showId(invite.hostId))}</code>. The host sees your name and player ID and approves your request.</p>`;
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="cl-name" maxlength="${MAX_PLAYER_NAME}" placeholder="Name" value="${esc(myName())}"></div>`;
   h += '<div class="pl-actions"><button class="tr-start" data-cl="join">Ask to join</button><button class="btn-small" data-cl="dismiss">Not now</button></div></section>';
   return h;
@@ -839,7 +839,7 @@ function hostHtml() {
   else {
     h += '<ul class="cl-list">';
     for (const m of pending) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="pl-meta">asked ${when(m.requestedAt)}${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
+      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(showId(m.id))}</code><span class="pl-meta">asked ${when(m.requestedAt)}${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
       h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
     }
     h += '</ul>';
@@ -898,7 +898,7 @@ function hostHtml() {
 // under an agent is indented, and any non-agent can be assigned to an agent.
 function memberRowHtml(m, agents) {
   const under = m.agentOf && club.members[m.agentOf];
-  let h = `<li class="${under ? 'cl-under' : ''}"><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
+  let h = `<li class="${under ? 'cl-under' : ''}"><span class="cl-name">${esc(m.name)}</span><code>${esc(showId(m.id))}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
   if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
   if (m.agent === 'yes') {
     const a = accountOf(club, m.id);
@@ -1052,7 +1052,7 @@ function agentHtml(m, hostHere) {
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.recruits.length) {
     h += `<span class="pl-meta">Asking to join through you (${a.recruits.length})</span><ul class="cl-list">`;
-    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(x.id)}</code><span class="cl-acts">${btn('ag-approve', x, 'Approve', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
+    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('ag-approve', x, 'Approve', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
     h += '</ul>';
   }
   h += `<span class="pl-meta">Your players (${a.players.length})</span>`;
@@ -1102,7 +1102,7 @@ function adminHtml(m, hostHere) {
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.pending.length) {
     h += `<span class="pl-meta">Requests to join (${a.pending.length})</span><ul class="cl-list">`;
-    for (const x of a.pending) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(x.id)}</code><span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
+    for (const x of a.pending) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
     h += '</ul>';
   }
   const asking = a.members.filter(x => x.request);

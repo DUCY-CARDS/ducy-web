@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ID_LENGTH, Verifier, canonical, checkSignature, createIdentity, exportIdentity,
-  importIdentity, isPlayerId, playerIdFor, fromB64url, signMessage,
+  importIdentity, isPlayerId, parseShownId, playerIdFor, fromB64url, showId, signMessage,
 } from '../src/identity.js';
 
 test('a new identity has an 8-character Base58 ID derived from its key', async () => {
@@ -107,4 +107,22 @@ test('importing something else fails clearly', async () => {
   const f = JSON.parse(await exportIdentity(me));
   f.id = 'XXXXXXXX';
   await assert.rejects(importIdentity(JSON.stringify(f)), /damaged/);
+});
+
+test('player IDs are shown in capitals and digits without I, L, O, 0 or 1, and read back in any case', async () => {
+  for (let i = 0; i < 50; i++) {
+    const me = await createIdentity();
+    const shown = showId(me.id);
+    assert.match(shown, /^[A-HJKMNP-Z2-9]{5}-[A-HJKMNP-Z2-9]{5}$/);
+    assert.equal(parseShownId(shown), me.id);
+    assert.equal(parseShownId(shown.toLowerCase()), me.id, 'lower case');
+    assert.equal(parseShownId(` ${shown.replace('-', '')} `), me.id, 'no dash, spaces around');
+    assert.equal(parseShownId(me.id), me.id, 'the stored form still works');
+  }
+  // The smallest and largest IDs.
+  assert.equal(showId('11111111'), 'AAAAA-AAAAA');
+  assert.equal(parseShownId(showId('zzzzzzzz')), 'zzzzzzzz');
+  assert.equal(parseShownId('99999-99999'), null, 'past the largest ID');
+  assert.equal(parseShownId('AAAAA-AAAAO'), null, 'O is never used');
+  assert.equal(parseShownId('AAAA-AAAA'), null, 'too short');
 });

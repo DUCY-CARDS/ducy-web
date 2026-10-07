@@ -20,7 +20,8 @@
 // host left, 4004 no such table, 4008 sending too fast, 4009 replaced by a newer connection with the
 // same id, 4029 the room is full.
 
-const CODE = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/;
+// Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
+const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
 const MAX_GUESTS = 16;
 const MAX_MESSAGE = 64 * 1024;

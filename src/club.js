@@ -33,6 +33,7 @@
 // the relay never sees hole cards and can't forge an update.
 
 import { checkSignature } from './identity.js';
+import { normCode } from './play-net.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 
 export const MAX_CLUB_NAME = 50;
@@ -78,10 +79,10 @@ export function inviteLink(club, base, relay = '') {
 // The invite in a page address, or null.
 export function parseInvite(href) {
   const p = new URL(href).searchParams;
-  const code = (p.get('club') || '').toUpperCase();
+  const code = normCode(p.get('club') || '');
   const invite = p.get('invite') || '';
   const host = p.get('host') || '';
-  if (!/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code) || !invite || !host) return null;
+  if (!code || !invite || !host) return null;
   return {code, invite, hostId: host};
 }
 

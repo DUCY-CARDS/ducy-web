@@ -52,6 +52,38 @@ export function isPlayerId(s) {
   return typeof s === 'string' && s.length === ID_LENGTH && [...s].every(c => B58.includes(c));
 }
 
+// How people see a player ID: the same number in capitals and digits with
+// no I, L, O, 0 or 1, as 10 characters in two groups ("7KQ2M-XR4TA"), so it
+// reads aloud and compares the same whatever case it's written in. The ID
+// itself (8 Base58 characters) stays what's stored, signed and sent.
+const SHOWN = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const SHOWN_BASE = BigInt(SHOWN.length);
+const SHOWN_LENGTH = 10;
+const ID_RANGE = 58n ** BigInt(ID_LENGTH);
+
+const fromB58 = id => [...id].reduce((n, c) => n * 58n + BigInt(B58.indexOf(c)), 0n);
+
+export function showId(id) {
+  if (!isPlayerId(id)) return String(id ?? '');
+  let n = fromB58(id), s = '';
+  for (let i = 0; i < SHOWN_LENGTH; i++) { s = SHOWN[Number(n % SHOWN_BASE)] + s; n /= SHOWN_BASE; }
+  return s.slice(0, 5) + '-' + s.slice(5);
+}
+
+// A player ID from what someone wrote: the shown form in any case, with or
+// without the dash or spaces, or the stored 8-character form. null otherwise.
+export function parseShownId(text) {
+  const raw = String(text ?? '').trim();
+  if (isPlayerId(raw)) return raw;
+  const s = raw.toUpperCase().replace(/[\s-]/g, '');
+  if (s.length !== SHOWN_LENGTH || ![...s].every(c => SHOWN.includes(c))) return null;
+  let n = [...s].reduce((v, c) => v * SHOWN_BASE + BigInt(SHOWN.indexOf(c)), 0n);
+  if (n >= ID_RANGE) return null;
+  let id = '';
+  for (let i = 0; i < ID_LENGTH; i++) { id = B58[Number(n % 58n)] + id; n /= 58n; }
+  return id;
+}
+
 // JSON with object keys sorted at every level, so the signer and the verifier
 // sign the same bytes whatever order the fields were built in.
 export function canonical(v) {

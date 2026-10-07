@@ -50,3 +50,10 @@ test('?relay= is remembered, carried in invite links, and ?relay=default clears 
   at('https://ducy.example/#play');
   assert.equal(relayUrl(), SITE_RELAY);
 });
+
+test('table codes read in any case, and never contain I, L, O, 0 or 1', () => {
+  assert.equal(normCode('abcd-efgh'), 'ABCD-EFGH');
+  assert.equal(normCode(' AbCd eFgH '), 'ABCD-EFGH');
+  assert.equal(normCode('abcdefgh'), 'ABCD-EFGH');
+  for (const bad of ['ABCD-EFG0', 'ABCD-EFGO', 'ABCD-EFG1', 'ABCD-EFGI', 'abcd-efgl', 'ABCD-EFG', 'ABCD-EFGHJ']) assert.equal(normCode(bad), '', bad);
+});

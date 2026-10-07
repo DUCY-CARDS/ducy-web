@@ -16,7 +16,7 @@
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, linkedCode, linkedHost, newCode, normCode, relayUrl } from './play-net.js';
-import { checkSignature, exportIdentity, importIdentity, loadIdentity, saveIdentity, signMessage } from './identity.js';
+import { checkSignature, exportIdentity, importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 
 let worker = null;
@@ -287,7 +287,7 @@ function friendsSetupHtml() {
 // it on another device.
 function identityRowHtml() {
   let h = '<div class="pl-row"><span class="pl-label">Player ID</span><div class="pl-opts">';
-  h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(me.id) : '…'}</code>`;
+  h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(showId(me.id)) : '…'}</code>`;
   h += `<button class="btn-small" data-act="idbackup"${me ? '' : ' disabled'}>Back up</button>`;
   h += '<label class="btn-small">Restore<input type="file" id="pl-idfile" accept=".json,application/json" hidden></label>';
   h += '</div></div>';
@@ -300,7 +300,7 @@ async function backupIdentity() {
   const blob = new Blob([await exportIdentity(me)], {type: 'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `ducy-identity-${me.id}.json`;
+  a.download = `ducy-identity-${showId(me.id)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   idNote = 'Keep this file private: anyone who has it can play as you.';
@@ -310,10 +310,10 @@ async function backupIdentity() {
 async function restoreIdentity(file) {
   try {
     const ident = await importIdentity(await file.text());
-    if (me && ident.id !== me.id && !confirm(`Replace player ID ${me.id} with ${ident.id}? Clubs that know ${me.id} won’t recognize this browser any more.`)) return;
+    if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
     await saveIdentity(ident);
     me = ident;
-    idNote = `Restored player ID ${ident.id}.`;
+    idNote = `Restored player ID ${showId(ident.id)}.`;
   } catch (e) {
     idNote = e.message;
   }

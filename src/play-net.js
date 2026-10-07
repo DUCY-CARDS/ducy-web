@@ -63,9 +63,11 @@ export function newCode() {
   return c.slice(0, 4) + '-' + c.slice(4);
 }
 
+// A table code as typed, in any case and with or without the dash or spaces,
+// as "ABCD-EFGH"; '' if it isn't one (codes never have I, L, O, 0 or 1).
 export function normCode(s) {
-  const c = String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return c.length === 8 ? c.slice(0, 4) + '-' + c.slice(4) : '';
+  const c = String(s ?? '').toUpperCase().replace(/[\s-]/g, '');
+  return c.length === 8 && [...c].every(ch => CODE_CHARS.includes(ch)) ? c.slice(0, 4) + '-' + c.slice(4) : '';
 }
 
 // Identifies this tab to the host, so a reload gets the same seat back.
