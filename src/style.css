@@ -343,6 +343,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 }
 .cc-btn:hover { border-color: var(--fg-muted); color: var(--fg); }
 .cc-btn.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+/* Option buttons in the play and clubs settings rows are words, not numbers: the page font. */
+.pl-opts .cc-btn { font-family: inherit; font-size: 12px; padding: 4px 10px; }
 #bp-random { margin-left: 10px; justify-content: space-between; }
 #bp-random[hidden] { display: none; }
 .group-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--fg-muted); padding: 7px 0; }
@@ -991,4 +993,19 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
   .pl-rev-best { grid-column: 1 / -1; }
   .pl-rev-street { grid-column: 1; }
   .pl-rev-grade { grid-row: 1; grid-column: 2; }
+}
+
+/* Tournament blind structure editor (#78) */
+.ts-editor { display: flex; flex-direction: column; gap: 10px; }
+.ts-levels { border-collapse: collapse; font-size: 13px; }
+.ts-levels th { text-align: left; font-size: 11px; font-weight: 600; color: var(--fg-muted); padding: 0 6px 4px; }
+.ts-levels td { padding: 2px 6px; font-variant-numeric: tabular-nums; }
+.ts-levels .pl-text { width: 90px; padding: 3px 6px; }
+.ts-levels .ts-break td:first-child { color: var(--fg-muted); font-style: italic; }
+.ts-errors { margin: 0; padding-left: 18px; color: var(--red); font-size: 13px; }
+.ts-estimate table { border-collapse: collapse; font-size: 13px; margin: 4px 0; }
+.ts-estimate td { padding: 2px 12px 2px 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .ts-levels .pl-text { width: 64px; }
+  .ts-levels th, .ts-levels td { padding: 2px 3px; }
 }
