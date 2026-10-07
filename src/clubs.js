@@ -17,9 +17,10 @@ import {
 } from './club.js';
 import { declineRequest, ensureChips, grantRequest, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
-  cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tablesBody,
+  cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createTableHost } from './club-host.js';
+import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import { joinTableVia } from './play.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
@@ -35,7 +36,7 @@ let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
 let tableHost = null; // runs the hosted club's tables (club-host.js)
 const online = new Set(); // members connected to the hosted club
-let tableForm = false; // the host's New table form is open
+let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -58,6 +59,40 @@ const STATUS_TEXT = {
 function saveClub() {
   save(CLUB_KEY, club);
   save(SENDERS_KEY, verifier.toJSON());
+  scheduleAdmin();
+}
+
+// Assistants (#62) see the club change as it happens: after any change, the
+// online ones get a fresh view (at most every 200 ms).
+let adminTimer = null;
+function scheduleAdmin() {
+  if (adminTimer || !club) return;
+  adminTimer = setTimeout(() => {
+    adminTimer = null;
+    if (!club) return;
+    const body = adminBody(club, tableHost?.seatedCounts() || {});
+    for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
+  }, 200);
+}
+
+// A role answer or an assistant's command, already verified as from `from`.
+function handleAdmin({type, from, body}) {
+  if (type === 'role_reply') {
+    const r = answerRole(club, from, !!body.accept);
+    if (r) sendToPlayer(r);
+    return;
+  }
+  try {
+    const r = runAdmin(club, from, body.cmd);
+    for (const rep of r.replies) sendToPlayer(rep);
+    if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, tableHost.seatedCounts())});
+    if (r.table?.start) tableHost?.start(r.table.start).then(() => { broadcastTables(); render(); });
+    if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
+    if (r.table) broadcastTables();
+    sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
+  } catch (e) {
+    sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: e.message}});
+  }
 }
 
 function startHosting() {
@@ -111,10 +146,13 @@ async function hostMessage(msg) {
   // A table command, from the member who signed it (the relay's sender id
   // must match, so no one can act for someone else).
   if (r.table && r.table.from === msg.from) tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
+  if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); saveClub(); render(); return; }
   // Members checking in get the tables too.
-  if (msg.data?.body?.type === 'hello' && club.members[msg.from]?.status === 'member' && tableHost) {
-    sendToPlayer({to: msg.from, body: tablesBody(club, tableHost.seatedCounts())});
-  }
+  const hello = msg.data?.body?.type === 'hello' && club.members[msg.from]?.status === 'member';
+  if (hello && tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, tableHost.seatedCounts())});
+  // …and their role, and an assistant their view of the club.
+  if (hello && club.members[msg.from].role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: club.members[msg.from].role}});
+  if (hello && isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, tableHost?.seatedCounts() || {})});
   if (r.changed || r.replies.length) { saveClub(); render(); }
 }
 
@@ -147,9 +185,10 @@ async function createClub(name) {
 }
 
 // The host's New table form: native, so the browser checks the numbers.
-function tableFormHtml() {
-  let h = '<form class="cl-tableform" data-tableform="1">';
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="Table ${(club.tables?.length || 0) + 1}"></label>`;
+// `code`: an assistant's form for that club (sent to its host), else the host's.
+function tableFormHtml(code = '') {
+  let h = `<form class="cl-tableform" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}>`;
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${code ? 'Table name' : `Table ${(club.tables?.length || 0) + 1}`}"></label>`;
   h += `<label>Game<select class="pl-text" name="game">${GAMES.map(g => `<option value="${g.id}">${esc(g.label)}</option>`).join('')}</select></label>`;
   h += '<label>Small blind<input class="pl-text" name="sb" type="number" required min="1" step="1" value="1"></label>';
   h += '<label>Big blind<input class="pl-text" name="bb" type="number" required min="1" step="1" value="2"></label>';
@@ -163,11 +202,19 @@ function tableFormHtml() {
 
 function submitTable(f) {
   const v = name => f.elements[name].value;
+  const settings = {
+    name: v('name'), game: v('game'), sb: Number(v('sb')), bb: Number(v('bb')),
+    minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats: Number(v('seats')), turnSecs: Number(v('turnSecs')),
+  };
+  // An assistant's: the host opens it.
+  if (f.dataset.code) {
+    tableForm = false;
+    adminCmd(f.dataset.code, {op: 'new_table', table: settings});
+    render();
+    return;
+  }
   try {
-    const t = newTable(club, {
-      name: v('name'), game: v('game'), sb: Number(v('sb')), bb: Number(v('bb')),
-      minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats: Number(v('seats')), turnSecs: Number(v('turnSecs')),
-    });
+    const t = newTable(club, settings);
     tableForm = false;
     saveClub();
     tableHost?.start(t).then(() => { broadcastTables(); render(); });
@@ -203,8 +250,8 @@ function tablesHtml() {
       h += '</li>';
     }
     h += '</ul>';
-  } else if (!tableForm) h += '<p class="pl-meta">No tables yet.</p>';
-  h += tableForm ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
+  } else if (tableForm !== true) h += '<p class="pl-meta">No tables yet.</p>';
+  h += tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
   return h;
 }
 
@@ -253,6 +300,15 @@ function openChipForm(kind, id) {
 function onSubmit(e) {
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  const af = e.target.closest('form[data-adminform]');
+  if (af) {
+    e.preventDefault();
+    const amount = Number(af.elements.amount.value);
+    adminForm = null;
+    adminCmd(af.dataset.code, {op: af.dataset.adminform, id: af.dataset.id, amount});
+    render();
+    return;
+  }
   const f = e.target.closest('form[data-chipform]');
   if (!f) return;
   e.preventDefault();
@@ -533,6 +589,11 @@ function hostHtml() {
       if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
       h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
       h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance ? '' : ' disabled'}>Take back</button>`;
+      h += m.role === 'assistant'
+        ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being a game assistant">Assistant ✕</button>`
+        : m.role === 'offered'
+          ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Withdraw the offer">Offered ✕</button>`
+          : `<button class="btn-small" data-cl="offer-role" data-id="${esc(m.id)}" title="Let ${esc(m.name)} help run the club">Make assistant</button>`;
       h += `<button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span>`;
       if (chipForm && chipForm.kind !== 'grant') h += chipFormHtml(m);
       h += '</li>';
@@ -544,6 +605,11 @@ function hostHtml() {
   h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
   h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
   h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
+  if (club.log?.length) {
+    h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
+    for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
+    h += '</ul></details>';
+  }
   h += '<div class="pl-actions"><button class="link-btn" data-cl="close">Close this club</button></div></section>';
   return h;
 }
@@ -562,13 +628,18 @@ function membershipsHtml() {
     h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button></span>`;
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
     if (m.status === 'member') h += accountHtml(m, !!n?.hostHere);
+    if (m.status === 'member' && m.role === 'offered') {
+      h += '<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>: approve players, give out chips from your own balance, and open and close tables.</span>';
+      h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
+    }
+    if (m.status === 'member' && m.role === 'assistant') h += adminHtml(m, !!n?.hostHere);
     h += '</li>';
   }
   h += '</ul></section>';
   return h;
 }
 
-const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', cash_out: 'Cashed out'};
+const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', cash_out: 'Cashed out', transfer_in: 'Given by an assistant', transfer_out: 'Given to a player'};
 
 // A member's chips in a club: balance, a request, and their own ledger copy.
 function accountHtml(m, hostHere) {
@@ -601,11 +672,75 @@ function accountHtml(m, hostHere) {
   if (m.entries?.length) {
     h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
     for (const e of [...m.entries].reverse().slice(0, 50)) {
-      const sign = ['reclaim', 'buy_in', 'top_up'].includes(e.kind) ? '−' : '+';
+      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
       h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
     }
     h += '</ul></details>';
   }
+  return h + '</div>';
+}
+
+// ---- a game assistant's tools (#62) ----
+
+// The assistant's open form: {code, kind: 'give' | 'grant', id}.
+let adminForm = null;
+
+function adminCmd(code, cmd) {
+  const mem = memberships.find(m => m.code === code);
+  if (mem) mem.adminNote = '';
+  sendToHost(code, {type: 'admin_cmd', club: code, cmd});
+}
+
+function adminFormHtml(code, x) {
+  if (adminForm?.code !== code || adminForm.id !== x.id) return '';
+  const grant = adminForm.kind === 'grant';
+  let h = `<form class="cl-chipform" data-adminform="${adminForm.kind}" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
+  h += `<label class="cl-formlabel" for="cl-aamt">${grant ? `Give ${esc(x.name)} from your chips (asked for ${chips(x.request?.amount)})` : `Give ${esc(x.name)} from your chips`}</label>`;
+  h += `<input class="pl-text" id="cl-aamt" name="amount" type="number" inputmode="numeric" required min="1" step="1" value="${grant ? esc(x.request?.amount) : ''}" placeholder="Chips">`;
+  h += '<button class="btn-small primary" type="submit">Give</button><button class="btn-small" type="button" data-cl="cancel-aform">Cancel</button></form>';
+  return h;
+}
+
+function adminHtml(m, hostHere) {
+  const a = m.admin;
+  let h = '<div class="cl-account cl-admin"><b>Assistant tools</b>';
+  if (!hostHere) h += '<span class="pl-meta">The host is away: these work again when the host is back.</span>';
+  if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
+  if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
+  const dis = hostHere ? '' : ' disabled';
+  const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
+  if (a.pending.length) {
+    h += `<span class="pl-meta">Requests to join (${a.pending.length})</span><ul class="cl-list">`;
+    for (const x of a.pending) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(x.id)}</code><span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
+    h += '</ul>';
+  }
+  const asking = a.members.filter(x => x.request);
+  if (asking.length) {
+    h += `<span class="pl-meta">Chip requests (${asking.length})</span><ul class="cl-list">`;
+    for (const x of asking) {
+      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">asks for ${chips(x.request.amount)}</span>`;
+      h += `<span class="cl-acts">${btn('a-grant', x, 'Give from mine', ' primary')}${btn('a-deny', x, 'Decline')}</span>${adminFormHtml(m.code, x)}</li>`;
+    }
+    h += '</ul>';
+  }
+  const others = a.members.filter(x => x.id !== me?.id);
+  h += `<span class="pl-meta">Members (${a.members.length})</span><ul class="cl-list">`;
+  for (const x of others) {
+    h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${chips(x.balance)} chips</span>${x.assistant ? '<span class="pl-meta">assistant</span>' : ''}`;
+    h += `<span class="cl-acts">${btn('a-give', x, 'Give')}${x.assistant ? '' : btn('a-remove', x, 'Remove')}</span>${!x.request ? adminFormHtml(m.code, x) : ''}</li>`;
+  }
+  h += '</ul>';
+  const open = a.tables.filter(t => t.status !== 'closed');
+  const closed = a.tables.filter(t => t.status === 'closed');
+  h += `<span class="pl-meta">Tables (${open.length})</span><ul class="cl-list">`;
+  for (const t of open) {
+    h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
+    if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
+    h += '</li>';
+  }
+  for (const t of closed) h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">closed</span><span class="cl-acts"><button class="btn-small" data-cl="a-hide-table" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${dis}>Remove</button></span></li>`;
+  h += '</ul>';
+  h += tableForm === m.code ? tableFormHtml(m.code) : `<div class="pl-actions"><button class="btn-small" data-cl="a-new-table" data-code="${esc(m.code)}"${dis}>New table</button></div>`;
   return h + '</div>';
 }
 
@@ -653,6 +788,25 @@ async function onClick(e) {
   else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
+  // The host: assistants.
+  else if (act === 'offer-role') { try { sendToPlayer(offerAssistant(club, b.dataset.id)); saveClub(); render(); } catch (err) { alert(err.message); } }
+  else if (act === 'revoke-role') { const r = revokeRole(club, b.dataset.id); if (r) { sendToPlayer(r); saveClub(); render(); } }
+  // A member: answering an offer.
+  else if (act === 'role-yes' || act === 'role-no') sendToHost(b.dataset.code, {type: 'role_reply', club: b.dataset.code, accept: act === 'role-yes'});
+  // An assistant's tools.
+  else if (act === 'a-approve') adminCmd(b.dataset.code, {op: 'approve', id: b.dataset.id});
+  else if (act === 'a-decline') adminCmd(b.dataset.code, {op: 'decline', id: b.dataset.id});
+  else if (act === 'a-remove') { if (confirm('Remove this member from the club? Their chips go back to the host.')) adminCmd(b.dataset.code, {op: 'remove', id: b.dataset.id}); }
+  else if (act === 'a-deny') adminCmd(b.dataset.code, {op: 'deny', id: b.dataset.id});
+  else if (act === 'a-give' || act === 'a-grant') {
+    const kind = act === 'a-give' ? 'give' : 'grant';
+    adminForm = adminForm?.id === b.dataset.id && adminForm.kind === kind ? null : {code: b.dataset.code, kind, id: b.dataset.id};
+    render();
+    root.querySelector('#cl-aamt')?.focus();
+  } else if (act === 'cancel-aform') { adminForm = null; render(); }
+  else if (act === 'a-close-table') { if (confirm('Close this table? Everyone is cashed out at the end of the hand.')) adminCmd(b.dataset.code, {op: 'close_table', table: b.dataset.table}); }
+  else if (act === 'a-hide-table') adminCmd(b.dataset.code, {op: 'hide_table', table: b.dataset.table});
+  else if (act === 'a-new-table') { tableForm = b.dataset.code; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'close-table') closeTable(b.dataset.table);
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
   else if (act === 'to-table') location.hash = 'play';
