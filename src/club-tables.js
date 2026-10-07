@@ -124,7 +124,7 @@ export function cashOutEveryone(club, now = Date.now(), keep = new Set()) {
   for (const m of Object.values(club.members)) {
     if (m.seat && !keep.has(m.seat.table)) entries.push(cashOut(club, m.id, now));
   }
-  for (const t of club.tables) if (t.status === 'closing') t.status = 'closed';
+  for (const t of club.tables) if (t.status === 'closing' && !keep.has(t.id)) t.status = 'closed';
   return entries;
 }
 

@@ -135,3 +135,13 @@ test('resuming tables (#107): cash out everyone but the tables that may resume, 
   assert.ok(Object.values(club.members).every(m => !m.seat));
   assert.ok(totals(club).conserved);
 });
+
+test('a closing table kept for resuming stays closing; others that were closing close (#117)', () => {
+  const club = clubWith();
+  const a = newTable(club, {name: 'A'}), b = newTable(club, {name: 'B'});
+  a.status = 'closing';
+  b.status = 'closing';
+  cashOutEveryone(club, 0, new Set([a.id]));
+  assert.equal(a.status, 'closing', 'A may still finish its hand');
+  assert.equal(b.status, 'closed');
+});

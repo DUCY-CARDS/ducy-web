@@ -204,11 +204,15 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     }
   }
 
+  // Thrown to stop starting a closing table that couldn't resume.
+  class Closed extends Error {}
+
   // Starts table `t`. With `resume` (the host's page just opened), a table
   // saved with a hand in progress picks up where it was (#107); one that
   // can't (none saved, out of step with the ledger, unreadable) starts
   // afresh, and whoever was seated there gets the chips the ledger last had
-  // for them, as before.
+  // for them, as before. A table that was closing (#117) finishes its hand
+  // and closes, or, if it can't resume, is closed there and then.
   async function start(t, {resume = false} = {}) {
     if (running.has(t.id)) return;
     const {min, max} = limits(t);
@@ -219,19 +223,25 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
       .then(resumed => {
         if (resumed) return;
         if (resume && cashOutTable(club(), t.id).length) save();
+        // A closing table that can't resume is done: everyone's been settled.
+        if (t.status === 'closing') throw new Closed();
         return fresh();
       })
       .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
       .catch(e => {
-        console.warn(e);
+        if (!(e instanceof Closed)) console.warn(e);
+        clearInterval(r.sweep);
         running.delete(t.id);
         if (resume && cashOutTable(club(), t.id).length) save();
+        if (t.status === 'closing') { t.status = 'closed'; save(); }
       });
     // The sit-out limit is checked on tick; tick regularly, not only on the turn clock.
     r.sweep = setInterval(() => { if (!r.stopped) run(t.id, 'tick'); }, 5_000);
     await r.chain;
     // The resumed table's state: who's seated, for joins and the host's view.
     if (r.paused) await run(t.id, 'state');
+    // A table that was closing finishes its hand, then closes (#117).
+    if (running.has(t.id) && t.status === 'closing') await close(t.id);
   }
 
   // Loads table `t`'s saved snapshot, if it's usable. Resolves to whether

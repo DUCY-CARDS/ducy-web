@@ -18,6 +18,7 @@ import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, 
 import { clientId, connect, joinLink, linkedCode, linkedHost, newCode, normCode, relayUrl } from './play-net.js';
 import { checkSignature, exportIdentity, importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
+import { dropTable, getTable, putTable } from './table-store.js';
 
 let worker = null;
 let nextId = 0;
@@ -263,6 +264,11 @@ function friendsSetupHtml() {
   let h = '<div class="pl-head"><h1>Play with friends</h1>';
   h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them. Running a regular game? <a href="#clubs">Start a club</a>.</p></div>';
   h += '<div class="pl-setup pl-multi">';
+  if (savedTable && mode !== 'host') {
+    const ago = Math.max(1, Math.round((Date.now() - savedTable.at) / 60_000));
+    h += `<div class="pl-resume"><p>Your table <b>${esc(savedTable.room)}</b> stopped ${ago < 60 ? `${ago} min` : `${Math.round(ago / 60)} h`} ago with a hand in progress. Resume it, and players rejoin with the same code.</p>`;
+    h += '<div class="pl-actions"><button class="tr-start" data-act="resumehost">Resume table</button><button class="btn-small" data-act="forgethost">Discard</button></div></div>';
+  }
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
   h += identityRowHtml();
   h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
@@ -576,7 +582,10 @@ function guestIncoming(m) {
 
 // Calls the host's MultiTable in order, and relays the messages it returns.
 function hostCall(op, ...args) {
-  const p = hostChain.then(() => call(op, ...args)).then(r => {
+  const p = hostChain.then(() => call(op, ...args)).then(async r => {
+    // Saved before anyone is told, so a resumed table is never behind what
+    // players were shown (#117).
+    await saveHostTable(r);
     for (const m of r.out) sendToGuest(m.to, m.data);
     guestsSeated = r.players || [];
     syncHostClock();
@@ -618,14 +627,27 @@ async function hostTable() {
   setupNote = '';
   saveSetup();
   const f = setup.friends;
-  tableGame = gameOf(f.game);
+  forgetSavedTable();
+  startHosting(newCode(), f.game);
+  // The host starts with 100 BB, kept within the table's limits.
+  const min = f.minBB * f.bb, max = f.maxBB * f.bb;
+  const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
+  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
+    .then(snap => { if (snap) show(snap); });
+}
+
+// Hosting a friends table with code `code`: the relay connection, keys and
+// clocks, for a new table (hostTable) or one resumed (resumeHosting).
+function startHosting(code, game) {
+  tableGame = gameOf(game);
+  hostGame = game;
   mode = 'host';
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
   gtoTable = false;
   review = null;
   sessionStats = {};
   recordedHand = 0;
-  room = newCode();
+  room = code;
   netNote = '';
   shownSeq = -1;
   seated = true;
@@ -643,7 +665,7 @@ async function hostTable() {
     onOpen() { if (mine === session) guestsOnline.clear(); },
     onMessage(m) {
       if (mine !== session) return;
-      if (m.event === 'open') { guestsOnline.add(m.from); syncHostClock(); sendHostKey(m.from); }
+      if (m.event === 'open') { guestsOnline.add(m.from); syncHostClock(); sendHostKey(m.from); maybeResume(); }
       else if (m.event === 'close') { guestsOnline.delete(m.from); syncHostClock(); hostEvent('hostDisconnected', m.from); }
       else if (m.data) hostIncoming(m.from, m.data);
     },
@@ -651,13 +673,90 @@ async function hostTable() {
     onFail(t) { leaveTable(t); },
     onHealth(ok) { if (mine !== session) return; linkOk = ok; syncHostClock(); },
   }, {heartbeat: true, persistent: true});
-  // The host starts with 100 BB, kept within the table's limits.
-  const min = f.minBB * f.bb, max = f.maxBB * f.bb;
-  const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
-    .then(snap => { if (snap) show(snap); });
   hostTimer = setInterval(() => { if (!clockStopped && turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
   startClock();
+}
+
+// ---- resuming a friends table (#117) ----
+//
+// After every change the host's table is saved in this browser (with
+// ducy's MultiTable.save: every card of the hand in progress, so only this
+// page reads it). If the page closes or the browser restarts, the setup
+// screen offers to resume: the table comes back under the same code, so
+// players' pages, which keep reconnecting, find it again. Play waits until
+// everyone seated is back, or RESUME_GRACE_MS, after which whoever is
+// missing counts as disconnected. Leaving the table forgets it.
+
+const SAVED = ['friends', 'host']; // its table-store key
+const SAVED_FOR_MS = 24 * 3600_000; // older saves aren't offered
+const RESUME_GRACE_MS = 60_000;
+let savedTable = null; // {json, room, game, seq, at}, if there's one to offer
+let hostGame = ''; // the game being hosted, saved with the table
+let savedSeq = -1, noSave = false; // the last state saved; the engine can't save
+let resuming = null; // while a resumed table waits for its players: the grace timer
+
+getTable(...SAVED).then(rec => {
+  if (rec && Date.now() - rec.at < SAVED_FOR_MS) { savedTable = rec; render(); }
+}).catch(() => {});
+
+// Saves the hosted table when its state changed. A table that can't be saved
+// (an older ducy-wasm, or storage blocked) just plays on, as before.
+async function saveHostTable(r) {
+  if (mode !== 'host' || noSave || r.seq == null || r.seq === savedSeq || resuming) return;
+  try {
+    const json = await call('hostSave');
+    if (json == null) { noSave = true; return; }
+    await putTable(...SAVED, {json, room, game: hostGame, seq: r.seq, at: Date.now()});
+    savedSeq = r.seq;
+  } catch (e) {
+    console.warn('table: not saved:', e);
+  }
+}
+
+function forgetSavedTable() {
+  savedTable = null;
+  savedSeq = -1;
+  noSave = false;
+  dropTable(...SAVED).catch(() => {});
+}
+
+async function resumeHosting() {
+  const rec = savedTable;
+  if (!rec) return;
+  readNameInput();
+  setupNote = '';
+  savedTable = null;
+  savedSeq = rec.seq;
+  noSave = false;
+  startHosting(rec.room, rec.game);
+  resuming = setTimeout(() => wake(), RESUME_GRACE_MS);
+  try {
+    show(await hostCall('hostRestore', rec.json));
+    netNote = 'Resumed: play goes on once everyone is back (at most a minute).';
+    maybeResume();
+  } catch (e) {
+    console.warn(e);
+    clearTimeout(resuming);
+    resuming = null;
+    forgetSavedTable();
+    leaveTable('That table couldn’t be resumed. Host a new one.');
+  }
+}
+
+// A player came back: once everyone seated is, play goes on.
+function maybeResume() {
+  if (resuming && guestsSeated.length && guestsSeated.every(p => guestsOnline.has(p.client_id))) wake();
+}
+
+// The resumed table plays on: everyone not back yet counts as disconnected
+// (they check or fold, and their seat waits for them as usual).
+function wake() {
+  if (!resuming) return;
+  clearTimeout(resuming);
+  resuming = null;
+  netNote = '';
+  for (const p of guestsSeated) if (!guestsOnline.has(p.client_id)) hostEvent('hostDisconnected', p.client_id);
+  hostEvent('hostResume');
 }
 
 function joinTable() {
@@ -794,6 +893,8 @@ function clockText() {
 
 function leaveTable(note = '') {
   clearTimeout(timer);
+  clearTimeout(resuming);
+  resuming = null;
   cancelDeal();
   clearInterval(hostTimer);
   clearInterval(clockTimer);
@@ -1379,7 +1480,9 @@ function onClick(e) {
     armDeal();
   }
   else if (el.dataset.act === 'autodeal') { setup.autoDeal = !setup.autoDeal; saveSetup(); holds.delete('user'); render(); armDeal(); }
-  else if (el.dataset.act === 'leave') leaveTable();
+  else if (el.dataset.act === 'leave') { if (mode === 'host') forgetSavedTable(); leaveTable(); }
+  else if (el.dataset.act === 'resumehost') resumeHosting();
+  else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'join') joinTable();
   else if (el.dataset.act === 'copy') copyLink();

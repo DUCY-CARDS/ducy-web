@@ -97,6 +97,20 @@ const ops = {
     host = MultiTable.friends(seats, name, BigInt(hostChips), BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(now('host'));
   },
+  // The friends table as JSON, to resume it if the page closes (#117); null
+  // with an older ducy-wasm.
+  hostSave: () => (host?.save ? host.save(now('host')) : null),
+  // A friends table saved with hostSave, paused until hostResume (throws if
+  // it can't be loaded).
+  hostRestore: json => {
+    if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
+    const t = MultiTable.restore(json, Date.now());
+    clocks.delete('host');
+    host?.free();
+    host = t;
+    return host.state(now('host'));
+  },
+  hostResume: () => host.resume(now('host')),
   hostApprove: seat => host.approveChips(seat, now('host')),
   hostDeny: seat => host.denyChips(seat, now('host')),
   hostChips: amount => host.hostChips(BigInt(amount), now('host')),
