@@ -143,13 +143,13 @@ function startHosting() {
 }
 
 // The club's tables (#68). The page opening again means any tables that were
-// running stopped. Open tables saved with a hand in progress resume it
-// (#107, club-host.js); everyone seated anywhere else is cashed out first
-// (club-tables.js).
+// running stopped. Open and closing tables saved with a hand in progress
+// resume it (#107, #117, club-host.js; a closing one then closes after the
+// hand); everyone seated anywhere else is cashed out first (club-tables.js).
 function startTables() {
   if (tableHost) return;
   ensureTables(club);
-  const open = openTables(club).filter(t => t.status === 'open');
+  const open = openTables(club).filter(t => t.status === 'open' || t.status === 'closing');
   const back = cashOutEveryone(club, Date.now(), new Set(open.map(t => t.id)));
   if (back.length) saveClub();
   tableHost = createTableHost({
