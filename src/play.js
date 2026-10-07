@@ -12,6 +12,7 @@
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
+import { exportIdentity, importIdentity, loadIdentity, saveIdentity } from './identity.js';
 
 let worker = null;
 let nextId = 0;
@@ -105,6 +106,9 @@ let myChips = null;
 let chipAsk = 0; // the amount in a guest's request box
 let lastView = null; // a guest's last view from the host
 let joinCode = linkedCode();
+// This browser's player identity for clubs (identity.js), loaded on open.
+let me = null;
+let idNote = '';
 
 function defaultSetup() {
   return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, tab: 'bots', friends: {...FRIENDS_DEFAULT}};
@@ -219,6 +223,7 @@ function friendsSetupHtml() {
   h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them.</p></div>';
   h += '<div class="pl-setup pl-multi">';
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
+  h += identityRowHtml();
   h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
   h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(f.bb === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)));
   h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
@@ -234,6 +239,44 @@ function friendsSetupHtml() {
   if (netNote) h += `<p class="pl-desc pl-neterr">${esc(netNote)}</p>`;
   h += '</div>';
   return h;
+}
+
+// The player ID, with backup and restore. The ID only lives in this browser,
+// so a backup file is the way to keep it after clearing site data or to use
+// it on another device.
+function identityRowHtml() {
+  let h = '<div class="pl-row"><span class="pl-label">Player ID</span><div class="pl-opts">';
+  h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(me.id) : '…'}</code>`;
+  h += `<button class="btn-small" data-act="idbackup"${me ? '' : ' disabled'}>Back up</button>`;
+  h += '<label class="btn-small">Restore<input type="file" id="pl-idfile" accept=".json,application/json" hidden></label>';
+  h += '</div></div>';
+  if (idNote) h += `<p class="pl-desc">${esc(idNote)}</p>`;
+  return h;
+}
+
+async function backupIdentity() {
+  if (!me) return;
+  const blob = new Blob([await exportIdentity(me)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ducy-identity-${me.id}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  idNote = 'Keep this file private: anyone who has it can play as you.';
+  render();
+}
+
+async function restoreIdentity(file) {
+  try {
+    const ident = await importIdentity(await file.text());
+    if (me && ident.id !== me.id && !confirm(`Replace player ID ${me.id} with ${ident.id}? Clubs that know ${me.id} won’t recognize this browser any more.`)) return;
+    await saveIdentity(ident);
+    me = ident;
+    idNote = `Restored player ID ${ident.id}.`;
+  } catch (e) {
+    idNote = e.message;
+  }
+  render();
 }
 
 // ---- table ----
@@ -991,6 +1034,7 @@ function onClick(e) {
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'join') joinTable();
   else if (el.dataset.act === 'copy') copyLink();
+  else if (el.dataset.act === 'idbackup') backupIdentity();
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
@@ -1011,6 +1055,7 @@ function onInput(e) {
 
 function onChange(e) {
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
+  if (e.target.id === 'pl-idfile' && e.target.files[0]) restoreIdentity(e.target.files[0]);
 }
 
 // The countdown waits while a mouse is over the result or the log, so the
@@ -1065,6 +1110,10 @@ export async function openPlay(el, shortcut) {
   // An invite link opens on the friends tab, with the code filled in.
   if (joinCode && !seated && relayUrl()) setup.tab = 'friends';
   if (document.hidden) holds.add('hidden'); else holds.delete('hidden');
+  if (!me) {
+    loadIdentity().then(i => { me = i; if (!seated && personalities.length) render(); })
+      .catch(e => { console.warn(e); idNote = 'This browser can’t keep a player ID (private mode or storage blocked).'; });
+  }
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
