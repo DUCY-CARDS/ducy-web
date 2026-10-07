@@ -104,9 +104,12 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
       m.name = name;
       return {replies: [reply(club, id)], changed};
     }
-    if (body.invite !== club.invite) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
+    // The club's link, or an agent's (#74): their recruits wait for the agent.
+    const agent = body.invite && Object.values(club.members).find(a => a.agent === 'yes' && a.status === 'member' && a.agentInvite === body.invite);
+    if (body.invite !== club.invite && !agent) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
     // New, or asking again after being declined or removed.
     club.members[id] = {...m, id, name, status: 'pending', requestedAt: now};
+    if (agent) club.members[id].agentOf = agent.id;
     ensureChips(club);
     return {replies: [reply(club, id)], changed: true};
   }
@@ -117,9 +120,9 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (m?.status === 'member') replies.push(account(club, id, body.since));
     return {replies, changed};
   }
-  // Game assistants (#62): an answer to a role offer, or an assistant's
-  // command. The caller handles them (club-roles.js).
-  if (body.type === 'role_reply' || body.type === 'admin_cmd') {
+  // Game assistants (#62) and agents (#74–#76): an answer to a role offer,
+  // or a command. The caller handles them (club-roles.js, club-agents.js).
+  if (['role_reply', 'admin_cmd', 'agent_reply', 'agent_cmd'].includes(body.type)) {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     return {replies: [], changed: false, admin: {type: body.type, from: id, body}};
   }
@@ -221,6 +224,18 @@ export async function playerReceive(mem, env) {
   if (b.type === 'admin') {
     mem.hostSeq = env.seq;
     mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || []};
+    return true;
+  }
+  if (b.type === 'agent_role') {
+    mem.hostSeq = env.seq;
+    mem.agent = b.agent || null;
+    mem.creditLimit = Number(b.creditLimit) || 0;
+    if (mem.agent !== 'yes') mem.agentView = null;
+    return true;
+  }
+  if (b.type === 'agent') {
+    mem.hostSeq = env.seq;
+    mem.agentView = {own: b.own, shares: b.shares, total: b.total, limit: b.limit, creditUsed: b.creditUsed, room: b.room, invite: b.invite, recruits: b.recruits || [], players: b.players || []};
     return true;
   }
   if (b.type === 'admin_result') {

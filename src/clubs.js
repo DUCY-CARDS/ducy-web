@@ -21,6 +21,9 @@ import {
 } from './club-tables.js';
 import { createTableHost } from './club-host.js';
 import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
+import {
+  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
+} from './club-agents.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { joinTableVia } from './play.js';
@@ -74,18 +77,20 @@ function scheduleAdmin() {
     if (!club) return;
     const body = adminBody(club, tableHost?.seatedCounts() || {});
     for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
+    // Agents (#75) see their account and their players.
+    for (const id of online) if (isAgent(club, id)) sendToPlayer({to: id, body: agentBody(club, id)});
   }, 200);
 }
 
 // A role answer or an assistant's command, already verified as from `from`.
 function handleAdmin({type, from, body}) {
-  if (type === 'role_reply') {
-    const r = answerRole(club, from, !!body.accept);
+  if (type === 'role_reply' || type === 'agent_reply') {
+    const r = (type === 'role_reply' ? answerRole : answerAgent)(club, from, !!body.accept);
     if (r) sendToPlayer(r);
     return;
   }
   try {
-    const r = runAdmin(club, from, body.cmd);
+    const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd);
     for (const rep of r.replies) sendToPlayer(rep);
     if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, tableHost.seatedCounts())});
     if (r.table?.start) tableHost?.start(r.table.start).then(() => { broadcastTables(); render(); });
@@ -160,6 +165,9 @@ async function hostMessage(msg) {
   // …and their role, and an assistant their view of the club.
   if (hello && club.members[msg.from].role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: club.members[msg.from].role}});
   if (hello && isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, tableHost?.seatedCounts() || {})});
+  const ag = hello && club.members[msg.from].agent;
+  if (ag) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: ag, creditLimit: club.members[msg.from].creditLimit || 0}});
+  if (hello && isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
   if (r.changed || r.replies.length) { saveClub(); render(); }
 }
 
@@ -298,6 +306,10 @@ const FORM_TEXT = {
   give: m => ({label: `Give ${m.name}`, submit: 'Give', value: '', max: null, note: true}),
   take: m => ({label: `Take back from ${m.name} (has ${chips(m.balance)})`, submit: 'Take back', value: m.balance, max: m.balance, note: true}),
   grant: m => ({label: `Give ${m.name} (asked for ${chips(m.request?.amount)})`, submit: 'Give', value: m.request?.amount ?? '', max: null, note: false}),
+  // Agents (#74, #76).
+  agent: m => ({label: `Make ${m.name} an agent with a credit limit of`, submit: 'Offer', value: 0, max: null, note: false, min: 0}),
+  limit: m => ({label: `${m.name}'s credit limit`, submit: 'Save', value: m.creditLimit || 0, max: null, note: false, min: 0}),
+  settle: m => ({label: `Record a settlement from ${m.name} (credit used ${chips(accountOf(club, m.id).creditUsed)})`, submit: 'Record', value: accountOf(club, m.id).creditUsed || '', max: null, note: true}),
 };
 
 // A native form: the browser checks the amount (required, whole, at least
@@ -307,7 +319,7 @@ function chipFormHtml(m) {
   const t = FORM_TEXT[chipForm.kind](m);
   let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
   h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
-  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="numeric" required min="1" step="1"${t.max != null ? ` max="${t.max}"` : ''} value="${esc(t.value)}" placeholder="Chips">`;
+  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="numeric" required min="${t.min ?? 1}" step="1"${t.max != null ? ` max="${t.max}"` : ''} value="${esc(t.value)}" placeholder="Chips">`;
   if (t.note) h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Note (optional)">`;
   h += `<button class="btn-small primary" type="submit">${t.submit}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></form>`;
   return h;
@@ -323,6 +335,15 @@ function openChipForm(kind, id) {
 function onSubmit(e) {
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  const gf = e.target.closest('form[data-agentform]');
+  if (gf) {
+    e.preventDefault();
+    const amount = Number(gf.elements.amount.value);
+    agentForm = null;
+    agentCmd(gf.dataset.code, {op: gf.dataset.agentform, id: gf.dataset.id, amount});
+    render();
+    return;
+  }
   const af = e.target.closest('form[data-adminform]');
   if (af) {
     e.preventDefault();
@@ -342,6 +363,10 @@ function onSubmit(e) {
   if (kind === 'give') chipAction(id, () => issue(club, id, amount, Date.now(), why));
   else if (kind === 'take') chipAction(id, () => reclaim(club, id, amount, Date.now(), why));
   else if (kind === 'grant') chipAction(id, () => grantRequest(club, id, amount));
+  else if (kind === 'agent' || kind === 'limit') {
+    try { sendToPlayer(kind === 'agent' ? offerAgent(club, id, amount) : setCreditLimit(club, id, amount)); saveClub(); } catch (err) { alert(err.message); }
+    render();
+  } else if (kind === 'settle') chipAction(id, () => settle(club, id, amount, Date.now(), why));
 }
 
 // Runs a chip change for member `id`, then sends them their updated account.
@@ -734,12 +759,12 @@ function hostHtml() {
   else {
     h += '<ul class="cl-list">';
     for (const m of pending) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="pl-meta">asked ${when(m.requestedAt)}</span>`;
+      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="pl-meta">asked ${when(m.requestedAt)}${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
       h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
     }
     h += '</ul>';
   }
-  const asking = members.filter(m => m.request).sort((a, b) => a.request.at - b.request.at);
+  const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
   if (asking.length) {
     h += `<h3>Chip requests (${asking.length})</h3><ul class="cl-list">`;
     for (const m of asking) {
@@ -756,21 +781,12 @@ function hostHtml() {
   h += `<h3>Members${members.length ? ` (${members.length})` : ''}</h3>`;
   if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
   else {
+    // Agents' players are listed under their agent (#75).
+    const agents = members.filter(m => m.agent === 'yes');
+    const order = members.filter(m => !m.agentOf || !agents.some(a => a.id === m.agentOf))
+      .flatMap(m => (m.agent === 'yes' ? [m, ...members.filter(p => p.agentOf === m.id)] : [m]));
     h += '<ul class="cl-list">';
-    for (const m of members) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
-      if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
-      h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
-      h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance ? '' : ' disabled'}>Take back</button>`;
-      h += m.role === 'assistant'
-        ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being a game assistant">Assistant ✕</button>`
-        : m.role === 'offered'
-          ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Withdraw the offer">Offered ✕</button>`
-          : `<button class="btn-small" data-cl="offer-role" data-id="${esc(m.id)}" title="Let ${esc(m.name)} help run the club">Make assistant</button>`;
-      h += `<button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span>`;
-      if (chipForm && chipForm.kind !== 'grant') h += chipFormHtml(m);
-      h += '</li>';
-    }
+    for (const m of order) h += memberRowHtml(m, agents);
     h += '</ul>';
   }
   const t = totals(club);
@@ -794,6 +810,41 @@ function hostHtml() {
   return h;
 }
 
+// One member on the host's dashboard: balance, chips on a table, and what the
+// host can do. An agent shows their account and credit (#75, #76); a player
+// under an agent is indented, and any non-agent can be assigned to an agent.
+function memberRowHtml(m, agents) {
+  const under = m.agentOf && club.members[m.agentOf];
+  let h = `<li class="${under ? 'cl-under' : ''}"><span class="cl-name">${esc(m.name)}</span><code>${esc(m.id)}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
+  if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
+  if (m.agent === 'yes') {
+    const a = accountOf(club, m.id);
+    h += `<span class="pl-meta">agent · account ${chips(a.total)} · credit used ${chips(a.creditUsed)}/${chips(a.limit)}</span>`;
+  }
+  h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
+  h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
+  h += m.role === 'assistant'
+    ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being a game assistant">Assistant ✕</button>`
+    : m.role === 'offered'
+      ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Withdraw the offer">Offered ✕</button>`
+      : `<button class="btn-small" data-cl="offer-role" data-id="${esc(m.id)}" title="Let ${esc(m.name)} help run the club">Make assistant</button>`;
+  if (m.agent === 'yes') {
+    h += `<button class="btn-small" data-cl="settle" data-id="${esc(m.id)}">Settle</button><button class="btn-small" data-cl="limit" data-id="${esc(m.id)}">Credit limit</button>`;
+    h += `<button class="btn-small" data-cl="revoke-agent" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being an agent">Agent ✕</button>`;
+  } else if (m.agent === 'offered') {
+    h += `<button class="btn-small" data-cl="revoke-agent" data-id="${esc(m.id)}" title="Withdraw the offer">Agent offered ✕</button>`;
+  } else if (!m.agentOf) {
+    h += `<button class="btn-small" data-cl="make-agent" data-id="${esc(m.id)}" title="Let ${esc(m.name)} bring in and back players">Make agent</button>`;
+  }
+  h += `<button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span>`;
+  if (!m.agent && agents.length) {
+    h += `<label class="pl-meta cl-assign">Agent <select class="pl-text" data-assign="${esc(m.id)}"><option value="">none</option>`;
+    h += agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('') + '</select></label>';
+  }
+  if (chipForm && chipForm.kind !== 'grant') h += chipFormHtml(m);
+  return h + '</li>';
+}
+
 function membershipsHtml() {
   if (!memberships.length) return '';
   let h = '<section class="cl-card"><h2>Clubs you’ve joined</h2>';
@@ -813,13 +864,18 @@ function membershipsHtml() {
       h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
     if (m.status === 'member' && m.role === 'assistant') h += adminHtml(m, !!n?.hostHere);
+    if (m.status === 'member' && m.agent === 'offered') {
+      h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>, with a credit limit of ${chips(m.creditLimit)}: recruit your own players, give them chips from your balance, and back them on credit.</span>`;
+      h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
+    }
+    if (m.status === 'member' && m.agent === 'yes') h += agentHtml(m, !!n?.hostHere);
     h += '</li>';
   }
   h += '</ul></section>';
   return h;
 }
 
-const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', cash_out: 'Cashed out', transfer_in: 'Given by an assistant', transfer_out: 'Given to a player'};
+const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded'};
 
 // A member's chips in a club: balance, a request, and their own ledger copy.
 function accountHtml(m, hostHere) {
@@ -859,6 +915,75 @@ function accountHtml(m, hostHere) {
       h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
     }
     h += '</ul></details>';
+  }
+  return h + '</div>';
+}
+
+// ---- an agent's tools (#74, #75, #76) ----
+
+let agentForm = null; // {code, kind: 'give' | 'take' | 'grant', id}
+
+function agentCmd(code, cmd) {
+  const mem = memberships.find(m => m.code === code);
+  if (mem) mem.adminNote = '';
+  sendToHost(code, {type: 'agent_cmd', club: code, cmd});
+}
+
+function agentFormHtml(code, x) {
+  if (agentForm?.code !== code || agentForm.id !== x.id) return '';
+  const {kind} = agentForm;
+  const label = kind === 'take' ? `Take back from ${x.name} (has ${chips(x.balance)})`
+    : kind === 'grant' ? `Give ${x.name} (asked for ${chips(x.request?.amount)})` : `Give ${x.name}`;
+  const value = kind === 'take' ? x.balance : kind === 'grant' ? x.request?.amount : '';
+  let h = `<form class="cl-chipform" data-agentform="${kind}" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
+  h += `<label class="cl-formlabel" for="cl-gamt">${esc(label)}</label>`;
+  h += `<input class="pl-text" id="cl-gamt" name="amount" type="number" inputmode="numeric" required min="1" step="1"${kind === 'take' ? ` max="${x.balance}"` : ''} value="${esc(value ?? '')}" placeholder="Chips">`;
+  h += `<button class="btn-small primary" type="submit">${kind === 'take' ? 'Take back' : 'Give'}</button><button class="btn-small" type="button" data-cl="cancel-gform">Cancel</button></form>`;
+  return h;
+}
+
+// The agent's link: like the club's, with their own invite token, so the
+// people who use it are their players.
+function agentLink(m) {
+  const u = new URL(location.href);
+  u.search = '';
+  u.searchParams.set('club', m.code);
+  u.searchParams.set('invite', m.agentView.invite);
+  u.searchParams.set('host', m.hostId);
+  const relay = relayUrl();
+  if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
+  u.hash = 'clubs';
+  return u.toString();
+}
+
+function agentHtml(m, hostHere) {
+  const a = m.agentView;
+  let h = '<div class="cl-account cl-admin"><b>Agent tools</b>';
+  if (!hostHere) h += '<span class="pl-meta">The host is away: these work again when the host is back.</span>';
+  if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
+  if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
+  const dis = hostHere ? '' : ' disabled';
+  h += `<span>Your account: <b class="cl-chips">${chips(a.total)}</b> <span class="pl-meta">(your balance ${chips(a.own)} + your players’ ${chips(a.shares)})</span></span>`;
+  h += `<span class="${a.creditUsed ? 'cl-down' : 'pl-meta'}">Credit used ${chips(a.creditUsed)} of ${chips(a.limit)} · you can still give out ${chips(Math.max(0, a.room))}</span>`;
+  h += `<div class="pl-row"><span class="pl-label">Your link</span><div class="pl-opts cl-link"><input class="pl-text" readonly value="${esc(agentLink(m))}" data-aglink="${esc(m.code)}"><button class="btn-small" data-cl="ag-copy" data-code="${esc(m.code)}">Copy</button></div></div>`;
+  const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
+  if (a.recruits.length) {
+    h += `<span class="pl-meta">Asking to join through you (${a.recruits.length})</span><ul class="cl-list">`;
+    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(x.id)}</code><span class="cl-acts">${btn('ag-approve', x, 'Approve', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
+    h += '</ul>';
+  }
+  h += `<span class="pl-meta">Your players (${a.players.length})</span>`;
+  if (!a.players.length) h += '<span class="pl-meta">No players yet. Send someone your link.</span>';
+  else {
+    h += '<ul class="cl-list">';
+    for (const x of a.players) {
+      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${chips(x.balance)} chips</span>${x.seated ? '<span class="pl-meta">at a table</span>' : ''}`;
+      if (x.request) h += `<span class="pl-meta">asks for ${chips(x.request.amount)}</span>`;
+      h += '<span class="cl-acts">';
+      h += x.request ? `${btn('ag-grant', x, 'Give', ' primary')}${btn('ag-deny', x, 'Decline')}` : btn('ag-give', x, 'Give');
+      h += `${btn('ag-take', x, 'Take back')}</span>${agentFormHtml(m.code, x)}</li>`;
+    }
+    h += '</ul>';
   }
   return h + '</div>';
 }
@@ -971,6 +1096,26 @@ async function onClick(e) {
   else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
+  // The host: agents.
+  else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
+  else if (act === 'limit') openChipForm('limit', b.dataset.id);
+  else if (act === 'settle') openChipForm('settle', b.dataset.id);
+  else if (act === 'revoke-agent') { try { const r = revokeAgent(club, b.dataset.id); if (r) { sendToPlayer(r); saveClub(); render(); } } catch (err) { alert(err.message); } }
+  // A member: answering an agent offer.
+  else if (act === 'agent-yes' || act === 'agent-no') sendToHost(b.dataset.code, {type: 'agent_reply', club: b.dataset.code, accept: act === 'agent-yes'});
+  // An agent's tools.
+  else if (['ag-give', 'ag-take', 'ag-grant'].includes(act)) {
+    const kind = act.slice(3);
+    agentForm = agentForm?.id === b.dataset.id && agentForm.kind === kind ? null : {code: b.dataset.code, kind, id: b.dataset.id};
+    render();
+    root.querySelector('#cl-gamt')?.focus();
+  } else if (act === 'cancel-gform') { agentForm = null; render(); }
+  else if (act === 'ag-deny') agentCmd(b.dataset.code, {op: 'deny', id: b.dataset.id});
+  else if (act === 'ag-approve' || act === 'ag-decline') agentCmd(b.dataset.code, {op: act.slice(3), id: b.dataset.id});
+  else if (act === 'ag-copy') {
+    const v = root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.value || '';
+    try { await navigator.clipboard.writeText(v); } catch { root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.select(); }
+  }
   // The host: assistants.
   else if (act === 'offer-role') { try { sendToPlayer(offerAssistant(club, b.dataset.id)); saveClub(); render(); } catch (err) { alert(err.message); } }
   else if (act === 'revoke-role') { const r = revokeRole(club, b.dataset.id); if (r) { sendToPlayer(r); saveClub(); render(); } }
@@ -1021,6 +1166,12 @@ function onDocKey(e) {
 }
 
 function onFilter(e) {
+  const pid = e.target.dataset?.assign;
+  if (pid != null) {
+    try { assignToAgent(club, pid, e.target.value || null); saveClub(); } catch (err) { alert(err.message); }
+    render();
+    return;
+  }
   const k = e.target.dataset?.handfilter;
   if (k == null) return;
   historyTable[k] = e.target.value;
