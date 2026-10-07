@@ -15,10 +15,15 @@
 //                                        is the last ledger entry they have
 //   {type: 'chip_request', club, amount, note}   ask the host for chips (#67)
 //   {type: 'cancel_request', club}
+//   {type: 'table', club, table, cmd}    a command for a club table (#68): join, act,
+//                                        sit_in, leave, request_chips
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
 //   {type: 'account', club, balance, request, entries}   see club-chips.js
+//   {type: 'tables', club, tables}       the open tables (club-tables.js)
+// Table updates go to players unsigned as {type: 'table', table, update}:
+// only the host can send to a player through the relay.
 
 import { checkSignature } from './identity.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
@@ -107,6 +112,13 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (m?.status === 'member') replies.push(account(club, id, body.since));
     return {replies, changed};
   }
+  // A command for one of the club's tables (#68): signed, so a player can
+  // prove what they did. The caller runs it (club-host.js).
+  if (body.type === 'table') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    if (typeof body.table !== 'string' || !body.cmd || typeof body.cmd !== 'object') return {replies: [], changed: false, reason: 'bad table command'};
+    return {replies: [], changed: false, table: {id: body.table, cmd: body.cmd, from: id}};
+  }
   if (body.type === 'chip_request' || body.type === 'cancel_request') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     try {
@@ -182,6 +194,11 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);
     if (b.status !== 'unknown') mem.status = b.status;
+    return true;
+  }
+  if (b.type === 'tables') {
+    mem.hostSeq = env.seq;
+    mem.tables = Array.isArray(b.tables) ? b.tables : [];
     return true;
   }
   if (b.type === 'account') {

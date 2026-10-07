@@ -16,6 +16,11 @@ import {
   newClub, newMembership, parseInvite, playerReceive, removeMember, revokeInvite,
 } from './club.js';
 import { declineRequest, ensureChips, grantRequest, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
+import {
+  cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tablesBody,
+} from './club-tables.js';
+import { createTableHost } from './club-host.js';
+import { joinTableVia } from './play.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
 
@@ -28,6 +33,10 @@ let memberships = []; // clubs this browser asked to join
 const playerNets = new Map(); // club code → {net, online, hostHere}
 let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
+let tableHost = null; // runs the hosted club's tables (club-host.js)
+const online = new Set(); // members connected to the hosted club
+let tableForm = false; // the host's New table form is open
+let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -53,6 +62,7 @@ function saveClub() {
 
 function startHosting() {
   if (!club || hostNet) return;
+  startTables();
   hostNet = connect(club.code, 'host', '', {
     onOpen() { hostOnline = true; render(); },
     onMessage: hostMessage,
@@ -61,18 +71,63 @@ function startHosting() {
   }, {retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
 }
 
+// The club's tables (#68). The page opening again means any tables that were
+// running stopped: everyone seated is cashed out first (club-tables.js).
+function startTables() {
+  if (tableHost) return;
+  ensureTables(club);
+  const back = cashOutEveryone(club);
+  if (back.length) saveClub();
+  tableHost = createTableHost({
+    club: () => club,
+    save: () => { saveClub(); render(); },
+    sendTable: (to, msg) => hostNet?.send({to, data: msg}),
+    chipsChanged: id => {
+      const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
+      sendToPlayer(account(club, id, n ? n - 1 : Infinity));
+    },
+    tablesChanged: () => { broadcastTables(); render(); },
+  });
+  for (const t of openTables(club)) {
+    if (t.status === 'open') tableHost.start(t);
+  }
+}
+
+function broadcastTables() {
+  if (!club || !tableHost) return;
+  const body = tablesBody(club, tableHost.seatedCounts());
+  for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
+}
+
 async function hostMessage(msg) {
-  if (!msg || !msg.from || !('data' in msg)) return;
+  if (!msg || !msg.from) return;
+  if (msg.event === 'open') { online.add(msg.from); return; }
+  if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); return; }
+  if (!('data' in msg)) return;
   const r = await hostReceive(club, verifier, msg.data);
   if (msg.queued) hostNet?.send({ack: msg.queued});
   if (r.reason && r.reason !== 'replayed') console.warn('club: refused a message:', r.reason);
-  for (const rep of r.replies) await sendToPlayer(rep);
-  saveClub();
-  render();
+  for (const rep of r.replies) sendToPlayer(rep);
+  // A table command, from the member who signed it (the relay's sender id
+  // must match, so no one can act for someone else).
+  if (r.table && r.table.from === msg.from) tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
+  // Members checking in get the tables too.
+  if (msg.data?.body?.type === 'hello' && club.members[msg.from]?.status === 'member' && tableHost) {
+    sendToPlayer({to: msg.from, body: tablesBody(club, tableHost.seatedCounts())});
+  }
+  if (r.changed || r.replies.length) { saveClub(); render(); }
 }
 
-async function sendToPlayer(rep) {
-  if (rep && hostNet) hostNet.send({to: rep.to, data: await signMessage(me, rep.body)});
+// Signed messages go out one at a time, in order: a player ignores anything
+// with a lower sequence number than one it has seen.
+let hostSends = Promise.resolve();
+function sendToPlayer(rep) {
+  if (!rep) return hostSends;
+  hostSends = hostSends.then(async () => {
+    const env = await signMessage(me, rep.body);
+    hostNet?.send({to: rep.to, data: env});
+  }).catch(e => console.warn(e));
+  return hostSends;
 }
 
 async function createClub(name) {
@@ -85,9 +140,72 @@ async function createClub(name) {
   }
   verifier = new Verifier();
   note = '';
+  ensureTables(club);
   saveClub();
   startHosting();
   render();
+}
+
+// The host's New table form: native, so the browser checks the numbers.
+function tableFormHtml() {
+  let h = '<form class="cl-tableform" data-tableform="1">';
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="Table ${(club.tables?.length || 0) + 1}"></label>`;
+  h += `<label>Game<select class="pl-text" name="game">${GAMES.map(g => `<option value="${g.id}">${esc(g.label)}</option>`).join('')}</select></label>`;
+  h += '<label>Small blind<input class="pl-text" name="sb" type="number" required min="1" step="1" value="1"></label>';
+  h += '<label>Big blind<input class="pl-text" name="bb" type="number" required min="1" step="1" value="2"></label>';
+  h += '<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="40"></label>';
+  h += '<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="100"></label>';
+  h += `<label>Seats<input class="pl-text" name="seats" type="number" required min="2" max="${MAX_SEATS}" step="1" value="${MAX_SEATS}"></label>`;
+  h += `<label>Turn time<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === 30 ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
+  h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button><button class="btn-small" type="button" data-cl="cancel-table">Cancel</button></div></form>';
+  return h;
+}
+
+function submitTable(f) {
+  const v = name => f.elements[name].value;
+  try {
+    const t = newTable(club, {
+      name: v('name'), game: v('game'), sb: Number(v('sb')), bb: Number(v('bb')),
+      minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats: Number(v('seats')), turnSecs: Number(v('turnSecs')),
+    });
+    tableForm = false;
+    saveClub();
+    tableHost?.start(t).then(() => { broadcastTables(); render(); });
+  } catch (e) {
+    alert(e.message);
+  }
+  render();
+}
+
+function closeTable(id) {
+  const t = club.tables.find(x => x.id === id);
+  if (!t || !confirm(`Close ${t.name}? Everyone is cashed out at the end of the hand.`)) return;
+  t.status = 'closing';
+  saveClub();
+  if (tableHost) tableHost.close(id); else t.status = 'closed';
+  broadcastTables();
+  render();
+}
+
+function tablesHtml() {
+  const tables = openTables(club);
+  const counts = tableHost?.seatedCounts() || {};
+  let h = `<h3>Tables${tables.length ? ` (${tables.length})` : ''}</h3>`;
+  if (tables.length) {
+    h += '<ul class="cl-list">';
+    for (const t of tables) {
+      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
+      h += t.status === 'closing'
+        ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
+        : `<span class="cl-acts"><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
+      const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
+      if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
+      h += '</li>';
+    }
+    h += '</ul>';
+  } else if (!tableForm) h += '<p class="pl-meta">No tables yet.</p>';
+  h += tableForm ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
+  return h;
 }
 
 async function decide(fn, id) {
@@ -96,6 +214,8 @@ async function decide(fn, id) {
   saveClub();
   render();
   for (const r of [rep].flat()) await sendToPlayer(r);
+  // A new member gets the tables straight away.
+  if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesBody(club, tableHost.seatedCounts())});
 }
 
 const chips = n => Number(n || 0).toLocaleString();
@@ -131,6 +251,8 @@ function openChipForm(kind, id) {
 }
 
 function onSubmit(e) {
+  const tf = e.target.closest('form[data-tableform]');
+  if (tf) { e.preventDefault(); submitTable(tf); return; }
   const f = e.target.closest('form[data-chipform]');
   if (!f) return;
   e.preventDefault();
@@ -158,7 +280,9 @@ async function chipAction(id, fn) {
 }
 
 function closeClub() {
+  if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first.'); return; }
   if (!confirm(`Close ${club.name}? Its members and records are deleted from this browser.`)) return;
+  tableHost = null;
   hostNet?.close();
   hostNet = null;
   club = null;
@@ -180,7 +304,7 @@ function saveMemberships() {
 
 function connectMembership(mem) {
   if (playerNets.has(mem.code)) return;
-  const entry = {net: null, online: false, hostHere: false};
+  const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve()};
   playerNets.set(mem.code, entry);
   const greet = async () => {
     // Never ask to join without a name: the host would see a nameless player.
@@ -188,14 +312,27 @@ function connectMembership(mem) {
     const body = mem.status === 'new'
       ? {type: 'join', club: mem.code, invite: mem.invite, name: myName()}
       : {type: 'hello', club: mem.code, name: myName(), since: lastEntry(mem)};
-    entry.net?.send(await signMessage(me, body));
+    sendToHost(mem.code, body);
+    // Back at a club table after the host (or this page) reconnected.
+    if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: myName()}});
   };
   entry.net = connect(mem.code, 'guest', me.id, {
     onOpen() { entry.online = true; entry.hostHere = true; mem.error = ''; greet(); render(); },
     async onMessage(msg) {
-      if (msg?.type === 'host_away' || msg?.type === 'host_gone') { entry.hostHere = false; render(); return; }
+      if (msg?.type === 'host_away' || msg?.type === 'host_gone') {
+        entry.hostHere = false;
+        if (seatedAt?.code === mem.code) seatedAt.handlers.onMessage({type: 'host_gone'});
+        render();
+        return;
+      }
       if (msg?.type === 'host_back') { entry.hostHere = true; greet(); render(); return; }
       if (msg?.type === 'queue_full') return;
+      // A club table's update for this player (unsigned: only the host can
+      // reach a player through the relay).
+      if (msg?.type === 'table' && !msg.sig) {
+        if (seatedAt?.code === mem.code && seatedAt.table === msg.table) tableUpdate(msg.update);
+        return;
+      }
       if (await playerReceive(mem, msg)) { saveMemberships(); render(); }
     },
     onStatus(s) { entry.online = !s; render(); },
@@ -243,10 +380,37 @@ async function setName(name) {
     const body = m.status === 'new'
       ? {type: 'join', club: m.code, invite: m.invite, name: n}
       : {type: 'hello', club: m.code, name: n};
-    const net = playerNets.get(m.code)?.net;
-    if (net) net.send(await signMessage(me, body));
+    sendToHost(m.code, body);
   }
   render();
+}
+
+// ---- playing at a club table ----
+
+// Sits down at a club table: the #play page draws it (play.js), and its
+// commands go to the host signed, over this club's connection.
+function sitAt(code, table) {
+  const mem = memberships.find(m => m.code === code);
+  const t = mem?.tables?.find(x => x.id === table);
+  if (!mem || !t) return;
+  joinTableVia(handlers => {
+    seatedAt = {code, table, handlers};
+    return {
+      send: cmd => sendToHost(code, {type: 'table', club: code, table, cmd}),
+      close: () => { if (seatedAt?.table === table) seatedAt = null; },
+    };
+  }, {
+    label: `${mem.name} · ${t.name}`,
+    onLeave: why => { seatedAt = null; note = why || ''; location.hash = 'clubs'; },
+  });
+  location.hash = 'play';
+}
+
+function tableUpdate(u) {
+  if (!seatedAt || !u) return;
+  // Refused for good (not a member, at another table, table closed).
+  if (u.type === 'rejected' && u.fatal) { seatedAt.handlers.onFail(u.reason); return; }
+  seatedAt.handlers.onMessage(u);
 }
 
 function leaveMembership(code) {
@@ -359,6 +523,7 @@ function hostHtml() {
     }
     h += '</ul>';
   }
+  h += tablesHtml();
   h += `<h3>Members${members.length ? ` (${members.length})` : ''}</h3>`;
   if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
   else {
@@ -421,6 +586,18 @@ function accountHtml(m, hostHere) {
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
   }
+  if (m.tables?.length) {
+    h += '<ul class="cl-tables">';
+    for (const t of m.tables) {
+      const here = seatedAt?.code === m.code && seatedAt.table === t.id;
+      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${chips(t.min)}–${chips(t.max)} · ${t.taken}/${t.seats} seated</span>`;
+      h += here
+        ? '<button class="btn-small primary" data-cl="to-table">Back to the table</button>'
+        : `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${hostHere && !seatedAt && t.taken < t.seats ? '' : ' disabled'}>Sit</button>`;
+      h += '</li>';
+    }
+    h += '</ul>';
+  } else h += '<p class="pl-meta">No tables open right now.</p>';
   if (m.entries?.length) {
     h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
     for (const e of [...m.entries].reverse().slice(0, 50)) {
@@ -432,9 +609,16 @@ function accountHtml(m, hostHere) {
   return h + '</div>';
 }
 
-async function sendToHost(code, body) {
+// Signed messages to a club's host go out one at a time, in order: the host
+// refuses one with a lower sequence number than it has seen.
+function sendToHost(code, body) {
   const n = playerNets.get(code);
-  if (n?.net) n.net.send(await signMessage(me, body));
+  if (!n) return Promise.resolve();
+  n.sends = n.sends.then(async () => {
+    const env = await signMessage(me, body);
+    n.net?.send(env);
+  }).catch(e => console.warn(e));
+  return n.sends;
 }
 
 // ---- events ----
@@ -467,6 +651,11 @@ async function onClick(e) {
   else if (act === 'grant') { chipForm = null; chipAction(b.dataset.id, () => grantRequest(club, b.dataset.id)); }
   else if (act === 'deny') chipAction(b.dataset.id, () => { declineRequest(club, b.dataset.id); return null; });
   else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
+  else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
+  else if (act === 'cancel-table') { tableForm = false; render(); }
+  else if (act === 'close-table') closeTable(b.dataset.table);
+  else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
+  else if (act === 'to-table') location.hash = 'play';
   else if (act === 'ask') {
     const code = b.dataset.code;
     const amount = Number(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
@@ -478,6 +667,7 @@ async function onClick(e) {
 
 function onKey(e) {
   if (e.key === 'Escape' && chipForm && e.target.closest('form[data-chipform]')) { chipForm = null; render(); return; }
+  if (e.key === 'Escape' && tableForm && e.target.closest('form[data-tableform]')) { tableForm = false; render(); return; }
   if (e.key !== 'Enter') return;
   if (e.target.id === 'cl-clubname') root.querySelector('[data-cl="create"]')?.click();
   if (e.target.id === 'cl-name') root.querySelector('[data-cl="join"]')?.click();
@@ -528,7 +718,7 @@ export async function openClubs(el) {
     window.addEventListener('storage', onStorage);
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     club = load(CLUB_KEY, null);
-    if (club) ensureChips(club);
+    if (club) { ensureChips(club); ensureTables(club); }
     verifier = new Verifier(load(SENDERS_KEY, {}));
     memberships = load(MEMBERSHIPS_KEY, []);
   }
