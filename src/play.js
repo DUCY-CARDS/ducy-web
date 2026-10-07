@@ -9,8 +9,12 @@
 // receives and sends its actions to the host. A friends table has no bots:
 // seats stay empty until people join, and chips are real, handed out by the
 // host on request within the table's buy-in limits.
+// Heads-up against the GTO bot is training: both players start every hand
+// with 100 BB, and each finished hand's decisions are reviewed against the
+// bot's strategy (play-review.js) in the background.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
+import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
 import { exportIdentity, importIdentity, loadIdentity, saveIdentity } from './identity.js';
 
@@ -41,6 +45,8 @@ const BOT_DELAY = 650; // ms between bot actions
 const DEAL_DELAYS = [0.5, 1, 2, 3];
 const SETUP_KEY = 'ducyPlaySetup';
 const STATS_KEY = 'ducyPlayStats';
+const REVIEW_KEY = 'ducyPlayReview';
+const GTO_BUY_IN_BB = 100; // the depth the GTO bot is trained for
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
 const GAMES = [
   {id: 'nlhe', label: 'Hold’em', name: 'No-limit Hold’em', cards: 2, pl: false},
@@ -86,6 +92,16 @@ let sessionStats = {};
 let allStats = loadStats();
 let recordedHand = 0; // hand_number of the last hand added to the stats
 let statsOpen = false;
+// GTO training: the table is heads-up against the GTO bot.
+let gtoTable = false;
+// The last finished hand's review: {hand, data} once it's back, {hand,
+// pending: true} while it's worked out. `reviewOpen` holds the decisions
+// expanded to show the bot's mix.
+let review = null;
+let reviewOpen = new Set();
+// Review totals since sitting down, and all time (kept in localStorage).
+let sessionReview = emptyTotals();
+let allReview = loadReviewTotals();
 let statsSort = {key: 'seat', dir: 1};
 // Multiplayer: 'solo' against bots, 'host' running a table for friends, or
 // 'guest' at someone else's table.
@@ -111,7 +127,7 @@ let me = null;
 let idNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, tab: 'bots', friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, tab: 'bots', friends: {...FRIENDS_DEFAULT}};
 }
 
 function loadSetup() {
@@ -136,6 +152,18 @@ function loadStats() {
 
 function saveStats() {
   try { localStorage.setItem(STATS_KEY, JSON.stringify({v: 1, games: allStats})); } catch {}
+}
+
+function loadReviewTotals() {
+  try {
+    const s = JSON.parse(localStorage.getItem(REVIEW_KEY) || 'null');
+    if (s && s.v === 1 && s.totals && typeof s.totals === 'object') return addTotals(emptyTotals(), s.totals);
+  } catch {}
+  return emptyTotals();
+}
+
+function saveReviewTotals() {
+  try { localStorage.setItem(REVIEW_KEY, JSON.stringify({v: 1, totals: allReview})); } catch {}
 }
 
 function esc(s) {
@@ -208,6 +236,7 @@ function botsSetupHtml() {
   });
   h += '</div>';
   if (gtoAvailable && !gtoAllowed()) h += '<p class="pl-desc">Play heads-up No-limit Hold’em (1 opponent) to face the GTO bot.</p>';
+  if (gtoAllowed() && setup.bots[0] === 'gto') h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in, and your decisions are reviewed after each hand.</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
@@ -308,6 +337,7 @@ function show(snap) {
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
   botToAct = snap.botToAct;
   recordStats();
+  startReview();
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -360,7 +390,11 @@ async function startTable() {
   foldQueued = false;
   sessionStats = {};
   recordedHand = 0;
-  const snap = await request('create', setup.bots, setup.buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
+  gtoTable = setup.game === 'nlhe' && setup.bots.length === 1 && setup.bots[0] === 'gto';
+  review = null;
+  sessionReview = emptyTotals();
+  const buyIn = gtoTable ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
+  const snap = await request('create', setup.bots, buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
   if (snap) show(snap);
 }
 
@@ -370,7 +404,8 @@ async function nextHand() {
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
-  const snap = await request('newHand');
+  // GTO training starts every hand at 100 BB: no chips carry over.
+  const snap = await request('newHand', ...(mode === 'solo' && gtoTable ? [true] : []));
   if (!snap) return;
   holds.delete('user'); // a pause lasts until the next hand
   show(snap);
@@ -484,6 +519,8 @@ async function hostTable() {
   tableGame = gameOf(f.game);
   mode = 'host';
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
+  gtoTable = false;
+  review = null;
   sessionStats = {};
   recordedHand = 0;
   room = newCode();
@@ -522,6 +559,8 @@ function joinTable() {
   mode = 'guest';
   myChips = null;
   chipAsk = 0;
+  gtoTable = false;
+  review = null;
   sessionStats = {};
   recordedHand = 0;
   room = code;
@@ -667,6 +706,7 @@ function renderTable() {
   h += `<button class="cc-btn${setup.autoDeal ? ' on' : ''}" data-act="autodeal" aria-pressed="${!!setup.autoDeal}">Auto-deal</button>`;
   if (setup.autoDeal) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
+  if (gtoTable && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
   h += '<button class="link-btn" data-act="leave">Leave table</button></span></div>';
   h += '<div class="pl-felt">';
@@ -701,6 +741,7 @@ function renderTable() {
   h += '</div>';
   h += controlsHtml();
   h += chipsHtml();
+  h += reviewHtml();
   if (statsOpen) h += statsHtml();
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
@@ -953,6 +994,7 @@ function statsHtml() {
     h += '</tr>';
   }
   h += '</tbody></table></div>';
+  if (gtoTable && mode === 'solo') h += reviewTotalsHtml();
   h += '<p class="pl-meta">Raw rates with the sample size in brackets. Bots are tracked by personality, so their stats follow them to new tables. Each game keeps its own stats.</p>';
   h += '</div>';
   return h;
@@ -963,15 +1005,117 @@ function resetStats() {
   if (!confirm(`Reset ${all ? 'all-time' : 'this session’s'} ${tableGame.name} stats for everyone?`)) return;
   if (all) { delete allStats[tableGame.id]; saveStats(); }
   else delete sessionStats[tableGame.id];
+  if (gtoTable) {
+    if (all) { allReview = emptyTotals(); saveReviewTotals(); }
+    else sessionReview = emptyTotals();
+  }
   render();
+}
+
+// ---- hand review (GTO training) ----
+
+// Asks the worker for the finished hand's review, once per hand, without
+// holding up play: the review shows when it's back, and the next hand can be
+// dealt meanwhile (the worker takes it right after).
+function startReview() {
+  if (mode !== 'solo' || !gtoTable || !setup.review || !state?.complete) return;
+  const hand = num(state.hand_number);
+  if (!hand || review?.hand === hand) return;
+  review = {hand, pending: true};
+  reviewOpen = new Set();
+  const mine = session;
+  call('review').then(data => {
+    if (mine !== session) return;
+    if (data) {
+      addReview(sessionReview, data);
+      addReview(allReview, data);
+      saveReviewTotals();
+    }
+    if (review?.hand === hand) review = {hand, data};
+    if (num(state?.hand_number) === hand) render();
+  }, e => {
+    console.warn(e);
+    if (mine === session && review?.hand === hand) { review = {hand, error: true}; render(); }
+  });
+}
+
+const STREET = {preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River'};
+
+// "Ks 9d" as the card faces' text.
+const boardText = b => (b ? b.split(' ').map(c => `${c[0]}${SUITS[c[1]] || ''}`).join(' ') : '');
+
+function decisionHtml(d, i) {
+  const flagged = FLAGGED.includes(d.grade);
+  const open = reviewOpen.has(i);
+  const cls = ['pl-rev-row', `g-${d.grade}`, open ? 'open' : ''].filter(Boolean).join(' ');
+  let h = `<li class="${cls}"><button class="pl-rev-line" data-rev="${i}" aria-expanded="${open}">`;
+  h += `<span class="pl-rev-street">${STREET[d.street] || esc(d.street)}${d.board ? ` <span class="pl-rev-board">${esc(boardText(d.board))}</span>` : ''}</span>`;
+  h += `<span class="pl-rev-act">${esc(d.action)}</span>`;
+  if (flagged && d.grade !== 'deviation' && d.best) h += `<span class="pl-rev-best">best: ${esc(d.best)}</span>`;
+  else if (flagged || isVariant(d)) h += `<span class="pl-rev-best">GTO: ${esc(d.main)}</span>`;
+  else h += '<span class="pl-rev-best"></span>';
+  const cost = d.bb_lost > 0 ? `−${bbText(d.bb_lost)} bb` : '';
+  const label = isVariant(d) ? 'Fine (mixed)' : GRADE_LABEL[d.grade] || d.grade;
+  h += `<span class="pl-rev-grade">${esc(label)}${cost ? ` <b>${cost}</b>` : ''}</span>`;
+  h += '</button>';
+  if (open) {
+    h += '<div class="pl-rev-more">';
+    h += `<div>Pot ${bbText(d.pot)} bb${d.to_call > 0 ? `, ${bbText(d.to_call)} bb to call` : ''}</div>`;
+    const mix = mixText(d.gto);
+    if (mix) h += `<div>GTO mix with your hand: ${esc(mix)}</div>`;
+    const valued = (d.gto || []).filter(a => a.ev != null);
+    if (valued.length) {
+      const evs = valued.slice().sort((a, b) => b.ev - a.ev).map(a => `${esc(a.action)} ${bbText(a.ev)}`).join(' · ');
+      h += `<div>Value of each play (bb): ${evs}${d.stderr > 0 ? ` <span class="pl-meta">(± ${bbText(d.stderr)})</span>` : ''}</div>`;
+    }
+    if (d.note) h += `<div class="pl-meta">${esc(d.note[0].toUpperCase() + d.note.slice(1))}.</div>`;
+    h += '</div>';
+  }
+  return h + '</li>';
+}
+
+// The review panel under the controls, once a hand against the GTO bot is
+// over. It sits below the action bar, so the buttons never move.
+function reviewHtml() {
+  if (mode !== 'solo' || !gtoTable || !setup.review || !state.complete || !review || review.hand !== num(state.hand_number)) return '';
+  let h = '<div class="pl-review"><div class="pl-review-head"><b>Hand review</b>';
+  if (review.pending) return h + '<span class="pl-meta">Reviewing your decisions…</span></div></div>';
+  if (review.error || !review.data) return h + '<span class="pl-meta">No review for this hand.</span></div></div>';
+  const r = review.data;
+  if (!r.decisions.length) return h + '<span class="pl-meta">You had no decisions this hand.</span></div></div>';
+  const lost = r.bb_lost > 0 ? `<span class="pl-rev-total bad">−${bbText(r.bb_lost)} bb from your decisions</span>` : '<span class="pl-rev-total">No bb lost to mistakes</span>';
+  h += `${lost}<span class="pl-meta">Result ${r.result > 0 ? '+' : ''}${bbText(r.result)} bb (luck included)</span></div>`;
+  h += `<ul class="pl-rev-list">${r.decisions.map(decisionHtml).join('')}</ul>`;
+  if (r.note) h += `<p class="pl-meta">${esc(r.note[0].toUpperCase() + r.note.slice(1))}.</p>`;
+  h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s own strategy, which is strong but not perfect, using the range it could hold, not its actual cards. Preflop plays are compared with its mix only.</p>';
+  return h + '</div>';
+}
+
+// Review totals for the Stats panel.
+function reviewTotalsHtml() {
+  const all = setup.statsScope === 'all';
+  const t = all ? allReview : sessionReview;
+  let h = '<div class="pl-rev-totals"><b>GTO review</b> ';
+  if (!t.hands) return h + '<span class="pl-meta">no reviewed hands yet</span></div>';
+  const p = per100(t);
+  h += `<span>${t.hands} hands · ${t.decisions} decisions · ${bbText(t.bbLost)} bb lost (${bbText(p)} per 100 hands)</span> `;
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  h += `<span class="pl-meta">${n(t.inaccuracies, 'inaccuracy', 'inaccuracies')} · ${n(t.mistakes, 'mistake', 'mistakes')} · ${n(t.blunders, 'blunder', 'blunders')} · ${t.deviations} off-strategy preflop</span>`;
+  return h + '</div>';
 }
 
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-tab],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-tab],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev]');
   if (!el) return;
   const d = el.dataset;
+  if (d.rev != null) {
+    const i = +d.rev;
+    if (reviewOpen.has(i)) reviewOpen.delete(i); else reviewOpen.add(i);
+    render();
+    return;
+  }
   if (d.tab) { readNameInput(); setup.tab = d.tab; saveSetup(); render(); return; }
   const f = setup.friends;
   if (d.fgame || d.fblinds || d.fseats || d.fmin || d.fmax) {
@@ -1004,6 +1148,7 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
   else if (el.dataset.act === 'reset-stats') resetStats();
   else if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
@@ -1058,11 +1203,11 @@ function onChange(e) {
   if (e.target.id === 'pl-idfile' && e.target.files[0]) restoreIdentity(e.target.files[0]);
 }
 
-// The countdown waits while a mouse is over the result or the log, so the
-// hand can be read.
+// The countdown waits while a mouse is over the result, the log or the
+// review, so the hand can be read.
 function onPointer(e) {
   if (e.pointerType !== 'mouse') return;
-  hold('hover', e.type === 'pointerover' && !!e.target.closest('.pl-result, .pl-log'));
+  hold('hover', e.type === 'pointerover' && !!e.target.closest('.pl-result, .pl-log, .pl-review'));
 }
 
 function onVisibility() {

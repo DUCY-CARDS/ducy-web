@@ -1,0 +1,205 @@
+{
+ "hole": "5h 9s",
+ "board": "Qh 2s Qd 7d 2d",
+ "decisions": [
+  {
+   "street": "preflop",
+   "board": "",
+   "pot": 1.5,
+   "to_call": 0.5,
+   "action": "call 0.5bb",
+   "gto": [
+    {
+     "action": "fold",
+     "frequency": 0.00392156862745098,
+     "ev": null
+    },
+    {
+     "action": "call",
+     "frequency": 0.27450980392156865,
+     "ev": null
+    },
+    {
+     "action": "raise to 2.5bb",
+     "frequency": 0.7215686274509804,
+     "ev": null
+    },
+    {
+     "action": "all-in",
+     "frequency": 0,
+     "ev": null
+    }
+   ],
+   "frequency": 0.27450980392156865,
+   "main": "raise to 2.5bb",
+   "best": null,
+   "ev": null,
+   "ev_loss": null,
+   "bb_lost": 0,
+   "stderr": 0,
+   "grade": "fine",
+   "note": "a less common choice: the blueprint plays this 27% of the time; its main play is raise to 2.5bb (72%)"
+  },
+  {
+   "street": "preflop",
+   "board": "",
+   "pot": 3.5,
+   "to_call": 1.5,
+   "action": "call 1.5bb",
+   "gto": [
+    {
+     "action": "fold",
+     "frequency": 0.9529411764705882,
+     "ev": null
+    },
+    {
+     "action": "call",
+     "frequency": 0.023529411764705882,
+     "ev": null
+    },
+    {
+     "action": "raise to 7.5bb",
+     "frequency": 0.0196078431372549,
+     "ev": null
+    },
+    {
+     "action": "all-in",
+     "frequency": 0.00392156862745098,
+     "ev": null
+    }
+   ],
+   "frequency": 0.023529411764705882,
+   "main": "fold",
+   "best": null,
+   "ev": null,
+   "ev_loss": null,
+   "bb_lost": 0,
+   "stderr": 0,
+   "grade": "deviation",
+   "note": "the blueprint rarely plays this (2%); its main play is fold (95%)"
+  },
+  {
+   "street": "flop",
+   "board": "Qh 2s Qd",
+   "pot": 6.5,
+   "to_call": 1.5,
+   "action": "call 1.5bb",
+   "gto": [
+    {
+     "action": "fold",
+     "frequency": 0.9607843137254902,
+     "ev": -2.6645352591003757e-15
+    },
+    {
+     "action": "call",
+     "frequency": 0.011764705882352941,
+     "ev": 0.5718860949524429
+    },
+    {
+     "action": "raise to 100% pot",
+     "frequency": 0.027450980392156862,
+     "ev": 0.8052458891847087
+    },
+    {
+     "action": "all-in",
+     "frequency": 0,
+     "ev": -8.999249911751512
+    }
+   ],
+   "frequency": 0.011764705882352941,
+   "main": "fold",
+   "best": "raise to 100% pot",
+   "ev": 0.5718860949524429,
+   "ev_loss": 0.23335979423226583,
+   "bb_lost": 0,
+   "stderr": 0.48463769510682964,
+   "grade": "fine",
+   "note": "not the blueprint's play, but close in value; its main play is fold (96%)"
+  },
+  {
+   "street": "turn",
+   "board": "Qh 2s Qd 7d",
+   "pot": 10.5,
+   "to_call": 2.5,
+   "action": "call 2.5bb",
+   "gto": [
+    {
+     "action": "fold",
+     "frequency": 0.9450980392156862,
+     "ev": 0
+    },
+    {
+     "action": "call",
+     "frequency": 0.00392156862745098,
+     "ev": -1.7604487686053032
+    },
+    {
+     "action": "raise to 100% pot",
+     "frequency": 0.047058823529411764,
+     "ev": -4.216546548338073
+    },
+    {
+     "action": "all-in",
+     "frequency": 0.00392156862745098,
+     "ev": -13.778515586930467
+    }
+   ],
+   "frequency": 0.00392156862745098,
+   "main": "fold",
+   "best": "fold",
+   "ev": -1.7604487686053032,
+   "ev_loss": 1.7604487686053032,
+   "bb_lost": 1.7604487686053032,
+   "stderr": 0,
+   "grade": "mistake",
+   "note": null
+  },
+  {
+   "street": "river",
+   "board": "Qh 2s Qd 7d 2d",
+   "pot": 13,
+   "to_call": 0,
+   "action": "bet 13bb (100% pot)",
+   "gto": [
+    {
+     "action": "check",
+     "frequency": 0.00392156862745098,
+     "ev": 0.45934808946865946
+    },
+    {
+     "action": "bet 35% pot",
+     "frequency": 0.0196078431372549,
+     "ev": 1.1217396805210154
+    },
+    {
+     "action": "bet 77% pot",
+     "frequency": 0.6588235294117647,
+     "ev": 0.31395678227242474
+    },
+    {
+     "action": "bet 127% pot",
+     "frequency": 0.3058823529411765,
+     "ev": -0.8694607882277161
+    },
+    {
+     "action": "all-in",
+     "frequency": 0.011764705882352941,
+     "ev": -7.728507743220987
+    }
+   ],
+   "frequency": 0.47399930386355726,
+   "main": "bet 77% pot",
+   "best": "bet 35% pot",
+   "ev": -0.30576188630309287,
+   "ev_loss": 1.4275015668241082,
+   "bb_lost": 0,
+   "stderr": 0,
+   "grade": "fine",
+   "note": "a less common choice: the blueprint plays this 47% of the time; its main play is bet 77% pot (66%)"
+  }
+ ],
+ "bb_lost": 1.7604487686053032,
+ "worst": 3,
+ "result": -19.5,
+ "note": null
+}
