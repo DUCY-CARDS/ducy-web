@@ -1,7 +1,8 @@
 // Hidden page at #clubs (#66): host a club, invite players with a link and
-// approve them, and see the clubs you belong to. club.js has the rules; this
-// file draws the page and carries signed messages over the relay
-// (play-net.js, in queue mode so join requests wait while the host is away).
+// approve them, and see the clubs you belong to. club.js has the rules and
+// club-server.js runs the host's side; this file draws the page and carries
+// signed messages over the relay (play-net.js, in queue mode so join
+// requests wait while the host is away).
 //
 // Storage (this browser only, #61):
 //   ducyClub          the club this browser hosts (one per host for now)
@@ -13,21 +14,18 @@ import { loadIdentity, showId, signMessage, Verifier } from './identity.js';
 import { connect, DEFAULT_RELAY, newCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
-  newClub, newMembership, parseInvite, playerReceive, removeMember, revokeInvite,
+  newClub, newMembership, parseInvite, playerReceive,
 } from './club.js';
-import { declineRequest, ensureChips, grantRequest, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
+import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
   cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
-import { createTableHost } from './club-host.js';
-import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
-import {
-  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
-} from './club-agents.js';
+import { createClubServer } from './club-server.js';
+import { accountOf, settle } from './club-agents.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { joinTableVia } from './play.js';
-import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
+import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
 
@@ -40,32 +38,7 @@ let memberships = []; // clubs this browser asked to join
 const playerNets = new Map(); // club code → {net, online, hostHere}
 let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
-let tableHost = null; // runs the hosted club's tables (club-host.js)
-const online = new Set(); // members connected to the hosted club
-// Encrypted table updates (e2e.js): the host's key pair for this session,
-// and per member {pub, key, sends} (their public key, the shared AES key,
-// and a queue that keeps their updates in order).
-let hostKeysP = null;
-const hostKeys = () => (hostKeysP ||= newKeyPair()); // made once, on first use
-const memberKeys = new Map();
-
-// A member sent their session key (with join or hello): derive the shared key.
-async function memberKey(id, pub) {
-  if (!isPublicKey(pub) || memberKeys.get(id)?.pub === pub) return;
-  const hk = await hostKeys();
-  const key = await sharedKey(hk, pub, {context: `club:${club.code}`, hostId: club.hostId, playerId: id, hostPub: hk.pub, playerPub: pub});
-  memberKeys.set(id, {pub, key, sends: memberKeys.get(id)?.sends || Promise.resolve()});
-}
-
-// A table update for member `to`, encrypted to them. Without their key it
-// isn't sent at all: nothing goes over the relay in the clear.
-function sendSealed(to, msg) {
-  const k = memberKeys.get(to);
-  if (!k) { console.warn('club: no key for', to, '- table update not sent'); return; }
-  k.sends = k.sends.then(async () => {
-    hostNet?.send({to, data: {type: 'table', table: msg.table, enc: await seal(k.key, msg.update)}});
-  }).catch(e => console.warn(e));
-}
+let server = null; // runs the hosted club (club-server.js)
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
@@ -89,149 +62,38 @@ const STATUS_TEXT = {
 function saveClub() {
   save(CLUB_KEY, club);
   save(SENDERS_KEY, verifier.toJSON());
-  scheduleAdmin();
 }
 
-// Assistants (#62) see the club change as it happens: after any change, the
-// online ones get a fresh view (at most every 200 ms).
-let adminTimer = null;
-function scheduleAdmin() {
-  if (adminTimer || !club) return;
-  adminTimer = setTimeout(() => {
-    adminTimer = null;
-    if (!club) return;
-    const body = adminBody(club, tableHost?.seatedCounts() || {});
-    for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
-    // Agents (#75) see their account and their players.
-    for (const id of online) if (isAgent(club, id)) sendToPlayer({to: id, body: agentBody(club, id)});
-  }, 200);
+// The club's host logic, carrying its messages over this tab's relay connection.
+function newServer() {
+  server = createClubServer({
+    identity: me, club, verifier,
+    persist: saveClub,
+    transport: {send: (to, data) => hostNet?.send({to, data}), ack: n => hostNet?.send({ack: n})},
+    onChange: render,
+    storeHand,
+  });
 }
 
-// A role answer or an assistant's command, already verified as from `from`.
-function handleAdmin({type, from, body}) {
-  if (type === 'role_reply' || type === 'agent_reply') {
-    const r = (type === 'role_reply' ? answerRole : answerAgent)(club, from, !!body.accept);
-    if (r) sendToPlayer(r);
-    return;
-  }
-  try {
-    const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd);
-    for (const rep of r.replies) sendToPlayer(rep);
-    if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, tableHost.seatedCounts())});
-    if (r.table?.start) tableHost?.start(r.table.start).then(() => { broadcastTables(); render(); });
-    if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
-    if (r.table) broadcastTables();
-    sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
-  } catch (e) {
-    sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: e.message}});
-  }
+// A host action (club-server.js), telling the host if it can't be done.
+async function hostAct(op, args) {
+  try { await server.run(op, args); } catch (e) { alert(e.message); }
+  render();
 }
 
 function startHosting() {
   if (!club || hostNet) return;
+  if (!server) newServer();
   hostNet = connect(club.code, 'host', '', {
-    // The relay tells us again who's connected. Tables start once this tab is
-    // the club's host: a second tab, refused by the relay, never runs (or
-    // resumes) them.
-    onOpen() { hostOnline = true; online.clear(); startTables(); render(); },
-    onMessage: hostMessage,
+    // Tables start once this tab is the club's host: a second tab, refused
+    // by the relay, never runs (or resumes) them.
+    onOpen() { hostOnline = true; server.relayOpen(); render(); },
+    onMessage: m => server.message(m),
     onStatus(s) { hostOnline = !s; render(); },
-    onFail(reason) { hostNet = null; hostOnline = false; tableHost?.setLink(false); note = reason; render(); },
+    onFail(reason) { hostNet = null; hostOnline = false; server.setLink(false); note = reason; render(); },
     // Tables stop their clocks while the relay can't be reached (club-host.js).
-    onHealth(ok) { tableHost?.setLink(ok); render(); },
+    onHealth(ok) { server.setLink(ok); render(); },
   }, {heartbeat: true, persistent: true, retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
-}
-
-// The club's tables (#68). The page opening again means any tables that were
-// running stopped. Open and closing tables saved with a hand in progress
-// resume it (#107, #117, club-host.js; a closing one then closes after the
-// hand); everyone seated anywhere else is cashed out first (club-tables.js).
-function startTables() {
-  if (tableHost) return;
-  ensureTables(club);
-  const open = openTables(club).filter(t => t.status === 'open' || t.status === 'closing');
-  const back = cashOutEveryone(club, Date.now(), new Set(open.map(t => t.id)));
-  if (back.length) saveClub();
-  tableHost = createTableHost({
-    club: () => club,
-    save: () => { saveClub(); render(); },
-    sendTable: sendSealed,
-    chipsChanged: id => {
-      const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
-      sendToPlayer(account(club, id, n ? n - 1 : Infinity));
-    },
-    tablesChanged: () => { broadcastTables(); render(); },
-    online: id => online.has(id),
-    onHand: (tid, view) => {
-      const t = tableById(club, tid);
-      storeHand(handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'}),
-        {days: club.keepDays ?? HOST_KEEP_DAYS});
-    },
-  });
-  for (const t of open) tableHost.start(t, {resume: true}).then(() => { broadcastTables(); render(); });
-}
-
-function broadcastTables() {
-  if (!club || !tableHost) return;
-  const body = tablesBody(club, tableHost.seatedCounts());
-  for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
-}
-
-async function hostMessage(msg) {
-  if (!msg || !msg.from) return;
-  if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); return; }
-  if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); tableHost?.presence(msg.from); return; }
-  if (!('data' in msg)) return;
-  const r = await hostReceive(club, verifier, msg.data);
-  if (msg.queued) hostNet?.send({ack: msg.queued});
-  if (r.reason && r.reason !== 'replayed') console.warn('club: refused a message:', r.reason);
-  // A verified message from this member may carry their session key.
-  const verified = !['malformed', 'bad signature', 'id does not match key', 'id in use', 'replayed'].includes(r.reason);
-  if (verified && msg.data?.from === msg.from && msg.data?.body?.key) await memberKey(msg.from, msg.data.body.key);
-  for (const rep of r.replies) sendToPlayer(rep);
-  // A table command, from the member who signed it (the relay's sender id
-  // must match, so no one can act for someone else). No one is seated
-  // without a key: their cards would have to cross the relay in the clear.
-  if (r.table && r.table.from === msg.from) {
-    if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
-      sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the host. Reload and try again.'}});
-    } else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
-  }
-  if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); saveClub(); render(); return; }
-  // Members checking in get the tables too.
-  const hello = msg.data?.body?.type === 'hello' && club.members[msg.from]?.status === 'member';
-  if (hello && tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, tableHost.seatedCounts())});
-  // …and the host's key for encrypted table updates (signed, like the rest).
-  if (hello) {
-    sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
-  }
-  // …and their role, and an assistant their view of the club.
-  if (hello && club.members[msg.from].role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: club.members[msg.from].role}});
-  if (hello && isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, tableHost?.seatedCounts() || {})});
-  const ag = hello && club.members[msg.from].agent;
-  if (ag) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: ag, creditLimit: club.members[msg.from].creditLimit || 0}});
-  if (hello && isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
-  if (r.changed || r.replies.length) { saveClub(); render(); }
-}
-
-// Signed messages go out one at a time, in order: a player ignores anything
-// with a lower sequence number than one it has seen.
-let hostSends = Promise.resolve();
-function sendToPlayer(rep) {
-  if (!rep) return hostSends;
-  // Whoever gets the tables gets the host's key first, so they can read the
-  // encrypted updates once they sit down.
-  if (rep.body?.type === 'tables') {
-    hostSends = hostSends.then(async () => {
-      const env = await signMessage(me, {type: 'host_key', club: club.code, key: (await hostKeys()).pub});
-      hostNet?.send({to: rep.to, data: env});
-    }).catch(e => console.warn(e));
-  }
-  hostSends = hostSends.then(async () => {
-    const env = await signMessage(me, rep.body);
-    hostNet?.send({to: rep.to, data: env});
-  }).catch(e => console.warn(e));
-  return hostSends;
 }
 
 async function createClub(name) {
@@ -285,10 +147,8 @@ function submitTable(f) {
     return;
   }
   try {
-    const t = newTable(club, settings);
+    server.run('new_table', {table: settings});
     tableForm = false;
-    saveClub();
-    tableHost?.start(t).then(() => { broadcastTables(); render(); });
   } catch (e) {
     alert(e.message);
   }
@@ -299,9 +159,9 @@ function submitTable(f) {
 // the engine (no one's cards before they're shown down), nothing to act on.
 function watchTable(id) {
   const t = tableById(club, id);
-  if (!t || !tableHost?.running(id)) return;
+  if (!t || !server?.running(id)) return;
   joinTableVia(handlers => {
-    const stop = tableHost.watch(id, u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u)));
+    const stop = server.watch(id, u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u)));
     return {send() {}, close: stop};
   }, {
     label: `${club.name} · ${t.name} (watching)`,
@@ -314,16 +174,12 @@ function watchTable(id) {
 function closeTable(id) {
   const t = club.tables.find(x => x.id === id);
   if (!t || !confirm(`Close ${t.name}? Everyone is cashed out at the end of the hand.`)) return;
-  t.status = 'closing';
-  saveClub();
-  if (tableHost) tableHost.close(id); else t.status = 'closed';
-  broadcastTables();
-  render();
+  hostAct('close_table', {table: id});
 }
 
 function tablesHtml() {
   const tables = openTables(club);
-  const counts = tableHost?.seatedCounts() || {};
+  const counts = server?.seatedCounts() || {};
   let h = `<h3>Tables${tables.length ? ` (${tables.length})` : ''}</h3>`;
   if (tables.length) {
     h += '<ul class="cl-list">';
@@ -331,7 +187,7 @@ function tablesHtml() {
       h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
       h += t.status === 'closing'
         ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
-        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableHost?.running(t.id) ? "" : " disabled"}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
+        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${server?.running(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
       if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
       h += '</li>';
@@ -342,15 +198,6 @@ function tablesHtml() {
   return h;
 }
 
-async function decide(fn, id) {
-  const rep = fn(club, id);
-  if (!rep) return;
-  saveClub();
-  render();
-  for (const r of [rep].flat()) await sendToPlayer(r);
-  // A new member gets the tables straight away.
-  if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesBody(club, tableHost.seatedCounts())});
-}
 
 const chips = n => Number(n || 0).toLocaleString();
 
@@ -416,33 +263,15 @@ function onSubmit(e) {
   const amount = Number(f.elements.amount.value);
   const why = f.elements.note?.value || '';
   chipForm = null;
-  if (kind === 'give') chipAction(id, () => issue(club, id, amount, Date.now(), why));
-  else if (kind === 'take') chipAction(id, () => reclaim(club, id, amount, Date.now(), why));
-  else if (kind === 'grant') chipAction(id, () => grantRequest(club, id, amount));
-  else if (kind === 'agent' || kind === 'limit') {
-    try { sendToPlayer(kind === 'agent' ? offerAgent(club, id, amount) : setCreditLimit(club, id, amount)); saveClub(); } catch (err) { alert(err.message); }
-    render();
-  } else if (kind === 'settle') chipAction(id, () => settle(club, id, amount, Date.now(), why));
+  const op = {give: 'give', take: 'take', grant: 'grant', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle'}[kind];
+  if (op) hostAct(op, {id, amount, note: why});
 }
 
-// Runs a chip change for member `id`, then sends them their updated account.
-async function chipAction(id, fn) {
-  let e;
-  try {
-    e = fn();
-  } catch (err) {
-    alert(err.message);
-    return;
-  }
-  saveClub();
-  render();
-  await sendToPlayer(account(club, id, e?.n ? e.n - 1 : Infinity));
-}
 
 function closeClub() {
   if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first.'); return; }
   if (!confirm(`Close ${club.name}? Its members and records are deleted from this browser.`)) return;
-  tableHost = null;
+  server = null;
   hostNet?.close();
   hostNet = null;
   club = null;
@@ -1158,10 +987,10 @@ async function onClick(e) {
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'join') joinFromInvite(root.querySelector('#cl-name')?.value);
   else if (act === 'dismiss') { invite = null; clearInviteFromAddress(); render(); }
-  else if (act === 'approve') decide(approve, b.dataset.id);
-  else if (act === 'decline') decide(decline, b.dataset.id);
-  else if (act === 'remove') { if (confirm('Remove this member from the club?')) decide(removeMember, b.dataset.id); }
-  else if (act === 'revoke') { if (confirm('Make a new invite link? The current link stops working for anyone who hasn’t used it yet.')) { revokeInvite(club); saveClub(); render(); } }
+  else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
+  else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
+  else if (act === 'remove') { if (confirm('Remove this member from the club?')) hostAct('remove', {id: b.dataset.id}); }
+  else if (act === 'revoke') { if (confirm('Make a new invite link? The current link stops working for anyone who hasn’t used it yet.')) hostAct('revoke_invite'); }
   else if (act === 'copy') {
     try { await navigator.clipboard.writeText(link()); } catch { root.querySelector('#cl-link')?.select(); }
     copied = true;
@@ -1176,17 +1005,17 @@ async function onClick(e) {
   else if (act === 'take') openChipForm('take', b.dataset.id);
   else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
   else if (act === 'cancel-form') { chipForm = null; render(); }
-  else if (act === 'grant') { chipForm = null; chipAction(b.dataset.id, () => grantRequest(club, b.dataset.id)); }
-  else if (act === 'deny') chipAction(b.dataset.id, () => { declineRequest(club, b.dataset.id); return null; });
-  else if (act === 'rathole') { club.ratholeHours = Number(b.dataset.hours); saveClub(); render(); }
-  else if (act === 'sitout-mins') { club.sitOutMins = Number(b.dataset.mins); saveClub(); render(); }
+  else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
+  else if (act === 'deny') hostAct('deny', {id: b.dataset.id});
+  else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
+  else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The host: agents.
   else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
   else if (act === 'limit') openChipForm('limit', b.dataset.id);
   else if (act === 'settle') openChipForm('settle', b.dataset.id);
-  else if (act === 'revoke-agent') { try { const r = revokeAgent(club, b.dataset.id); if (r) { sendToPlayer(r); saveClub(); render(); } } catch (err) { alert(err.message); } }
+  else if (act === 'revoke-agent') hostAct('revoke_agent', {id: b.dataset.id});
   // A member: answering an agent offer.
   else if (act === 'agent-yes' || act === 'agent-no') sendToHost(b.dataset.code, {type: 'agent_reply', club: b.dataset.code, accept: act === 'agent-yes'});
   // An agent's tools.
@@ -1203,8 +1032,8 @@ async function onClick(e) {
     try { await navigator.clipboard.writeText(v); } catch { root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.select(); }
   }
   // The host: assistants.
-  else if (act === 'offer-role') { try { sendToPlayer(offerAssistant(club, b.dataset.id)); saveClub(); render(); } catch (err) { alert(err.message); } }
-  else if (act === 'revoke-role') { const r = revokeRole(club, b.dataset.id); if (r) { sendToPlayer(r); saveClub(); render(); } }
+  else if (act === 'offer-role') hostAct('offer_assistant', {id: b.dataset.id});
+  else if (act === 'revoke-role') hostAct('revoke_role', {id: b.dataset.id});
   // A member: answering an offer.
   else if (act === 'role-yes' || act === 'role-no') sendToHost(b.dataset.code, {type: 'role_reply', club: b.dataset.code, accept: act === 'role-yes'});
   // An assistant's tools.
@@ -1229,7 +1058,7 @@ async function onClick(e) {
   else if (act === 'replay-to') stepReplay(Number(b.dataset.i));
   else if (act === 'replay-play') toggleReplayPlay();
   else if (act === 'replay-close') closeReplay();
-  else if (act === 'keep-days') { club.keepDays = Number(b.dataset.days); saveClub(); prune(club.code, 'host', {days: club.keepDays}).then(() => loadHands(club.code, 'host')); render(); }
+  else if (act === 'keep-days') { hostAct('settings', {keepDays: Number(b.dataset.days)}); prune(club.code, 'host', {days: club.keepDays}).then(() => loadHands(club.code, 'host')); render(); }
   else if (act === 'keep-hands') { try { localStorage.setItem(KEEP_KEY, b.dataset.n); } catch {} for (const m of memberships) prune(m.code, me.id, {keep: keepHands()}); render(); }
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
   else if (act === 'to-table') location.hash = 'play';
@@ -1254,7 +1083,7 @@ function onDocKey(e) {
 function onFilter(e) {
   const pid = e.target.dataset?.assign;
   if (pid != null) {
-    try { assignToAgent(club, pid, e.target.value || null); saveClub(); } catch (err) { alert(err.message); }
+    hostAct('assign_agent', {id: pid, agent: e.target.value || null});
     render();
     return;
   }
@@ -1296,8 +1125,18 @@ function reconnectAll() {
 // tab can host, but any tab can show the club): show what it saved.
 function onStorage(e) {
   if (e.key === CLUB_KEY) {
-    club = load(CLUB_KEY, null);
-    verifier = new Verifier(load(SENDERS_KEY, {}));
+    const fresh = load(CLUB_KEY, null);
+    if (server && fresh?.code === club?.code) {
+      // The same club, changed in another tab: update it in place, so this
+      // tab's server (which holds these objects) carries on with it.
+      for (const k of Object.keys(club)) delete club[k];
+      Object.assign(club, fresh);
+      verifier.senders = new Verifier(load(SENDERS_KEY, {})).senders;
+    } else {
+      club = fresh;
+      verifier = new Verifier(load(SENDERS_KEY, {}));
+      server = null;
+    }
     if (!club) { hostNet?.close(); hostNet = null; hostOnline = false; }
   } else if (e.key === MEMBERSHIPS_KEY) {
     const saved = load(MEMBERSHIPS_KEY, []);
