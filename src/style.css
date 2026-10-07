@@ -343,6 +343,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 }
 .cc-btn:hover { border-color: var(--fg-muted); color: var(--fg); }
 .cc-btn.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+/* Option buttons in the play and clubs settings rows are words, not numbers: the page font. */
+.pl-opts .cc-btn { font-family: inherit; font-size: 12px; padding: 4px 10px; }
 #bp-random { margin-left: 10px; justify-content: space-between; }
 #bp-random[hidden] { display: none; }
 .group-label { font-family: var(--font-data); font-size: 11px; font-weight: 600; color: var(--fg-muted); padding: 7px 0; }
