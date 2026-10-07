@@ -97,9 +97,11 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {
       if (closed) return;
       // 4001: the room already has a host; 4004: no such table. After a drop
       // a guest keeps trying while the host comes back.
-      if ((e.code === 4001 && !(retryInUse && tries < 4)) || (e.code === 4004 && !joined) || tries >= 6) {
+      // 4008: this page sent faster than the relay allows (#103).
+      if ((e.code === 4001 && !(retryInUse && tries < 4)) || e.code === 4008 || (e.code === 4004 && !joined) || tries >= 6) {
         closed = true;
-        onFail(e.code === 4001 ? inUse : e.code === 4004 ? 'No table with that code.' : 'Lost the connection.');
+        onFail(e.code === 4001 ? inUse : e.code === 4004 ? 'No table with that code.'
+          : e.code === 4008 ? 'The relay closed the connection: too many messages. Reload to reconnect.' : 'Lost the connection.');
         return;
       }
       onStatus('Reconnecting…');

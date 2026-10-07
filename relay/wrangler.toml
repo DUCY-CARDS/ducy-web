@@ -14,5 +14,6 @@ new_sqlite_classes = ["Room"]
 
 [vars]
 # Comma-separated page origins allowed to connect, e.g. "https://ducy.example".
-# Empty allows any origin.
-ALLOWED_ORIGINS = ""
+# Empty allows any origin. The site only, so other pages can't use the relay (#103);
+# a page opened from elsewhere (e.g. localhost) uses a local relay instead.
+ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"

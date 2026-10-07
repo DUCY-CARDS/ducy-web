@@ -93,3 +93,21 @@ test('each guest can queue only a few messages', async () => {
   assert.deepEqual(await g.next(), {type: 'queue_full'});
   g.ws.close();
 });
+
+test('a connection sending too fast is closed (4008); others are unaffected', async () => {
+  const h = open('/room/EEEE-EEEE?role=host');
+  await h.ready;
+  const calm = open('/room/EEEE-EEEE?role=guest&id=calm');
+  const flood = open('/room/EEEE-EEEE?role=guest&id=flood');
+  await Promise.all([calm.ready, flood.ready]);
+  // Well past the burst of 50, all at once.
+  for (let i = 0; i < 200; i++) flood.send({i});
+  assert.equal(await flood.closed, 4008);
+  // The calm guest still gets through.
+  calm.send({hello: 'still here'});
+  for (let m = await h.next(); ; m = await h.next()) {
+    if (m.from === 'calm' && m.data) { assert.deepEqual(m.data, {hello: 'still here'}); break; }
+  }
+  h.ws.close();
+  calm.ws.close();
+});

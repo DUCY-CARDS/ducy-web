@@ -11,6 +11,19 @@ const MAX_MESSAGE = 64 * 1024;
 // Messages kept for an absent host (guests that connect with queue=1).
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_DAYS = 7;
+// Messages a second per connection, in bursts of up to BURST (as in the Worker).
+const RATE = Number(process.env.RELAY_RATE || 20), BURST = Number(process.env.RELAY_BURST || 50);
+const HOST_RATE = 200, HOST_BURST = 500;
+
+// A token bucket per socket: false when it's sending too fast.
+function allow(ws, rate, burst, now = Date.now()) {
+  const b = (ws.bucket ||= {tokens: burst, at: now});
+  b.tokens = Math.min(burst, b.tokens + ((now - b.at) / 1000) * rate);
+  b.at = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
 const port = Number(process.argv[2] || process.env.PORT || 8787);
 
 // code → {host, guests: Map(id → {ws, queue}), queued: [{n, from, data, at}], next}
@@ -55,6 +68,7 @@ wss.on('connection', (ws, req) => {
     for (const [gid, g] of room.guests) { send(ws, {from: gid, event: 'open'}); send(g.ws, {type: 'host_back'}); }
     for (const q of room.queued) send(ws, {from: q.from, data: q.data, queued: q.n});
     ws.on('message', data => {
+      if (!allow(ws, HOST_RATE, HOST_BURST)) return ws.close(4008, 'too many messages');
       let msg;
       try { msg = JSON.parse(data); } catch { return; }
       if (msg && typeof msg.to === 'string') { const g = room.guests.get(msg.to); if (g) send(g.ws, msg.data); }
@@ -81,6 +95,7 @@ wss.on('connection', (ws, req) => {
     if (room.host) send(room.host, {from: id, event: 'open'});
     else send(ws, {type: 'host_away'});
     ws.on('message', data => {
+      if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       if (room.host) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
