@@ -790,9 +790,12 @@ function seatPos(i, n) {
 }
 
 function eventText(e) {
-  const who = e.seat != null ? nameOf(e.seat) : '';
-  // "You call" but "Rampart calls".
-  const v = (base, s = base + 's') => (e.seat === 0 ? base : s);
+  // Seat 0 is you: "You call" but "Rampart calls". At friends and club tables
+  // your seat shows your name, so the log says "You" rather than "Ann call".
+  // Watching a club table (#73), seat 0 is someone else.
+  const me0 = e.seat === 0 && !watching;
+  const who = e.seat == null ? '' : me0 ? 'You' : nameOf(e.seat);
+  const v = (base, s = base + 's') => (me0 ? base : s);
   const allIn = e.all_in ? ' (all-in)' : '';
   switch (e.type) {
     case 'small_blind': return `${who} ${v('post')} the small blind ${num(e.amount)}`;
