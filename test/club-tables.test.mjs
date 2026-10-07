@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  canJoin, cashOutEveryone, chipsForTable, leftTable, limits, newTable, openTables, syncStacks, tablesBody,
+  canJoin, cashOutEveryone, cashOutTable, chipsForTable, leftTable, limits, newTable, openTables, syncStacks,
+  tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
 
 const H = 3600e3;
@@ -108,4 +109,29 @@ test('sit-out limit: per table, defaulting to the club setting (10 minutes)', ()
   assert.equal(newTable(club).sitOutMins, 30);
   assert.equal(newTable(club, {sitOutMins: 0}).sitOutMins, 0, 'no limit');
   assert.throws(() => newTable(club, {sitOutMins: -1}), /sit-out limit/);
+});
+
+test('resuming tables (#107): cash out everyone but the tables that may resume, and each ledger step', () => {
+  const club = clubWith('ann', 'bob', 'cy');
+  const a = newTable(club, {name: 'A'});
+  const b = newTable(club, {name: 'B'});
+  assert.equal(tableLedgerN(club, a.id), 0);
+  chipsForTable(club, 'ann', a, 100, 0);
+  chipsForTable(club, 'bob', a, 100, 0);
+  chipsForTable(club, 'cy', b, 100, 0);
+  const n = tableLedgerN(club, a.id);
+  assert.ok(n > 0);
+  // Other tables' entries don't move table A's step.
+  chipsForTable(club, 'cy', b, 20, 0);
+  assert.equal(tableLedgerN(club, a.id), n);
+  chipsForTable(club, 'ann', a, 20, 0);
+  assert.ok(tableLedgerN(club, a.id) > n, 'a top-up at A does');
+  // The page reopens: A may resume; B's people are cashed out.
+  const out = cashOutEveryone(club, 0, new Set([a.id]));
+  assert.deepEqual(out.map(e => e.member), ['cy']);
+  assert.equal(club.members.ann.seat.table, a.id);
+  // A can't resume after all.
+  assert.deepEqual(cashOutTable(club, a.id, 0).map(e => e.member).sort(), ['ann', 'bob']);
+  assert.ok(Object.values(club.members).every(m => !m.seat));
+  assert.ok(totals(club).conserved);
 });

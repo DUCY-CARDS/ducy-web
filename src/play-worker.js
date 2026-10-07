@@ -20,7 +20,8 @@
 //   clubCreate(id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) |
 //   clubCall(id, method, ...args) for handle, disconnected, newHand,
 //     advance, tick, approveChips, denyChips, remove, state (the time is
-//     added) | clubDrop(id)
+//     added) | clubDrop(id) | clubSave(id) | clubRestore(id, json); resume
+//     is a clubCall method too
 // clubCall results also carry `players` and `departed`.
 import init, { BotTable, MultiTable, botPersonalities, loadGto } from '../wasm/ducy_wasm.js';
 
@@ -118,6 +119,19 @@ const ops = {
     return t[method](...args, now(id));
   },
   clubDrop: id => { clubTables.get(id)?.free(); clocks.delete(id); return clubTables.delete(id); },
+  // The table as JSON for resuming it after a restart (#107); null with an
+  // older ducy-wasm, which can't save tables.
+  clubSave: id => { const t = clubTables.get(id); return t?.save ? t.save(now(id)) : null; },
+  // A table saved with clubSave, paused until resume (throws if it can't be loaded).
+  clubRestore: (id, json) => {
+    if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
+    // Times in the snapshot are time left, so the restored table starts a fresh clock.
+    clocks.delete(id);
+    const t = MultiTable.restore(json, Date.now());
+    clubTables.get(id)?.free();
+    clubTables.set(id, t);
+    return t.state(Date.now());
+  },
   // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
   clubSitOutLimit: (id, ms) => { clubTables.get(id)?.setSitOutLimit(ms); return true; },
   // Stops (on) or restarts a table's clock: 'host' for the friends table,
@@ -141,7 +155,7 @@ function now(key) {
   const c = clocks.get(key);
   return c ? (c.at ?? Date.now()) - c.lost : Date.now();
 }
-const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state']);
+const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state', 'resume']);
 
 self.onmessage = async e => {
   const {id, op, args = []} = e.data;
