@@ -84,7 +84,7 @@ test('declined and removed players can ask again with a valid invite', async () 
   const r = await hostReceive(club, verifier, await signMessage(ann, join(club)));
   assert.equal(r.replies[0].body.status, 'pending');
   approve(club, ann.id);
-  assert.equal(removeMember(club, ann.id).body.status, 'removed');
+  assert.equal(removeMember(club, ann.id)[0].body.status, 'removed');
   assert.equal(removeMember(club, ann.id), null);
 });
 

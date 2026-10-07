@@ -11,12 +11,17 @@
 //
 // Player → host bodies:
 //   {type: 'join', club, invite, name}   ask to join (or update a pending request)
-//   {type: 'hello', club, name}          a member or applicant checking in
+//   {type: 'hello', club, name, since}   a member or applicant checking in; `since`
+//                                        is the last ledger entry they have
+//   {type: 'chip_request', club, amount, note}   ask the host for chips (#67)
+//   {type: 'cancel_request', club}
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
+//   {type: 'account', club, balance, request, entries}   see club-chips.js
 
 import { checkSignature } from './identity.js';
+import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 
 export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
@@ -36,7 +41,7 @@ export function newInvite() {
 }
 
 export function newClub(name, code, hostId, now = Date.now()) {
-  return {v: 1, code, name: clubName(name), hostId, invite: newInvite(), createdAt: now, members: {}};
+  return ensureChips({v: 1, code, name: clubName(name), hostId, invite: newInvite(), createdAt: now, members: {}});
 }
 
 // A new invite token; the old link stops working for people who haven't
@@ -80,6 +85,7 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   if (!v.ok) return {replies: [], changed: false, reason: v.reason};
   const id = v.from, body = v.body || {};
   if (body.club !== club.code) return {replies: [], changed: false, reason: 'wrong club'};
+  ensureChips(club);
   const m = club.members[id];
   if (body.type === 'join') {
     const name = playerName(body.name);
@@ -91,14 +97,34 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (body.invite !== club.invite) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
     // New, or asking again after being declined or removed.
     club.members[id] = {...m, id, name, status: 'pending', requestedAt: now};
+    ensureChips(club);
     return {replies: [reply(club, id)], changed: true};
   }
   if (body.type === 'hello') {
     let changed = false;
     if (m && body.name) { const name = playerName(body.name); changed = m.name !== name; m.name = name; }
-    return {replies: [reply(club, id)], changed};
+    const replies = [reply(club, id)];
+    if (m?.status === 'member') replies.push(account(club, id, body.since));
+    return {replies, changed};
+  }
+  if (body.type === 'chip_request' || body.type === 'cancel_request') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    try {
+      if (body.type === 'chip_request') requestChips(club, id, body.amount, body.note, now);
+      else cancelRequest(club, id);
+    } catch (e) {
+      return {replies: [account(club, id, Infinity)], changed: false, reason: e.message};
+    }
+    return {replies: [account(club, id, Infinity)], changed: true};
   }
   return {replies: [], changed: false, reason: 'unknown message'};
+}
+
+// A member's account as a reply. `since` is the last entry they have, so
+// only newer entries are sent (Infinity: none, just the balance and request).
+export function account(club, id, since = 0) {
+  const s = Number.isFinite(since) ? Math.max(0, Math.floor(since)) : Number.MAX_SAFE_INTEGER;
+  return {to: id, body: accountBody(club, id, s)};
 }
 
 function setStatus(club, id, status, now, from) {
@@ -113,8 +139,20 @@ function setStatus(club, id, status, now, from) {
 // The host's decisions. Each returns the reply to send, or null if it didn't apply.
 export const approve = (club, id, now = Date.now()) => setStatus(club, id, 'member', now, ['pending']);
 export const decline = (club, id, now = Date.now()) => setStatus(club, id, 'declined', now, ['pending']);
-// Removing a member. Their chips go back to the host once the ledger exists (#67).
-export const removeMember = (club, id, now = Date.now()) => setStatus(club, id, 'removed', now, ['member', 'pending']);
+// Removing a member: the host takes back their whole club balance first
+// (#66), and any open chip request goes. Returns the replies to send (status,
+// and the account showing the reclaim), or null. A member seated at a table
+// is cashed out by the table first (#68).
+export function removeMember(club, id, now = Date.now()) {
+  ensureChips(club);
+  const m = club.members[id];
+  if (!m || !['member', 'pending'].includes(m.status) || m.seat) return null;
+  const hadChips = m.balance > 0;
+  if (hadChips) reclaim(club, id, m.balance, now, 'Removed from the club');
+  m.request = null;
+  const status = setStatus(club, id, 'removed', now, ['member', 'pending']);
+  return hadChips ? [status, account(club, id, 0)] : [status];
+}
 
 export function membersByStatus(club, status) {
   return Object.values(club.members).filter(m => m.status === status)
@@ -139,9 +177,27 @@ export async function playerReceive(mem, env) {
   if (await checkSignature(env)) return false;
   mem.hostPub = env.pub;
   const b = env.body || {};
-  if (b.type !== 'status' || b.club !== mem.code) return false;
-  mem.hostSeq = env.seq;
-  if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);
-  if (b.status !== 'unknown') mem.status = b.status;
-  return true;
+  if (b.club !== mem.code) return false;
+  if (b.type === 'status') {
+    mem.hostSeq = env.seq;
+    if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);
+    if (b.status !== 'unknown') mem.status = b.status;
+    return true;
+  }
+  if (b.type === 'account') {
+    mem.hostSeq = env.seq;
+    mem.balance = Number(b.balance) || 0;
+    mem.request = b.request || null;
+    const have = new Set((mem.entries || []).map(e => e.n));
+    const fresh = (Array.isArray(b.entries) ? b.entries : []).filter(e => Number.isSafeInteger(e?.n) && !have.has(e.n));
+    mem.entries = [...(mem.entries || []), ...fresh].sort((x, y) => x.n - y.n);
+    // Keep the signed messages that brought entries: they prove the balance.
+    if (fresh.length) mem.receipts = [...(mem.receipts || []), env];
+    mem.ledgerOk = checkOwnLedger(mem.entries, mem.balance);
+    return true;
+  }
+  return false;
 }
+
+// The last ledger entry this player has, for 'hello'.
+export const lastEntry = mem => (mem.entries?.length ? mem.entries[mem.entries.length - 1].n : 0);
