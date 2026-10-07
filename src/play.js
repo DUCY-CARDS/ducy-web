@@ -109,6 +109,7 @@ let mode = 'solo';
 let net = null; // relay connection
 let room = ''; // table code
 let netNote = ''; // connection status, e.g. "Reconnecting…"
+let noteUntil = 0; // keep netNote on screen until then (a refused chip request)
 let shownSeq = -1; // state number on screen, so late results are dropped
 let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
@@ -556,6 +557,40 @@ function joinTable() {
   if (!code) { netNote = 'Enter the 8-character table code.'; render(); return; }
   saveSetup();
   joinCode = code;
+  startGuest(code);
+  const mine = session;
+  net = connect(code, 'guest', clientId(), {
+    onOpen() { net.send({type: 'join', name: setup.name}); },
+    onMessage(m) { if (mine === session) guestMessage(m); },
+    onStatus(t) { netNote = t; render(); },
+    onFail(t) { leaveTable(t); },
+  });
+  render();
+  startClock();
+}
+
+// Sits down at a table reached some other way than a table code: a club
+// table (clubs.js). `open(handlers)` returns {send(command), close()} and
+// calls handlers.onMessage(update) for each update from the table's host,
+// handlers.onStatus(text) and handlers.onFail(reason). Leaving the table
+// calls `onLeave`.
+let leaveHook = null;
+export function joinTableVia(open, {label = '', onLeave = null} = {}) {
+  if (seated) leaveTable();
+  startGuest(label);
+  leaveHook = onLeave;
+  const mine = session;
+  net = open({
+    onMessage(m) { if (mine === session) guestMessage(m); },
+    onStatus(t) { if (mine === session) { netNote = t; render(); } },
+    onFail(t) { if (mine === session) leaveTable(t); },
+  });
+  net.send({type: 'join', name: setup.name});
+  render();
+  startClock();
+}
+
+function startGuest(code) {
   mode = 'guest';
   myChips = null;
   chipAsk = 0;
@@ -571,15 +606,6 @@ function joinTable() {
   lastView = null;
   raiseTo = 0;
   foldQueued = false;
-  const mine = session;
-  net = connect(code, 'guest', clientId(), {
-    onOpen() { net.send({type: 'join', name: setup.name}); },
-    onMessage(m) { if (mine === session) guestMessage(m); },
-    onStatus(t) { netNote = t; render(); },
-    onFail(t) { leaveTable(t); },
-  });
-  render();
-  startClock();
 }
 
 function guestMessage(m) {
@@ -587,10 +613,13 @@ function guestMessage(m) {
     lastView = m.view;
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
     tableGame = GAMES.find(g => g.cards === num(m.view.hole_cards) && g.pl === m.view.pot_limit) || GAMES[0];
-    netNote = '';
+    if (Date.now() > noteUntil) netNote = '';
     show({seq: num(m.seq), state: m.view, botToAct: false, turnMsLeft: m.turn_ms_left});
   } else if (m.type === 'rejected') {
     if (m.reason === 'the table is full') { leaveTable('That table is full.'); return; }
+    // A chip request the host turned down, with why (a club table: not
+    // enough chips in the club, the rathole rule).
+    if (m.chips) { netNote = m.reason; noteUntil = Date.now() + 6000; render(); return; }
     // Our action didn't count (e.g. the turn moved on): back to the last view.
     if (lastView) { state = lastView; render(); }
   } else if (m.type === 'host_gone') {
@@ -647,7 +676,10 @@ function leaveTable(note = '') {
   foldQueued = false;
   turnEnds = 0;
   netNote = note;
-  render();
+  const hook = leaveHook;
+  leaveHook = null;
+  if (hook) hook(note);
+  else render();
 }
 
 async function copyLink() {

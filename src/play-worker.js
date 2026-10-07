@@ -16,6 +16,12 @@
 // Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
 // chipRequests, buyIn, hostPendingChips, out}, where out lists {to, data}
 // messages for the page to relay to each player.
+// A club's tables (clubs.js) are MultiTable.club instances kept by id:
+//   clubCreate(id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) |
+//   clubCall(id, method, ...args) for handle, disconnected, newHand,
+//     advance, tick, approveChips, denyChips, remove, state (the time is
+//     added) | clubDrop(id)
+// clubCall results also carry `players` and `departed`.
 import init, { BotTable, MultiTable, botPersonalities, loadGto } from '../wasm/ducy_wasm.js';
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
@@ -99,7 +105,22 @@ const ops = {
   hostHandle: (client, msg) => host.handle(client, msg, Date.now()),
   hostDisconnected: client => host.disconnected(client, Date.now()),
   hostTick: () => host.tick(Date.now()),
+  clubCreate: (id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
+    clubTables.get(id)?.free();
+    const t = MultiTable.club(seats, BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
+    clubTables.set(id, t);
+    return t.state(Date.now());
+  },
+  clubCall: (id, method, ...args) => {
+    const t = clubTables.get(id);
+    if (!t || !CLUB_METHODS.has(method)) throw new Error(`no table ${id} or method ${method}`);
+    return t[method](...args, Date.now());
+  },
+  clubDrop: id => { clubTables.get(id)?.free(); return clubTables.delete(id); },
 };
+
+const clubTables = new Map();
+const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state']);
 
 self.onmessage = async e => {
   const {id, op, args = []} = e.data;
