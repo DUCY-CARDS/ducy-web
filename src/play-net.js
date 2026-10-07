@@ -74,7 +74,10 @@ export function clientId() {
 // onStatus(text) with '' once connected, onFail(reason) when it gives up.
 // With `queue` (clubs), a guest can connect while the host is away, and the
 // relay keeps its messages until the host comes back (see relay/README.md).
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {queue = false} = {}) {
+// With `retryInUse`, a host refused because the room already has one keeps
+// trying for a few seconds (after a reload the relay may not have noticed
+// the old connection close yet) before giving up with `inUse` as the reason.
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {queue = false, retryInUse = false, inUse = 'That table code is in use.'} = {}) {
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
   const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '') + (queue ? '&queue=1' : '');
   const open = () => {
@@ -85,9 +88,9 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {
       if (closed) return;
       // 4001: the room already has a host; 4004: no such table. After a drop
       // a guest keeps trying while the host comes back.
-      if (e.code === 4001 || (e.code === 4004 && !joined) || tries >= 6) {
+      if ((e.code === 4001 && !(retryInUse && tries < 4)) || (e.code === 4004 && !joined) || tries >= 6) {
         closed = true;
-        onFail(e.code === 4001 ? 'That table code is in use.' : e.code === 4004 ? 'No table with that code.' : 'Lost the connection.');
+        onFail(e.code === 4001 ? inUse : e.code === 4004 ? 'No table with that code.' : 'Lost the connection.');
         return;
       }
       onStatus('Reconnecting…');

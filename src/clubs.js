@@ -57,7 +57,7 @@ function startHosting() {
     onMessage: hostMessage,
     onStatus(s) { hostOnline = !s; render(); },
     onFail(reason) { hostNet = null; hostOnline = false; note = reason; render(); },
-  });
+  }, {retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
 }
 
 async function hostMessage(msg) {
@@ -240,7 +240,10 @@ function hostHtml() {
   }
   const pending = membersByStatus(club, 'pending');
   const members = membersByStatus(club, 'member');
-  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${hostOnline ? ' on' : ''}">${hostOnline ? 'Open' : 'Connecting…'}</span></div>`;
+  const badge = hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${hostOnline ? ' on' : ''}">${badge}</span>`;
+  if (!hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
+  h += '</div>';
   h += `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
   h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
   h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
@@ -306,6 +309,7 @@ async function onClick(e) {
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
   else if (act === 'forget') leaveMembership(b.dataset.code);
+  else if (act === 'reconnect') { note = ''; startHosting(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
 }
 
