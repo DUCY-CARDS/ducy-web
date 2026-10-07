@@ -15,13 +15,30 @@
 // guests get {type: 'host_back'} when the host arrives.
 //
 // Close codes: 4000 bad request, 4001 the room already has a host, 4002 the
-// host left, 4004 no such table, 4009 replaced by a newer connection with the
+// host left, 4004 no such table, 4008 sending too fast, 4009 replaced by a newer connection with the
 // same id, 4029 the room is full.
 
 const CODE = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
 const MAX_GUESTS = 16;
 const MAX_MESSAGE = 64 * 1024;
+// Each connection may send RATE messages a second, in bursts of up to BURST;
+// one that sends faster is closed (4008), so a single client can't use up
+// the account's quota for everyone (#103).
+export const RATE = 20, BURST = 50;
+// A host sends one message per player per change, at every table it runs.
+export const HOST_RATE = 200, HOST_BURST = 500;
+
+// A token bucket kept on the socket itself, so it survives hibernation.
+function allow(ws, rate, burst, now = Date.now()) {
+  const b = ws.deserializeAttachment() || {tokens: burst, at: now};
+  b.tokens = Math.min(burst, b.tokens + ((now - b.at) / 1000) * rate);
+  b.at = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  ws.serializeAttachment(b);
+  return true;
+}
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
 
@@ -107,6 +124,8 @@ export class Room {
   }
 
   async webSocketMessage(ws, msg) {
+    const host = this.state.getTags(ws).includes('host');
+    if (!allow(ws, host ? HOST_RATE : RATE, host ? HOST_BURST : BURST)) { ws.close(4008, 'too many messages'); return; }
     if (typeof msg !== 'string' || msg.length > MAX_MESSAGE) return;
     const id = this.guestId(ws);
     if (id) {
