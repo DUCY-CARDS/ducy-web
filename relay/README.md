@@ -12,6 +12,7 @@ only thing it stores is the queue below.
 | guest | `data` | `{from, data}` to the host |
 | (relay) | | `{from, event: 'open' \| 'close'}` to the host when a guest connects or drops |
 | (relay) | | `{type: 'host_gone'}` to guests when the host drops (they reconnect once it's back) |
+| either | `{type: 'ping', t}` | `{type: 'pong', t}` back to the sender, never forwarded or queued: the host's heartbeat. While its pings go unanswered (or its socket is down) the host stops its tables' clocks, so an outage doesn't time out or fold anyone |
 
 Connect to `/room/<CODE>?role=host` or `/room/<CODE>?role=guest&id=<client id>`,
 where the code looks like `ABCD-EFGH`. Close codes: 4000 bad request, 4001 the

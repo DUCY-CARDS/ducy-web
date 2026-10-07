@@ -131,11 +131,14 @@ function startHosting() {
   if (!club || hostNet) return;
   startTables();
   hostNet = connect(club.code, 'host', '', {
-    onOpen() { hostOnline = true; render(); },
+    // The relay tells us again who's connected.
+    onOpen() { hostOnline = true; online.clear(); render(); },
     onMessage: hostMessage,
     onStatus(s) { hostOnline = !s; render(); },
-    onFail(reason) { hostNet = null; hostOnline = false; note = reason; render(); },
-  }, {retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
+    onFail(reason) { hostNet = null; hostOnline = false; tableHost?.setLink(false); note = reason; render(); },
+    // Tables stop their clocks while the relay can't be reached (club-host.js).
+    onHealth(ok) { tableHost?.setLink(ok); render(); },
+  }, {heartbeat: true, persistent: true, retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
 }
 
 // The club's tables (#68). The page opening again means any tables that were
@@ -154,6 +157,7 @@ function startTables() {
       sendToPlayer(account(club, id, n ? n - 1 : Infinity));
     },
     tablesChanged: () => { broadcastTables(); render(); },
+    online: id => online.has(id),
     onHand: (tid, view) => {
       const t = tableById(club, tid);
       storeHand(handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'}),
@@ -173,8 +177,8 @@ function broadcastTables() {
 
 async function hostMessage(msg) {
   if (!msg || !msg.from) return;
-  if (msg.event === 'open') { online.add(msg.from); return; }
-  if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); return; }
+  if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); return; }
+  if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); tableHost?.presence(msg.from); return; }
   if (!('data' in msg)) return;
   const r = await hostReceive(club, verifier, msg.data);
   if (msg.queued) hostNet?.send({ack: msg.queued});
@@ -522,7 +526,7 @@ function connectMembership(mem) {
       mem.error = /No table/.test(reason) ? 'The host isn’t online, and this relay can’t hold your request. Try again when the host is online.' : reason;
       render();
     },
-  }, {queue: true});
+  }, {queue: true, persistent: true});
 }
 
 function joinFromInvite(name) {
@@ -819,10 +823,12 @@ function hostHtml() {
   }
   const pending = membersByStatus(club, 'pending');
   const members = membersByStatus(club, 'member');
-  const badge = hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  const stalled = hostOnline && hostNet && !hostNet.healthy();
+  const badge = stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
   let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${hostOnline ? ' on' : ''}">${badge}</span>`;
   if (!hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
   h += '</div>';
+  if (hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
   h += `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
   h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';

@@ -3,6 +3,7 @@
 //   npm install && node dev-server.mjs [port]     (default 8787)
 // Then open the page with ?relay=ws://localhost:8787
 import { WebSocketServer } from 'ws';
+import { pingReply } from './src/worker.js';
 
 const CODE = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
@@ -69,6 +70,8 @@ wss.on('connection', (ws, req) => {
     for (const q of room.queued) send(ws, {from: q.from, data: q.data, queued: q.n});
     ws.on('message', data => {
       if (!allow(ws, HOST_RATE, HOST_BURST)) return ws.close(4008, 'too many messages');
+      const pong = pingReply(String(data));
+      if (pong) return ws.send(pong);
       let msg;
       try { msg = JSON.parse(data); } catch { return; }
       if (msg && typeof msg.to === 'string') { const g = room.guests.get(msg.to); if (g) send(g.ws, msg.data); }
@@ -96,6 +99,8 @@ wss.on('connection', (ws, req) => {
     else send(ws, {type: 'host_away'});
     ws.on('message', data => {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
+      const pong = pingReply(String(data));
+      if (pong) return ws.send(pong);
       if (room.host) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }

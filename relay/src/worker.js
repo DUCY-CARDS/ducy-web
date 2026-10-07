@@ -14,6 +14,8 @@
 // {from, data, queued: n}; the host sends {ack: n} to delete each one. Queued
 // guests get {type: 'host_back'} when the host arrives.
 //
+// Heartbeat: {type: "ping", t} from anyone is answered with {type: "pong", t}.
+//
 // Close codes: 4000 bad request, 4001 the room already has a host, 4002 the
 // host left, 4004 no such table, 4008 sending too fast, 4009 replaced by a newer connection with the
 // same id, 4029 the room is full.
@@ -39,6 +41,18 @@ function allow(ws, rate, burst, now = Date.now()) {
   ws.serializeAttachment(b);
   return true;
 }
+
+// {type: 'ping', t} → the {type: 'pong', t} reply, or null for anything else.
+export function pingReply(msg) {
+  if (typeof msg !== 'string' || msg.length > 100 || !msg.includes('"ping"')) return null;
+  try {
+    const m = JSON.parse(msg);
+    return m?.type === 'ping' ? JSON.stringify({type: 'pong', t: m.t ?? null}) : null;
+  } catch {
+    return null;
+  }
+}
+
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
 
@@ -127,6 +141,10 @@ export class Room {
     const host = this.state.getTags(ws).includes('host');
     if (!allow(ws, host ? HOST_RATE : RATE, host ? HOST_BURST : BURST)) { ws.close(4008, 'too many messages'); return; }
     if (typeof msg !== 'string' || msg.length > MAX_MESSAGE) return;
+    // A heartbeat from either side: answered here, never forwarded or queued,
+    // so a host can tell its link to the relay is alive.
+    const pong = pingReply(msg);
+    if (pong) { ws.send(pong); return; }
     const id = this.guestId(ws);
     if (id) {
       const host = this.host();
