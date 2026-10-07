@@ -861,5 +861,6 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .pl-chip-acts .tr-btn { padding: 4px 12px; font-size: 13px; }
 .pl-chip-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pl-chip-ask .pl-text { width: 110px; }
+.pl-pid { font-family: var(--font-data); font-size: 13px; letter-spacing: 0.06em; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg); user-select: all; }
 .pl-chip-ask .tr-btn { padding: 4px 12px; font-size: 13px; }
 
