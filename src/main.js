@@ -4,6 +4,7 @@ import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 import { openPlay, closePlay, playOpen } from './play.js';
+import { openClubs, closeClubs } from './clubs.js';
 
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
@@ -1749,14 +1750,17 @@ function loadFromHash() {
 // engine, so it's set up before the WASM load below; the bot table loads it.
 // `shortcut` opens the bot table straight into a preset game (see openPlay).
 function setMode(mode, shortcut) {
-  const trainer = mode === 'trainer', play = mode === 'play';
+  const trainer = mode === 'trainer', play = mode === 'play', clubs = mode === 'clubs';
   document.body.classList.toggle('mode-trainer', trainer);
   document.body.classList.toggle('mode-play', play);
+  document.body.classList.toggle('mode-clubs', clubs);
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
   if (play) openPlay(document.getElementById('play'), shortcut);
   else closePlay();
+  if (clubs) openClubs(document.getElementById('clubs'));
+  else closeClubs();
 }
 
 document.querySelector('.mode-tabs').addEventListener('click', e => {
@@ -1778,13 +1782,20 @@ function openShortcut() {
 window.addEventListener('hashchange', () => {
   if (location.hash === '#trainer') { setMode('trainer'); return; }
   if (location.hash === '#play') { setMode('play'); return; }
+  if (location.hash === '#clubs') { setMode('clubs'); return; }
   if (location.hash === '#codedoug') { openShortcut(); return; }
   setMode('equity');
   loadFromHash(); render(); updateGameUI();
 });
 
+// A club invite opens #clubs even if the #clubs on the end of the link was
+// lost (some apps cut links at the #).
+const q = new URLSearchParams(location.search);
+if (q.has('club') && q.has('invite') && location.hash !== '#clubs') history.replaceState(null, '', location.pathname + location.search + '#clubs');
+
 if (location.hash === '#trainer') setMode('trainer');
 else if (location.hash === '#play') setMode('play');
+else if (location.hash === '#clubs') setMode('clubs');
 else if (location.hash === '#codedoug') openShortcut();
 
 // Init

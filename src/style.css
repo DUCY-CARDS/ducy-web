@@ -710,6 +710,29 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .play { display: none; }
 body.mode-play .play { display: block; }
 body.mode-play :is(.toolbar, .table-wrap) { display: none; }
+.clubs { display: none; }
+body.mode-clubs .clubs { display: block; }
+body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
+.cl-wrap { max-width: 760px; }
+.cl-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.cl-card h2 { font-size: 16px; color: var(--fg-strong); margin: 0; }
+.cl-card h3 { font-size: 13px; color: var(--fg); margin: 6px 0 0; }
+.cl-invite { border-color: var(--teal); }
+.cl-title { display: flex; align-items: center; gap: 10px; }
+.cl-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg-inset); color: var(--fg-muted); }
+.cl-badge.on { background: var(--teal); color: #fff; }
+.cl-link { flex: 1; min-width: 0; }
+.cl-link .pl-text { flex: 1; min-width: 0; width: auto; font-size: 12px; }
+.cl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.cl-list li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.cl-list li:first-child { border-top: 0; }
+.cl-list code { font-family: var(--font-data); font-size: 12px; color: var(--fg-muted); }
+.cl-name { font-weight: 600; color: var(--fg-strong); }
+.cl-acts { margin-left: auto; display: flex; gap: 6px; }
+.cl-status { color: var(--fg-muted); }
+.cl-err { flex-basis: 100%; font-size: 12px; }
+.cl-status.cl-member { color: var(--teal); font-weight: 600; }
+.cl-status.cl-declined, .cl-status.cl-removed, .cl-status.cl-bad_invite { color: var(--red, #c0392b); }
 .pl-wrap { max-width: 980px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .pl-head h1 { font-size: 22px; color: var(--fg-strong); margin: 0 0 4px; }
 .pl-head p, .pl-meta { color: var(--fg-muted); font-size: 13px; margin: 0; }
