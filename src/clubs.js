@@ -21,6 +21,8 @@ import {
 } from './club-tables.js';
 import { createTableHost } from './club-host.js';
 import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
+import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
+import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { joinTableVia } from './play.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
@@ -122,6 +124,11 @@ function startTables() {
       sendToPlayer(account(club, id, n ? n - 1 : Infinity));
     },
     tablesChanged: () => { broadcastTables(); render(); },
+    onHand: (tid, view) => {
+      const t = tableById(club, tid);
+      storeHand(handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'}),
+        {days: club.keepDays ?? HOST_KEEP_DAYS});
+    },
   });
   for (const t of openTables(club)) {
     if (t.status === 'open') tableHost.start(t);
@@ -457,6 +464,147 @@ async function setName(name) {
   render();
 }
 
+// ---- hand history (#71) and the replayer (#72) ----
+
+const KEEP_KEY = 'ducyKeepHands';
+const keepHands = () => { try { return Number(localStorage.getItem(KEEP_KEY)) || PLAYER_KEEP_HANDS; } catch { return PLAYER_KEEP_HANDS; } };
+const handLists = new Map(); // `${club}|${who}` → records, newest first (loaded on demand)
+let historyOpen = new Set(); // which history sections are open: `${club}|${who}`
+let historyTable = {}; // `${club}|${who}` → table filter ('' for all)
+let replay = null; // {rec, frames, i, playing}
+
+async function storeHand(rec, keep) {
+  try {
+    await saveHand(rec);
+    await prune(rec.club, rec.who, keep);
+    if (historyOpen.has(`${rec.club}|${rec.who}`)) await loadHands(rec.club, rec.who);
+  } catch (e) {
+    console.warn('hand history:', e);
+  }
+}
+
+async function loadHands(code, who) {
+  try {
+    handLists.set(`${code}|${who}`, await listHands(code, who));
+  } catch (e) {
+    console.warn(e);
+    handLists.set(`${code}|${who}`, []);
+  }
+  render();
+}
+
+function toggleHistory(code, who) {
+  const k = `${code}|${who}`;
+  if (historyOpen.has(k)) historyOpen.delete(k);
+  else { historyOpen.add(k); loadHands(code, who); }
+  render();
+}
+
+const SUIT = {s: '♠', h: '♥', d: '♦', c: '♣'};
+const cardSpan = c => (c ? `<span class="cl-card s-${c[1]}">${esc(c[0])}${SUIT[c[1]] || ''}</span>` : '<span class="cl-card back"></span>');
+
+// A club's stored hands for `who`, with a table filter, as a list to replay.
+function handsHtml(code, who, label) {
+  const k = `${code}|${who}`;
+  const isOpen = historyOpen.has(k);
+  let h = `<div class="cl-hands"><button class="link-btn" data-cl="hands" data-code="${esc(code)}" data-who="${esc(who)}">${isOpen ? '▾' : '▸'} ${esc(label)}</button>`;
+  if (!isOpen) return h + '</div>';
+  const all = handLists.get(k);
+  if (!all) return h + '<span class="pl-meta">Loading…</span></div>';
+  const tables = [...new Map(all.map(r => [r.table, r.tableName])).entries()];
+  const filter = historyTable[k] || '';
+  const rows = all.filter(r => !filter || r.table === filter);
+  if (tables.length > 1) {
+    h += `<select class="pl-text cl-handfilter" data-handfilter="${esc(k)}"><option value="">All tables</option>${tables.map(([id, n]) => `<option value="${esc(id)}"${id === filter ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+  }
+  if (!rows.length) return h + '<p class="pl-meta">No hands yet.</p></div>';
+  h += '<ul class="cl-list cl-handlist">';
+  for (const r of rows.slice(0, 100)) {
+    const mine = r.who !== 'host' ? r.seats[0] : null;
+    h += `<li><span class="pl-meta">${new Date(r.at).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}</span>`;
+    h += `<span>${esc(r.tableName)} #${r.hand}</span><span class="cl-chips">pot ${chips(r.pot)}</span>`;
+    h += mine ? `<span class="${mine.net > 0 ? 'cl-up' : mine.net < 0 ? 'cl-down' : 'pl-meta'}">${mine.net > 0 ? '+' : ''}${chips(mine.net)}</span>` : `<span class="pl-meta">${esc(summary(r))}</span>`;
+    h += `<span class="cl-acts"><button class="btn-small" data-cl="replay" data-id="${esc(r.id)}">Replay</button></span></li>`;
+  }
+  return h + '</ul></div>';
+}
+
+// Win/loss per table session (from the ledger) and totals.
+function resultsHtml(entries, names = null, tableNames = {}) {
+  const sessions = tableSessions(entries);
+  if (!sessions.length) return '';
+  const totals = totalsByMember(sessions);
+  const name = id => (names ? names[id] || id : 'You');
+  let h = '<details class="cl-history"><summary>Results by table session</summary>';
+  if (names) {
+    h += '<ul class="cl-results">' + Object.entries(totals).sort((a, b) => b[1] - a[1])
+      .map(([id, n]) => `<li><span>${esc(name(id))}</span><span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span></li>`).join('') + '</ul>';
+  }
+  h += '<ul>';
+  for (const s of sessions.slice(0, 100)) {
+    h += `<li><span class="pl-meta">${when(s.start)}</span> ${names ? `${esc(name(s.member))} · ` : ''}${esc(tableNames[s.table] || 'table')}: in ${chips(s.put)}${s.open ? ', still playing' : `, out ${chips(s.took)} → <strong class="${s.net > 0 ? 'cl-up' : s.net < 0 ? 'cl-down' : ''}">${s.net > 0 ? '+' : ''}${chips(s.net)}</strong>`}</li>`;
+  }
+  return h + '</ul></details>';
+}
+
+async function openReplay(id) {
+  const rec = await getHand(id);
+  if (!rec) return;
+  replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
+  render();
+}
+
+function stepReplay(to) {
+  if (!replay) return;
+  replay.i = Math.max(0, Math.min(replay.frames.length - 1, to));
+  render();
+}
+
+function toggleReplayPlay() {
+  if (!replay) return;
+  if (replay.playing) { clearInterval(replay.playing); replay.playing = null; render(); return; }
+  if (replay.i >= replay.frames.length - 1) replay.i = 0;
+  replay.playing = setInterval(() => {
+    if (!replay || replay.i >= replay.frames.length - 1) { clearInterval(replay?.playing); if (replay) replay.playing = null; render(); return; }
+    stepReplay(replay.i + 1);
+  }, 900);
+  render();
+}
+
+function closeReplay() {
+  if (replay?.playing) clearInterval(replay.playing);
+  replay = null;
+  render();
+}
+
+function replayHtml() {
+  const {rec, frames, i} = replay;
+  const f = frames[i];
+  const starts = streetStarts(frames);
+  let h = '<div class="cl-replay-bg" data-cl="replay-close"></div><div class="cl-replay" role="dialog" aria-label="Hand replay">';
+  h += `<div class="cl-replay-head"><b>${esc(rec.tableName)} · hand ${rec.hand}</b><span class="pl-meta">${new Date(rec.at).toLocaleString()} · blinds ${rec.sb}/${rec.bb}</span><button class="link-btn" data-cl="replay-close">Close</button></div>`;
+  h += `<div class="cl-replay-board">${[0, 1, 2, 3, 4].map(k => (f.board[k] ? cardSpan(f.board[k]) : '<span class="cl-card slot"></span>')).join('')}<span class="cl-chips">Pot ${chips(f.pot)}</span></div>`;
+  h += '<ul class="cl-replay-seats">';
+  f.seats.forEach((s, k) => {
+    if (!s.inHand) return;
+    const btn = k === rec.button ? ' <span class="pl-meta">(D)</span>' : '';
+    // Cards the viewer saw: their own, and any shown down (only at the end).
+    const shownNow = s.cards && (rec.who !== 'host' && k === 0 || i === frames.length - 1);
+    const cards = s.cards && shownNow ? s.cards.map(cardSpan).join('') : new Array(rec.holeCards).fill(null).map(cardSpan).join('');
+    h += `<li class="${s.folded ? 'folded' : ''}${f.event?.seat === k ? ' acting' : ''}"><span class="cl-name">${esc(s.name)}${btn}</span><span class="cl-hole">${cards}</span>`;
+    h += `<span class="cl-chips">${chips(s.stack)}</span>${s.bet ? `<span class="cl-bet">bet ${chips(s.bet)}</span>` : ''}${s.folded ? '<span class="pl-meta">folded</span>' : ''}${s.allIn ? '<span class="pl-meta">all-in</span>' : ''}</li>`;
+  });
+  h += '</ul>';
+  h += `<p class="cl-replay-text">${esc(f.text)}</p>`;
+  h += '<div class="cl-replay-controls">';
+  h += `<button class="btn-small" data-cl="replay-to" data-i="0" title="Start">⏮</button><button class="btn-small" data-cl="replay-to" data-i="${i - 1}"${i ? '' : ' disabled'} title="Back (←)">◀</button>`;
+  h += `<button class="btn-small primary" data-cl="replay-play">${replay.playing ? 'Pause' : 'Play'}</button>`;
+  h += `<button class="btn-small" data-cl="replay-to" data-i="${i + 1}"${i < frames.length - 1 ? '' : ' disabled'} title="Forward (→)">▶</button><button class="btn-small" data-cl="replay-to" data-i="${frames.length - 1}" title="End">⏭</button>`;
+  h += `<span class="pl-meta">${i + 1}/${frames.length}</span>`;
+  h += STREETS.filter(s => s in starts).map(s => `<button class="cc-btn${f.street === s ? ' on' : ''}" data-cl="replay-to" data-i="${starts[s]}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('');
+  return h + '</div></div>';
+}
+
 // ---- playing at a club table ----
 
 // Sits down at a club table: the #play page draws it (play.js), and its
@@ -474,6 +622,11 @@ function sitAt(code, table) {
   }, {
     label: `${mem.name} · ${t.name}`,
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = 'clubs'; },
+    // Each hand you played goes in your hand history (#71), as you saw it.
+    onHand: view => {
+      if (view.seats[0]?.sitting_out || view.seats[0]?.empty) return;
+      storeHand(handRecord({club: code, table, tableName: t.name, game: t.game, view, who: me.id}), {keep: keepHands()});
+    },
   });
   location.hash = 'play';
 }
@@ -517,8 +670,12 @@ function render() {
   if (invite) h += inviteHtml();
   h += hostHtml();
   h += membershipsHtml();
+  if (memberships.length) {
+    h += `<p class="pl-meta">Keep your last ${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-cl="keep-hands" data-n="${n}">${n}</button>`).join(' ')} hands in each club.</p>`;
+  }
   h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(me.id)}</code>. Back it up from Play → Play with friends.</p>`;
   h += relayHtml();
+  if (replay) h += replayHtml();
   h += '</div>';
   // Messages arriving redraw the page; keep what the host is typing in an open form.
   const typing = root.querySelector('form[data-chipform]');
@@ -621,6 +778,13 @@ function hostHtml() {
   h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
   h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
   h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
+  // Hand history and results (#71): the host's hands show no hidden cards.
+  h += '<h3>History</h3>';
+  h += handsHtml(club.code, 'host', 'Hands at your tables');
+  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+  const tableNames = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
+  h += resultsHtml(club.chips.ledger, names, tableNames);
+  h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   if (club.log?.length) {
     h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
     for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
@@ -685,6 +849,9 @@ function accountHtml(m, hostHere) {
     }
     h += '</ul>';
   } else h += '<p class="pl-meta">No tables open right now.</p>';
+  h += handsHtml(m.code, me.id, 'Your hands');
+  const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
+  h += resultsHtml(m.entries || [], null, tableNames);
   if (m.entries?.length) {
     h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
     for (const e of [...m.entries].reverse().slice(0, 50)) {
@@ -825,6 +992,14 @@ async function onClick(e) {
   else if (act === 'a-new-table') { tableForm = b.dataset.code; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'close-table') closeTable(b.dataset.table);
   else if (act === 'watch') watchTable(b.dataset.table);
+  // Hand history and the replayer.
+  else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
+  else if (act === 'replay') openReplay(b.dataset.id);
+  else if (act === 'replay-to') stepReplay(Number(b.dataset.i));
+  else if (act === 'replay-play') toggleReplayPlay();
+  else if (act === 'replay-close') closeReplay();
+  else if (act === 'keep-days') { club.keepDays = Number(b.dataset.days); saveClub(); prune(club.code, 'host', {days: club.keepDays}).then(() => loadHands(club.code, 'host')); render(); }
+  else if (act === 'keep-hands') { try { localStorage.setItem(KEEP_KEY, b.dataset.n); } catch {} for (const m of memberships) prune(m.code, me.id, {keep: keepHands()}); render(); }
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
   else if (act === 'to-table') location.hash = 'play';
   else if (act === 'ask') {
@@ -834,6 +1009,22 @@ async function onClick(e) {
     if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter a whole number of chips above 0.'); return; }
     sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
   } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
+}
+
+// The replayer's keys: ← → step, Space plays, Esc closes.
+function onDocKey(e) {
+  if (!replay || !open || e.target.closest?.('input, select, textarea')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(replay.i + 1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(replay.i - 1); }
+  else if (e.key === ' ') { e.preventDefault(); toggleReplayPlay(); }
+  else if (e.key === 'Escape') closeReplay();
+}
+
+function onFilter(e) {
+  const k = e.target.dataset?.handfilter;
+  if (k == null) return;
+  historyTable[k] = e.target.value;
+  render();
 }
 
 function onKey(e) {
@@ -885,6 +1076,8 @@ export async function openClubs(el) {
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
+    root.addEventListener('change', onFilter);
+    document.addEventListener('keydown', onDocKey);
     window.addEventListener('pagehide', disconnectAll);
     window.addEventListener('storage', onStorage);
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });

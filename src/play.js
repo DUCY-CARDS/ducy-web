@@ -337,6 +337,9 @@ function show(snap) {
   }
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
   botToAct = snap.botToAct;
+  // A finished hand, for a club player's hand history (#71).
+  const hn = num(snap.state.hand_number);
+  if (handHook && snap.state.complete && hn && hn !== hookedHand) { hookedHand = hn; handHook(snap.state); }
   recordStats();
   startReview();
   if (state.complete || state.seats[0].folded) foldQueued = false;
@@ -577,10 +580,12 @@ function joinTable() {
 let leaveHook = null;
 // With `watch`, only watch the table (a club host, #73): no seat, nothing to
 // act on, and the hands aren't added to your stats.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false} = {}) {
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
   watching = watch;
+  handHook = onHand;
+  hookedHand = 0;
   leaveHook = onLeave;
   const mine = session;
   net = open({
@@ -593,6 +598,7 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false} =
   startClock();
 }
 let watching = false;
+let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 
 function startGuest(code) {
   mode = 'guest';
@@ -672,6 +678,7 @@ function leaveTable(note = '') {
   clearInterval(clockTimer);
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
   watching = false;
+  handHook = null;
   net?.close();
   net = null;
   session++;
