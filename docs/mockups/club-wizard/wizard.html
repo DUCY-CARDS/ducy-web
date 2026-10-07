@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en" class="four-color">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Club wizard mockups</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="../../../src/style.css">
+<style>
+  /* Mockup-only styles for the wizard proposal (not in the app). */
+  .screen { display: none; }
+  .screen.on { display: block; }
+  .wz { max-width: 560px; margin: 0 auto; }
+  .wz-steps { display: flex; gap: 6px; margin: 0 0 14px; font-size: 12px; color: var(--fg-muted); }
+  .wz-steps span { flex: 1; border-top: 3px solid var(--border); padding-top: 6px; }
+  .wz-steps span.done { border-color: var(--teal); color: var(--fg); }
+  .wz-steps span.now { border-color: var(--teal); color: var(--fg-strong); font-weight: 600; }
+  .wz h2 { font-size: 22px !important; }
+  .wz .lead { font-size: 15px; color: var(--fg); margin: 0; }
+  .wz input.big { font-size: 17px; padding: 10px 12px; width: 100%; box-sizing: border-box; }
+  .wz-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .choice { border: 1.5px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--bg-raised); cursor: pointer; text-align: left; font: inherit; color: var(--fg); }
+  .choice b { display: block; color: var(--fg-strong); font-size: 14px; }
+  .choice small { color: var(--fg-muted); font-size: 12px; }
+  .choice.on { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-faint); }
+  .fieldlabel { font-size: 12px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; margin: 4px 0 -2px; }
+  .more { border-top: 1px dashed var(--border); padding-top: 10px; font-size: 13px; color: var(--fg-muted); display: flex; justify-content: space-between; align-items: center; }
+  .more a, .linkish { color: var(--teal); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .linkrow { display: flex; gap: 6px; }
+  .linkrow input { flex: 1; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 0 0 12px; }
+  .tabs > span { padding: 8px 14px; font-size: 14px; color: var(--fg-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs > span.on { color: var(--fg-strong); border-color: var(--teal); font-weight: 600; }
+  .tabs .count { background: var(--red); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 4px; }
+  .attn { border-left: 3px solid var(--teal); padding-left: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; }
+  .badge-n { background: var(--red); color: #fff; border-radius: 9px; padding: 0 7px; font-size: 11px; margin-left: 6px; vertical-align: middle; }
+  .tcard { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+  .setgroup { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+  .setgroup:last-child { border-bottom: none; }
+  .setgroup h3 { margin: 0 !important; }
+  .big-num { font-family: var(--font-data); font-size: 28px; font-weight: 700; color: var(--fg-strong); }
+  .wait { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 4px var(--teal-faint); }
+  .danger { color: var(--red) !important; }
+  .note { font-size: 12px; color: var(--fg-muted); }
+  @media (max-width: 500px) { .wz { padding: 0 16px; } }
+</style>
+</head>
+<body class="mode-clubs">
+<div class="topbar">
+  <div class="wordmark">DUCY</div>
+  <nav class="mode-tabs"><button class="mode-tab">Equity</button><button class="mode-tab">Trainer</button><button class="mode-tab">Play</button><button class="mode-tab on">Clubs</button></nav>
+</div>
+<p class="beta-notice"><strong>Beta.</strong> This part of ducy is still in development and may change.</p>
+<main class="clubs">
+
+<!-- ===== Create: step 1 ===== -->
+<section class="screen" id="create-1"><div class="wz">
+  <div class="wz-steps"><span class="now">1 · Name</span><span>2 · First table</span><span>3 · Invite</span></div>
+  <section class="cl-card">
+    <h2>Start a club</h2>
+    <p class="lead">Run a regular game for your friends. You approve who joins and hand out the chips; chips are play money.</p>
+    <div class="fieldlabel">Club name</div>
+    <input class="pl-text big" value="Friday Night Game">
+    <div class="wz-nav"><span class="note">You can rename it later.</span><button class="tr-start">Next</button></div>
+  </section>
+  <p class="pl-meta">Got an invite link? Just open it. · <span class="linkish">Clubs you’ve joined</span></p>
+</div></section>
+
+<!-- ===== Create: step 2 ===== -->
+<section class="screen" id="create-2"><div class="wz">
+  <div class="wz-steps"><span class="done">1 · Name</span><span class="now">2 · First table</span><span>3 · Invite</span></div>
+  <section class="cl-card">
+    <h2>Your first table</h2>
+    <div class="fieldlabel">Game</div>
+    <div class="choices">
+      <button class="choice on"><b>Hold’em</b><small>No-limit</small></button>
+      <button class="choice"><b>Omaha</b><small>Pot-limit, 4 cards</small></button>
+      <button class="choice"><b>Omaha 5</b><small>Pot-limit, 5 cards</small></button>
+      <button class="choice"><b>Omaha 6</b><small>Pot-limit, 6 cards</small></button>
+    </div>
+    <div class="fieldlabel">Blinds</div>
+    <div class="choices">
+      <button class="choice on"><b>1 / 2</b><small>buy in 80–200</small></button>
+      <button class="choice"><b>2 / 5</b><small>buy in 200–500</small></button>
+      <button class="choice"><b>5 / 10</b><small>buy in 400–1,000</small></button>
+      <button class="choice"><b>Other</b><small>set your own</small></button>
+    </div>
+    <div class="fieldlabel">Seats</div>
+    <div class="choices">
+      <button class="choice"><b>Heads-up</b><small>2</small></button>
+      <button class="choice on"><b>6-max</b><small>6</small></button>
+      <button class="choice"><b>Full ring</b><small>9</small></button>
+    </div>
+    <div class="more"><span>Buy-in 40–100 big blinds · 30 s to act · seat kept 10 min when sitting out</span><a>Change</a></div>
+    <div class="wz-nav"><span class="linkish">Back</span><span><span class="linkish" style="margin-right:14px">Skip for now</span><button class="tr-start">Next</button></span></div>
+  </section>
+</div></section>
+
+<!-- ===== Create: step 3 ===== -->
+<section class="screen" id="create-3"><div class="wz">
+  <div class="wz-steps"><span class="done">1 · Name</span><span class="done">2 · First table</span><span class="now">3 · Invite</span></div>
+  <section class="cl-card">
+    <h2>Invite your players</h2>
+    <p class="lead">Send this link to the people you want in <b>Friday Night Game</b>. You’ll approve each one, then give them chips.</p>
+    <div class="linkrow"><input class="pl-text" readonly value="https://ducy.cards/?club=ATSX-ES68&invite=…"><button class="btn-small primary">Copy link</button><button class="btn-small">Share…</button></div>
+    <p class="note">Keep this tab open while you host: the club runs in your browser. Anyone who asks while you’re away will be waiting when you come back.</p>
+    <div class="wz-nav"><span class="linkish">Back</span><button class="tr-start">Go to my club</button></div>
+  </section>
+</div></section>
+
+<!-- ===== Host: club home ===== -->
+<section class="screen" id="host-home">
+  <section class="cl-card">
+    <div class="cl-title"><h2>Friday Night Game</h2><span class="cl-badge on">Open</span><span class="grow"></span><button class="btn-small">Copy invite link</button></div>
+    <div class="tabs"><span class="on">Home<span class="badge-n">2</span></span><span>Members (6)</span><span>Chips</span><span>History</span><span>Settings</span></div>
+    <div class="attn">
+      <h3 style="margin:0">Waiting for you<span class="badge-n">2</span></h3>
+      <div class="row"><b>Ann</b><span class="pl-meta grow">asked to join · 2 min ago</span><button class="btn-small primary">Approve</button><button class="btn-small">Decline</button></div>
+      <div class="row"><b>Bob</b><span class="pl-meta grow">asks for 500 chips · “rebuy”</span><button class="btn-small primary">Give 500</button><button class="btn-small">Other amount</button><button class="btn-small">Decline</button></div>
+    </div>
+    <h3>Tables</h3>
+    <div class="tcard"><b>Main</b><span class="pl-meta grow">Hold’em · 1/2 · 4 of 6 seated · hand 37</span><button class="btn-small">Watch</button><button class="btn-small">⋯</button></div>
+    <div class="tcard"><b>PLO</b><span class="pl-meta grow">Omaha · 1/2 · 0 of 6 seated</span><button class="btn-small">Watch</button><button class="btn-small">⋯</button></div>
+    <div><button class="tr-start" style="font-size:14px;padding:8px 14px">New table</button></div>
+  </section>
+</section>
+
+<!-- ===== Host: new table (quick) ===== -->
+<section class="screen" id="host-table"><div class="wz">
+  <section class="cl-card">
+    <h2>New table</h2>
+    <div class="fieldlabel">Game</div>
+    <div class="choices"><button class="choice on"><b>Hold’em</b></button><button class="choice"><b>Omaha</b></button><button class="choice"><b>Omaha 5</b></button><button class="choice"><b>Omaha 6</b></button></div>
+    <div class="fieldlabel">Blinds</div>
+    <div class="choices"><button class="choice on"><b>1 / 2</b></button><button class="choice"><b>2 / 5</b></button><button class="choice"><b>5 / 10</b></button><button class="choice"><b>Other</b></button></div>
+    <div class="fieldlabel">Seats</div>
+    <div class="choices"><button class="choice"><b>2</b></button><button class="choice on"><b>6</b></button><button class="choice"><b>9</b></button></div>
+    <details open><summary class="linkish" style="font-size:13px">More options</summary>
+      <div class="pl-row" style="margin-top:8px"><span class="pl-label">Name</span><input class="pl-text" value="Table 2"></div>
+      <div class="pl-row"><span class="pl-label">Buy-in</span><input class="pl-text" style="width:70px" value="40"> to <input class="pl-text" style="width:70px" value="100"> <span class="pl-desc">big blinds</span></div>
+      <div class="pl-row"><span class="pl-label">Time to act</span><select class="pl-text" style="width:100px"><option>30 s</option></select></div>
+      <div class="pl-row"><span class="pl-label">Sitting out</span><select class="pl-text" style="width:100px"><option>10 min</option></select><span class="pl-desc">then the seat is given up</span></div>
+    </details>
+    <div class="wz-nav"><span class="linkish">Cancel</span><button class="tr-start">Open table</button></div>
+  </section>
+</div></section>
+
+<!-- ===== Host: settings ===== -->
+<section class="screen" id="host-settings">
+  <section class="cl-card">
+    <div class="cl-title"><h2>Friday Night Game</h2><span class="cl-badge on">Open</span></div>
+    <div class="tabs"><span>Home</span><span>Members (6)</span><span>Chips</span><span>History</span><span class="on">Settings</span></div>
+    <div class="setgroup"><h3>Club</h3>
+      <div class="pl-row"><span class="pl-label">Name</span><input class="pl-text" value="Friday Night Game"></div>
+      <div class="pl-row"><span class="pl-label">Invite link</span><button class="btn-small">Copy</button><button class="btn-small">Make a new link</button><span class="pl-desc">The old link stops working.</span></div>
+    </div>
+    <div class="setgroup"><h3>Table rules</h3>
+      <div class="pl-row"><span class="pl-label">Rathole</span><select class="pl-text" style="width:110px"><option>2 hours</option></select><span class="pl-desc">Come back to a table with at least what you left with, for this long.</span></div>
+      <div class="pl-row"><span class="pl-label">Sitting out</span><select class="pl-text" style="width:110px"><option>10 min</option></select><span class="pl-desc">Default for new tables, then the seat is given up.</span></div>
+    </div>
+    <div class="setgroup"><h3>History</h3>
+      <div class="pl-row"><span class="pl-label">Keep hands</span><select class="pl-text" style="width:110px"><option>7 days</option></select></div>
+    </div>
+    <div class="setgroup"><h3>This browser</h3>
+      <p class="pl-desc" style="margin:0">Your player ID <code>D6YAA-6VMFJ</code> · <span class="linkish">Back up</span> · Relay: ducy-relay (live)</p>
+    </div>
+    <div class="setgroup"><span class="linkish danger">Close this club…</span></div>
+  </section>
+</section>
+
+<!-- ===== Join: invite ===== -->
+<section class="screen" id="join-1"><div class="wz">
+  <div class="wz-steps"><span class="now">1 · Your name</span><span>2 · Approval</span><span>3 · Chips &amp; tables</span></div>
+  <section class="cl-card cl-invite">
+    <h2>Join Friday Night Game</h2>
+    <p class="lead"><b>Allen</b> invited you. Tell them who you are; they’ll let you in.</p>
+    <div class="fieldlabel">Your name</div>
+    <input class="pl-text big" value="Ann">
+    <div class="wz-nav"><span class="note">Allen sees your name and player ID.</span><button class="tr-start">Ask to join</button></div>
+  </section>
+  <p class="pl-meta">Not for you? <span class="linkish">Start your own club instead</span></p>
+</div></section>
+
+<!-- ===== Join: waiting ===== -->
+<section class="screen" id="join-2"><div class="wz">
+  <div class="wz-steps"><span class="done">1 · Your name</span><span class="now">2 · Approval</span><span>3 · Chips &amp; tables</span></div>
+  <section class="cl-card">
+    <h2>Request sent</h2>
+    <div class="wait"><span class="dot"></span>Waiting for Allen to approve you…</div>
+    <p class="note">Allen is online now. You can close this page: your request stays, and this page shows when you’re in.</p>
+  </section>
+</div></section>
+
+<!-- ===== Join: member home ===== -->
+<section class="screen" id="join-3"><div class="wz">
+  <section class="cl-card">
+    <div class="cl-title"><h2>Friday Night Game</h2><span class="cl-badge on">Host online</span><span class="grow"></span><span class="linkish" style="font-size:13px">⚙ Your settings</span></div>
+    <p class="lead">You’re in. Ask Allen for chips, then take a seat.</p>
+    <div class="row"><span class="big-num">0</span><span class="pl-meta grow">chips</span></div>
+    <div class="choices"><button class="choice"><b>200</b></button><button class="choice on"><b>500</b></button><button class="choice"><b>1,000</b></button><button class="choice"><b>Other</b></button></div>
+    <div class="row"><input class="pl-text grow" placeholder="Note to Allen (optional)"><button class="tr-start" style="font-size:14px;padding:8px 14px">Ask for 500 chips</button></div>
+    <h3>Tables</h3>
+    <div class="tcard"><b>Main</b><span class="pl-meta grow">Hold’em · 1/2 · buy in 80–200 · 4 of 6 seated</span><button class="btn-small primary" disabled>Sit</button></div>
+    <p class="note">Sit is available once you have chips.</p>
+    <details><summary class="linkish" style="font-size:13px">Your hands and results</summary></details>
+  </section>
+</div></section>
+
+<!-- ===== Player settings ===== -->
+<section class="screen" id="join-settings"><div class="wz">
+  <section class="cl-card">
+    <h2>Your settings</h2>
+    <div class="setgroup"><h3>You</h3>
+      <div class="pl-row"><span class="pl-label">Name</span><input class="pl-text" value="Ann"><span class="pl-desc">What hosts see.</span></div>
+      <div class="pl-row"><span class="pl-label">Player ID</span><code>B6UDG-4XDKR</code><button class="btn-small">Back up</button></div>
+    </div>
+    <div class="setgroup"><h3>Hand history</h3>
+      <div class="pl-row"><span class="pl-label">Keep</span><select class="pl-text" style="width:140px"><option>last 500 hands</option></select><span class="pl-desc">in each club</span></div>
+    </div>
+    <div class="setgroup"><h3>Clubs you’ve joined</h3>
+      <div class="row"><b>Friday Night Game</b><span class="pl-meta grow">member</span><span class="linkish danger" style="font-size:13px">Leave</span></div>
+    </div>
+    <p class="note">Connection: ducy-relay (live)</p>
+  </section>
+</div></section>
+
+</main>
+<script>
+  const id = location.hash.slice(1) || 'create-1';
+  document.getElementById(id)?.classList.add('on');
+</script>
+</body>
+</html>
