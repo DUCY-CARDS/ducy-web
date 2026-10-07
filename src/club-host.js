@@ -12,6 +12,12 @@
 //   chipsChanged(id)    a member's balance changed: send them their account
 //   tablesChanged()     seat counts or tables changed: tell members
 //   onHand(table, view) a hand finished (the host's view: no hidden cards)
+//   online(id)          whether a member is connected to the relay
+//
+// A table's clock stops while the host can't reach the relay (linkHealthy
+// false) or no one seated there is connected: no turn runs out, no one is
+// folded or sat out, no hand is dealt, until someone is back (an outage
+// shouldn't fold everyone).
 
 import { canJoin, chipsForTable, leftTable, limits, syncStacks, tableById } from './club-tables.js';
 
@@ -40,10 +46,30 @@ function call(op, ...args) {
 
 const num = v => Number(v);
 
-export function createTableHost({club, save, sendTable, chipsChanged, tablesChanged, onHand}) {
+export function createTableHost({club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true}) {
   const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
   const at = new Map(); // member id → table id
   const watchers = new Map(); // table id → Set(fn(update))
+  let linkOk = true;
+
+  // Stops or restarts table tid's clock to match who can be reached.
+  function syncClock(tid) {
+    const r = running.get(tid);
+    if (!r) return;
+    const stop = !linkOk || !r.players.some(p => online(p.client_id));
+    if (stop === !!r.stopped) return;
+    r.stopped = stop;
+    if (stop) for (const k of Object.keys(r.timers)) clear(r, k);
+    r.chain = r.chain.then(() => call('clockPause', tid, stop)).catch(e => console.warn(e));
+    // Restarted: the state's turn clock and next step set the timers again.
+    if (!stop) run(tid, 'state');
+  }
+
+  // The host's link to the relay is up (true) or down.
+  function setLink(ok) {
+    linkOk = ok;
+    for (const tid of running.keys()) syncClock(tid);
+  }
 
   // Calls fn with the table's spectator view now and after every change.
   // Returns a function that stops watching.
@@ -117,6 +143,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     // Save when chips moved or a hand ended, not on every tick.
     if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }
     if (before !== r.players.length) tablesChanged();
+    syncClock(tid);
     pace(tid, res);
     if (t.status === 'closing' && !r.players.length) drop(tid);
   }
@@ -126,7 +153,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
   function pace(tid, res) {
     const r = running.get(tid);
     const t = tableById(club(), tid);
-    if (!r || !t) return;
+    if (!r || !t || r.stopped) return;
     clear(r, 'tick');
     if (res.turnMsLeft != null) r.timers.tick = setTimeout(() => run(tid, 'tick'), num(res.turnMsLeft) + 50);
     if (res.botToAct) {
@@ -152,7 +179,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
       .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
       .catch(e => { console.warn(e); running.delete(t.id); });
     // The sit-out limit is checked on tick; tick regularly, not only on the turn clock.
-    r.sweep = setInterval(() => run(t.id, 'tick'), 5_000);
+    r.sweep = setInterval(() => { if (!r.stopped) run(t.id, 'tick'); }, 5_000);
     await r.chain;
   }
 
@@ -200,7 +227,13 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     if (tid) run(tid, 'disconnected', id);
   }
 
+  // A member's connection changed (clubs.js keeps who's online).
+  function presence(id) {
+    const tid = at.get(id);
+    if (tid) syncClock(tid);
+  }
+
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.players.length]));
 
-  return {start, close, handle, disconnected, seatedCounts, watch, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
+  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
 }

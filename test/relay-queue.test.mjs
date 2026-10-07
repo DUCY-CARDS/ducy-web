@@ -111,3 +111,18 @@ test('a connection sending too fast is closed (4008); others are unaffected', as
   h.ws.close();
   calm.ws.close();
 });
+
+test('pings are answered by the relay, never forwarded or queued', async () => {
+  const g = open('/room/FFFF-FFFF?role=guest&id=pinger&queue=1');
+  await g.ready;
+  assert.deepEqual(await g.next(), {type: 'host_away'});
+  g.send({type: 'ping', t: 7});
+  assert.deepEqual(await g.next(), {type: 'pong', t: 7});
+  const h = open('/room/FFFF-FFFF?role=host');
+  await h.ready;
+  assert.deepEqual(await h.next(), {from: 'pinger', event: 'open'});
+  h.send({type: 'ping', t: 1});
+  assert.deepEqual(await h.next(), {type: 'pong', t: 1}, 'nothing was queued, and the host gets its own pong');
+  g.ws.close();
+  h.ws.close();
+});

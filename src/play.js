@@ -116,6 +116,13 @@ let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
+// A hosted table's clock stops while the host can't reach the relay or none
+// of the people seated is connected, so an outage doesn't fold everyone:
+// no turn runs out and no hand is dealt until someone is back.
+let linkOk = false;
+const guestsOnline = new Set();
+let guestsSeated = [];
+let clockStopped = 0; // when the clock stopped (Date.now() ms), or 0
 let openSeats = 0;
 // The host's side of a friends table: who's in, chip requests, limits.
 let hostInfo = {playersIn: 0, chipRequests: [], buyIn: null, hostPendingChips: 0};
@@ -337,7 +344,7 @@ function show(snap) {
     // A newer state is already on screen (results can arrive out of order).
     if (snap.seq < shownSeq) { pace(); return; }
     shownSeq = snap.seq;
-    turnEnds = snap.turnMsLeft != null ? Date.now() + num(snap.turnMsLeft) : 0;
+    turnEnds = snap.turnMsLeft != null ? (clockStopped || Date.now()) + num(snap.turnMsLeft) : 0;
   }
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
   botToAct = snap.botToAct;
@@ -571,6 +578,8 @@ function guestIncoming(m) {
 function hostCall(op, ...args) {
   const p = hostChain.then(() => call(op, ...args)).then(r => {
     for (const m of r.out) sendToGuest(m.to, m.data);
+    guestsSeated = r.players || [];
+    syncHostClock();
     openSeats = r.openSeats;
     hostInfo = {
       playersIn: r.playersIn ?? 0,
@@ -582,6 +591,18 @@ function hostCall(op, ...args) {
   });
   hostChain = p.catch(() => {});
   return p;
+}
+
+// Stops or restarts the friends table's clock to match who can be reached.
+function syncHostClock() {
+  const stop = mode === 'host' && (!linkOk || (guestsSeated.length > 0 && !guestsSeated.some(p => guestsOnline.has(p.client_id))));
+  if (stop === !!clockStopped) return;
+  // The turn shown on screen resumes with the time it had left.
+  if (stop) clockStopped = Date.now();
+  else { if (turnEnds) turnEnds += Date.now() - clockStopped; clockStopped = 0; }
+  hostChain = hostChain.then(() => call('clockPause', 'host', stop)).catch(e => console.warn(e));
+  hold('offline', stop);
+  render();
 }
 
 // A host call that isn't the player's own request (a message, the clock).
@@ -613,23 +634,29 @@ async function hostTable() {
   foldQueued = false;
   const mine = session;
   e2eHost = {keys: newKeyPair(), guests: new Map()};
+  linkOk = false;
+  guestsOnline.clear();
+  guestsSeated = [];
+  clockStopped = 0;
   net = connect(room, 'host', null, {
-    onOpen() {},
+    // The relay tells us again who's connected.
+    onOpen() { if (mine === session) guestsOnline.clear(); },
     onMessage(m) {
       if (mine !== session) return;
-      if (m.event === 'open') sendHostKey(m.from);
-      else if (m.event === 'close') hostEvent('hostDisconnected', m.from);
+      if (m.event === 'open') { guestsOnline.add(m.from); syncHostClock(); sendHostKey(m.from); }
+      else if (m.event === 'close') { guestsOnline.delete(m.from); syncHostClock(); hostEvent('hostDisconnected', m.from); }
       else if (m.data) hostIncoming(m.from, m.data);
     },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
-  });
+    onHealth(ok) { if (mine !== session) return; linkOk = ok; syncHostClock(); },
+  }, {heartbeat: true, persistent: true});
   // The host starts with 100 BB, kept within the table's limits.
   const min = f.minBB * f.bb, max = f.maxBB * f.bb;
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
   request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
     .then(snap => { if (snap) show(snap); });
-  hostTimer = setInterval(() => { if (turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
+  hostTimer = setInterval(() => { if (!clockStopped && turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
   startClock();
 }
 
@@ -652,7 +679,9 @@ function joinTable() {
     onMessage(m) { if (mine === session) guestIncoming(m); },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
-  });
+    // Once in, keep trying through an outage: the host holds the seat and
+    // the hand waits (a wrong code still fails at once).
+  }, {persistent: true});
   render();
   startClock();
 }
@@ -758,7 +787,9 @@ function startClock() {
 }
 
 function clockText() {
-  return turnEnds ? Math.max(0, Math.ceil((turnEnds - Date.now()) / 1000)) + 's' : '';
+  if (!turnEnds) return '';
+  const left = Math.max(0, Math.ceil((turnEnds - (clockStopped || Date.now())) / 1000)) + 's';
+  return clockStopped ? left + ' (paused)' : left;
 }
 
 function leaveTable(note = '') {
@@ -766,6 +797,8 @@ function leaveTable(note = '') {
   cancelDeal();
   clearInterval(hostTimer);
   clearInterval(clockTimer);
+  clockStopped = 0;
+  holds.delete('offline');
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
   watching = false;
   handHook = null;
@@ -1075,6 +1108,7 @@ function netBarHtml() {
   if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
   else h += '</span>';
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
+  if (mode === 'host' && clockStopped) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
   return h;
 }
 

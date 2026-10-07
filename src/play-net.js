@@ -3,6 +3,7 @@
 // The relay knows nothing about poker; the host's tab runs the table.
 //   host  → relay: {to, data}           relay → host:  {from, data} | {from, event: 'open' | 'close'}
 //   guest → relay: data                  relay → guest: data | {type: 'host_gone'}
+//   either → relay: {type: 'ping', t}    relay → it:    {type: 'pong', t} (the heartbeat)
 
 const RELAY_KEY = 'ducyRelay';
 const CLIENT_KEY = 'ducyPlayClient';
@@ -86,18 +87,51 @@ export function clientId() {
 // With `retryInUse`, a host refused because the room already has one keeps
 // trying for a few seconds (after a reload the relay may not have noticed
 // the old connection close yet) before giving up with `inUse` as the reason.
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {queue = false, retryInUse = false, inUse = 'That table code is in use.'} = {}) {
+// With `heartbeat`, it pings the relay every few seconds and calls
+// onHealth(healthy) when the link's health changes: unhealthy while the
+// socket is down, or (once the relay has shown it answers pings) when
+// nothing has been heard for a while. A host pauses its tables while
+// unhealthy, so an outage doesn't time everyone out. With `persistent`, it
+// never gives up reconnecting (a host keeps its table through an outage).
+export const PING_MS = 5_000, SILENT_MS = 12_000;
+
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, retryInUse = false, inUse = 'That table code is in use.', heartbeat = false, persistent = false} = {}) {
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
+  let heard = 0, pongs = false, healthy = false, beat = null;
   const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '') + (queue ? '&queue=1' : '');
+  const setHealth = h => { if (h !== healthy) { healthy = h; onHealth(h); } };
+  // Healthy: the socket is open and, if the relay answers pings, we've heard
+  // from it recently. (A relay without pongs: the socket's state alone.)
+  const check = () => setHealth(!!ws && ws.readyState === 1 && (!pongs || Date.now() - heard < SILENT_MS));
+  if (heartbeat) {
+    beat = setInterval(() => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({type: 'ping', t: Date.now()}));
+      check();
+    }, PING_MS);
+  }
   const open = () => {
     ws = new WebSocket(url);
-    ws.onopen = () => { tries = 0; joined = true; onStatus(''); onOpen(); };
-    ws.onmessage = e => { try { onMessage(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
+    // onOpen first: it may reset what was known before the health change.
+    ws.onopen = () => { tries = 0; joined = true; heard = Date.now(); onStatus(''); onOpen(); check(); };
+    ws.onmessage = e => {
+      heard = Date.now();
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { console.warn(err); return; }
+      if (m?.type === 'pong') { pongs = true; check(); return; }
+      check();
+      try { onMessage(m); } catch (err) { console.warn(err); }
+    };
     ws.onclose = e => {
+      check();
       if (closed) return;
       // 4001: the room already has a host; 4004: no such table. After a drop
       // a guest keeps trying while the host comes back.
       // 4008: this page sent faster than the relay allows (#103).
+      if (persistent && e.code !== 4001 && e.code !== 4008 && !(e.code === 4004 && !joined)) {
+        onStatus('Reconnecting…');
+        retry = setTimeout(open, Math.min(30_000, 1000 * 2 ** tries++));
+        return;
+      }
       if ((e.code === 4001 && !(retryInUse && tries < 4)) || e.code === 4008 || (e.code === 4004 && !joined) || tries >= 6) {
         closed = true;
         onFail(e.code === 4001 ? inUse : e.code === 4004 ? 'No table with that code.'
@@ -111,6 +145,7 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail}, {
   open();
   return {
     send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
-    close() { closed = true; clearTimeout(retry); if (ws) ws.close(1000); },
+    close() { closed = true; clearTimeout(retry); clearInterval(beat); if (ws) ws.close(1000); },
+    healthy: () => healthy,
   };
 }

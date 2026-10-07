@@ -87,41 +87,60 @@ const ops = {
   loadGto: manifestUrl => loadGtoModel(manifestUrl),
   hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-    return host.state(Date.now()); // deal once the players are in
+    return host.state(now('host')); // deal once the players are in
   },
   // Friends: empty seats people take as they join, and real chips the host
   // hands out on request.
   hostFriends: (seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
+    clocks.delete('host');
     host = MultiTable.friends(seats, name, BigInt(hostChips), BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-    return host.state(Date.now());
+    return host.state(now('host'));
   },
-  hostApprove: seat => host.approveChips(seat, Date.now()),
-  hostDeny: seat => host.denyChips(seat, Date.now()),
-  hostChips: amount => host.hostChips(BigInt(amount), Date.now()),
-  hostRemove: seat => host.remove(seat, Date.now()),
-  hostNewHand: () => host.newHand(Date.now()),
-  hostAdvance: () => host.advance(Date.now()),
-  hostAct: (kind, amount) => host.act(kind, BigInt(amount), Date.now()),
-  hostHandle: (client, msg) => host.handle(client, msg, Date.now()),
-  hostDisconnected: client => host.disconnected(client, Date.now()),
-  hostTick: () => host.tick(Date.now()),
+  hostApprove: seat => host.approveChips(seat, now('host')),
+  hostDeny: seat => host.denyChips(seat, now('host')),
+  hostChips: amount => host.hostChips(BigInt(amount), now('host')),
+  hostRemove: seat => host.remove(seat, now('host')),
+  hostNewHand: () => host.newHand(now('host')),
+  hostAdvance: () => host.advance(now('host')),
+  hostAct: (kind, amount) => host.act(kind, BigInt(amount), now('host')),
+  hostHandle: (client, msg) => host.handle(client, msg, now('host')),
+  hostDisconnected: client => host.disconnected(client, now('host')),
+  hostTick: () => host.tick(now('host')),
   clubCreate: (id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
     clubTables.get(id)?.free();
     const t = MultiTable.club(seats, BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     clubTables.set(id, t);
-    return t.state(Date.now());
+    return t.state(now(id));
   },
   clubCall: (id, method, ...args) => {
     const t = clubTables.get(id);
     if (!t || !CLUB_METHODS.has(method)) throw new Error(`no table ${id} or method ${method}`);
-    return t[method](...args, Date.now());
+    return t[method](...args, now(id));
   },
-  clubDrop: id => { clubTables.get(id)?.free(); return clubTables.delete(id); },
+  clubDrop: id => { clubTables.get(id)?.free(); clocks.delete(id); return clubTables.delete(id); },
   // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
   clubSitOutLimit: (id, ms) => { clubTables.get(id)?.setSitOutLimit(ms); return true; },
+  // Stops (on) or restarts a table's clock: 'host' for the friends table,
+  // else a club table's id. While stopped no time passes for it, so no turn
+  // runs out and no sit-out expires; it resumes with the time that was left.
+  clockPause: (key, on) => {
+    const c = clocks.get(key) || {at: null, lost: 0};
+    if (on && c.at == null) c.at = Date.now();
+    if (!on && c.at != null) { c.lost += Date.now() - c.at; c.at = null; }
+    clocks.set(key, c);
+    return true;
+  },
 };
 
 const clubTables = new Map();
+
+// The time each table's engine sees: real time, minus the time its clock was
+// stopped (clockPause) because the host couldn't reach anyone.
+const clocks = new Map();
+function now(key) {
+  const c = clocks.get(key);
+  return c ? (c.at ?? Date.now()) - c.lost : Date.now();
+}
 const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state']);
 
 self.onmessage = async e => {
