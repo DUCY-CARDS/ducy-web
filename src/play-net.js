@@ -35,12 +35,21 @@ export function linkedCode() {
   return normCode(new URLSearchParams(location.search).get('table') || '');
 }
 
+// The host's player ID in the page's link (?host=…), if any: a guest checks
+// the host's signed encryption key against it.
+export function linkedHost() {
+  const h = new URLSearchParams(location.search).get('host') || '';
+  return /^[1-9A-HJ-NP-Za-km-z]{8}$/.test(h) ? h : '';
+}
+
 // A link that opens #play ready to join `code`. It names the relay too when
-// it isn't the default, so friends reach the same one.
-export function joinLink(code) {
+// it isn't the default, so friends reach the same one, and the host's player
+// ID, so guests can check the host's encryption key (play.js).
+export function joinLink(code, hostId = '') {
   const u = new URL(location.href);
   u.search = '';
   u.searchParams.set('table', code);
+  if (hostId) u.searchParams.set('host', hostId);
   const relay = relayUrl();
   if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
   u.hash = 'play';

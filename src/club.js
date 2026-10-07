@@ -27,8 +27,10 @@
 //   {type: 'role', club, role}           'offered' | 'assistant' | null (#62)
 //   {type: 'admin', club, pending, members, tables}   an assistant's view
 //   {type: 'admin_result', club, error}  how an assistant's command went
-// Table updates go to players unsigned as {type: 'table', table, update}:
-// only the host can send to a player through the relay.
+//   {type: 'host_key', club, key}        the host's session key for table updates
+// Join and hello carry the player's session key ({key}). Table updates go
+// to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
+// the relay never sees hole cards and can't forge an update.
 
 import { checkSignature } from './identity.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
@@ -224,6 +226,19 @@ export async function playerReceive(mem, env) {
   if (b.type === 'admin') {
     mem.hostSeq = env.seq;
     mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || []};
+    return true;
+  }
+  // The host's key for this session's encrypted table updates (e2e.js),
+  // signed by the host like every other message here.
+  if (b.type === 'host_key') {
+    mem.hostSeq = env.seq;
+    mem.hostKey = typeof b.key === 'string' ? b.key : null;
+    return true;
+  }
+  // The host couldn't seat this player at a table (e.g. no encryption key).
+  if (b.type === 'table_error') {
+    mem.hostSeq = env.seq;
+    mem.tableError = {table: b.table, reason: String(b.reason || '')};
     return true;
   }
   if (b.type === 'agent_role') {

@@ -15,8 +15,9 @@
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
-import { clientId, connect, joinLink, linkedCode, newCode, normCode, relayUrl } from './play-net.js';
-import { exportIdentity, importIdentity, loadIdentity, saveIdentity } from './identity.js';
+import { clientId, connect, joinLink, linkedCode, linkedHost, newCode, normCode, relayUrl } from './play-net.js';
+import { checkSignature, exportIdentity, importIdentity, loadIdentity, saveIdentity, signMessage } from './identity.js';
+import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 
 let worker = null;
 let nextId = 0;
@@ -398,7 +399,7 @@ async function startTable() {
   review = null;
   sessionReview = emptyTotals();
   const buyIn = gtoTable ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
-  const snap = await request('create', setup.bots, buyIn, setup.sb, setup.bb, Math.floor(Math.random() * 2 ** 32), setup.game);
+  const snap = await request('create', setup.bots, buyIn, setup.sb, setup.bb, crypto.getRandomValues(new Uint32Array(1))[0], setup.game);
   if (snap) show(snap);
 }
 
@@ -490,10 +491,83 @@ async function act(kind, amount = 0) {
 
 // ---- multiplayer ----
 
+// ---- encrypted updates at a friends table (e2e.js) ----
+// The relay forwards everything, so every update to a guest (which has
+// their hole cards) is encrypted with a key only the host and that guest
+// share. The host signs its key with its player identity and the invite
+// link names the host (?host=ID), so a guest can tell the relay didn't swap
+// it; a guest who typed the code instead trusts the first host key it gets.
+let e2eHost = null; // host: {keys, guests: Map(client → {key, sends, inbox})}
+let e2eGuest = null; // guest: {keys, aes, aesFor, hostId, inbox}
+
+const e2eContext = (client, hostPub, guestPub) => ({context: `table:${room}`, hostId: '', playerId: client, hostPub, playerPub: guestPub});
+
+function hostGuest(client) {
+  let g = e2eHost.guests.get(client);
+  if (!g) e2eHost.guests.set(client, (g = {key: null, sends: Promise.resolve(), inbox: Promise.resolve()}));
+  return g;
+}
+
+// The host's signed key, for a guest who just connected.
+async function sendHostKey(client) {
+  const key = (await e2eHost.keys).pub;
+  const body = {type: 'host_key', table: room, key};
+  net?.send({to: client, data: me ? await signMessage(me, body) : body});
+}
+
+// A message from guest `client`, in the order it arrived: their key first
+// (derive the shared key), then their commands for the table.
+function hostIncoming(client, data) {
+  const g = hostGuest(client);
+  g.inbox = g.inbox.then(async () => {
+    if (data?.type === 'e2e_key') {
+      if (!isPublicKey(data.key)) return;
+      const hk = await e2eHost.keys;
+      g.key = await sharedKey(hk, data.key, e2eContext(client, hk.pub, data.key));
+      return;
+    }
+    hostEvent('hostHandle', client, data);
+  }).catch(e => console.warn(e));
+}
+
+// An update for guest `to`, encrypted; without their key it isn't sent.
+function sendToGuest(to, data) {
+  const g = e2eHost?.guests.get(to);
+  if (!g?.key) { console.warn('table: no key for', to, '- update not sent'); return; }
+  g.sends = g.sends.then(async () => { net?.send({to, data: {enc: await seal(g.key, data)}}); }).catch(e => console.warn(e));
+}
+
+// A guest's incoming message, in order: the host's key, then encrypted
+// updates. Relay notices (host_gone) come in the clear; anything else
+// unencrypted is ignored, since only the host can make an update that opens.
+function guestIncoming(m) {
+  e2eGuest.inbox = e2eGuest.inbox.then(async () => {
+    if (m?.type === 'host_key' || m?.body?.type === 'host_key') {
+      const signed = !!m.sig;
+      if (signed && (await checkSignature(m) || (e2eGuest.hostId && m.from !== e2eGuest.hostId))) { console.warn('table: a host key that isn’t from the host; ignored'); return; }
+      if (!signed && e2eGuest.hostId) { console.warn('table: an unsigned host key; ignored'); return; }
+      const hostPub = signed ? m.body.key : m.key;
+      if (!isPublicKey(hostPub) || hostPub === e2eGuest.aesFor) return;
+      const gk = await e2eGuest.keys;
+      e2eGuest.aes = await sharedKey(gk, hostPub, e2eContext(clientId(), hostPub, gk.pub));
+      e2eGuest.aesFor = hostPub;
+      return;
+    }
+    if (m?.enc) {
+      if (!e2eGuest.aes) return;
+      let update;
+      try { update = await openBox(e2eGuest.aes, m.enc); } catch { console.warn('table: an update didn’t decrypt; ignored'); return; }
+      guestMessage(update);
+      return;
+    }
+    if (m?.type === 'host_gone') guestMessage(m);
+  }).catch(e => console.warn(e));
+}
+
 // Calls the host's MultiTable in order, and relays the messages it returns.
 function hostCall(op, ...args) {
   const p = hostChain.then(() => call(op, ...args)).then(r => {
-    for (const m of r.out) net?.send({to: m.to, data: m.data});
+    for (const m of r.out) sendToGuest(m.to, m.data);
     openSeats = r.openSeats;
     hostInfo = {
       playersIn: r.playersIn ?? 0,
@@ -535,12 +609,14 @@ async function hostTable() {
   raiseTo = 0;
   foldQueued = false;
   const mine = session;
+  e2eHost = {keys: newKeyPair(), guests: new Map()};
   net = connect(room, 'host', null, {
     onOpen() {},
     onMessage(m) {
       if (mine !== session) return;
-      if (m.event === 'close') hostEvent('hostDisconnected', m.from);
-      else if (m.data) hostEvent('hostHandle', m.from, m.data);
+      if (m.event === 'open') sendHostKey(m.from);
+      else if (m.event === 'close') hostEvent('hostDisconnected', m.from);
+      else if (m.data) hostIncoming(m.from, m.data);
     },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
@@ -548,7 +624,7 @@ async function hostTable() {
   // The host starts with 100 BB, kept within the table's limits.
   const min = f.minBB * f.bb, max = f.maxBB * f.bb;
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, Math.floor(Math.random() * 2 ** 32), f.game, setup.turnSecs * 1000)
+  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
     .then(snap => { if (snap) show(snap); });
   hostTimer = setInterval(() => { if (turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
   startClock();
@@ -562,9 +638,15 @@ function joinTable() {
   joinCode = code;
   startGuest(code);
   const mine = session;
+  e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId: linkedHost(), inbox: Promise.resolve()};
   net = connect(code, 'guest', clientId(), {
-    onOpen() { net.send({type: 'join', name: setup.name}); },
-    onMessage(m) { if (mine === session) guestMessage(m); },
+    // Our key first, then the join, so the host can encrypt from the start.
+    async onOpen() {
+      const key = (await e2eGuest.keys).pub;
+      net.send({type: 'e2e_key', key});
+      net.send({type: 'join', name: setup.name});
+    },
+    onMessage(m) { if (mine === session) guestIncoming(m); },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
   });
@@ -695,7 +777,7 @@ function leaveTable(note = '') {
 }
 
 async function copyLink() {
-  try { await navigator.clipboard.writeText(joinLink(room)); netNote = 'Link copied'; } catch { netNote = joinLink(room); }
+  try { await navigator.clipboard.writeText(joinLink(room, me?.id)); netNote = 'Link copied'; } catch { netNote = joinLink(room, me?.id); }
   render();
 }
 

@@ -147,7 +147,7 @@ export function createTableHost({club, save, sendTable, chipsChanged, tablesChan
     const {min, max} = limits(t);
     const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true};
     running.set(t.id, r);
-    r.chain = call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, Math.floor(Math.random() * 2 ** 32), t.game, t.turnSecs * 1000)
+    r.chain = call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000)
       .catch(e => { console.warn(e); running.delete(t.id); });
     await r.chain;
   }

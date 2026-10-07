@@ -27,6 +27,7 @@ import {
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { joinTableVia } from './play.js';
+import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 
 const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
 
@@ -41,6 +42,30 @@ let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
 let tableHost = null; // runs the hosted club's tables (club-host.js)
 const online = new Set(); // members connected to the hosted club
+// Encrypted table updates (e2e.js): the host's key pair for this session,
+// and per member {pub, key, sends} (their public key, the shared AES key,
+// and a queue that keeps their updates in order).
+let hostKeysP = null;
+const hostKeys = () => (hostKeysP ||= newKeyPair()); // made once, on first use
+const memberKeys = new Map();
+
+// A member sent their session key (with join or hello): derive the shared key.
+async function memberKey(id, pub) {
+  if (!isPublicKey(pub) || memberKeys.get(id)?.pub === pub) return;
+  const hk = await hostKeys();
+  const key = await sharedKey(hk, pub, {context: `club:${club.code}`, hostId: club.hostId, playerId: id, hostPub: hk.pub, playerPub: pub});
+  memberKeys.set(id, {pub, key, sends: memberKeys.get(id)?.sends || Promise.resolve()});
+}
+
+// A table update for member `to`, encrypted to them. Without their key it
+// isn't sent at all: nothing goes over the relay in the clear.
+function sendSealed(to, msg) {
+  const k = memberKeys.get(to);
+  if (!k) { console.warn('club: no key for', to, '- table update not sent'); return; }
+  k.sends = k.sends.then(async () => {
+    hostNet?.send({to, data: {type: 'table', table: msg.table, enc: await seal(k.key, msg.update)}});
+  }).catch(e => console.warn(e));
+}
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
@@ -123,7 +148,7 @@ function startTables() {
   tableHost = createTableHost({
     club: () => club,
     save: () => { saveClub(); render(); },
-    sendTable: (to, msg) => hostNet?.send({to, data: msg}),
+    sendTable: sendSealed,
     chipsChanged: id => {
       const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
       sendToPlayer(account(club, id, n ? n - 1 : Infinity));
@@ -154,14 +179,26 @@ async function hostMessage(msg) {
   const r = await hostReceive(club, verifier, msg.data);
   if (msg.queued) hostNet?.send({ack: msg.queued});
   if (r.reason && r.reason !== 'replayed') console.warn('club: refused a message:', r.reason);
+  // A verified message from this member may carry their session key.
+  const verified = !['malformed', 'bad signature', 'id does not match key', 'id in use', 'replayed'].includes(r.reason);
+  if (verified && msg.data?.from === msg.from && msg.data?.body?.key) await memberKey(msg.from, msg.data.body.key);
   for (const rep of r.replies) sendToPlayer(rep);
   // A table command, from the member who signed it (the relay's sender id
-  // must match, so no one can act for someone else).
-  if (r.table && r.table.from === msg.from) tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
+  // must match, so no one can act for someone else). No one is seated
+  // without a key: their cards would have to cross the relay in the clear.
+  if (r.table && r.table.from === msg.from) {
+    if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
+      sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the host. Reload and try again.'}});
+    } else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
+  }
   if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); saveClub(); render(); return; }
   // Members checking in get the tables too.
   const hello = msg.data?.body?.type === 'hello' && club.members[msg.from]?.status === 'member';
   if (hello && tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, tableHost.seatedCounts())});
+  // …and the host's key for encrypted table updates (signed, like the rest).
+  if (hello) {
+    sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
+  }
   // …and their role, and an assistant their view of the club.
   if (hello && club.members[msg.from].role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: club.members[msg.from].role}});
   if (hello && isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, tableHost?.seatedCounts() || {})});
@@ -176,6 +213,14 @@ async function hostMessage(msg) {
 let hostSends = Promise.resolve();
 function sendToPlayer(rep) {
   if (!rep) return hostSends;
+  // Whoever gets the tables gets the host's key first, so they can read the
+  // encrypted updates once they sit down.
+  if (rep.body?.type === 'tables') {
+    hostSends = hostSends.then(async () => {
+      const env = await signMessage(me, {type: 'host_key', club: club.code, key: (await hostKeys()).pub});
+      hostNet?.send({to: rep.to, data: env});
+    }).catch(e => console.warn(e));
+  }
   hostSends = hostSends.then(async () => {
     const env = await signMessage(me, rep.body);
     hostNet?.send({to: rep.to, data: env});
@@ -408,37 +453,61 @@ function saveMemberships() {
 
 function connectMembership(mem) {
   if (playerNets.has(mem.code)) return;
-  const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve()};
+  // keys: this connection's key pair for encrypted table updates (e2e.js);
+  // aes: the key shared with the host, for the host key in aesFor.
+  const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve(), inbox: Promise.resolve(), keys: newKeyPair(), aes: null, aesFor: ''};
   playerNets.set(mem.code, entry);
   const greet = async () => {
     // Never ask to join without a name: the host would see a nameless player.
     if (mem.status === 'new' && !myName()) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
+    const key = (await entry.keys).pub;
     const body = mem.status === 'new'
-      ? {type: 'join', club: mem.code, invite: mem.invite, name: myName()}
-      : {type: 'hello', club: mem.code, name: myName(), since: lastEntry(mem)};
+      ? {type: 'join', club: mem.code, invite: mem.invite, name: myName(), key}
+      : {type: 'hello', club: mem.code, name: myName(), since: lastEntry(mem), key};
     sendToHost(mem.code, body);
     // Back at a club table after the host (or this page) reconnected.
     if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: myName()}});
   };
+  const handle = async msg => {
+    if (msg?.type === 'host_away' || msg?.type === 'host_gone') {
+      entry.hostHere = false;
+      if (seatedAt?.code === mem.code) seatedAt.handlers.onMessage({type: 'host_gone'});
+      render();
+      return;
+    }
+    if (msg?.type === 'host_back') { entry.hostHere = true; greet(); render(); return; }
+    if (msg?.type === 'queue_full') return;
+    // A club table's update for this player: only ones encrypted with the
+    // key shared with the host count. Anything else (the relay can send
+    // whatever it likes) is ignored.
+    if (msg?.type === 'table' && !msg.sig) {
+      if (!msg.enc || !entry.aes) return;
+      let update;
+      try { update = await openBox(entry.aes, msg.enc); } catch { console.warn('club: a table update didn’t decrypt; ignored'); return; }
+      if (seatedAt?.code === mem.code && seatedAt.table === msg.table) tableUpdate(update);
+      return;
+    }
+    if (await playerReceive(mem, msg)) {
+      // A new host key (the host's page restarted): derive the shared key.
+      if (mem.hostKey && mem.hostKey !== entry.aesFor) {
+        const keys = await entry.keys;
+        entry.aes = await sharedKey(keys, mem.hostKey, {context: `club:${mem.code}`, hostId: mem.hostId, playerId: me.id, hostPub: mem.hostKey, playerPub: keys.pub});
+        entry.aesFor = mem.hostKey;
+      }
+      if (mem.tableError) {
+        const {table, reason} = mem.tableError;
+        mem.tableError = null;
+        if (seatedAt?.code === mem.code && seatedAt.table === table) tableUpdate({type: 'rejected', reason, fatal: true});
+      }
+      saveMemberships();
+      render();
+    }
+  };
   entry.net = connect(mem.code, 'guest', me.id, {
     onOpen() { entry.online = true; entry.hostHere = true; mem.error = ''; greet(); render(); },
-    async onMessage(msg) {
-      if (msg?.type === 'host_away' || msg?.type === 'host_gone') {
-        entry.hostHere = false;
-        if (seatedAt?.code === mem.code) seatedAt.handlers.onMessage({type: 'host_gone'});
-        render();
-        return;
-      }
-      if (msg?.type === 'host_back') { entry.hostHere = true; greet(); render(); return; }
-      if (msg?.type === 'queue_full') return;
-      // A club table's update for this player (unsigned: only the host can
-      // reach a player through the relay).
-      if (msg?.type === 'table' && !msg.sig) {
-        if (seatedAt?.code === mem.code && seatedAt.table === msg.table) tableUpdate(msg.update);
-        return;
-      }
-      if (await playerReceive(mem, msg)) { saveMemberships(); render(); }
-    },
+    // One message at a time, in order: a new host key must be in place
+    // before the encrypted updates after it.
+    onMessage(msg) { entry.inbox = entry.inbox.then(() => handle(msg)).catch(e => console.warn(e)); },
     onStatus(s) { entry.online = !s; render(); },
     // 4004 means the relay had no host and doesn't hold requests (a relay
     // older than queue mode).
