@@ -1,7 +1,10 @@
 // Counting rules for the #play stats tracker, on hand-written histories.
+// ducy does the counting (handCounts); these check the page gets what it
+// shows. Needs the wasm build in wasm/.
 // Run with: node --test test/play-stats.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { countHand, recordHand, rates, pct, afText, emptyCounts } from '../src/play-stats.js';
 
 const SB = (seat, amount = 1) => ({type: 'small_blind', seat, amount});

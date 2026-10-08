@@ -1,11 +1,13 @@
 // Player stats for the bot table at #play: VPIP, PFR, 3-bet, aggression,
 // showdowns and winnings, counted from each finished hand's event history.
-// The counting rules mirror ducy-play's OpponentModel (stats.rs), so the
-// page and the bots' own reads agree; the page shows the raw rates, not the
-// smoothed ones the bots use.
+// The counting is ducy's own (ducy_play::stats::hand_counts, via the
+// handCounts binding), the same rules the bots use for their reads; the page
+// shows the raw rates, not the smoothed ones the bots use.
 //
 // Counts are kept by player id: "you" for the person, the personality id for
 // a bot, so a bot's stats follow it across seats and tables.
+
+import { handCounts } from '../wasm/ducy_wasm.js';
 
 // Every counter one player has, all zero.
 export function emptyCounts() {
@@ -32,90 +34,28 @@ const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very la
 
 // Counts for one finished hand, one entry per seat: {id, counts}. `state` is
 // the table state BotTable returns (events, seats with id/folded/won/net,
-// showdown, big_blind).
+// showdown, big_blind). ducy counts the actions; showdowns and winnings come
+// from the seats.
 export function countHand(state) {
-  const n = state.seats.length;
-  const c = state.seats.map(() => ({...emptyCounts(), hands: 1}));
   const bb = num(state.big_blind) || 1;
-  let preflop = true;
-  let streetBets = new Array(n).fill(0);
-  let current = 0;
-  let raises = 0; // preflop bets and raises so far (blinds aren't raises)
-  const folded = new Array(n).fill(false);
-  const vpip = new Array(n).fill(false);
-  const pfr = new Array(n).fill(false);
-  const chance = new Array(n).fill(false);
-  const threeBet = new Array(n).fill(false);
-  const facing = seat => current > streetBets[seat];
-
-  // A preflop decision facing exactly one raise is a 3-bet chance, unless
-  // the call put the seat all-in (it couldn't have raised).
-  const preflopDecision = (seat, raised, allInCall = false) => {
-    if (raises === 1 && !chance[seat] && !allInCall) {
-      chance[seat] = true;
-      threeBet[seat] = raised;
-    }
-  };
-
-  for (const e of state.events) {
-    const s = e.seat;
-    switch (e.type) {
-      case 'small_blind':
-      case 'big_blind':
-        streetBets[s] += num(e.amount);
-        current = Math.max(current, streetBets[s]);
-        break;
-      case 'board':
-        if (preflop) for (let i = 0; i < n; i++) if (!folded[i]) c[i].sawFlop = 1;
-        preflop = false;
-        streetBets = new Array(n).fill(0);
-        current = 0;
-        break;
-      case 'fold':
-        if (preflop) preflopDecision(s, false);
-        else {
-          c[s].folds++;
-          if (facing(s)) { c[s].facedBets++; c[s].foldsToBets++; }
-        }
-        folded[s] = true;
-        break;
-      case 'check':
-        break;
-      case 'call':
-        if (preflop) {
-          preflopDecision(s, false, e.all_in);
-          vpip[s] = true;
-        } else {
-          c[s].facedBets++;
-          c[s].calls++;
-        }
-        streetBets[s] += num(e.amount);
-        break;
-      case 'bet':
-      case 'raise':
-        if (preflop) {
-          preflopDecision(s, true);
-          vpip[s] = pfr[s] = true;
-          raises++;
-        } else {
-          if (facing(s)) c[s].facedBets++;
-          c[s].aggressive++;
-        }
-        streetBets[s] = num(e.to);
-        current = Math.max(current, streetBets[s]);
-        break;
-      default: // ante, award
-        break;
-    }
-  }
-
+  const counted = handCounts(state.events, state.seats.length);
   return state.seats.map((seat, i) => {
-    const x = c[i];
-    x.vpip = +vpip[i];
-    x.pfr = +pfr[i];
-    x.threeBetChances = +chance[i];
-    x.threeBets = +threeBet[i];
-    const out = folded[i] || seat.folded;
+    const h = counted[i];
+    const x = {
+      ...emptyCounts(),
+      hands: 1,
+      vpip: +h.vpip,
+      pfr: +h.pfr,
+      threeBetChances: +h.three_bet_chance,
+      threeBets: +h.three_bet,
+      aggressive: h.aggressive,
+      calls: h.calls,
+      folds: h.folds,
+      facedBets: h.faced_bets,
+      foldsToBets: h.folds_to_bets,
+      sawFlop: +h.saw_flop,
+    };
+    const out = h.folded || seat.folded;
     if (state.showdown && !out) {
       x.showdowns = 1;
       x.showdownsWon = +(num(seat.won) > 0);
