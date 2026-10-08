@@ -15,6 +15,7 @@ import {
 } from './clubs.js';
 import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
+import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 
 export const TABS = ['play', 'join', 'host', 'clubs'];
 const LABELS = {play: 'Play', join: 'Join', host: 'Host', clubs: 'My clubs'};
@@ -96,17 +97,32 @@ function renderTabs() {
     if (t === 'play' && dot) badge = '<span class="pt-dot" aria-label="A table opened"></span>';
     h += `<a class="pl-tab${on ? ' on' : ''}" role="tab" aria-selected="${on}" href="#${t}">${LABELS[t]}${badge}</a>`;
   }
+  // You: name, player ID, backups and the rest, in a dialog (#144).
+  h += `<button class="pt-me" type="button" data-pt="player" title="Player settings" aria-label="Player settings"><span class="pt-me-name">${esc(myName() || 'You')} </span><span aria-hidden="true">⚙</span></button>`;
   nav.innerHTML = h;
+  if (!nav.dataset.ready) {
+    nav.dataset.ready = '1';
+    nav.addEventListener('click', e => { if (e.target.closest('[data-pt=player]')) openPlayerSettings(); });
+  }
 }
 
 // Something changed in the clubs: the tab bar, and the top navigation's Play
-// and the window title, show what's waiting.
+// and the window title, show what's waiting. With notifications on (Player
+// settings), a new request while the page isn't in front says so.
+let lastNeeds = 0;
 function changed() {
   const n = needsYou();
   document.title = n ? `(${n}) ${TITLE}` : TITLE;
   const top = document.querySelector('.mode-tab[data-mode="play"]');
   if (top) top.dataset.badge = n ? String(n) : '';
   if (tab) renderTabs();
+  if (n > lastNeeds && document.hidden && notifyOn()) {
+    try {
+      const note = new Notification('ducy', {body: n === 1 ? 'Someone is waiting for you in your club.' : `${n} things are waiting for you in your clubs.`, tag: 'ducy-needs'});
+      note.onclick = () => { window.focus(); location.hash = 'clubs'; note.close(); };
+    } catch {}
+  }
+  lastNeeds = n;
 }
 
 // ---- the Join tab (#141) ----

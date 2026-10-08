@@ -83,6 +83,10 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
   color: var(--amber); background: var(--amber-faint); border-bottom: 1px solid var(--border);
 }
 .beta-notice strong { font-weight: 700; }
+.beta-notice { position: relative; padding-right: 40px; }
+.beta-notice.closed { display: none !important; }
+.notice-close { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: inherit; font: inherit; font-size: 13px; cursor: pointer; padding: 4px 6px; opacity: 0.8; }
+.notice-close:hover { opacity: 1; }
 body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
 /* The clubs' testing note: on Join, Host and My clubs, and at a club table. */
@@ -739,6 +743,16 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 .psec [hidden] { display: none !important; }
 .pt-tabs { max-width: 980px; margin: 0 auto; padding: 8px 20px 0; }
 .pt-tabs .pl-tab { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.pt-tabs { display: flex; align-items: center; }
+.pt-me { margin-left: auto; font: inherit; font-size: 13px; color: var(--fg-muted); background: none; border: 0; padding: 8px 4px; cursor: pointer; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-me:hover { color: var(--fg-strong); }
+@media (max-width: 480px) {
+  .pt-tabs { padding: 8px 8px 0; }
+  .pt-tabs .pl-tab { padding: 8px 9px; }
+  .pt-me-name { display: none; }
+}
+.ps .pl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ps-check { font-size: 13px; color: var(--fg); }
 .pt-badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #1a1a1a; font-size: 11px; line-height: 18px; text-align: center; }
 .pt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
 .pt-body { display: flex; flex-direction: column; }
