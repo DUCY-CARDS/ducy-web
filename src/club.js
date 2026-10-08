@@ -32,7 +32,7 @@
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
 
-import { checkSignature } from './identity.js';
+import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 
@@ -213,6 +213,16 @@ export async function playerReceive(mem, env) {
   mem.hostPub = env.pub;
   const b = env.body || {};
   if (b.club !== mem.code) return false;
+  // The club moved to an always-on room on the relay (#98), signed by the
+  // host it had: from now on it signs as `hostId`.
+  if (b.type === 'host_moved') {
+    if (!isPlayerId(b.hostId) || b.hostId === mem.hostId) return false;
+    mem.hostId = b.hostId;
+    mem.hostPub = null;
+    mem.hostSeq = 0;
+    mem.hostKey = null;
+    return true;
+  }
   if (b.type === 'status') {
     mem.hostSeq = env.seq;
     if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);

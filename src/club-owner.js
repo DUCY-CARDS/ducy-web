@@ -14,7 +14,7 @@
 // (table-store.js, written durably): losing it would cut the owner off
 // from their club, and a browser that crashes can lose recent localStorage.
 
-import { signMessage, Verifier } from './identity.js';
+import { checkSignature, signMessage, Verifier } from './identity.js';
 import { connect, newCode } from './play-net.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -43,7 +43,9 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     net = connect(code, 'guest', identity.id, {
       async onOpen() {
         online = true;
-        if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
+        if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code}));
+        else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
+        else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
         else await sendSigned({type: 'owner_hello'});
         onChange();
       },
@@ -61,9 +63,12 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
   }
 
   async function receive(m) {
-    if (m?.type === 'club_created' && creating) {
+    if ((m?.type === 'club_created' || m?.type === 'club_imported') && creating) {
       rec = {code: creating.code, hostId: m.hostId, name: creating.name};
       await save(rec);
+      // A club that moved here: as its old host, tell its members to follow
+      // the club's new identity (#98).
+      if (m.type === 'club_imported') await sendSigned({type: 'host_moved', hostId: m.hostId});
       creating.resolve(rec);
       creating = null;
       await sendSigned({type: 'owner_hello'});
@@ -75,6 +80,17 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
       net?.close();
       net = null;
       return;
+    }
+    // Opening a club this player owns from another browser: the club's
+    // first signed view, naming this player as owner, says who it is.
+    if (creating?.attach && m?.body?.type === 'owner_view') {
+      const d = m.body.data;
+      if (m.body.club !== creating.code || d?.ownerId !== identity.id || d?.hostId !== m.from || await checkSignature(m)) return;
+      rec = {code: creating.code, hostId: m.from, name: d.name};
+      await save(rec);
+      clearTimeout(creating.timer);
+      creating.resolve(rec);
+      creating = null;
     }
     // Everything else is signed by the club itself, in order.
     if (!rec || m?.from !== rec.hostId) return;
@@ -117,6 +133,27 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
         const code = newCode();
         creating = {name, code, resolve, reject};
         connectTo(code);
+      });
+    },
+    // Opens the always-on club with this code, owned by this player, from
+    // this browser (e.g. after restoring the player ID from a backup).
+    attach(code) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (creating?.attach) { creating = null; owner.stop(); }
+          reject(new Error('No always-on club of yours has that code.'));
+        }, 15_000);
+        creating = {attach: true, code, resolve, reject, timer};
+        connectTo(code);
+      });
+    },
+    // Moves a browser-run club (club.js) to its room on the relay (#98),
+    // keeping its code, so members' links and memberships carry on. `senders`
+    // is its Verifier's state. This page must have stopped hosting it.
+    moveHere(club, senders) {
+      return new Promise((resolve, reject) => {
+        creating = {name: club.name, code: club.code, data: club, senders, resolve, reject};
+        connectTo(club.code);
       });
     },
     run(op, args = {}) {
