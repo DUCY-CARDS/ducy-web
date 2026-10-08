@@ -24,7 +24,20 @@ export function emptyTotals() {
     deviations: 0,
     unknown: 0,
     variants: 0, // fine, but the less common side of the bot's mix
+    mixLoss: 0, // bb those mixed plays gave up against the best play (not charged)
   };
+}
+
+// What an uncharged play still gave up: a play the bot mixes in isn't
+// graded down, but in this spot it can still be worth less than the best
+// play, and that's worth seeing. {loss, best, close} for a play graded fine
+// and not charged that's worth less than the best, with `close` when the
+// difference is within the estimate's error (2 standard errors); otherwise
+// null.
+export function mixCost(d) {
+  const loss = Number(d.ev_loss);
+  if (d.grade !== 'fine' || Number(d.bb_lost) > 0 || !(loss > 0) || !d.best || d.best === d.action) return null;
+  return {loss, best: d.best, close: loss <= 2 * (Number(d.stderr) || 0)};
 }
 
 const GRADE_KEYS = {
@@ -60,6 +73,8 @@ export function addReview(totals, review) {
     const key = GRADE_KEYS[d.grade];
     if (key) totals[key] += 1;
     if (isVariant(d)) totals.variants += 1;
+    const c = mixCost(d);
+    if (c && !c.close) totals.mixLoss += c.loss;
   }
   return totals;
 }
