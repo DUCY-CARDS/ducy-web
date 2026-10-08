@@ -30,6 +30,8 @@ const BOT_PACE_MS = 700;
 // going ahead without one.
 const FAIR_STEP_MS = 4000;
 const FAIR_WAIT_MS = 6000;
+// Results kept per player, to send again when they come back.
+const FAIR_KEEP = 3;
 // A table resumed after the host's page reopened (#107) waits this long for
 // the people at it to come back; then whoever isn't back counts as
 // disconnected, and the clocks run again.
@@ -333,11 +335,22 @@ export function createTableHost({
     const dealt = d.seats.slice().sort((a, b) => a.seat - b.seat);
     const t = tableById(club(), tid);
     dealt.forEach((p, index) => {
-      sendTable(p.id, {type: 'table', table: tid, update: {
+      const update = {
         type: 'fair', step: 'result', hand: d.hand, game: t?.game || 'nlhe', dealt: dealt.length, index,
         seed: d.round.seed, list: d.round.list, reveals: d.round.used,
-      }});
+      };
+      // Kept for a while, to send again to a player who was away when it went.
+      const kept = r.results.get(p.id) || [];
+      kept.push(update);
+      r.results.set(p.id, kept.slice(-FAIR_KEEP));
+      sendTable(p.id, {type: 'table', table: tid, update});
     });
+  }
+
+  // A player (re)joining the table gets the last few hands' results again,
+  // in case they were away when they went (their page checks each once).
+  function fairResend(tid, id) {
+    for (const update of running.get(tid)?.results.get(id) || []) sendTable(id, {type: 'table', table: tid, update});
   }
 
   // Thrown to stop starting a closing table that couldn't resume.
@@ -352,7 +365,7 @@ export function createTableHost({
   async function start(t, {resume = false} = {}) {
     if (running.has(t.id)) return;
     const {min, max} = limits(t);
-    const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true};
+    const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true, results: new Map()};
     running.set(t.id, r);
     const fresh = () => call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000);
     r.chain = (resume ? restore(t, r).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))
@@ -455,7 +468,7 @@ export function createTableHost({
       return;
     }
     await run(tid, 'handle', id, cmd);
-    if (cmd.type === 'join') cameBack(tid, id);
+    if (cmd.type === 'join') { cameBack(tid, id); fairResend(tid, id); }
   }
 
   function disconnected(id) {
