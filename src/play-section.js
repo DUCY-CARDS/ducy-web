@@ -11,11 +11,12 @@
 
 import { openPlay, closePlay, joinTable, tableName } from './play.js';
 import {
-  anyClubs, closeClubs, joinClub, managesClub, memberName, needsYou, onClubsChange, openClubs, openSeats, startClubs,
+  anyClubs, closeClubs, joinClub, managesClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
 import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
+import { hostPick, onHostPick, setHostPick } from './host-choice.js';
 
 export const TABS = ['play', 'join', 'host', 'clubs'];
 const LABELS = {play: 'Play', join: 'Join', host: 'Host', clubs: 'My clubs'};
@@ -50,6 +51,9 @@ export function openSection(t, shortcut) {
       openSection('play');
     });
   }
+  // Coming to Host from another tab starts at its two choices (a club being
+  // created picks itself again, clubs.js).
+  if (t === 'host' && tab !== 'host') setHostPick(null);
   tab = t;
   try { localStorage.setItem(TAB_KEY, t); } catch {}
   if (t === 'play') seenSeats = openSeats();
@@ -60,8 +64,12 @@ export function openSection(t, shortcut) {
   if (!joinRoot) {
     joinRoot = el('pjoin');
     joinRoot.addEventListener('submit', onJoin);
+    joinRoot.addEventListener('click', onHostClick);
+    onHostPick(() => { if (tab === 'host') renderHost(); });
   }
-  if (t === 'join') renderJoin(); else joinRoot.hidden = true;
+  if (t === 'join') renderJoin();
+  else if (t === 'host') renderHost();
+  else joinRoot.hidden = true;
   openClubs(el('clubs'), t);
   openPlay(el('play'), shortcut, t);
 }
@@ -116,13 +124,67 @@ function changed() {
   const top = document.querySelector('.mode-tab[data-mode="play"]');
   if (top) top.dataset.badge = n ? String(n) : '';
   if (tab) renderTabs();
-  if (n > lastNeeds && document.hidden && notifyOn()) {
-    try {
-      const note = new Notification('ducy', {body: n === 1 ? 'Someone is waiting for you in your club.' : `${n} things are waiting for you in your clubs.`, tag: 'ducy-needs'});
-      note.onclick = () => { window.focus(); location.hash = 'clubs'; note.close(); };
-    } catch {}
+  if (n > lastNeeds) {
+    const text = n === 1 ? 'Someone is waiting for you in your club.' : `${n} requests are waiting for you in your clubs.`;
+    // On the page, whichever tab is showing (#152); and with notifications on
+    // (Player settings), from the system while the page isn't in front.
+    toast(text);
+    if (document.hidden && notifyOn()) {
+      try {
+        const note = new Notification('ducy', {body: text, tag: 'ducy-needs'});
+        note.onclick = () => { window.focus(); showClubPlayers(); note.close(); };
+      } catch {}
+    }
   }
   lastNeeds = n;
+}
+
+// A notice at the bottom of the page for a new request, with a way to it.
+let toastTimer = null;
+function toast(text) {
+  let t = el('pt-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'pt-toast';
+    t.className = 'pt-toast';
+    t.setAttribute('role', 'status');
+    t.addEventListener('click', e => {
+      if (e.target.closest('[data-toast=open]')) showClubPlayers();
+      t.hidden = true;
+    });
+    document.body.append(t);
+  }
+  t.innerHTML = `<span>${esc(text)}</span><button class="btn-small primary" data-toast="open">See requests</button><button class="link-btn" aria-label="Dismiss">✕</button>`;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 10_000);
+}
+
+// ---- the Host tab's choices (#152) ----
+
+// Two choices, each with what it is; once one is picked, play.js (a game) or
+// clubs.js (a club) shows its steps, with a way back here.
+function renderHost() {
+  const p = hostPick();
+  let h = '<div class="pl-wrap">';
+  if (!p) {
+    h += '<div class="pl-head"><h1>Host</h1><p>Start a game for tonight, or a club that lasts.</p></div>';
+    h += '<div class="ph-choices">';
+    h += '<button class="ph-choice" data-ph="game"><b>Start a game to invite friends</b><span>A table for now: share a code, play, and nothing is kept once everyone has left.</span></button>';
+    h += '<button class="ph-choice" data-ph="club"><b>Create a club</b><span>A lasting club with members, chips and history. It runs on ducy’s server, so people can play whenever.</span></button>';
+    h += '</div>';
+  } else {
+    h += '<p class="ph-back"><button class="link-btn" data-ph="back">← Host</button></p>';
+  }
+  joinRoot.innerHTML = h + '</div>';
+  joinRoot.hidden = false;
+}
+
+function onHostClick(e) {
+  const b = e.target.closest('[data-ph]');
+  if (!b || tab !== 'host') return;
+  setHostPick(b.dataset.ph === 'back' ? null : b.dataset.ph);
+  scrollTo({top: 0});
 }
 
 // ---- the Join tab (#141) ----
