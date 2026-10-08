@@ -12,6 +12,12 @@
 // Each table sees its own clock: real time, minus the time it was stopped
 // (clockPause) because the host couldn't reach anyone. The page's friends
 // table uses the same clocks under the key 'host'.
+//
+// Fair deals (#136): clubCall(id, 'newHand', seed) deals from a commit–reveal
+// seed, and fairSecret() | fairCommitment(value, nonce) | fairSeed(values)
+// are ducy's fair-deal functions, for the host's side of the round.
+
+import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
 
 const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state', 'resume']);
 
@@ -35,8 +41,13 @@ export function clubEngine(MultiTable) {
     clubCall: (id, method, ...args) => {
       const t = tables.get(id);
       if (!t || !CLUB_METHODS.has(method)) throw new Error(`no table ${id} or method ${method}`);
+      // newHand takes the time first, then the fair-deal seed if there is one.
+      if (method === 'newHand') return t.newHand(now(id), args[0] || undefined);
       return t[method](...args, now(id));
     },
+    fairSecret: () => fairSecret(),
+    fairCommitment: (value, nonce) => fairCommitment(value, nonce),
+    fairSeed: values => fairSeed(values),
     clubDrop: id => { tables.get(id)?.free(); clocks.delete(id); return tables.delete(id); },
     // The table as JSON for resuming it after a restart (#107); null with an
     // older ducy-wasm, which can't save tables.

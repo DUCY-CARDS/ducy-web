@@ -25,6 +25,11 @@ import { dropTable, getTable, putTable } from './table-store.js';
 
 const NEXT_HAND_MS = 3000;
 const BOT_PACE_MS = 700;
+// Fair deals (#136): how long players have to send a commitment, then a
+// reveal, and how long a deal may wait for a round still under way before
+// going ahead without one.
+const FAIR_STEP_MS = 4000;
+const FAIR_WAIT_MS = 6000;
 // A table resumed after the host's page reopened (#107) waits this long for
 // the people at it to come back; then whoever isn't back counts as
 // disconnected, and the clocks run again.
@@ -108,6 +113,8 @@ export function createTableHost({
       if (t) {
         await persist(tid, res);
         send(tid, res);
+        // A fair-dealt hand's reveals go out after its final state (#136).
+        if (r.publish) { fairPublish(tid, r.publish); r.publish = null; }
         pace(tid, res);
         sweep(tid, r);
         if (t.status === 'closing' && !r.players.length) drop(tid);
@@ -169,6 +176,7 @@ export function createTableHost({
     if (r.complete && r.handNumber && r.handNumber !== r.recorded) {
       r.recorded = r.handNumber;
       onHand?.(tid, state);
+      r.publish = state;
     }
     // Between hands the engine's count is the truth.
     if (r.complete) syncStacks(club(), r.players);
@@ -219,13 +227,117 @@ export function createTableHost({
     }
     // A resumed table deals no new hand until its people are back.
     if (r.complete && !r.paused && !r.timers.deal && t.status === 'open' && num(res.playersIn) >= 2) {
-      r.timers.deal = setTimeout(async () => {
-        r.timers.deal = null;
-        // If people left meanwhile the engine refuses; the next change
-        // (someone sitting down, chips) tries again.
-        try { await run(tid, 'newHand'); } catch {}
-      }, r.handNumber ? NEXT_HAND_MS : 500);
+      // The next hand's fair-deal round, if one isn't under way already.
+      if (!r.fair) fairStart(tid);
+      r.timers.deal = setTimeout(() => deal(tid), r.handNumber ? NEXT_HAND_MS : 500);
     }
+  }
+
+  // Deals the next hand, from the fair-deal round's seed (#136). A round
+  // still under way gets a little longer; after that the hand is dealt
+  // without one rather than holding the table up.
+  async function deal(tid) {
+    const r = running.get(tid);
+    if (!r) return;
+    r.timers.deal = null;
+    const f = r.fair;
+    if (f && !f.seed && Date.now() - f.started < FAIR_WAIT_MS) {
+      r.timers.deal = setTimeout(() => deal(tid), 300);
+      return;
+    }
+    r.fair = null;
+    // If people left meanwhile the engine refuses; the next change (someone
+    // sitting down, chips) tries again.
+    let res = null;
+    try { res = await run(tid, 'newHand', f?.seed || null); } catch {}
+    if (res && f?.seed) {
+      // Who was dealt in: the players whose view came with their own cards
+      // (someone sitting out isn't).
+      const dealtIn = new Set((res.out || []).filter(m => m.data?.view?.seats?.[0]?.cards).map(m => m.to));
+      r.dealt = {hand: num(res.state.hand_number), round: f, seats: r.players.filter(p => dealtIn.has(p.client_id)).map(p => ({id: p.client_id, seat: p.seat}))};
+    }
+    // The round for the hand after this one runs while this one is played.
+    if (res) fairStart(tid);
+  }
+
+  // ---- fair deals (#136) ----
+  //
+  // Each seated player's page and the host commit to a random value, then,
+  // once every commitment is in (a list everyone gets before revealing),
+  // reveal it. The hand is dealt from the seed of all the values revealed,
+  // so no single party picks the cards. After the hand the host publishes
+  // the reveals, and each page checks its own cards and the board against
+  // the seed (fair-check.js). A player who doesn't commit or reveal in time
+  // is left out of the seed, so the table never waits on them.
+
+  async function fairStart(tid) {
+    const r = running.get(tid);
+    if (!r || r.fair) return;
+    const f = r.fair = {id: `${tid}:${Date.now()}`, started: Date.now(), commits: new Map(), reveals: new Map(), seed: null};
+    const players = r.players.map(p => p.client_id);
+    try { f.host = await call('fairSecret'); } catch (e) { console.warn('fair deal:', e); return; }
+    if (r.fair !== f) return;
+    f.invited = new Set(players);
+    for (const id of players) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'commit', round: f.id}});
+    clear(r, 'fair');
+    r.timers.fair = setTimeout(() => fairCommitsIn(tid, f), FAIR_STEP_MS);
+  }
+
+  // Every commitment is in (or the time's up): everyone gets the list, then reveals.
+  function fairCommitsIn(tid, f) {
+    const r = running.get(tid);
+    if (!r || r.fair !== f || f.list) return;
+    clear(r, 'fair');
+    f.list = [{id: 'host', c: f.host.commitment}, ...[...f.commits].map(([id, c]) => ({id, c}))];
+    for (const [id] of f.commits) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'reveal', round: f.id, list: f.list}});
+    if (!f.commits.size) { fairRevealsIn(tid, f); return; }
+    r.timers.fair = setTimeout(() => fairRevealsIn(tid, f), FAIR_STEP_MS);
+  }
+
+  // Every reveal is in (or the time's up): the seed, from the values in list order.
+  async function fairRevealsIn(tid, f) {
+    const r = running.get(tid);
+    if (!r || r.fair !== f || f.seed) return;
+    clear(r, 'fair');
+    f.used = f.list.filter(e => e.id === 'host' || f.reveals.has(e.id))
+      .map(e => (e.id === 'host' ? {id: 'host', value: f.host.value, nonce: f.host.nonce} : {id: e.id, ...f.reveals.get(e.id)}));
+    try { f.seed = await call('fairSeed', f.used.map(u => u.value)); } catch (e) { console.warn('fair deal:', e); }
+  }
+
+  // A player's commitment or reveal for the round under way.
+  async function fairIncoming(tid, id, cmd) {
+    const f = running.get(tid)?.fair;
+    if (!f || cmd.round !== f.id || !f.invited?.has(id)) return;
+    const hex = s => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
+    if (cmd.type === 'fair_commit' && !f.list && hex(cmd.c) && !f.commits.has(id)) {
+      f.commits.set(id, cmd.c);
+      if (f.commits.size === f.invited.size) fairCommitsIn(tid, f);
+    } else if (cmd.type === 'fair_reveal' && f.list && !f.seed && f.commits.has(id) && !f.reveals.has(id) && hex(cmd.value) && hex(cmd.nonce)) {
+      // A reveal that doesn't open its commitment is left out, like a missing one.
+      let opens = false;
+      try { opens = (await call('fairCommitment', cmd.value, cmd.nonce)) === f.commits.get(id); } catch {}
+      if (!opens || f.seed) return;
+      f.reveals.set(id, {value: cmd.value, nonce: cmd.nonce});
+      if (f.reveals.size === f.commits.size) fairRevealsIn(tid, f);
+    }
+  }
+
+  // A hand dealt from a seed is over: everyone dealt in gets the reveals, so
+  // their page can check the deal, with where their cards are in it.
+  function fairPublish(tid, state) {
+    const r = running.get(tid);
+    const d = r?.dealt;
+    if (!d || d.hand !== num(state.hand_number)) return;
+    r.dealt = null;
+    // Cards go to the dealt seats in seat order (ducy's Deal::from_seed).
+    const dealt = d.seats.slice().sort((a, b) => a.seat - b.seat);
+    const t = tableById(club(), tid);
+    dealt.forEach((p, index) => {
+      sendTable(p.id, {type: 'table', table: tid, update: {
+        type: 'fair', step: 'result', hand: d.hand, game: t?.game || 'nlhe', dealt: dealt.length, index,
+        seed: d.round.seed, list: d.round.list, reveals: d.round.used,
+      }});
+    });
   }
 
   // Thrown to stop starting a closing table that couldn't resume.
@@ -330,6 +442,8 @@ export function createTableHost({
   async function handle(tid, id, cmd) {
     const t = tableById(club(), tid);
     if (!cmd || typeof cmd.type !== 'string') return;
+    // A commitment or reveal for the next hand's deal (#136).
+    if (cmd.type === 'fair_commit' || cmd.type === 'fair_reveal') { await fairIncoming(tid, id, cmd); return; }
     if (cmd.type === 'join') {
       const why = canJoin(club(), id, t, at.get(id));
       if (why) { sendTable(id, {type: 'table', table: tid, update: {type: 'rejected', reason: why, fatal: true}}); return; }

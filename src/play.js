@@ -113,6 +113,12 @@ let statsSort = {key: 'seat', dir: 1};
 let mode = 'solo';
 let net = null; // relay connection
 let room = ''; // table code
+// The last fair-deal check at a club table (#136): {hand, ok, why}.
+let fairCheck = null;
+export function showFairCheck(check) {
+  fairCheck = check;
+  render();
+}
 // A friends table's name (#152): the host's, sent to each player.
 let hostTitle = '';
 let tableTitle = '';
@@ -874,6 +880,7 @@ function startGuest(code) {
   recordedHand = 0;
   room = code;
   tableTitle = '';
+  fairCheck = null;
   netNote = 'Connecting…';
   shownSeq = -1;
   seated = true;
@@ -1269,6 +1276,10 @@ function netBarHtml() {
   let h = `<span class="pl-meta">${title ? `<b>${esc(title)}</b> · ` : ''}Table <b>${esc(room)}</b>`;
   if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
   else h += '</span>';
+  if (fairCheck && mode === 'guest') {
+    h += fairCheck.ok ? `<span class="cl-fair" title="Dealt from a seed every player helped make, checked by this page">Hand ${fairCheck.hand}: fair deal ✓</span>`
+      : `<span class="cl-fair bad">Hand ${fairCheck.hand}: the deal didn’t check out: ${esc(fairCheck.why)}.</span>`;
+  }
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
   if (mode === 'host' && clockStopped) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
   return h;
