@@ -21,6 +21,7 @@ import {
   cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
+import { createOwner } from './club-owner.js';
 import { accountOf, settle } from './club-agents.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
@@ -39,6 +40,11 @@ const playerNets = new Map(); // club code → {net, online, hostHere}
 let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
 let server = null; // runs the hosted club (club-server.js)
+// An always-on club this browser owns (#93, club-owner.js): `club` is then
+// its latest view from the relay, and host actions go there as commands.
+let owner = null;
+const isRemote = () => !!owner?.record;
+let createWhere = 'browser'; // the New club form's choice: 'always' or 'browser'
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
@@ -60,6 +66,7 @@ const STATUS_TEXT = {
 // ---- hosting ----
 
 function saveClub() {
+  if (isRemote()) return;
   save(CLUB_KEY, club);
   save(SENDERS_KEY, verifier.toJSON());
 }
@@ -75,14 +82,19 @@ function newServer() {
   });
 }
 
-// A host action (club-server.js), telling the host if it can't be done.
+// A host action (club-server.js), here or in an always-on club's room;
+// tells the host if it can't be done. Resolves to whether it was.
 async function hostAct(op, args) {
-  try { await server.run(op, args); } catch (e) { alert(e.message); }
+  let ok = true;
+  try { await (isRemote() ? owner.run(op, args) : server.run(op, args)); } catch (e) { alert(e.message); ok = false; }
   render();
+  return ok;
 }
 
+const seatedCounts = () => (isRemote() ? owner.view?.seated || {} : server?.seatedCounts() || {});
+
 function startHosting() {
-  if (!club || hostNet) return;
+  if (!club || hostNet || isRemote()) return;
   if (!server) newServer();
   hostNet = connect(club.code, 'host', '', {
     // Tables start once this tab is the club's host: a second tab, refused
@@ -97,6 +109,19 @@ function startHosting() {
 }
 
 async function createClub(name) {
+  if (createWhere === 'always') {
+    // An always-on club (#93): its room on the relay becomes the club.
+    note = 'Setting up your club on the server…';
+    render();
+    try {
+      await owner.create(String(name || '').trim() || 'My club');
+      note = '';
+    } catch (e) {
+      note = e.message;
+    }
+    render();
+    return;
+  }
   try {
     club = newClub(name, newCode(), me.id);
   } catch (e) {
@@ -146,13 +171,8 @@ function submitTable(f) {
     render();
     return;
   }
-  try {
-    server.run('new_table', {table: settings});
-    tableForm = false;
-  } catch (e) {
-    alert(e.message);
-  }
-  render();
+  // The form stays open if the table can't be opened, so nothing is lost.
+  hostAct('new_table', {table: settings}).then(ok => { if (ok) { tableForm = false; render(); } });
 }
 
 // The host watches a table (#73) on the #play page: a spectator's view from
@@ -179,7 +199,7 @@ function closeTable(id) {
 
 function tablesHtml() {
   const tables = openTables(club);
-  const counts = server?.seatedCounts() || {};
+  const counts = seatedCounts();
   let h = `<h3>Tables${tables.length ? ` (${tables.length})` : ''}</h3>`;
   if (tables.length) {
     h += '<ul class="cl-list">';
@@ -269,6 +289,15 @@ function onSubmit(e) {
 
 
 function closeClub() {
+  if (isRemote()) {
+    // An always-on club keeps running on the server; this browser just stops
+    // running it. Deleting the club itself comes later (#98).
+    if (!confirm(`Stop running ${club?.name || 'this club'} from this browser? The club keeps running on the server for its members, and this browser can’t get back to it.`)) return;
+    owner.forget();
+    club = null;
+    render();
+    return;
+  }
   if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first.'); return; }
   if (!confirm(`Close ${club.name}? Its members and records are deleted from this browser.`)) return;
   server = null;
@@ -645,23 +674,32 @@ function inviteHtml() {
 }
 
 function hostHtml() {
+  if (!club && isRemote()) return `<section class="cl-card"><h2>${esc(owner.record.name)}</h2><p class="pl-meta">Connecting to your always-on club…</p></section>`;
   if (!club) {
     let h = '<section class="cl-card"><h2>Host a club</h2>';
-    h += '<p class="pl-desc">The club lives in this browser: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</p>';
     h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game"></div>`;
+    // Where it runs (#93): on ducy's relay, or in this browser.
+    h += '<div class="pl-row"><span class="pl-label">Runs</span><div class="cl-where">';
+    h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b>: on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser.</label>`;
+    h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
+    h += '</div></div>';
     h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div></section>';
     return h;
   }
   const pending = membersByStatus(club, 'pending');
   const members = membersByStatus(club, 'member');
-  const stalled = hostOnline && hostNet && !hostNet.healthy();
-  const badge = stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
-  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${hostOnline ? ' on' : ''}">${badge}</span>`;
-  if (!hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
+  const remote = isRemote();
+  const stalled = !remote && hostOnline && hostNet && !hostNet.healthy();
+  const on = remote ? owner.online : hostOnline;
+  const badge = remote ? (owner.online ? 'Always on' : 'Connecting…') : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${on ? ' on' : ''}">${badge}</span>`;
+  if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
   h += '</div>';
-  if (hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
-  if (!hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  h += `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
+  if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
+  h += remote
+    ? `<p class="pl-meta">Your always-on club runs on ducy's server · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`
+    : `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
   h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
   h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
   h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button><button class="btn-small" data-cl="revoke" title="Make a new link; the old one stops working">New link</button></div></div>`;
@@ -720,7 +758,7 @@ function hostHtml() {
     for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
     h += '</ul></details>';
   }
-  h += '<div class="pl-actions"><button class="link-btn" data-cl="close">Close this club</button></div></section>';
+  h += `<div class="pl-actions"><button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
   return h;
 }
 
@@ -1081,6 +1119,7 @@ function onDocKey(e) {
 }
 
 function onFilter(e) {
+  if (e.target.name === 'cl-where') { createWhere = e.target.value; return; }
   const pid = e.target.dataset?.assign;
   if (pid != null) {
     hostAct('assign_agent', {id: pid, agent: e.target.value || null});
@@ -1110,6 +1149,7 @@ function disconnectAll() {
   hostNet?.close();
   hostNet = null;
   hostOnline = false;
+  owner?.stop();
   for (const n of playerNets.values()) n.net?.close();
   playerNets.clear();
 }
@@ -1117,6 +1157,7 @@ function disconnectAll() {
 function reconnectAll() {
   if (!me) return;
   startHosting();
+  owner?.start();
   for (const m of memberships) connectMembership(m);
   render();
 }
@@ -1175,6 +1216,11 @@ export async function openClubs(el) {
       return;
     }
   }
+  owner ||= createOwner({
+    identity: me,
+    onChange: () => { if (isRemote()) club = owner.club; render(); },
+    onNote: t => { note = t; render(); },
+  });
   reconnectAll();
 }
 

@@ -108,6 +108,7 @@ export function createTableHost({
         await persist(tid, res);
         send(tid, res);
         pace(tid, res);
+        sweep(tid, r);
         if (t.status === 'closing' && !r.players.length) drop(tid);
       }
       return res;
@@ -188,6 +189,14 @@ export function createTableHost({
     return t;
   }
 
+  // The sit-out limit is checked on tick, so a table with people at it ticks
+  // regularly, not only on the turn clock. An empty one doesn't, so nothing
+  // keeps an always-on club's room awake while no one plays (#93).
+  function sweep(tid, r) {
+    if (r.players.length && !r.sweep) r.sweep = setInterval(() => { if (!r.stopped) run(tid, 'tick'); }, 5_000);
+    else if (!r.players.length && r.sweep) { clearInterval(r.sweep); r.sweep = null; }
+  }
+
   // What happens next at a table: an away player's or the clock's move, or
   // the next hand.
   function pace(tid, res) {
@@ -242,8 +251,6 @@ export function createTableHost({
         if (resume && cashOutTable(club(), t.id).length) save();
         if (t.status === 'closing') { t.status = 'closed'; save(); }
       });
-    // The sit-out limit is checked on tick; tick regularly, not only on the turn clock.
-    r.sweep = setInterval(() => { if (!r.stopped) run(t.id, 'tick'); }, 5_000);
     await r.chain;
     // The resumed table's state: who's seated, for joins and the host's view.
     if (r.paused) await run(t.id, 'state');

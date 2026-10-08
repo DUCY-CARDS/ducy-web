@@ -19,6 +19,15 @@
 //   storeHand(rec, {days})  a finished hand, for the host's history (#71)
 //   engine         {call, store} for the tables (club-host.js); defaults to
 //                  the page's worker and IndexedDB
+//   hostKeyPair    the host's key pair for encrypted table updates (e2e.js);
+//                  by default a fresh one for this session
+//   memberPubs     members' public keys already known ({id: pub}), and
+//   onMemberKey(id, pub)  a member sent a new one: an always-on club keeps
+//                  them, so it can carry on after its object restarts
+//
+// An always-on club (#93) has an owner (club.ownerId) who runs it from their
+// page: they send the same host actions signed (owner_cmd), get each result
+// (owner_result), and get the whole club after every change (owner_view).
 
 import { signMessage } from './identity.js';
 import { account, approve, decline, hostReceive, removeMember, revokeInvite } from './club.js';
@@ -42,6 +51,7 @@ const SETTINGS = {
 
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, storeHand = () => {}, engine = {},
+  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {},
 }) {
   const online = new Set(); // members connected now
   let tableHost = null;
@@ -49,9 +59,10 @@ export function createClubServer({
   // Encrypted table updates (e2e.js): the host's key pair for this session,
   // and per member {pub, key, sends} (their public key, the shared AES key,
   // and a queue that keeps their updates in order).
-  let hostKeysP = null;
+  let hostKeysP = hostKeyPair ? Promise.resolve(hostKeyPair) : null;
   const hostKeys = () => (hostKeysP ||= newKeyPair());
   const memberKeys = new Map();
+  const keysReady = Promise.all(Object.entries(memberPubs).map(([id, pub]) => memberKey(id, pub, false)));
 
   function changed() {
     persist();
@@ -60,8 +71,9 @@ export function createClubServer({
   }
 
   // A member sent their session key (with join or hello): derive the shared key.
-  async function memberKey(id, pub) {
+  async function memberKey(id, pub, isNew = true) {
     if (!isPublicKey(pub) || memberKeys.get(id)?.pub === pub) return;
+    if (isNew) onMemberKey(id, pub);
     const hk = await hostKeys();
     const key = await sharedKey(hk, pub, {context: `club:${club.code}`, hostId: club.hostId, playerId: id, hostPub: hk.pub, playerPub: pub});
     memberKeys.set(id, {pub, key, sends: memberKeys.get(id)?.sends || Promise.resolve()});
@@ -104,7 +116,27 @@ export function createClubServer({
       const body = adminBody(club, seatedCounts());
       for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
       for (const id of online) if (isAgent(club, id)) sendToPlayer({to: id, body: agentBody(club, id)});
+      sendOwnerView();
     }, 200);
+  }
+
+  // An always-on club's owner sees the whole club, as their page's copy.
+  function sendOwnerView() {
+    if (!club.ownerId || !online.has(club.ownerId)) return;
+    const running = (club.tables || []).filter(t => tableHost?.running(t.id)).map(t => t.id);
+    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data: club, seated: seatedCounts(), running, online: [...online]}});
+  }
+
+  // The owner's check-in, or one of their host actions (run): they get the
+  // result, then the club as it is now.
+  async function handleOwner({type, from, body}) {
+    if (type === 'owner_cmd') {
+      let error = '', value = null;
+      try { value = (await run(String(body.op), body.args && typeof body.args === 'object' ? body.args : {})) ?? null; } catch (e) { error = e.message || String(e); }
+      if (typeof value !== 'string' && typeof value !== 'number') value = null;
+      await sendToPlayer({to: from, body: {type: 'owner_result', club: club.code, id: body.id ?? null, error, value}});
+    }
+    sendOwnerView();
   }
 
   const seatedCounts = () => tableHost?.seatedCounts() || {};
@@ -173,6 +205,7 @@ export function createClubServer({
     if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); return; }
     if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); tableHost?.presence(msg.from); return; }
     if (!('data' in msg)) return;
+    await keysReady;
     const r = await hostReceive(club, verifier, msg.data);
     if (msg.queued) transport.ack(msg.queued);
     if (r.reason && r.reason !== 'replayed') console.warn('club: refused a message:', r.reason);
@@ -189,6 +222,7 @@ export function createClubServer({
       } else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
     }
     if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); changed(); return; }
+    if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner); return; }
     const m = club.members[msg.from];
     if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
@@ -264,17 +298,19 @@ export function createClubServer({
     },
   };
 
+  function run(op, args = {}) {
+    if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
+    return OPS[op](args);
+  }
+
   return {
     club, verifier, online,
     // The relay accepted this as the club's host: it says again who's
     // connected, and the tables start (only once: a second tab, refused by
     // the relay, never runs them).
-    relayOpen() { online.clear(); startTables(); onChange(); },
+    async relayOpen() { await keysReady; online.clear(); startTables(); onChange(); },
     message,
-    run(op, args = {}) {
-      if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
-      return OPS[op](args);
-    },
+    run,
     // The host's link to the relay is up or down: tables stop their clocks
     // while it's down (club-host.js).
     setLink(ok) { linkOk = ok; tableHost?.setLink(ok); },

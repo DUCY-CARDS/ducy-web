@@ -3,7 +3,17 @@
 //   npm install && node dev-server.mjs [port]     (default 8787)
 // Then open the page with ?relay=ws://localhost:8787
 import { WebSocketServer } from 'ws';
-import { pingReply } from './src/worker.js';
+import { readFileSync } from 'node:fs';
+import { pingReply } from './src/ping.js';
+import { createClub, openClub } from './src/club-room.js';
+
+// The engine for always-on clubs (#93), loaded on first use from the site's
+// wasm build (../wasm, as the Worker bundles it).
+let engineP = null;
+const engine = () => (engineP ||= import('../wasm/ducy_wasm.js').then(m => {
+  m.initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
+  return m.MultiTable;
+}));
 
 // Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
 const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
@@ -28,20 +38,48 @@ function allow(ws, rate, burst, now = Date.now()) {
 }
 const port = Number(process.argv[2] || process.env.PORT || 8787);
 
-// code → {host, guests: Map(id → {ws, queue}), queued: [{n, from, data, at}], next}
+// code → {host, guests: Map(id → {ws, queue}), queued: [{n, from, data, at}], next,
+//   store (an always-on club's storage), club (its server, once open), chain}
 const rooms = new Map();
 
 const send = (ws, obj) => { try { ws.send(JSON.stringify(obj)); } catch {} };
 
 function roomFor(code) {
   let room = rooms.get(code);
-  if (!room) rooms.set(code, (room = {host: null, guests: new Map(), queued: [], next: 1}));
+  if (!room) rooms.set(code, (room = {host: null, guests: new Map(), queued: [], next: 1, store: new Map(), club: null, chain: Promise.resolve()}));
   room.queued = room.queued.filter(q => Date.now() - q.at < QUEUE_DAYS * 864e5);
   return room;
 }
 
 function dropIfEmpty(code, room) {
-  if (!room.host && !room.guests.size && !room.queued.length) rooms.delete(code);
+  if (!room.host && !room.guests.size && !room.queued.length && !room.store.has('club')) rooms.delete(code);
+}
+
+// An always-on club's storage, kept in memory while this relay runs.
+function storageOf(room) {
+  return {
+    get: async k => (room.store.has(k) ? structuredClone(room.store.get(k)) : undefined),
+    put: async (k, v) => { room.store.set(k, structuredClone(v)); },
+    delete: async k => { room.store.delete(k); },
+  };
+}
+
+// Runs fn for the room after whatever it's doing: one message at a time.
+function inRoom(room, fn) {
+  room.chain = room.chain.then(fn).catch(e => console.warn('club room:', e));
+  return room.chain;
+}
+
+// The always-on club running in the room, opening it if needed; null if none.
+async function clubOf(room) {
+  if (!room.store.has('club')) return null;
+  room.club ||= engine().then(MultiTable => openClub({
+    storage: storageOf(room),
+    send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
+    online: [...room.guests.keys()],
+    MultiTable,
+  }));
+  return room.club;
 }
 
 function enqueue(room, from, raw) {
@@ -65,6 +103,7 @@ wss.on('connection', (ws, req) => {
   if (role === 'host') {
     const room = roomFor(code);
     if (room.host) return ws.close(4001, 'the table already has a host');
+    if (room.store.has('club')) return ws.close(4001, 'this club runs on the relay');
     room.host = ws;
     // Guests waiting in queue mode, then whatever they left while the host was away.
     for (const [gid, g] of room.guests) { send(ws, {from: gid, event: 'open'}); send(g.ws, {type: 'host_back'}); }
@@ -90,18 +129,39 @@ wss.on('connection', (ws, req) => {
   } else if (role === 'guest') {
     if (!ID.test(id)) return ws.close(4000, 'bad id');
     const existing = rooms.get(code);
-    if (!existing?.host && !queue) return ws.close(4004, 'no such table');
+    const isClub = !!existing?.store.has('club');
+    if (!existing?.host && !queue && !isClub) return ws.close(4004, 'no such table');
     const room = roomFor(code);
     room.guests.get(id)?.ws.close(4009, 'replaced');
     room.guests.delete(id);
     if (room.guests.size >= MAX_GUESTS) return ws.close(4029, 'the room is full');
     room.guests.set(id, {ws, queue});
-    if (room.host) send(room.host, {from: id, event: 'open'});
+    if (isClub) inRoom(room, async () => (await clubOf(room)).message({from: id, event: 'open'}));
+    else if (room.host) send(room.host, {from: id, event: 'open'});
     else send(ws, {type: 'host_away'});
     ws.on('message', data => {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
       if (pong) return ws.send(pong);
+      // An always-on club runs here, or someone asks to make this room one.
+      if (room.store.has('club') || String(data).includes('"create_club"')) {
+        let msg;
+        try { msg = JSON.parse(data); } catch { return; }
+        inRoom(room, async () => {
+          const club = await clubOf(room);
+          if (club) return club.message({from: id, data: msg});
+          if (msg?.body?.type !== 'create_club') return;
+          try {
+            if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
+            if (msg.from !== id) throw new Error('The request must come from you.');
+            send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code))});
+            await clubOf(room);
+          } catch (e) {
+            send(ws, {type: 'club_error', reason: e.message});
+          }
+        });
+        return;
+      }
       if (room.host) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
@@ -113,7 +173,8 @@ wss.on('connection', (ws, req) => {
     ws.on('close', () => {
       if (room.guests.get(id)?.ws !== ws) return; // replaced
       room.guests.delete(id);
-      if (room.host) send(room.host, {from: id, event: 'close'});
+      if (room.club) inRoom(room, async () => (await room.club).message({from: id, event: 'close'}));
+      else if (room.host) send(room.host, {from: id, event: 'close'});
       dropIfEmpty(code, room);
     });
   } else {
