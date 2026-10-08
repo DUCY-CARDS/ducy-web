@@ -782,6 +782,34 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-tableform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--fg); }
 .cl-tableform .pl-text { width: 100%; }
 .cl-formacts { grid-column: 1 / -1; display: flex; gap: 6px; }
+/* The quick New table form (#113): choices as buttons, the rest under More options. */
+.cl-tableform.tf { display: flex; flex-direction: column; gap: 10px; }
+.tf .pl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tf-opt { position: relative; cursor: pointer; }
+.tf-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.tf-opt:has(input:checked) { background: var(--teal); border-color: var(--teal); color: #fff; }
+.tf-opt:has(input:focus-visible) { outline: 2px solid var(--teal); outline-offset: 2px; }
+.tf-other { display: none !important; }
+.tf:has([name=blinds][value=other]:checked) .tf-other-blinds,
+.tf:has([name=seatsPick][value=other]:checked) .tf-other-seats { display: flex !important; }
+.tf-other label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
+.tf-more summary, .cl-card details.tf-more summary { cursor: pointer; font-size: 13px; color: var(--fg-muted); }
+.tf-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; padding-top: 8px; }
+.tf-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--fg); }
+.tf-fields .pl-text { width: 100%; }
+.cl-more { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+/* My clubs (#143): what needs you, the sub-tabs, ⋯ menus and the settings dialog. */
+.cl-needs { border: 1px solid var(--amber); border-radius: var(--radius); padding: 8px 12px; background: var(--amber-faint); }
+.cl-needs h3 { margin: 0 0 4px; color: var(--amber); }
+.cl-dash-tabs { margin-top: 4px; }
+.cl-menu { position: relative; display: inline-block; }
+.cl-menu > summary { list-style: none; cursor: pointer; }
+.cl-menu > summary::-webkit-details-marker { display: none; }
+.cl-menu-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 200px; display: flex; flex-direction: column; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 4px; }
+.cl-menu-item { font: inherit; font-size: 13px; text-align: left; background: none; border: 0; color: var(--fg); padding: 7px 10px; border-radius: 4px; cursor: pointer; }
+.cl-menu-item:hover, .cl-menu-item:focus-visible { background: var(--bg-inset); color: var(--fg-strong); }
+.cl-title .cl-menu { margin-left: auto; }
+.cl-dialog h3 { font-size: 13px; margin: 4px 0 0; }
 .cl-hands { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .cl-handfilter { width: auto; }
 .cl-handlist { width: 100%; }
