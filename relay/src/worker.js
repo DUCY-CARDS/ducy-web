@@ -135,6 +135,8 @@ export class Room {
     const cfg = backupConfig(this.env);
     if (code && cfg) await dropBackups(cfg, code).catch(e => console.warn(e));
     await this.state.storage.delete('backupAt');
+    await this.state.storage.delete('backupDue');
+    this.timerMap?.clear();
     await this.state.storage.deleteAlarm();
     setTimeout(() => { for (const g of this.state.getWebSockets('guest')) { try { g.close(4004, 'the club was closed'); } catch {} } }, 1000);
   }
@@ -159,6 +161,7 @@ export class Room {
       onUsage: minutes => this.registry('/used', {minutes}),
       onDeleted: () => this.deleted(),
       onSaved: () => this.scheduleBackup(),
+      timers: this.tableTimers(),
     })
       .catch(e => { this.clubP = null; throw e; });
     return this.clubP;
@@ -181,12 +184,48 @@ export class Room {
   }
 
   // The club changed: back it up now if the last backup is 5 minutes old,
-  // else when that's up (an alarm, which doesn't keep the room awake).
+  // else when that's up (on the alarm, which doesn't keep the room awake).
   async scheduleBackup() {
     if (!backupConfig(this.env)) return;
     const last = (await this.state.storage.get('backupAt')) || 0;
     if (Date.now() - last >= BACKUP_EVERY_MS) await this.backupNow();
-    else if (!(await this.state.storage.getAlarm())) await this.state.storage.setAlarm(last + BACKUP_EVERY_MS);
+    else if (!(await this.state.storage.get('backupDue'))) {
+      await this.state.storage.put('backupDue', last + BACKUP_EVERY_MS);
+      await this.armAlarm();
+    }
+  }
+
+  // The tables' clocks (#135): turn time-outs, the next deal, the sit-out
+  // sweep and the rest, on the room's one alarm (shared with backups), so
+  // the room can sleep between them instead of being held awake by timers.
+  // They're kept in memory; if the room is evicted meanwhile, the alarm
+  // wakes it, the club opens again, and its tables (saved after every
+  // change) restore and set their timers again, the ones already due firing
+  // at once.
+  tableTimers() {
+    this.timerMap ||= new Map();
+    this.timerN ||= 0;
+    return {
+      set: (fn, ms) => {
+        const h = ++this.timerN;
+        this.timerMap.set(h, {at: Date.now() + Math.max(0, Number(ms) || 0), fn});
+        this.armAlarm().catch(e => console.warn('room: alarm not set:', e));
+        return h;
+      },
+      clear: h => { if (h != null) this.timerMap?.delete(h); },
+    };
+  }
+
+  // Sets the alarm for the soonest table timer or backup, if it's sooner
+  // than the alarm already set.
+  async armAlarm() {
+    const times = [...(this.timerMap?.values() || [])].map(t => t.at);
+    const backupDue = await this.state.storage.get('backupDue');
+    if (backupDue) times.push(backupDue);
+    if (!times.length) return;
+    const next = Math.min(...times);
+    const set = await this.state.storage.getAlarm();
+    if (set == null || next < set) await this.state.storage.setAlarm(next);
   }
 
   async backupNow() {
@@ -198,7 +237,23 @@ export class Room {
   }
 
   async alarm() {
-    await this.backupNow();
+    // Woken after being evicted: open the club, so its tables restore and
+    // set their timers again.
+    if (!this.clubP && await this.state.storage.get('club')) {
+      try { await this.club(); } catch (e) { console.warn('club: not reopened:', e); }
+    }
+    const now = Date.now();
+    for (const [h, t] of [...(this.timerMap || [])]) {
+      if (t.at > now) continue;
+      this.timerMap.delete(h);
+      try { t.fn(); } catch (e) { console.warn('room: timer:', e); }
+    }
+    const backupDue = await this.state.storage.get('backupDue');
+    if (backupDue && backupDue <= now) {
+      await this.state.storage.delete('backupDue');
+      await this.backupNow();
+    }
+    await this.armAlarm();
   }
 
   storage() {

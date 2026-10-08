@@ -99,7 +99,9 @@ async function isHandoff(club, env) {
 // club and its storage is gone; the caller drops the server and its
 // connections. `onSaved()`: the club was saved (the caller may back it up,
 // backup.js).
-export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}}) {
+// `timers`: {set(fn, ms), clear(handle)} for the tables' clocks (#135); the
+// Worker backs it with the room's alarm, the local relay uses plain timers.
+export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, timers = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -179,6 +181,7 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
         put: (code, tid, rec) => later(() => storage.put(`table:${tid}`, rec)),
         drop: (code, tid) => later(() => storage.delete(`table:${tid}`)),
       },
+      ...(timers ? {timers} : {}),
     },
     hostKeyPair, memberPubs,
     onMemberKey: (id, pub) => { memberPubs[id] = pub; later(() => storage.put('memberPubs', {...memberPubs})); },
