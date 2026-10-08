@@ -1,9 +1,9 @@
 // Shared by fit-omaha-rank.mjs and omaha-blockers.mjs: the random hand sample
 // and the step that turns fitted feature weights into a final model with the
-// blocker term (src/omaha-blockers.js) and percentile cutoffs.
+// blocker term (scripts/omaha-blockers.js) and percentile cutoffs.
 
-import { omahaFeatures } from '../src/omaha-features.js';
-import { nutFlushBlock } from '../src/omaha-blockers.js';
+import { omahaFeatures } from './omaha-features.js';
+import { nutFlushBlock } from './omaha-blockers.js';
 
 export const PERCENTILE_SAMPLE = 400000;
 export const CUTOFF_STEPS = 400;

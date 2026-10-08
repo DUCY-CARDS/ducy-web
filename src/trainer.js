@@ -5,9 +5,7 @@
 
 import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
-import { omahaPercentile } from './omaha-rank.js';
-import { OMAHA_MODEL } from './omaha-rank-model.js';
-import { omahaTags, TAG_LABELS } from './omaha-tags.js';
+import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 
@@ -121,7 +119,7 @@ const handsName = n => (n === 2 ? 'Hold’em hands' : `${n}-card hands`);
 const dealTop = n => (n === 2 ? dealHand() : dealOmaha(n));
 const topPercentile = h => (h.length === 2 ? HOLDEM_PERCENTILE[handClass(h[0], h[1])] : omahaPercentile(h));
 const topTags = h => (h.length === 2 ? holdemTags(h) : omahaTags(h));
-const labelsFor = n => (n === 2 ? HOLDEM_TAG_LABELS : TAG_LABELS);
+const labelsFor = n => (n === 2 ? HOLDEM_TAG_LABELS : omahaLabels());
 
 /** The top X% of Hold'em hands as a target, for drawing the 13x13 grid. */
 function holdemTopTarget(pct) {
@@ -363,7 +361,7 @@ function dealDrill(cards, cut, band, tag) {
 // range, how far in as a share of the cutoff; outside, how far out as a share
 // of the rest. Obvious hands (deep inside, or far outside) aren't dealt except
 // as occasional probes for major mistakes, and practice leans toward the
-// kinds of hands (omaha-tags.js) the player keeps getting wrong.
+// kinds of hands (omaha-hand.js, holdem-tags.js) the player keeps getting wrong.
 
 const PROGRESS_KEY = 'ducyTrainerProgress';
 // band: relative distance from the cutoff, [min, max).
@@ -400,7 +398,9 @@ function fingerprint(text) {
 const modelVersions = {};
 function modelVersion(key) {
   const cards = key.startsWith('holdem:') ? 2 : +key.split(':')[1];
-  return modelVersions[cards] ||= fingerprint(JSON.stringify(cards === 2 ? HOLDEM_PERCENTILE : OMAHA_MODEL[cards] || null));
+  return modelVersions[cards] ||= cards === 2
+    ? fingerprint(JSON.stringify(HOLDEM_PERCENTILE))
+    : omahaModelVersion(cards, fingerprint);
 }
 
 /** A fresh record for `key`, stamped with the current ranking. */
