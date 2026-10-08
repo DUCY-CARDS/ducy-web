@@ -1107,6 +1107,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   background: var(--bg-raised); color: var(--fg); font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,0.25);
 }
 .pt-toast[hidden] { display: none; }
+/* A fair deal's check (#136) */
+.cl-fair { font-size: 12px; color: var(--green); white-space: nowrap; }
+.cl-fair.bad { color: var(--red); white-space: normal; }
 /* A club's Accounting tab */
 .cl-acct { border-collapse: collapse; font-size: 13px; min-width: min(420px, 100%); }
 .cl-acct th, .cl-acct td { padding: 4px 10px; border-bottom: 1px solid var(--border); }
