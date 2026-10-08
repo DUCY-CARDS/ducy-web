@@ -26,7 +26,7 @@ export function structureEditor({stack, tableSize = 9, preset = 'regular', onCha
   function html() {
     let h = '<div class="ts-editor">';
     h += '<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">';
-    h += PRESETS.map(p => `<button type="button" class="cc-btn${chosen === p.id ? ' on' : ''}" data-ts="preset" data-preset="${p.id}">${esc(p.label)}</button>`).join('');
+    h += PRESETS().map(p => `<button type="button" class="cc-btn${chosen === p.id ? ' on' : ''}" data-ts="preset" data-preset="${p.id}">${esc(p.label)}</button>`).join('');
     h += '</div></div>';
     h += '<table class="ts-levels"><thead><tr><th>Level</th><th>Small blind</th><th>Big blind</th><th>Ante</th><th>Minutes</th><th></th></tr></thead><tbody>';
     let level = 0;
