@@ -71,7 +71,7 @@ test('assistants give and grant from their own balance, never creating chips', (
   requestChips(club, 'bob', 100);
   runAdmin(club, 'ann', {op: 'deny', id: 'bob'});
   assert.equal(club.members.bob.request, null);
-  assert.throws(() => runAdmin(club, 'ann', {op: 'give', id: 'bob', amount: 1000}), /You have 500/);
+  assert.throws(() => runAdmin(club, 'ann', {op: 'give', id: 'bob', amount: 1000}), /You have 5 chips/, 'shown in chips: 500 hundredths');
   const after = totals(club);
   assert.equal(after.issued, before.issued, 'no chips created');
   assert.ok(after.conserved);

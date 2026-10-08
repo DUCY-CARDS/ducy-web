@@ -9,6 +9,7 @@
 // cards. Seat numbers are the viewer's (they're seat 0).
 
 import { replayFrames as ducyReplayFrames } from '../wasm/ducy_wasm.js';
+import { chipText } from './chip-format.js';
 
 export const STREETS = ['preflop', 'flop', 'turn', 'river'];
 
@@ -32,7 +33,7 @@ export function handRecord({club, table, tableName, game, view, who}, now = Date
 
 // Who won what, for a list row: "Ann +12".
 export function summary(rec) {
-  const winners = rec.seats.filter(s => s.inHand && s.net > 0).map(s => `${s.name} +${s.net}`);
+  const winners = rec.seats.filter(s => s.inHand && s.net > 0).map(s => `${s.name} +${chipText(s.net)}`);
   return winners.join(', ') || 'split';
 }
 
@@ -45,13 +46,33 @@ export function replayFrames(rec) {
   const start = rec.seats.map(s => BigInt(s.inHand ? s.stackEnd - s.net : s.stackEnd));
   const frames = ducyReplayFrames(rec.events, BigUint64Array.from(start), rec.seats.map(s => s.name));
   return frames.map(f => ({
-    street: f.street, board: f.board, pot: num(f.pot), text: f.text,
+    street: f.street, board: f.board, pot: num(f.pot),
+    text: (f.event != null && amountText(rec.events[f.event], i => rec.seats[i]?.name || `Seat ${i}`)) || f.text,
     event: f.event == null ? null : rec.events[f.event],
     seats: f.seats.map((s, i) => ({
       name: rec.seats[i].name, inHand: rec.seats[i].inHand, cards: rec.seats[i].cards,
       stack: num(s.stack), bet: num(s.bet), folded: s.folded, allIn: s.all_in,
     })),
   }));
+}
+
+// The text for an event with an amount in it, the amount shown as chips
+// (chip-format.js), as ducy words it; null for the rest, where ducy's text
+// stands.
+function amountText(e, name) {
+  if (!e) return null;
+  const c = chipText, who = name(e.seat), allIn = e.all_in ? ' (all-in)' : '';
+  switch (e.type) {
+    case 'ante': return `${who} antes ${c(e.amount)}`;
+    case 'post': return `${who} posts missed blinds: ${[[e.dead, 'dead'], [e.live, 'live']].filter(([n]) => num(n) > 0).map(([n, w]) => `${c(n)} ${w}`).join(' + ')}`;
+    case 'small_blind': return `${who} posts the small blind ${c(e.amount)}`;
+    case 'big_blind': return `${who} posts the big blind ${c(e.amount)}`;
+    case 'call': return `${who} calls ${c(e.amount)}${allIn}`;
+    case 'bet': return `${who} bets ${c(e.to)}${allIn}`;
+    case 'raise': return `${who} raises to ${c(e.to)}${allIn}`;
+    case 'award': return `${who} wins ${c(e.amount)}${num(e.pot) > 0 ? ' (side pot)' : ''}`;
+    default: return null;
+  }
 }
 
 // The frame index where each street starts (for jumping), from frames.

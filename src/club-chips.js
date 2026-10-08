@@ -11,6 +11,10 @@
 // balance.
 //
 // Conservation: issued − reclaimed = all club balances + all table stacks.
+//
+// Amounts are whole hundredths, shown divided by 100 (chip-format.js).
+
+import { chipText } from './chip-format.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
@@ -66,7 +70,7 @@ export function reclaim(club, id, amt, now = Date.now(), why = '') {
   ensureChips(club);
   if (!m) throw new Error('No such member.');
   amount(amt);
-  if (amt > m.balance) throw new Error(`${m.name} only has ${m.balance} chips in the club.`);
+  if (amt > m.balance) throw new Error(`${m.name} only has ${chipText(m.balance)} chips in the club.`);
   m.balance -= amt;
   club.chips.reclaimed += amt;
   return record(club, m, 'reclaim', amt, now, {note: note(why)});
@@ -105,7 +109,7 @@ export function transfer(club, from, to, amt, now = Date.now(), why = '', {floor
   const a = member(club, from), b = member(club, to);
   amount(amt);
   if (from === to) throw new Error('Pick someone else.');
-  if (a.balance - amt < floor) throw new Error(floor < 0 ? `That's more than your balance plus credit allows (${Math.max(0, a.balance - floor)}).` : `You have ${a.balance} chips in the club.`);
+  if (a.balance - amt < floor) throw new Error(floor < 0 ? `That's more than your balance plus credit allows (${chipText(Math.max(0, a.balance - floor))}).` : `You have ${chipText(a.balance)} chips in the club.`);
   a.balance -= amt;
   b.balance += amt;
   return [
@@ -130,9 +134,9 @@ export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
   amount(amt);
   if (m.seat) throw new Error('Already seated at a table.');
   const floor = Math.max(min, ratholeMin(club, id, table, now));
-  if (amt < floor) throw new Error(floor > min ? `You left this table with ${floor} chips less than ${club.ratholeHours} hours ago, so buy in for at least that.` : `The minimum buy-in is ${min}.`);
-  if (amt > max) throw new Error(`The maximum buy-in is ${max}.`);
-  if (amt > m.balance) throw new Error(`You have ${m.balance} chips in the club.`);
+  if (amt < floor) throw new Error(floor > min ? `You left this table with ${chipText(floor)} chips less than ${club.ratholeHours} hours ago, so buy in for at least that.` : `The minimum buy-in is ${min}.`);
+  if (amt > max) throw new Error(`The maximum buy-in is ${chipText(max)}.`);
+  if (amt > m.balance) throw new Error(`You have ${chipText(m.balance)} chips in the club.`);
   m.balance -= amt;
   m.seat = {table, stack: amt};
   return record(club, m, 'buy_in', amt, now, {table});

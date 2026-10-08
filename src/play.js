@@ -21,6 +21,7 @@ import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { hostPick, onHostPick } from './host-choice.js';
+import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 
 let worker = null;
 let nextId = 0;
@@ -61,11 +62,15 @@ const GAMES = [
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // A friends table: its name, game, blinds, seats in all (the host's
 // included) and the buy-in limits in big blinds (min and max, in chips, are
-// minBB × bb and maxBB × bb).
-const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 1, bb: 2, seats: 6, minBB: 50, maxBB: 200};
+// minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
+// shows as 1/2.
+const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 6, minBB: 50, maxBB: 200};
 const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
-const FRIENDS_BLINDS = [[1, 2], [2, 5], [5, 10], [25, 50]];
-const MAX_CHIPS = 1e9;
+const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
+const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
+const MAX_CHIPS = 1e11;
+// An amount from the engine, for the screen.
+const c = n => chipText(num(n));
 
 let root = null;
 let open = false;
@@ -151,13 +156,18 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 function loadSetup() {
   try {
     const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
-    if (s && Array.isArray(s.bots)) return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
+    if (s && Array.isArray(s.bots)) {
+      // Saved before chips were hundredths: its blinds and buy-in would show
+      // a hundred times too small, so they start over.
+      if (s.chips !== 'cents') { delete s.sb; delete s.bb; delete s.buyIn; delete s.friends; }
+      return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
+    }
   } catch {}
   return defaultSetup();
 }
@@ -277,7 +287,7 @@ function botsSetupHtml() {
   if (setup.count === 1) h += picks;
   else h += `<p class="pl-meta">Against ${setup.bots.map(id => esc(botChoices().find(x => x.id === id)?.name || id)).join(', ')}.</p>`;
   h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>More options</summary><div class="cl-more">`;
-  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${sb}/${bb}`)));
+  h += optsRow('Blinds', BOT_BLINDS.map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)));
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   if (setup.count > 1) h += picks;
   h += '</div></details>';
@@ -313,15 +323,15 @@ function friendsSetupHtml() {
     h += `<p class="pl-desc">${gameOf(f.game).name}, up to ${f.seats} players, you included.</p>`;
   } else {
     const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
-    h += optsRow('Blinds', [...FRIENDS_BLINDS.map(([sb, bb]) => optBtn(preset?.[1] === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)), optBtn(!preset, 'data-fblinds', 'custom', 'Custom')]);
+    h += optsRow('Blinds', [...FRIENDS_BLINDS.map(([sb, bb]) => optBtn(preset?.[1] === bb, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)), optBtn(!preset, 'data-fblinds', 'custom', 'Custom')]);
     if (!preset || f.customBlinds) {
       h += '<div class="pl-row"><span class="pl-label"></span><div class="pl-opts">';
-      h += `<label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="1" step="1" value="${f.sb}"></label>`;
-      h += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="1" step="1" value="${f.bb}"></label></div></div>`;
+      h += `<label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.sb)}"></label>`;
+      h += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.bb)}"></label></div></div>`;
     }
     h += '<div class="pl-row"><span class="pl-label">Buy-in</span><div class="pl-opts">';
-    h += `<label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="1" step="1" value="${f.minBB * f.bb}"></label>`;
-    h += `<label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="1" step="1" value="${f.maxBB * f.bb}"></label>`;
+    h += `<label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.minBB * f.bb)}"></label>`;
+    h += `<label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.maxBB * f.bb)}"></label>`;
     h += '</div></div>';
     h += `<p class="pl-desc">In chips: ${f.minBB}–${f.maxBB} big blinds. Everyone, you too, tops up to between these, and chips carry over from hand to hand.</p>`;
   }
@@ -342,14 +352,14 @@ function readFriendsStep() {
   if (val('pf-title')) f.title = val('pf-title').value.trim().slice(0, 40);
   if (fstep === 1 && !setup.name) return 'Enter your name: it’s what the others see.';
   if (val('pf-sb')) {
-    const sb = Math.floor(+val('pf-sb').value), bb = Math.floor(+val('pf-bb').value);
-    if (!(sb >= 1 && bb >= sb && bb <= MAX_CHIPS)) return 'Blinds are whole chips: a small blind of at least 1, and a big blind at least that.';
+    const sb = parseChips(val('pf-sb').value), bb = parseChips(val('pf-bb').value);
+    if (!(sb >= 1 && bb >= sb && bb <= MAX_CHIPS)) return 'Blinds are amounts like 1 or 0.25: a small blind of at least 0.01, and a big blind at least that.';
     f.sb = sb;
     f.bb = bb;
   }
   if (val('pf-min')) {
-    const min = Math.floor(+val('pf-min').value), max = Math.floor(+val('pf-max').value);
-    if (!(min >= f.bb)) return `The minimum buy-in must be at least the big blind (${f.bb}).`;
+    const min = parseChips(val('pf-min').value), max = parseChips(val('pf-max').value);
+    if (!(min >= f.bb)) return `The minimum buy-in must be at least the big blind (${chipText(f.bb)}).`;
     if (!(max >= min && max <= MAX_CHIPS)) return 'The maximum buy-in must be at least the minimum.';
     f.minBB = min / f.bb;
     f.maxBB = max / f.bb;
@@ -1007,18 +1017,18 @@ function eventText(e) {
   const v = (base, s = base + 's') => (me0 ? base : s);
   const allIn = e.all_in ? ' (all-in)' : '';
   switch (e.type) {
-    case 'small_blind': return `${who} ${v('post')} the small blind ${num(e.amount)}`;
-    case 'big_blind': return `${who} ${v('post')} the big blind ${num(e.amount)}`;
+    case 'small_blind': return `${who} ${v('post')} the small blind ${c(e.amount)}`;
+    case 'big_blind': return `${who} ${v('post')} the big blind ${c(e.amount)}`;
     // Coming back after sitting out (#70): missed blinds, dead and live.
-    case 'post': return `${who} ${v('post')} missed blinds: ${[num(e.dead) && `${num(e.dead)} dead`, num(e.live) && `${num(e.live)} live`].filter(Boolean).join(' + ')}`;
-    case 'ante': return `${who} ${v('ante')} ${num(e.amount)}`;
+    case 'post': return `${who} ${v('post')} missed blinds: ${[num(e.dead) && `${c(e.dead)} dead`, num(e.live) && `${c(e.live)} live`].filter(Boolean).join(' + ')}`;
+    case 'ante': return `${who} ${v('ante')} ${c(e.amount)}`;
     case 'fold': return `${who} ${v('fold')}`;
     case 'check': return `${who} ${v('check')}`;
-    case 'call': return `${who} ${v('call')} ${num(e.amount)}${allIn}`;
-    case 'bet': return `${who} ${v('bet')} ${num(e.to)}${allIn}`;
-    case 'raise': return `${who} ${v('raise', 'raises')} to ${num(e.to)}${allIn}`;
+    case 'call': return `${who} ${v('call')} ${c(e.amount)}${allIn}`;
+    case 'bet': return `${who} ${v('bet')} ${c(e.to)}${allIn}`;
+    case 'raise': return `${who} ${v('raise', 'raises')} to ${c(e.to)}${allIn}`;
     case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
-    case 'award': return `${who} ${v('win')} ${num(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
+    case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
     default: return '';
   }
 }
@@ -1040,7 +1050,7 @@ function renderTable() {
   const last = lastActions();
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${num(s.small_blind ?? setup.sb)}/${num(s.big_blind ?? setup.bb)}</span>`;
+  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
   if (mode !== 'solo') h += netBarHtml();
   h += '<span class="pl-tools">';
   h += `<button class="cc-btn${setup.autoDeal ? ' on' : ''}" data-act="autodeal" aria-pressed="${!!setup.autoDeal}">Auto-deal</button>`;
@@ -1051,7 +1061,7 @@ function renderTable() {
   h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
-  h += `<div class="pl-pot">Pot ${num(s.pot)}</div></div>`;
+  h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
@@ -1062,19 +1072,19 @@ function renderTable() {
     }
     if (seat.sitting_out) {
       const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
-      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
     const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${num(seat.stack)}</span></div>`;
-    const note = s.complete ? (num(seat.net) > 0 ? `+${num(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
+    const note = s.complete ? (num(seat.net) > 0 ? `+${c(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (setup.hud) h += hudHtml(seatId(i));
-    if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${num(seat.street_bet)}</div>`;
+    if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${c(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
   });
@@ -1109,7 +1119,7 @@ function controlsHtml() {
   const L = s.legal;
   if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
-    const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${num(w.won)}`).join(', ');
+    const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
     // Before the first hand of a hosted table there's no result yet.
     status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
     if (mode === 'guest') {
@@ -1136,14 +1146,14 @@ function controlsHtml() {
     status = 'Your turn';
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
     if (L.can_check) call = '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
-    else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${num(L.call)} <kbd>C</kbd></button>`;
+    else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${c(L.call)} <kbd>C</kbd></button>`;
     const range = L.raise || L.bet;
     if (range) {
       const min = num(range.min_to), max = num(range.max_to);
       // Pot-limit defaults to the pot, no-limit to the minimum.
       if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
       const word = L.raise ? 'Raise to' : 'Bet';
-      raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${raiseTo}</b> <kbd>R</kbd></button>`;
+      raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${chipText(raiseTo)}</b> <kbd>R</kbd></button>`;
       sizes = `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
       amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
     }
@@ -1223,7 +1233,7 @@ function hostChipsHtml() {
   if (hostInfo.chipRequests.length) {
     h += '<div class="pl-chips-head"><b>Chip requests</b></div><ul class="pl-chip-list">';
     for (const r of hostInfo.chipRequests) {
-      h += `<li><span><b>${esc(r.name)}</b> asks for ${num(r.amount)} chips <span class="pl-meta">(has ${num(r.stack)})</span></span>`;
+      h += `<li><span><b>${esc(r.name)}</b> asks for ${c(r.amount)} chips <span class="pl-meta">(has ${c(r.stack)})</span></span>`;
       h += `<span class="pl-chip-acts"><button class="tr-btn yes" data-approve="${r.seat}">Approve</button><button class="tr-btn" data-deny="${r.seat}">Deny</button></span></li>`;
     }
     h += '</ul>';
@@ -1233,18 +1243,18 @@ function hostChipsHtml() {
     h += '<div class="pl-chips-head"><b>Players</b></div><ul class="pl-chip-list">';
     for (const p of people) {
       const note = p.away ? ' · away' : p.sitting_out ? (num(p.stack) === 0 ? ' · needs chips' : ' · sitting out') : '';
-      h += `<li><span>${esc(p.name)} <span class="pl-meta">${num(p.stack)} chips${note}</span></span><button class="link-btn" data-remove="${p.i}">Remove</button></li>`;
+      h += `<li><span>${esc(p.name)} <span class="pl-meta">${c(p.stack)} chips${note}</span></span><button class="link-btn" data-remove="${p.i}">Remove</button></li>`;
     }
     h += '</ul>';
   }
   const mine = num(state.seats[0].stack) + hostInfo.hostPendingChips;
   const room = max - mine;
   h += '<div class="pl-chips-head"><b>Your chips</b>';
-  h += `<span class="pl-meta">${num(state.seats[0].stack)}${hostInfo.hostPendingChips ? ` (+${hostInfo.hostPendingChips} next hand)` : ''} · stacks ${min}–${max} after a top-up</span></div>`;
+  h += `<span class="pl-meta">${c(state.seats[0].stack)}${hostInfo.hostPendingChips ? ` (+${c(hostInfo.hostPendingChips)} next hand)` : ''} · stacks ${c(min)}–${c(max)} after a top-up</span></div>`;
   if (room > 0) {
     const lo = Math.max(1, min - mine);
     const v = Math.max(lo, Math.min(room, chipAsk || room));
-    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${lo}" max="${room}" value="${v}" aria-label="Chips to add"><button class="tr-btn" data-act="hostchips">Add chips</button></div>`;
+    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${chipInput(lo)}" max="${chipInput(room)}" step="${CHIP_STEP}" value="${chipInput(v)}" aria-label="Chips to add"><button class="tr-btn" data-act="hostchips">Add chips</button></div>`;
   }
   return h + '</div>';
 }
@@ -1253,13 +1263,13 @@ function guestChipsHtml() {
   const {min, max, requested, approved} = myChips;
   const stack = num(state.seats[0].stack) + approved;
   let h = '<div class="pl-chips"><div class="pl-chips-head"><b>Your chips</b>';
-  h += `<span class="pl-meta">${num(state.seats[0].stack)}${approved ? ` (+${approved} next hand)` : ''} · stacks ${min}–${max} after a top-up</span></div>`;
+  h += `<span class="pl-meta">${c(state.seats[0].stack)}${approved ? ` (+${c(approved)} next hand)` : ''} · stacks ${c(min)}–${c(max)} after a top-up</span></div>`;
   if (requested) {
-    h += `<div class="pl-chip-ask"><span>Asked the host for ${requested} chips…</span><button class="link-btn" data-act="cancelchips">Cancel</button></div>`;
+    h += `<div class="pl-chip-ask"><span>Asked the host for ${c(requested)} chips…</span><button class="link-btn" data-act="cancelchips">Cancel</button></div>`;
   } else if (stack < max) {
     const lo = Math.max(1, min - stack), hi = max - stack;
     const v = Math.max(lo, Math.min(hi, chipAsk || hi));
-    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${lo}" max="${hi}" value="${v}" aria-label="Chips to ask for"><button class="tr-btn yes" data-act="askchips">Ask for chips</button></div>`;
+    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${chipInput(lo)}" max="${chipInput(hi)}" step="${CHIP_STEP}" value="${chipInput(v)}" aria-label="Chips to ask for"><button class="tr-btn yes" data-act="askchips">Ask for chips</button></div>`;
     if (stack === 0) h += '<p class="pl-meta">You’ll be dealt in once the host approves your chips.</p>';
   }
   return h + '</div>';
@@ -1268,7 +1278,7 @@ function guestChipsHtml() {
 // The amount in the chips box.
 function chipAmount() {
   const el = root.querySelector('#pl-chipamt');
-  return el ? Math.floor(+el.value) || 0 : 0;
+  return el ? parseChips(el.value) || 0 : 0;
 }
 
 function netBarHtml() {
@@ -1339,7 +1349,7 @@ const STAT_COLS = [
   ['foldToBet', 'Fold to bet', 'Folded to a postflop bet or raise', r => pct(r.foldToBet), r => r.foldToBet.v],
   ['wtsd', 'WTSD', 'Went to showdown, of the hands that saw the flop', r => pct(r.wtsd), r => r.wtsd.v],
   ['wsd', 'W$SD', 'Won at showdown', r => pct(r.wsd), r => r.wsd.v],
-  ['net', 'Net', 'Chips won or lost (big blinds)', r => `${signed(r.net)} <small>(${signed(r.netBB, 1)} bb)</small>`, r => r.netBB],
+  ['net', 'Net', 'Chips won or lost (big blinds)', r => `${r.net > 0 ? '+' : ''}${chipText(r.net)} <small>(${signed(r.netBB, 1)} bb)</small>`, r => r.netBB],
   ['bb100', 'bb/100', 'Big blinds won per 100 hands', r => (r.bb100 == null ? '—' : signed(r.bb100, 1)), r => r.bb100],
 ];
 
@@ -1584,11 +1594,11 @@ function onClick(e) {
 }
 
 function onInput(e) {
-  if (e.target.id === 'pl-chipamt') chipAsk = Math.floor(+e.target.value) || 0;
+  if (e.target.id === 'pl-chipamt') chipAsk = parseChips(e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
     raiseTo = +e.target.value;
     const v = root.querySelector('#pl-amtv');
-    if (v) v.textContent = raiseTo;
+    if (v) v.textContent = chipText(raiseTo);
   }
 }
 

@@ -17,6 +17,7 @@
 // the host can still decline or remove anyone and assign or reassign members.
 
 import { approve, decline, account, newInvite } from './club.js';
+import { chipText } from './chip-format.js';
 import { cancelRequest, ensureChips, issue, transfer } from './club-chips.js';
 import { logAction } from './club-roles.js';
 
@@ -46,7 +47,7 @@ export function answerAgent(club, id, accept, now = Date.now()) {
   if (accept) {
     m.agent = 'yes';
     m.agentInvite = newInvite();
-    logAction(club, id, `${m.name} became an agent (credit limit ${m.creditLimit})`, now);
+    logAction(club, id, `${m.name} became an agent (credit limit ${chipText(m.creditLimit)})`, now);
   } else {
     delete m.agent;
     delete m.creditLimit;
@@ -73,7 +74,7 @@ export function setCreditLimit(club, id, limit, now = Date.now()) {
   if (!isAgent(club, id)) throw new Error('Not an agent.');
   if (!whole(limit)) throw new Error('The credit limit is a whole number of chips (0 for none).');
   club.members[id].creditLimit = limit;
-  logAction(club, club.hostId, `${club.members[id].name}'s credit limit is now ${limit}`, now);
+  logAction(club, club.hostId, `${club.members[id].name}'s credit limit is now ${chipText(limit)}`, now);
   return {to: id, body: agentBodyRole(club, id)};
 }
 
@@ -102,7 +103,7 @@ export function accountOf(club, id) {
 export function settle(club, id, amount, now = Date.now(), why = '') {
   if (!isAgent(club, id)) throw new Error('Not an agent.');
   const e = issue(club, id, amount, now, why || 'Settlement', 'settle');
-  logAction(club, club.hostId, `Recorded a settlement of ${amount} from ${club.members[id].name}`, now);
+  logAction(club, club.hostId, `Recorded a settlement of ${chipText(amount)} from ${club.members[id].name}`, now);
   return e;
 }
 
@@ -144,13 +145,13 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       // Inside the account: the agent's own balance may go negative, down to −limit.
       const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -(a.creditLimit || 0)});
       if (cmd.op === 'grant') cancelRequest(club, cmd.id);
-      logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${amt}`, now);
+      logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'take': {
       const p = mine(club, by, cmd.id);
       const [out] = transfer(club, cmd.id, by, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} took back ${out.amount} from ${p.name}`, now);
+      logAction(club, by, `${a.name} took back ${chipText(out.amount)} from ${p.name}`, now);
       return {replies: [account(club, cmd.id, out.n - 1), account(club, by, out.n)]};
     }
     case 'deny': {
