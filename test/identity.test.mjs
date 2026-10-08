@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ID_LENGTH, Verifier, canonical, checkSignature, createIdentity, exportIdentity,
+  ID_LENGTH, Verifier, backupNeedsPassword, canonical, checkSignature, createIdentity, exportIdentity, exportLockedIdentity,
   importIdentity, isPlayerId, parseShownId, playerIdFor, fromB64url, showId, signMessage,
 } from '../src/identity.js';
 
@@ -107,6 +107,50 @@ test('importing something else fails clearly', async () => {
   const f = JSON.parse(await exportIdentity(me));
   f.id = 'XXXXXXXX';
   await assert.rejects(importIdentity(JSON.stringify(f)), /damaged/);
+});
+
+test('a backup is locked with a password: the private key isn’t in it, and the right password restores the same ID', async () => {
+  const me = await createIdentity();
+  const text = await exportLockedIdentity(me, 'correct horse');
+  const f = JSON.parse(text);
+  assert.equal(f.v, 2);
+  assert.equal(f.id, me.id, 'the file says whose it is');
+  assert.equal(f.key, undefined);
+  assert.ok(!text.includes((await crypto.subtle.exportKey('jwk', me.privateKey)).d), 'no private key in the clear');
+  assert.ok(f.lock.iterations >= 100_000 && f.lock.salt && f.lock.iv && f.lock.ct);
+  assert.ok(backupNeedsPassword(text));
+  assert.ok(!backupNeedsPassword(await exportIdentity(me)));
+
+  const copy = await importIdentity(text, 'correct horse');
+  assert.equal(copy.id, me.id);
+  assert.ok((await new Verifier().verify(await signMessage(copy, {hi: 1}))).ok);
+  // Two backups of the same identity differ (fresh salt and IV).
+  assert.notEqual(JSON.parse(await exportLockedIdentity(me, 'correct horse')).lock.ct, f.lock.ct);
+});
+
+test('a locked backup refuses a missing or wrong password, a short new one, and tampering', async () => {
+  const me = await createIdentity();
+  await assert.rejects(exportLockedIdentity(me, 'short'), /at least 8/);
+  const text = await exportLockedIdentity(me, 'correct horse');
+  await assert.rejects(importIdentity(text), /locked with a password/);
+  await assert.rejects(importIdentity(text, 'wrong horse'), /Wrong password/);
+  // The ID, algorithm and seq are bound to the encrypted key.
+  for (const change of [f => { f.id = 'XXXXXXXX'; }, f => { f.seq = 99; }, f => { f.lock.ct = f.lock.ct.slice(0, -4) + 'AAAA'; }]) {
+    const f = JSON.parse(text);
+    change(f);
+    await assert.rejects(importIdentity(JSON.stringify(f), 'correct horse'), /Wrong password|damaged/);
+  }
+  const bad = JSON.parse(text);
+  bad.lock.iterations = 1e12;
+  await assert.rejects(importIdentity(JSON.stringify(bad), 'correct horse'), /isn’t a ducy identity file/);
+});
+
+test('older backups without a password (version 1) still restore', async () => {
+  const me = await createIdentity();
+  const v1 = await exportIdentity(me);
+  assert.equal(JSON.parse(v1).v, 1);
+  assert.equal((await importIdentity(v1)).id, me.id);
+  assert.equal((await importIdentity(v1, 'ignored')).id, me.id);
 });
 
 test('player IDs are shown in capitals and digits without I, L, O, 0 or 1, and read back in any case', async () => {
