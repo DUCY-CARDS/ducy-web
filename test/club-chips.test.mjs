@@ -27,7 +27,7 @@ test('issue and reclaim move the balance and keep the club conserved', () => {
   assert.equal(club.members.ann.balance, 300);
   assert.deepEqual(club.chips.ledger.map(e => [e.kind, e.amount, e.balance]), [['issue', 500, 500], ['reclaim', 200, 300]]);
   assert.ok(totals(club).conserved);
-  assert.throws(() => reclaim(club, 'ann', 301), /only has 300/);
+  assert.throws(() => reclaim(club, 'ann', 301), /only has 3 chips/);
   assert.throws(() => issue(club, 'ann', 0), /above 0/);
   assert.throws(() => issue(club, 'ann', 1.5), /whole number/);
   assert.throws(() => issue(club, 'nobody', 10), /Not a member/);
@@ -75,8 +75,8 @@ test('buy-in limits, balance and one seat at a time', () => {
   issue(club, 'ann', 150, 0);
   const limits = {min: 80, max: 200};
   assert.throws(() => buyIn(club, 'ann', 't1', 50, limits), /minimum buy-in is 80/);
-  assert.throws(() => buyIn(club, 'ann', 't1', 250, limits), /maximum buy-in is 200/);
-  assert.throws(() => buyIn(club, 'ann', 't1', 180, limits), /You have 150/);
+  assert.throws(() => buyIn(club, 'ann', 't1', 250, limits), /maximum buy-in is 2\./);
+  assert.throws(() => buyIn(club, 'ann', 't1', 180, limits), /You have 1\.50 chips/);
   buyIn(club, 'ann', 't1', 100, limits);
   assert.throws(() => buyIn(club, 'ann', 't2', 10, {min: 1, max: 100}), /Already seated/);
 });

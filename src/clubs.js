@@ -19,6 +19,7 @@
 //   ducyClubName      the display name sent with join requests
 
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
+import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
 import { downloadFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
@@ -173,20 +174,21 @@ function setWizard(step) {
 // `code`: an assistant's form for that club (sent to its host), else the
 // host's. `wizard`: step 2 of creating a club (#111), which can be skipped.
 const TABLE_KEY = 'ducyTableChoice';
-const BLINDS = [[1, 2], [2, 5], [5, 10]];
+// In hundredths (chip-format.js): 100/200 shows as 1/2.
+const BLINDS = [[100, 200], [200, 500], [500, 1000]];
 const SEATS = [2, 6, 9];
 const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
 
 function tableFormHtml(code = '', {wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
-  const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '1/2';
+  const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
   const seats = SEATS.includes(last.seats) ? String(last.seats) : last.seats ? 'other' : '9';
   const radio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
   let h = `<form class="cl-tableform tf" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}${wizard ? ' data-wizard="1"' : ''}>`;
   h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => radio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
-  h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${s}/${b}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
-  h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="1" step="1" value="${esc(last.sb || 1)}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="1" step="1" value="${esc(last.bb || 2)}"></label></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${chipText(s)}/${chipText(b)}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
+  h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.sb || 100))}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.bb || 200))}"></label></div>`;
   h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n))).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
   h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${MAX_SEATS}" step="1" value="${esc(last.seats || MAX_SEATS)}"></label></div>`;
   // Sit-out limit (#70): this table's, starting from the club's default (an
@@ -207,7 +209,7 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
 function submitTable(f) {
   const v = name => f.elements[name].value;
   const blinds = v('blinds');
-  const [sb, bb] = blinds === 'other' ? [Number(v('sb')), Number(v('bb'))] : blinds.split('/').map(Number);
+  const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
   const seats = v('seatsPick') === 'other' ? Number(v('seats')) : Number(v('seatsPick'));
   const settings = {
     name: v('name'), game: v('game'), sb, bb,
@@ -215,7 +217,7 @@ function submitTable(f) {
     sitOutMins: Number(v('sitOutMins')),
   };
   if (blinds === 'other' && !(Number.isSafeInteger(sb) && Number.isSafeInteger(bb) && sb >= 1 && sb <= bb)) {
-    alert('Blinds are whole chips, the small blind at least 1 and no more than the big blind.');
+    alert('Blinds are amounts like 1 or 0.25: the small blind at least 0.01 and no more than the big blind.');
     return;
   }
   save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
@@ -270,7 +272,7 @@ function tablesHtml() {
   if (tables.length) {
     h += '<ul class="cl-list">';
     for (const t of tables) {
-      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
+      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
       h += t.status === 'closing'
         ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
         : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
@@ -285,7 +287,10 @@ function tablesHtml() {
 }
 
 
-const chips = n => Number(n || 0).toLocaleString();
+// An amount for the screen: kept in hundredths, shown divided by 100.
+const chips = n => chipText(n);
+// An amount for an input box, or blank.
+const amountValue = v => (v === '' || v == null ? '' : chipInput(v));
 
 // The host's open chip form, under a member's row: {kind, id}, kind 'give',
 // 'take' or 'grant' (a request, for another amount). One at a time.
@@ -301,14 +306,15 @@ const FORM_TEXT = {
   settle: m => ({label: `Record a settlement from ${m.name} (credit used ${chips(accountOf(club, m.id).creditUsed)})`, submit: 'Record', value: accountOf(club, m.id).creditUsed || '', max: null, note: true}),
 };
 
-// A native form: the browser checks the amount (required, whole, at least
-// 1, at most the balance when taking back) before it submits.
+// A native form: the browser checks the amount (required, in steps of
+// 0.01, at least 0.01, at most the balance when taking back) before it
+// submits.
 function chipFormHtml(m) {
   if (!chipForm || chipForm.id !== m.id) return '';
   const t = FORM_TEXT[chipForm.kind](m);
   let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
   h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
-  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="numeric" required min="${t.min ?? 1}" step="1"${t.max != null ? ` max="${t.max}"` : ''} value="${esc(t.value)}" placeholder="Chips">`;
+  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
   if (t.note) h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Note (optional)">`;
   h += `<button class="btn-small primary" type="submit">${t.submit}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></form>`;
   return h;
@@ -329,7 +335,7 @@ function onSubmit(e) {
   const gf = e.target.closest('form[data-agentform]');
   if (gf) {
     e.preventDefault();
-    const amount = Number(gf.elements.amount.value);
+    const amount = parseChips(gf.elements.amount.value);
     agentForm = null;
     agentCmd(gf.dataset.code, {op: gf.dataset.agentform, id: gf.dataset.id, amount});
     render();
@@ -338,7 +344,7 @@ function onSubmit(e) {
   const af = e.target.closest('form[data-adminform]');
   if (af) {
     e.preventDefault();
-    const amount = Number(af.elements.amount.value);
+    const amount = parseChips(af.elements.amount.value);
     adminForm = null;
     adminCmd(af.dataset.code, {op: af.dataset.adminform, id: af.dataset.id, amount});
     render();
@@ -348,7 +354,7 @@ function onSubmit(e) {
   if (!f) return;
   e.preventDefault();
   const id = f.dataset.id, kind = f.dataset.chipform;
-  const amount = Number(f.elements.amount.value);
+  const amount = parseChips(f.elements.amount.value);
   const why = f.elements.note?.value || '';
   chipForm = null;
   const op = {give: 'give', take: 'take', grant: 'grant', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle'}[kind];
@@ -684,7 +690,7 @@ function replayHtml() {
   const f = frames[i];
   const starts = streetStarts(frames);
   let h = '<div class="cl-replay-bg" data-cl="replay-close"></div><div class="cl-replay" role="dialog" aria-label="Hand replay">';
-  h += `<div class="cl-replay-head"><b>${esc(rec.tableName)} · hand ${rec.hand}</b><span class="pl-meta">${new Date(rec.at).toLocaleString()} · blinds ${rec.sb}/${rec.bb}</span><button class="link-btn" data-cl="replay-close">Close</button></div>`;
+  h += `<div class="cl-replay-head"><b>${esc(rec.tableName)} · hand ${rec.hand}</b><span class="pl-meta">${new Date(rec.at).toLocaleString()} · blinds ${chips(rec.sb)}/${chips(rec.bb)}</span><button class="link-btn" data-cl="replay-close">Close</button></div>`;
   h += `<div class="cl-replay-board">${[0, 1, 2, 3, 4].map(k => (f.board[k] ? cardSpan(f.board[k]) : '<span class="cl-pc slot"></span>')).join('')}<span class="cl-chips">Pot ${chips(f.pot)}</span></div>`;
   h += '<ul class="cl-replay-seats">';
   f.seats.forEach((s, k) => {
@@ -1174,7 +1180,7 @@ function accountHtml(m, hostHere) {
     h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
     h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Cancel</button></div>`;
   } else {
-    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="1" step="1" placeholder="Chips" data-ask-amt="${esc(m.code)}">`;
+    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}">`;
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
   }
@@ -1182,7 +1188,7 @@ function accountHtml(m, hostHere) {
     h += '<ul class="cl-tables">';
     for (const t of m.tables) {
       const here = seatedAt?.code === m.code && seatedAt.table === t.id;
-      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${chips(t.min)}–${chips(t.max)} · ${t.taken}/${t.seats} seated</span>`;
+      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${chips(t.min)}–${chips(t.max)} · ${t.taken}/${t.seats} seated</span>`;
       h += here
         ? '<button class="btn-small primary" data-cl="to-table">Back to the table</button>'
         : `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${hostHere && !seatedAt && t.taken < t.seats ? '' : ' disabled'}>Sit</button>`;
@@ -1222,7 +1228,7 @@ function agentFormHtml(code, x) {
   const value = kind === 'take' ? x.balance : kind === 'grant' ? x.request?.amount : '';
   let h = `<form class="cl-chipform" data-agentform="${kind}" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
   h += `<label class="cl-formlabel" for="cl-gamt">${esc(label)}</label>`;
-  h += `<input class="pl-text" id="cl-gamt" name="amount" type="number" inputmode="numeric" required min="1" step="1"${kind === 'take' ? ` max="${x.balance}"` : ''} value="${esc(value ?? '')}" placeholder="Chips">`;
+  h += `<input class="pl-text" id="cl-gamt" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}"${kind === 'take' ? ` max="${chipInput(x.balance)}"` : ''} value="${esc(amountValue(value))}" placeholder="Chips">`;
   h += `<button class="btn-small primary" type="submit">${kind === 'take' ? 'Take back' : 'Give'}</button><button class="btn-small" type="button" data-cl="cancel-gform">Cancel</button></form>`;
   return h;
 }
@@ -1289,7 +1295,7 @@ function adminFormHtml(code, x) {
   const grant = adminForm.kind === 'grant';
   let h = `<form class="cl-chipform" data-adminform="${adminForm.kind}" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
   h += `<label class="cl-formlabel" for="cl-aamt">${grant ? `Give ${esc(x.name)} from your chips (asked for ${chips(x.request?.amount)})` : `Give ${esc(x.name)} from your chips`}</label>`;
-  h += `<input class="pl-text" id="cl-aamt" name="amount" type="number" inputmode="numeric" required min="1" step="1" value="${grant ? esc(x.request?.amount) : ''}" placeholder="Chips">`;
+  h += `<input class="pl-text" id="cl-aamt" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${grant ? esc(amountValue(x.request?.amount)) : ''}" placeholder="Chips">`;
   h += '<button class="btn-small primary" type="submit">Give</button><button class="btn-small" type="button" data-cl="cancel-aform">Cancel</button></form>';
   return h;
 }
@@ -1327,7 +1333,7 @@ function adminHtml(m, hostHere) {
   const closed = a.tables.filter(t => t.status === 'closed');
   h += `<span class="pl-meta">Tables (${open.length})</span><ul class="cl-list">`;
   for (const t of open) {
-    h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
+    h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
     if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
     h += '</li>';
   }
@@ -1446,9 +1452,9 @@ async function onClick(e) {
   else if (act === 'to-table') location.hash = 'play';
   else if (act === 'ask') {
     const code = b.dataset.code;
-    const amount = Number(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
+    const amount = parseChips(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
     const why = root.querySelector(`[data-ask-note="${code}"]`)?.value || '';
-    if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter a whole number of chips above 0.'); return; }
+    if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter an amount above 0, like 50 or 12.50.'); return; }
     sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
   } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
 }

@@ -14,6 +14,7 @@
 // Every assistant action goes in the club's activity log, which the host sees.
 
 import { approve, decline, removeMember, account } from './club.js';
+import { chipText } from './chip-format.js';
 import { cancelRequest, ensureChips, transfer } from './club-chips.js';
 import { newTable, tableById } from './club-tables.js';
 
@@ -104,7 +105,7 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
     }
     case 'give': {
       const [out] = transfer(club, by, cmd.id, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} gave ${who} ${out.amount}`, now);
+      logAction(club, by, `${a.name} gave ${who} ${chipText(out.amount)}`, now);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'grant': {
@@ -112,7 +113,7 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
       const amt = Number(cmd.amount ?? target.request.amount);
       const [out] = transfer(club, by, cmd.id, amt, now, target.request.note);
       cancelRequest(club, cmd.id);
-      logAction(club, by, `${a.name} granted ${who} ${amt}`, now);
+      logAction(club, by, `${a.name} granted ${who} ${chipText(amt)}`, now);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'deny': {

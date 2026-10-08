@@ -38,7 +38,7 @@ test('a record keeps what the viewer saw and nothing else', () => {
   assert.equal(host.pot, 48);
   assert.ok(host.seats.every(s => s.cards === null), 'the host saw no hole cards');
   assert.equal(host.seats[2].inHand, false);
-  assert.equal(summary(host), 'Bob +14');
+  assert.equal(summary(host), 'Bob +0.14');
   const mine = handRecord({club: 'ABCD-EFGH', table: 't1', tableName: 'Main', game: 'nlhe', view: view([['As', 'Kd'], null]), who: 'ann'}, 1000);
   assert.deepEqual(mine.seats[0].cards, ['As', 'Kd']);
   assert.equal(mine.seats[1].cards, null);
@@ -102,7 +102,7 @@ test('missed blinds posted on coming back replay as dead (pot) and live (bet)', 
   }});
   const f = replayFrames(rec);
   const afterPost = f[3];
-  assert.equal(afterPost.text, 'C posts missed blinds: 1 dead + 2 live');
+  assert.equal(afterPost.text, 'C posts missed blinds: 0.01 dead + 0.02 live');
   assert.equal(afterPost.pot, 1, 'the dead blind is in the pot');
   assert.deepEqual([afterPost.seats[2].stack, afterPost.seats[2].bet], [97, 2]);
   assert.deepEqual(f.at(-1).seats.map(s => s.stack), [99, 104, 97], 'ends at the final stacks');

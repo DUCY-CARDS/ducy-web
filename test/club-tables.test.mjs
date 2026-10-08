@@ -82,7 +82,7 @@ test('the rathole rule applies when buying back in at the same table', () => {
 test('a buy-in beyond the club balance is refused', () => {
   const club = clubWith('ann');
   const t = newTable(club, {sb: 50, bb: 100, minBB: 20, maxBB: 100});
-  assert.throws(() => chipsForTable(club, 'ann', t, 2000), /You have 1,?000/);
+  assert.throws(() => chipsForTable(club, 'ann', t, 2000), /You have 10 chips/);
   assert.equal(club.members.ann.seat, null);
 });
 
