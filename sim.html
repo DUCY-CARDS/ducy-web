@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DUCY Club Simulator</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <style>
+    /* A local test bench (#146): a host and several players, each its own
+       profile (?as=), in one window. Only works on localhost. */
+    :root {
+      --bg: #edeef0; --bg-raised: #f7f7f8; --fg: #3e4248; --fg-muted: #848890;
+      --line: #d3d5d9; --teal: #2e7888;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #16191e; --bg-raised: #1f2329; --fg: #c9ccd1; --fg-muted: #868b93;
+        --line: #343941; --teal: #4aa3b5;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg); color: var(--fg);
+      font: 13px/1.4 system-ui, sans-serif;
+      display: flex; flex-direction: column;
+    }
+    header {
+      display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+      padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg-raised);
+    }
+    header h1 { font-size: 14px; margin: 0; }
+    header label { display: flex; gap: 4px; align-items: center; }
+    header input, header select, header button { font: inherit; }
+    header input[type="number"] { width: 4em; }
+    header input[type="text"] { width: 16em; }
+    .hint { color: var(--fg-muted); }
+    main {
+      flex: 1; min-height: 0; display: grid; gap: 6px; padding: 6px;
+      grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
+    }
+    .pane {
+      display: flex; flex-direction: column; min-height: 0;
+      border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg-raised);
+    }
+    .pane.big { grid-column: 1 / -1; grid-row: span 2; }
+    .pane-head {
+      display: flex; gap: 8px; align-items: center; padding: 3px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .pane-head b { color: var(--teal); }
+    .pane-head .sp { flex: 1; }
+    .pane-head a, .pane-head button {
+      font: inherit; color: var(--fg-muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+    }
+    iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
+    .off { padding: 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Club simulator</h1>
+    <label>Players <input id="n" type="number" min="1" max="12" value="9"></label>
+    <label>Columns <input id="cols" type="number" min="1" max="6" value="4"></label>
+    <label>Relay <input id="relay" type="text" placeholder="default (or ws://localhost:8788)"></label>
+    <label>Open on
+      <select id="mode">
+        <option value="clubs">Clubs</option>
+        <option value="play">Play</option>
+      </select>
+    </label>
+    <button id="apply">Apply</button>
+    <span class="hint">Each pane is its own player: <code>host</code>, <code>p1</code>, <code>p2</code>… The same names are the same players every time.</span>
+  </header>
+  <main id="grid"></main>
+  <script>
+    const LOCAL = ['localhost', '127.0.0.1', '[::1]', '::1'];
+    const grid = document.getElementById('grid');
+    const q = new URLSearchParams(location.search);
+    const field = id => document.getElementById(id);
+    field('n').value = q.get('players') || 9;
+    field('cols').value = q.get('cols') || 4;
+    field('relay').value = q.get('relay') || '';
+    field('mode').value = q.get('open') === 'play' ? 'play' : 'clubs';
+
+    function pageUrl(name) {
+      const u = new URL('index.html', location.href);
+      u.searchParams.set('as', name);
+      const relay = field('relay').value.trim();
+      if (relay) u.searchParams.set('relay', relay);
+      u.hash = field('mode').value;
+      return u.toString();
+    }
+
+    function render() {
+      if (!LOCAL.includes(location.hostname)) {
+        grid.innerHTML = '<p class="off">The simulator only runs on localhost, where test profiles (?as=) are on.</p>';
+        return;
+      }
+      const n = Math.max(1, Math.min(12, Number(field('n').value) || 9));
+      grid.style.setProperty('--cols', Math.max(1, Math.min(6, Number(field('cols').value) || 4)));
+      grid.textContent = '';
+      for (const name of ['host', ...Array.from({length: n}, (_, i) => `p${i + 1}`)]) {
+        const pane = document.createElement('section');
+        pane.className = 'pane';
+        const url = pageUrl(name);
+        pane.innerHTML = `<div class="pane-head"><b>${name}</b><span class="sp"></span>`
+          + `<button type="button" data-act="big">Enlarge</button>`
+          + `<button type="button" data-act="reload">Reload</button>`
+          + `<a href="${url}" target="_blank" rel="noopener">Own tab</a></div>`
+          + `<iframe title="${name}" src="${url}"></iframe>`;
+        grid.append(pane);
+      }
+      const keep = new URLSearchParams({players: n, cols: field('cols').value, open: field('mode').value});
+      if (field('relay').value.trim()) keep.set('relay', field('relay').value.trim());
+      history.replaceState(null, '', `?${keep}`);
+    }
+
+    grid.addEventListener('click', e => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      const pane = b.closest('.pane');
+      if (b.dataset.act === 'big') {
+        const on = !pane.classList.contains('big');
+        for (const p of grid.children) {
+          p.classList.remove('big');
+          p.querySelector('[data-act="big"]').textContent = 'Enlarge';
+        }
+        pane.classList.toggle('big', on);
+        b.textContent = on ? 'Shrink' : 'Enlarge';
+        if (on) pane.scrollIntoView({block: 'nearest'});
+      } else {
+        const f = pane.querySelector('iframe');
+        f.src = f.src;
+      }
+    });
+    field('apply').addEventListener('click', render);
+    render();
+  </script>
+</body>
+</html>
