@@ -17,9 +17,7 @@
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
-import {
-  backupNeedsPassword, checkSignature, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId, signMessage,
-} from './identity.js';
+import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -140,7 +138,6 @@ let lastView = null; // a guest's last view from the host
 let errView = null; // the tab netNote is about, after leaving a table
 // This browser's player identity for clubs (identity.js), loaded on open.
 let me = null;
-let idNote = '';
 
 function defaultSetup() {
   return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
@@ -253,16 +250,24 @@ function botsSetupHtml() {
   h += '<div class="pl-setup">';
   h += optsRow('Game', GAMES.map(g => optBtn(setup.game === g.id, 'data-pgame', g.id, g.label)));
   h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
-  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${sb}/${bb}`)));
-  h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
-  h += '<div class="pl-bots">';
+  // Who sits where: heads-up, the one opponent stays in view (that's where
+  // the GTO bot is picked); otherwise, with the blinds and buy-in, under
+  // More options (#144), since random opponents and the defaults suit most.
+  let picks = '<div class="pl-bots">';
   setup.bots.forEach((id, i) => {
     const p = botChoices().find(x => x.id === id);
-    h += `<label class="pl-bot"><span class="pl-seatno">Seat ${i + 2}</span><select data-bot="${i}">`;
-    for (const q of botChoices()) h += `<option value="${q.id}"${q.id === id ? ' selected' : ''}>${esc(q.name)}</option>`;
-    h += `</select><span class="pl-desc">${esc(p ? p.description : '')}</span></label>`;
+    picks += `<label class="pl-bot"><span class="pl-seatno">Seat ${i + 2}</span><select data-bot="${i}">`;
+    for (const q of botChoices()) picks += `<option value="${q.id}"${q.id === id ? ' selected' : ''}>${esc(q.name)}</option>`;
+    picks += `</select><span class="pl-desc">${esc(p ? p.description : '')}</span></label>`;
   });
-  h += '</div>';
+  picks += '</div>';
+  if (setup.count === 1) h += picks;
+  else h += `<p class="pl-meta">Against ${setup.bots.map(id => esc(botChoices().find(x => x.id === id)?.name || id)).join(', ')}.</p>`;
+  h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>More options</summary><div class="cl-more">`;
+  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${sb}/${bb}`)));
+  h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
+  if (setup.count > 1) h += picks;
+  h += '</div></details>';
   if (gtoAvailable && !gtoAllowed()) h += '<p class="pl-desc">Play heads-up No-limit Hold’em (1 opponent) to face the GTO bot.</p>';
   if (gtoAllowed() && setup.bots[0] === 'gto') h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in, and your decisions are reviewed after each hand.</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
@@ -280,8 +285,8 @@ function friendsSetupHtml() {
   let h = '<div class="pl-head"><h1>Start a game now</h1>';
   h += '<p>A table for friends, just for now: send them the code or link. Seats stay empty until people join; each player asks you for chips, and you approve them. Nothing is kept once everyone has left.</p></div>';
   h += '<div class="pl-setup pl-multi">';
-  h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
-  h += identityRowHtml();
+  // Your name, the first time; after that it's in Player settings (#144).
+  if (!setup.name) h += '<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see"></div>';
   h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
   h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(f.bb === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)));
   h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
@@ -292,95 +297,6 @@ function friendsSetupHtml() {
   h += '<div class="pl-actions"><button class="tr-start" data-act="host">Start the game</button></div>';
   h += '</div>';
   return h;
-}
-
-// The player ID, with backup and restore. The ID only lives in this browser,
-// so a backup file is the way to keep it after clearing site data or to use
-// it on another device.
-function identityRowHtml() {
-  let h = '<div class="pl-row"><span class="pl-label">Player ID</span><div class="pl-opts">';
-  h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(showId(me.id)) : '…'}</code>`;
-  h += `<button class="btn-small" data-act="idbackup"${me ? '' : ' disabled'}>Back up</button>`;
-  h += '<label class="btn-small">Restore<input type="file" id="pl-idfile" accept=".json,application/json" hidden></label>';
-  h += '</div></div>';
-  if (idForm?.kind === 'backup') {
-    h += '<form class="pl-idform" data-idform="backup">';
-    h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
-    h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
-    h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
-    h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save backup</button><button class="btn-small" type="button" data-act="idcancel">Cancel</button></div></form>';
-  } else if (idForm?.kind === 'restore') {
-    h += '<form class="pl-idform" data-idform="restore">';
-    h += `<p class="pl-desc">This backup of player ID ${esc(showId(idForm.id))} is locked. Enter its password.</p>`;
-    h += '<label>Password<input class="pl-text" type="password" name="pw" required autocomplete="current-password"></label>';
-    h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Restore</button><button class="btn-small" type="button" data-act="idcancel">Cancel</button></div></form>';
-  }
-  if (idNote) h += `<p class="pl-desc">${esc(idNote)}</p>`;
-  return h;
-}
-
-// The backup and restore forms: {kind: 'backup'}, or {kind: 'restore', text,
-// id} for a locked file waiting for its password.
-let idForm = null;
-
-// Saves a backup file locked with `password` (identity.js).
-async function backupIdentity(password) {
-  if (!me) return;
-  try {
-    const blob = new Blob([await exportLockedIdentity(me, password)], {type: 'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `ducy-identity-${showId(me.id)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    idForm = null;
-    idNote = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
-  } catch (e) {
-    idNote = e.message;
-  }
-  render();
-}
-
-// A backup file was chosen: a locked one asks for its password first.
-async function chooseBackup(file) {
-  const text = await file.text();
-  if (backupNeedsPassword(text)) {
-    let id = '';
-    try { id = JSON.parse(text).id || ''; } catch {}
-    idForm = {kind: 'restore', text, id};
-    idNote = '';
-    render();
-    root.querySelector('form[data-idform] [name=pw]')?.focus();
-    return;
-  }
-  restoreIdentity(text, '');
-}
-
-async function restoreIdentity(text, password) {
-  try {
-    const ident = await importIdentity(text, password);
-    if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
-    await saveIdentity(ident);
-    me = ident;
-    idForm = null;
-    idNote = `Restored player ID ${showId(ident.id)}.${password ? '' : ' That backup had no password: make a new one with Back up, and delete the old file.'}`;
-  } catch (e) {
-    idNote = e.message;
-  }
-  render();
-}
-
-function onIdSubmit(e) {
-  const f = e.target.closest('form[data-idform]');
-  if (!f) return;
-  e.preventDefault();
-  const pw = f.elements.pw.value;
-  if (f.dataset.idform === 'backup') {
-    if (pw !== f.elements.pw2.value) { idNote = 'The passwords don’t match.'; render(); return; }
-    backupIdentity(pw);
-  } else if (idForm?.kind === 'restore') {
-    restoreIdentity(idForm.text, pw);
-  }
 }
 
 // ---- table ----
@@ -850,8 +766,13 @@ export function joinTable({code, name, hostId = ''}) {
 }
 let joinedByCode = false; // at a table joined with its code (joinTable)
 
-// The name this browser plays friends tables as.
+// The name this browser plays friends tables as (Player settings, #144).
 export const tableName = () => setup.name;
+export function setTableName(n) {
+  setup.name = String(n || '').trim().slice(0, 20);
+  saveSetup();
+  render();
+}
 
 // Sits down at a table reached some other way than a table code: a club
 // table (clubs.js). `open(handlers)` returns {send(command), close()} and
@@ -1498,6 +1419,9 @@ function reviewTotalsHtml() {
 // ---- events ----
 
 function onClick(e) {
+  // More options stays as it was left (it opens or closes after this click).
+  const more = e.target.closest('summary[data-more]');
+  if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev]');
   if (!el) return;
   const d = el.dataset;
@@ -1572,8 +1496,6 @@ function onClick(e) {
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'copy') copyLink();
-  else if (el.dataset.act === 'idbackup') { idForm = idForm?.kind === 'backup' ? null : {kind: 'backup'}; idNote = ''; render(); root.querySelector('form[data-idform] [name=pw]')?.focus(); }
-  else if (el.dataset.act === 'idcancel') { idForm = null; render(); }
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
@@ -1594,7 +1516,6 @@ function onInput(e) {
 
 function onChange(e) {
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
-  if (e.target.id === 'pl-idfile' && e.target.files[0]) { chooseBackup(e.target.files[0]); e.target.value = ''; }
 }
 
 // The countdown waits while a mouse is over the result, the log or the
@@ -1640,7 +1561,6 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
-    root.addEventListener('submit', onIdSubmit);
     root.addEventListener('pointerover', onPointer);
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
@@ -1653,7 +1573,7 @@ export async function openPlay(el, shortcut, v = 'play') {
   if (document.hidden) holds.add('hidden'); else holds.delete('hidden');
   if (!me) {
     loadIdentity().then(i => { me = i; if (!seated && personalities.length) render(); })
-      .catch(e => { console.warn(e); idNote = 'This browser can’t keep a player ID (private mode or storage blocked).'; });
+      .catch(e => console.warn(e));
   }
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';

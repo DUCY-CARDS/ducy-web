@@ -1808,6 +1808,27 @@ try {
 // Clubs connect now, whichever page is open, so requests arrive live (#145).
 startBackground();
 
+// The notices can be closed (#144). One stays closed until its text
+// changes: what's remembered is a fingerprint of the text closed.
+const NOTICE_KEY = 'ducyNoticesClosed';
+const noticeId = el => { let h = 5381; for (const c of el.textContent) h = ((h << 5) + h + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); };
+const closedNotices = (() => { try { return JSON.parse(localStorage.getItem(NOTICE_KEY)) || []; } catch { return []; } })();
+for (const n of document.querySelectorAll('.beta-notice')) {
+  const id = noticeId(n);
+  if (closedNotices.includes(id)) { n.classList.add('closed'); continue; }
+  const x = document.createElement('button');
+  x.className = 'notice-close';
+  x.type = 'button';
+  x.setAttribute('aria-label', 'Close this notice');
+  x.textContent = '✕';
+  x.addEventListener('click', () => {
+    n.classList.add('closed');
+    closedNotices.push(id);
+    try { localStorage.setItem(NOTICE_KEY, JSON.stringify(closedNotices.slice(-20))); } catch {}
+  });
+  n.append(x);
+}
+
 if (location.hash === '#codedoug') openShortcut();
 else if (hashMode()) setMode(hashMode());
 

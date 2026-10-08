@@ -827,14 +827,10 @@ function viewHtml() {
 }
 let pick = 'own'; // My clubs' club: 'own' (the one you run), or a code you help run
 
-// Your player ID and the relay, under the club tabs.
+// Under the club tabs: only a warning when a local page uses the live relay
+// (your player ID and the relay are in Player settings, #144).
 function footHtml() {
-  let h = '';
-  if (view === 'clubs' && memberships.length) {
-    h += `<p class="pl-meta">Keep your last ${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-cl="keep-hands" data-n="${n}">${n}</button>`).join(' ')} hands in each club.</p>`;
-  }
-  h += `<p class="pl-meta">Your player ID is <code class="pl-pid">${esc(showId(me.id))}</code>.</p>`;
-  return h + relayHtml();
+  return relayWarningHtml();
 }
 
 // The Join tab: requests this browser sent, until they're answered (and
@@ -913,12 +909,12 @@ function wizardHtml() {
 
 // Which relay this page uses. A page served locally but using the site's
 // relay is almost always a mistake when testing, so it says so.
-function relayHtml() {
+function relayWarningHtml() {
   const relay = relayUrl();
   const live = relay === wsUrl(DEFAULT_RELAY);
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   if (live && local) return `<p class="pl-desc pl-neterr">This local page is using the live relay (${esc(relay)}). To test against a local relay, open it with <code>?relay=ws://localhost:8788</code>; invite links then carry it.</p>`;
-  return `<p class="pl-meta">Relay: ${esc(relay)}</p>`;
+  return '';
 }
 
 function hostHtml() {
@@ -1075,10 +1071,6 @@ function membershipsHtml(mode, only = '') {
   const list = memberships.filter(m => (mode === 'play' ? m.status === 'member' : helps(m) && (!only || m.code === only)));
   if (!list.length) return '';
   let h = `<section class="cl-card"><h2>${mode === 'play' ? 'Your clubs' : list.length === 1 ? esc(list[0].name || list[0].code) : 'Clubs you help run'}</h2>`;
-  if (mode === 'play') {
-    h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="cl-myname" maxlength="${MAX_PLAYER_NAME}" placeholder="Name" value="${esc(myName())}">`;
-    h += '<button class="btn-small" data-cl="setname">Save</button><span class="pl-desc">What hosts see.</span></div>';
-  }
   h += '<ul class="cl-list">';
   for (const m of list) {
     const n = playerNets.get(m.code);
@@ -1605,5 +1597,18 @@ export async function joinClub(inv, name) {
   joinFromInvite(name);
 }
 
-// The name this browser joins clubs as.
+// The name this browser joins clubs as, and changing it (Player settings,
+// #144): each club's host is told.
 export const memberName = () => myName();
+export function renameMember(n) {
+  if (!started) { try { localStorage.setItem(NAME_KEY, String(n || '').trim().slice(0, MAX_PLAYER_NAME)); } catch {} return; }
+  setName(n);
+}
+
+// How many of your hands to keep in each club (Player settings).
+export { keepHands };
+export function setKeepHands(n) {
+  try { localStorage.setItem(KEEP_KEY, String(n)); } catch {}
+  for (const m of memberships) prune(m.code, me?.id, {keep: keepHands()});
+  render();
+}
