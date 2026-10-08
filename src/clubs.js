@@ -309,6 +309,34 @@ function closeClub() {
   render();
 }
 
+// Moves this browser's club to the server as an always-on club (#98): same
+// code, so members' links keep working, and they follow it there.
+async function moveToAlwaysOn() {
+  if (owner.record) { alert('This browser already runs an always-on club; one per browser for now.'); return; }
+  if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first, or wait until everyone has left them.'); return; }
+  if (!confirm(`Move ${club.name} to ducy’s server? It then stays open with this page closed, and you run it from here as its owner. Members don’t need to do anything.`)) return;
+  const data = JSON.parse(JSON.stringify(club)), senders = verifier.toJSON();
+  // The relay takes the club only once no tab hosts it.
+  hostNet?.close();
+  hostNet = null;
+  hostOnline = false;
+  server = null;
+  note = 'Moving your club to the server…';
+  render();
+  await new Promise(r => setTimeout(r, 800));
+  try {
+    await owner.moveHere(data, senders);
+    try { localStorage.removeItem(CLUB_KEY); localStorage.removeItem(SENDERS_KEY); } catch {}
+    club = owner.club;
+    verifier = null;
+    note = 'Your club now runs on the server: it stays open with this page closed.';
+  } catch (e) {
+    note = `The club didn’t move: ${e.message}`;
+    startHosting();
+  }
+  render();
+}
+
 function link() {
   const relay = relayUrl();
   return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '');
@@ -357,6 +385,16 @@ function connectMembership(mem) {
       return;
     }
     if (await playerReceive(mem, msg)) {
+      // The club moved to an always-on room (#98): greet it as the new host.
+      if (msg.body?.type === 'host_moved') {
+        entry.aes = null;
+        entry.aesFor = '';
+        entry.hostHere = true;
+        saveMemberships();
+        greet();
+        render();
+        return;
+      }
       // A new host key (the host's page restarted): derive the shared key.
       if (mem.hostKey && mem.hostKey !== entry.aesFor) {
         const keys = await entry.keys;
@@ -758,7 +796,7 @@ function hostHtml() {
     for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
     h += '</ul></details>';
   }
-  h += `<div class="pl-actions"><button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
+  h += `<div class="pl-actions">${remote ? '' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
   return h;
 }
 
@@ -1035,6 +1073,7 @@ async function onClick(e) {
     render();
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
+  else if (act === 'move-always') moveToAlwaysOn();
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }

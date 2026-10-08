@@ -26,7 +26,7 @@
 // host left, 4004 no such table, 4008 sending too fast, 4009 replaced by a newer connection with the
 // same id, 4029 the room is full.
 
-import { createClub, openClub } from './club-room.js';
+import { createClub, importClub, openClub } from './club-room.js';
 import { pingReply } from './ping.js';
 import { initSync, MultiTable } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
@@ -43,6 +43,8 @@ const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
 const MAX_GUESTS = 16;
 const MAX_MESSAGE = 64 * 1024;
+// A whole club moving here (#98), with its ledger.
+const MAX_IMPORT = 1024 * 1024;
 // Each connection may send RATE messages a second, in bursts of up to BURST;
 // one that sends faster is closed (4008), so a single client can't use up
 // the account's quota for everyone (#103).
@@ -119,6 +121,27 @@ export class Room {
     }
   }
 
+  // A browser-run club's host moves it here (#98). Members may be connected
+  // (waiting for the host); the host's own hosting connection must be gone.
+  // What they left while the host was away goes to the club straight after.
+  async importHere(ws, id, env) {
+    const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
+    try {
+      if (!code) throw new Error('Not a club room.');
+      if (this.host()) throw new Error('The club is still open in a tab as its host. Close it there first.');
+      if (env?.from !== id) throw new Error('The request must come from you.');
+      const made = await importClub(this.storage(), env, code);
+      ws.send(JSON.stringify({type: 'club_imported', ...made}));
+      const club = await this.club();
+      for (const q of await this.queued()) {
+        await club.message({from: q.from, data: q.data});
+        await this.state.storage.delete('q:' + String(q.n).padStart(12, '0'));
+      }
+    } catch (e) {
+      ws.send(JSON.stringify({type: 'club_error', reason: e.message}));
+    }
+  }
+
   async fetch(req) {
     const url = new URL(req.url);
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
@@ -189,7 +212,9 @@ export class Room {
   async webSocketMessage(ws, msg) {
     const host = this.state.getTags(ws).includes('host');
     if (!allow(ws, host ? HOST_RATE : RATE, host ? HOST_BURST : BURST)) { ws.close(4008, 'too many messages'); return; }
-    if (typeof msg !== 'string' || msg.length > MAX_MESSAGE) return;
+    if (typeof msg !== 'string' || msg.length > MAX_IMPORT) return;
+    // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
+    if (msg.length > MAX_MESSAGE && !msg.includes('"import_club"')) return;
     // A heartbeat from either side: answered here, never forwarded or queued,
     // so a host can tell its link to the relay is alive.
     const pong = pingReply(msg);
@@ -197,13 +222,14 @@ export class Room {
     const id = this.guestId(ws);
     if (id) {
       // An always-on club runs here: it gets the message. Or someone asks
-      // to make this room one.
+      // to make this room one, or to move their club here.
       const club = await this.club();
-      if (club || msg.includes('"create_club"')) {
+      if (club || msg.includes('"create_club"') || msg.includes('"import_club"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }
         if (club) await club.message({from: id, data: m});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
+        else if (m?.body?.type === 'import_club') await this.importHere(ws, id, m);
         return;
       }
       const host = this.host();

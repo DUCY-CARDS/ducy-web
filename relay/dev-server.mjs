@@ -5,7 +5,7 @@
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { pingReply } from './src/ping.js';
-import { createClub, openClub } from './src/club-room.js';
+import { createClub, importClub, openClub } from './src/club-room.js';
 
 // The engine for always-on clubs (#93), loaded on first use from the site's
 // wasm build (../wasm, as the Worker bundles it).
@@ -91,7 +91,8 @@ function enqueue(room, from, raw) {
   return true;
 }
 
-const wss = new WebSocketServer({port, maxPayload: MAX_MESSAGE});
+// Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
+const wss = new WebSocketServer({port, maxPayload: 1024 * 1024});
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
   const m = url.pathname.match(/^\/room\/([^/]+)$/);
@@ -143,19 +144,33 @@ wss.on('connection', (ws, req) => {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
       if (pong) return ws.send(pong);
-      // An always-on club runs here, or someone asks to make this room one.
-      if (room.store.has('club') || String(data).includes('"create_club"')) {
+      // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
+      if (data.length > MAX_MESSAGE && !String(data).includes('"import_club"')) return;
+      // An always-on club runs here, or someone asks to make this room one,
+      // or to move their club here.
+      if (room.store.has('club') || String(data).includes('"create_club"') || String(data).includes('"import_club"')) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
         inRoom(room, async () => {
           const club = await clubOf(room);
           if (club) return club.message({from: id, data: msg});
-          if (msg?.body?.type !== 'create_club') return;
+          const type = msg?.body?.type;
+          if (type !== 'create_club' && type !== 'import_club') return;
           try {
-            if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
             if (msg.from !== id) throw new Error('The request must come from you.');
-            send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code))});
-            await clubOf(room);
+            if (type === 'create_club') {
+              if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
+              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code))});
+              await clubOf(room);
+            } else {
+              if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
+              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code))});
+              const c = await clubOf(room);
+              // What members left while the host was away goes to the club.
+              const waiting = room.queued;
+              room.queued = [];
+              for (const q of waiting) await c.message({from: q.from, data: q.data});
+            }
           } catch (e) {
             send(ws, {type: 'club_error', reason: e.message});
           }

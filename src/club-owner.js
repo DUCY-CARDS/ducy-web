@@ -43,7 +43,8 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     net = connect(code, 'guest', identity.id, {
       async onOpen() {
         online = true;
-        if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
+        if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
+        else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
         else await sendSigned({type: 'owner_hello'});
         onChange();
       },
@@ -61,9 +62,12 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
   }
 
   async function receive(m) {
-    if (m?.type === 'club_created' && creating) {
+    if ((m?.type === 'club_created' || m?.type === 'club_imported') && creating) {
       rec = {code: creating.code, hostId: m.hostId, name: creating.name};
       await save(rec);
+      // A club that moved here: as its old host, tell its members to follow
+      // the club's new identity (#98).
+      if (m.type === 'club_imported') await sendSigned({type: 'host_moved', hostId: m.hostId});
       creating.resolve(rec);
       creating = null;
       await sendSigned({type: 'owner_hello'});
@@ -117,6 +121,15 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
         const code = newCode();
         creating = {name, code, resolve, reject};
         connectTo(code);
+      });
+    },
+    // Moves a browser-run club (club.js) to its room on the relay (#98),
+    // keeping its code, so members' links and memberships carry on. `senders`
+    // is its Verifier's state. This page must have stopped hosting it.
+    moveHere(club, senders) {
+      return new Promise((resolve, reject) => {
+        creating = {name: club.name, code: club.code, data: club, senders, resolve, reject};
+        connectTo(club.code);
       });
     },
     run(op, args = {}) {

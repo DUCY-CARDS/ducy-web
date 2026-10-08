@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createIdentity, signMessage, checkSignature } from '../src/identity.js';
-import { createClub, openClub } from '../relay/src/club-room.js';
+import { createClub, importClub, openClub } from '../relay/src/club-room.js';
 
 const WASM = new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url);
 const haveWasm = existsSync(WASM);
@@ -102,4 +102,60 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   old.seq = 1;
   assert.equal((await server.message({from: ann.id, data: old})), undefined);
   assert.ok(storage.keys().includes('identity') && storage.keys().includes('hostKey'));
+});
+
+test('a browser-run club moves to its room (#98): balances kept, members follow the handoff', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {newClub, approve, newMembership, playerReceive, hostReceive} = await import('../src/club.js');
+  const {issue, totals} = await import('../src/club-chips.js');
+  const {Verifier} = await import('../src/identity.js');
+  const MultiTable = await engine();
+  const host = await createIdentity(), ann = await createIdentity(), eve = await createIdentity();
+  const code = 'MOVE-HERE';
+
+  // The club as the host's browser has it: Ann joined and holds 250 chips.
+  const club = newClub('Home Game', code, host.id);
+  const verifier = new Verifier();
+  await hostReceive(club, verifier, await signMessage(ann, {club: code, type: 'join', invite: club.invite, name: 'Ann'}));
+  approve(club, ann.id);
+  issue(club, ann.id, 250, 1);
+  const mem = newMembership({code, invite: club.invite, hostId: host.id});
+  mem.status = 'member';
+
+  // Someone else can't move it, and a club with people at a table can't move.
+  const storage = memoryStorage();
+  await assert.rejects(importClub(storage, await signMessage(eve, {type: 'import_club', club: code, data: club, senders: verifier.toJSON()}), code), /Only the club’s host/);
+  const seated = structuredClone(club);
+  seated.members[ann.id].seat = {table: 't', stack: 10};
+  await assert.rejects(importClub(storage, await signMessage(host, {type: 'import_club', club: code, data: seated, senders: {}}), code), /at tables/);
+
+  const {hostId} = await importClub(storage, await signMessage(host, {type: 'import_club', club: code, data: club, senders: verifier.toJSON()}), code);
+  assert.notEqual(hostId, host.id);
+  const box = inbox(hostId);
+  const server = await openClub({storage, send: box.send, online: [host.id, ann.id], MultiTable});
+  assert.equal(server.club.ownerId, host.id, 'the host owns it now');
+  assert.equal(server.club.members[ann.id].balance, 250);
+  assert.ok(totals(server.club).conserved);
+
+  // A forged handoff is ignored; the host's real one goes to Ann.
+  await server.message({from: eve.id, data: await signMessage(eve, {club: code, type: 'host_moved', hostId})});
+  assert.equal((box.got.get(ann.id) || []).length, 0);
+  await server.message({from: host.id, data: await signMessage(host, {club: code, type: 'host_moved', hostId})});
+  const handoff = box.got.get(ann.id)[0];
+  assert.ok(await playerReceive(mem, handoff), 'Ann accepts the handoff from her host');
+  assert.equal(mem.hostId, hostId);
+
+  // From then on she talks to the club itself; her old messages still can't be replayed.
+  await server.message({from: ann.id, data: await signMessage(ann, {club: code, type: 'hello', since: 0})});
+  await settle();
+  const replies = (box.got.get(ann.id) || []).filter(e => e.from === hostId);
+  assert.ok(replies.length, 'the club answers her');
+  let accepted = 0;
+  for (const env of replies) if (await playerReceive(mem, env)) accepted++;
+  assert.ok(accepted > 0, 'and she accepts what it sends');
+  assert.equal(mem.status, 'member');
+
+  // Ann, connecting again later, gets the handoff first.
+  box.got.clear();
+  await server.message({from: ann.id, event: 'open'});
+  assert.equal(box.got.get(ann.id)[0].body.type, 'host_moved');
 });
