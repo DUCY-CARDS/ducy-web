@@ -137,7 +137,7 @@ async function createClub(name) {
     try {
       await owner.create(String(name || '').trim() || 'My club');
       note = '';
-      location.hash = 'clubs';
+      setWizard('table');
     } catch (e) {
       // The relay is down or full (limits, #123): offer this browser instead.
       note = '';
@@ -159,37 +159,76 @@ async function createClub(name) {
   ensureTables(club);
   saveClub();
   startHosting();
-  location.hash = 'clubs';
+  setWizard('table');
   render();
 }
 
-// The host's New table form: native, so the browser checks the numbers.
-// `code`: an assistant's form for that club (sent to its host), else the host's.
-function tableFormHtml(code = '') {
-  let h = `<form class="cl-tableform" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}>`;
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${code ? 'Table name' : `Table ${(club.tables?.length || 0) + 1}`}"></label>`;
-  h += `<label>Game<select class="pl-text" name="game">${GAMES.map(g => `<option value="${g.id}">${esc(g.label)}</option>`).join('')}</select></label>`;
-  h += '<label>Small blind<input class="pl-text" name="sb" type="number" required min="1" step="1" value="1"></label>';
-  h += '<label>Big blind<input class="pl-text" name="bb" type="number" required min="1" step="1" value="2"></label>';
-  h += '<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="40"></label>';
-  h += '<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="100"></label>';
-  h += `<label>Seats<input class="pl-text" name="seats" type="number" required min="2" max="${MAX_SEATS}" step="1" value="${MAX_SEATS}"></label>`;
-  h += `<label>Turn time<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === 30 ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
+// Creating a club (#111): 1 name, 2 its first table (or skip), 3 invite.
+// The club exists from step 1, so closing the page mid-way resumes at the
+// step after the last one done.
+const WIZARD_KEY = 'ducyClubWizard';
+let wizard = load(WIZARD_KEY, null); // {code, step: 'table' | 'invite'}
+const myClubCode = () => club?.code || owner?.record?.code || '';
+
+function setWizard(step) {
+  wizard = step ? {code: myClubCode(), step} : null;
+  if (wizard) save(WIZARD_KEY, wizard);
+  else try { localStorage.removeItem(WIZARD_KEY); } catch {}
+  render();
+}
+
+// The New table form (#113): three choices (game, blinds, seats) as
+// buttons, everything else under More options with good defaults. Native,
+// so the browser checks the numbers. The last choices are remembered.
+// `code`: an assistant's form for that club (sent to its host), else the
+// host's. `wizard`: step 2 of creating a club (#111), which can be skipped.
+const TABLE_KEY = 'ducyTableChoice';
+const BLINDS = [[1, 2], [2, 5], [5, 10]];
+const SEATS = [2, 6, 9];
+const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
+
+function tableFormHtml(code = '', {wizard = false} = {}) {
+  const last = load(TABLE_KEY, {});
+  const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
+  const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '1/2';
+  const seats = SEATS.includes(last.seats) ? String(last.seats) : last.seats ? 'other' : '9';
+  const radio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
+  let h = `<form class="cl-tableform tf" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}${wizard ? ' data-wizard="1"' : ''}>`;
+  h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => radio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${s}/${b}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
+  h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="1" step="1" value="${esc(last.sb || 1)}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="1" step="1" value="${esc(last.bb || 2)}"></label></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n))).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
+  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${MAX_SEATS}" step="1" value="${esc(last.seats || MAX_SEATS)}"></label></div>`;
   // Sit-out limit (#70): this table's, starting from the club's default (an
   // assistant's browser doesn't have the club, so theirs starts at 10 minutes).
   const defOut = club?.sitOutMins ?? 10;
-  h += `<label>Sit-out limit<select class="pl-text" name="sitOutMins">${[5, 10, 15, 30, 0].map(m => `<option value="${m}"${m === defOut ? ' selected' : ''}>${m ? m + ' min' : 'None'}</option>`).join('')}</select></label>`;
-  h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button><button class="btn-small" type="button" data-cl="cancel-table">Cancel</button></div></form>';
-  return h;
+  h += '<details class="tf-more"><summary>More options</summary><div class="tf-fields">';
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${code ? 'Table name' : `Table ${(club?.tables?.length || 0) + 1}`}"></label>`;
+  h += `<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="${esc(last.minBB || 40)}"></label>`;
+  h += `<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="${esc(last.maxBB || 100)}"></label>`;
+  h += `<label>Time to act<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === (last.turnSecs ?? 30) ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
+  h += `<label>Sitting out<select class="pl-text" name="sitOutMins">${[5, 10, 15, 30, 0].map(m => `<option value="${m}"${m === defOut ? ' selected' : ''}>${m ? m + ' min' : 'No limit'}</option>`).join('')}</select></label>`;
+  h += '</div></details>';
+  h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
+  h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-skip">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
+  return h + '</div></form>';
 }
 
 function submitTable(f) {
   const v = name => f.elements[name].value;
+  const blinds = v('blinds');
+  const [sb, bb] = blinds === 'other' ? [Number(v('sb')), Number(v('bb'))] : blinds.split('/').map(Number);
+  const seats = v('seatsPick') === 'other' ? Number(v('seats')) : Number(v('seatsPick'));
   const settings = {
-    name: v('name'), game: v('game'), sb: Number(v('sb')), bb: Number(v('bb')),
-    minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats: Number(v('seats')), turnSecs: Number(v('turnSecs')),
+    name: v('name'), game: v('game'), sb, bb,
+    minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats, turnSecs: Number(v('turnSecs')),
     sitOutMins: Number(v('sitOutMins')),
   };
+  if (blinds === 'other' && !(Number.isSafeInteger(sb) && Number.isSafeInteger(bb) && sb >= 1 && sb <= bb)) {
+    alert('Blinds are whole chips, the small blind at least 1 and no more than the big blind.');
+    return;
+  }
+  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
   // An assistant's: the host opens it.
   if (f.dataset.code) {
     tableForm = false;
@@ -198,7 +237,12 @@ function submitTable(f) {
     return;
   }
   // The form stays open if the table can't be opened, so nothing is lost.
-  hostAct('new_table', {table: settings}).then(ok => { if (ok) { tableForm = false; render(); } });
+  hostAct('new_table', {table: settings}).then(ok => {
+    if (!ok) return;
+    tableForm = false;
+    if (f.dataset.wizard) setWizard('invite');
+    render();
+  });
 }
 
 // The host watches a table (#73) on the #play page: a spectator's view from
@@ -767,11 +811,21 @@ function viewHtml() {
     return h || msg ? msg + h : '';
   }
   if (view === 'host') return msg + createHtml() + footHtml();
-  // My clubs: the club you run, and the clubs you help run.
-  const h = (club || isRemote() ? hostHtml() : '') + membershipsHtml('clubs');
-  if (!h) return msg;
+  // My clubs: the club you run, and the clubs you help run, one at a time
+  // with a picker when there's more than one (#143).
+  const own = club || isRemote();
+  const helped = memberships.filter(helps);
+  if (!own && !helped.length) return msg;
+  const choices = [...(own ? [['own', club?.name || owner.record.name]] : []), ...helped.map(m => [m.code, m.name || m.code])];
+  if (!choices.some(([k]) => k === pick)) pick = choices[0][0];
+  let h = '';
+  if (choices.length > 1) {
+    h += `<div class="pl-row cl-picker"><span class="pl-label">Club</span><div class="pl-opts">${choices.map(([k, name]) => `<button class="cc-btn${k === pick ? ' on' : ''}" data-cl="pick" data-code="${esc(k)}">${esc(name)}</button>`).join('')}</div></div>`;
+  }
+  h += pick === 'own' ? hostHtml() : membershipsHtml('clubs', pick);
   return msg + h + footHtml();
 }
+let pick = 'own'; // My clubs' club: 'own' (the one you run), or a code you help run
 
 // Your player ID and the relay, under the club tabs.
 function footHtml() {
@@ -808,30 +862,53 @@ function requestsHtml() {
   return h + '</ul></section>';
 }
 
-// The Host tab's club card: create one, or say where yours is.
+// The Host tab's club card: create one in three steps (#111), or say where
+// yours is.
 function createHtml() {
+  if ((club || isRemote()) && wizard?.code === myClubCode()) return wizardHtml();
   if (club || isRemote()) {
     const name = club?.name || owner.record.name;
     return `<section class="cl-card"><h2>Create a club</h2><p class="pl-desc">You run <b>${esc(name)}</b>: manage it in <a href="#clubs">My clubs</a>. A browser runs one club for now.</p></section>`;
   }
-  let h = '<section class="cl-card"><h2>Create a club</h2>';
+  let h = '<section class="cl-card"><h2>Create a club</h2><span class="pl-meta">Step 1 of 3: its name</span>';
   h += '<p class="pl-desc">A lasting club: members join with your invite link, you give them chips (play money), and they play at your tables.</p>';
   h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game"></div>`;
-  // Where it runs (#93): on ducy's relay, or in this browser.
-  h += '<div class="pl-row"><span class="pl-label">Runs</span><div class="cl-where">';
-  h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b>: on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser. Like every club for now, it may be deleted.</label>`;
-  h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
-  h += '</div></div>';
   if (alwaysFailed) {
     h += `<p class="pl-meta cl-down">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
     h += '<div class="pl-actions"><button class="tr-start" data-cl="create-browser">Run it in this browser instead</button><button class="btn-small" data-cl="create">Try the server again</button></div>';
   } else {
-    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div>';
+    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Next</button></div>';
   }
-  // An always-on club this player owns, opened from another browser (#98).
+  h += '<p class="pl-meta">Got an invite link? <a href="#join">Join</a> instead.</p>';
+  // Where it runs (#93), and an always-on club from another browser (#98):
+  // both have good defaults, so they wait under More options.
+  h += `<details class="tf-more"${createWhere === 'browser' ? ' open' : ''}><summary>More options</summary><div class="cl-more">`;
+  h += '<div class="pl-row"><span class="pl-label">Runs</span><div class="cl-where">';
+  h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b> (the default): on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser.</label>`;
+  h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
+  h += '</div></div>';
   h += '<div class="pl-row"><span class="pl-label">Own one already?</span><div class="pl-opts"><input class="pl-text" id="cl-attach" maxlength="9" placeholder="Club code"><button class="btn-small" data-cl="attach">Open it here</button></div></div>';
-  h += '<p class="pl-desc">An always-on club you own, run from another browser. This one needs your player ID too: restore it from your backup first.</p></section>';
-  return h;
+  h += '<p class="pl-desc">An always-on club you own, run from another browser. This one needs your player ID too: restore it from your backup first.</p>';
+  return h + '</div></details></section>';
+}
+
+// Steps 2 and 3 of creating a club.
+function wizardHtml() {
+  const name = club?.name || owner?.record?.name || '';
+  let h = `<section class="cl-card"><h2>Create a club: ${esc(name)}</h2>`;
+  if (wizard.step === 'table') {
+    h += '<span class="pl-meta">Step 2 of 3: its first table</span>';
+    h += '<p class="pl-desc">Pick the game, blinds and seats; the rest has good defaults. You can open more tables later, in My clubs.</p>';
+    return h + tableFormHtml('', {wizard: true}) + '</section>';
+  }
+  h += '<span class="pl-meta">Step 3 of 3: invite people</span>';
+  if (!club) return h + '<p class="pl-meta">Getting your invite link…</p></section>';
+  h += '<p class="pl-desc">Send this link to the people you want in the club. You approve each one, then give them chips.</p>';
+  h += `<div class="pl-row"><div class="pl-opts cl-link"><input class="pl-text" readonly value="${esc(link())}" id="cl-link"><button class="btn-small primary" data-cl="copy">${copied ? 'Copied' : 'Copy link'}</button>`;
+  if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
+  h += '</div></div>';
+  h += `<p class="pl-desc">${isRemote() ? 'Your club runs on ducy’s server: players can join and play with this page closed.' : 'Your club runs in this tab: keep it open while people join and play.'}</p>`;
+  return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-done">Done</button><button class="btn-small" data-cl="wiz-back">Back</button></div></section>';
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -855,28 +932,22 @@ function hostHtml() {
   const badge = remote ? (owner.online ? 'Always on' : 'Connecting…') : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
   let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${on ? ' on' : ''}">${badge}</span>`;
   if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
+  h += menuHtml('Club menu', [
+    ['settings', 'Club settings…'],
+    ['revoke', 'New invite link', 'Make a new link; the old one stops working'],
+  ]);
   h += '</div>';
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  h += remote
-    ? `<p class="pl-meta">Your always-on club runs on ducy's server · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`
-    : `<p class="pl-meta">You host this club · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
-  h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
-  h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
-  h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button><button class="btn-small" data-cl="revoke" title="Make a new link; the old one stops working">New link</button></div></div>`;
-  h += `<h3>Requests to join${pending.length ? ` (${pending.length})` : ''}</h3>`;
-  if (!pending.length) h += '<p class="pl-meta">No one is waiting.</p>';
-  else {
-    h += '<ul class="cl-list">';
+  h += `<p class="pl-meta">${remote ? 'Always on, on ducy’s server' : 'Runs in this tab'} · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  // What needs the host, always first (#143).
+  const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
+  if (pending.length || asking.length) {
+    h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
     for (const m of pending) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><code>${esc(showId(m.id))}</code><span class="pl-meta">asked ${when(m.requestedAt)}${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
+      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
       h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
     }
-    h += '</ul>';
-  }
-  const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
-  if (asking.length) {
-    h += `<h3>Chip requests (${asking.length})</h3><ul class="cl-list">`;
     for (const m of asking) {
       h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
       if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
@@ -885,43 +956,81 @@ function hostHtml() {
       if (chipForm?.kind === 'grant') h += chipFormHtml(m);
       h += '</li>';
     }
-    h += '</ul>';
+    h += '</ul></div>';
   }
-  h += tablesHtml();
-  h += `<h3>Members${members.length ? ` (${members.length})` : ''}</h3>`;
-  if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
-  else {
-    // Agents' players are listed under their agent (#75).
-    const agents = members.filter(m => m.agent === 'yes');
-    const order = members.filter(m => !m.agentOf || !agents.some(a => a.id === m.agentOf))
-      .flatMap(m => (m.agent === 'yes' ? [m, ...members.filter(p => p.agentOf === m.id)] : [m]));
-    h += '<ul class="cl-list">';
-    for (const m of order) h += memberRowHtml(m, agents);
-    h += '</ul>';
+  h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
+  h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
+  h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button>`;
+  if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
+  h += '</div></div>';
+  // Tables, members and history, one at a time.
+  const tables = openTables(club);
+  const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('members', `Members (${members.length})`)}${sub('history', 'History')}</div>`;
+  if (dashTab === 'tables') h += tablesHtml();
+  else if (dashTab === 'members') {
+    if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
+    else {
+      // Agents' players are listed under their agent (#75).
+      const agents = members.filter(m => m.agent === 'yes');
+      const order = members.filter(m => !m.agentOf || !agents.some(a => a.id === m.agentOf))
+        .flatMap(m => (m.agent === 'yes' ? [m, ...members.filter(p => p.agentOf === m.id)] : [m]));
+      h += '<ul class="cl-list">';
+      for (const m of order) h += memberRowHtml(m, agents);
+      h += '</ul>';
+    }
+    h += chipsOutHtml();
+  } else {
+    // Hand history and results (#71): the host's hands show no hidden cards.
+    h += handsHtml(club.code, 'host', 'Hands at your tables');
+    const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+    const tableNames = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
+    h += resultsHtml(club.chips.ledger, names, tableNames);
+    if (club.log?.length) {
+      h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
+      for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
+      h += '</ul></details>';
+    }
   }
+  h += '</section>';
+  if (settingsOpen) h += settingsHtml();
+  return h;
+}
+
+// My clubs' sub-tab, and whether the Club settings dialog is open.
+let dashTab = 'tables', settingsOpen = false;
+
+const chipsOutHtml = () => {
   const t = totals(club);
-  h += `<p class="pl-meta">Chips out: ${chips(t.issued - t.reclaimed)} (given ${chips(t.issued)}, taken back ${chips(t.reclaimed)}) · in balances ${chips(t.balances)} · on tables ${chips(t.onTables)}${t.conserved ? '' : ' · <span class="pl-neterr">doesn’t add up</span>'}</p>`;
+  return `<p class="pl-meta">Chips out: ${chips(t.issued - t.reclaimed)} (given ${chips(t.issued)}, taken back ${chips(t.reclaimed)}) · in balances ${chips(t.balances)} · on tables ${chips(t.onTables)}${t.conserved ? '' : ' · <span class="pl-neterr">doesn’t add up</span>'}</p>`;
+};
+
+// A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
+// handled like any other data-cl click.
+function menuHtml(label, items, id = '') {
+  let h = `<details class="cl-menu"><summary class="btn-small" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="cl-menu-items">`;
+  for (const [act, text, title = ''] of items) h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+  return h + '</div></details>';
+}
+
+// The Club settings dialog (#143, #144): the rules with good defaults,
+// where the club runs, and closing or deleting it.
+function settingsHtml() {
+  const remote = isRemote();
+  let h = '<div class="cl-replay-bg" data-cl="settings-close"></div><div class="cl-replay cl-dialog" role="dialog" aria-label="Club settings">';
+  h += `<div class="cl-replay-head"><b>Club settings</b><span class="pl-meta">${esc(club.name)}</span><button class="link-btn" data-cl="settings-close">Close</button></div>`;
   h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
   h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
   h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
   h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
   h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
   h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
-  // Hand history and results (#71): the host's hands show no hidden cards.
-  h += '<h3>History</h3>';
-  h += handsHtml(club.code, 'host', 'Hands at your tables');
-  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
-  const tableNames = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
-  h += resultsHtml(club.chips.ledger, names, tableNames);
-  h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
-  if (club.log?.length) {
-    h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
-    for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
-    h += '</ul></details>';
-  }
+  h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div><span class="pl-desc">How long the hands at your tables are kept for the history.</span></div>`;
+  h += chipsOutHtml();
+  h += `<h3>Where it runs</h3><p class="pl-desc">${remote ? 'On ducy’s server: it stays open for its members with this page closed.' : 'In this tab: players reach it only while it’s open.'}</p>`;
   if (remote) h += usageHtml();
-  h += `<div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete this club</button>' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
-  return h;
+  h += `<div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete this club</button>' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div>`;
+  return h + '</div>';
 }
 
 // One member on the host's dashboard: balance, chips on a table, and what the
@@ -935,22 +1044,21 @@ function memberRowHtml(m, agents) {
     const a = accountOf(club, m.id);
     h += `<span class="pl-meta">agent · account ${chips(a.total)} · credit used ${chips(a.creditUsed)}/${chips(a.limit)}</span>`;
   }
+  if (m.role === 'assistant') h += '<span class="pl-meta">assistant</span>';
+  else if (m.role === 'offered') h += '<span class="pl-meta">offered assistant</span>';
+  if (m.agent === 'offered') h += '<span class="pl-meta">offered agent</span>';
+  // Giving and taking chips stay in view; the rest is in the row's menu (#143).
   h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
   h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
-  h += m.role === 'assistant'
-    ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being a game assistant">Assistant ✕</button>`
-    : m.role === 'offered'
-      ? `<button class="btn-small" data-cl="revoke-role" data-id="${esc(m.id)}" title="Withdraw the offer">Offered ✕</button>`
-      : `<button class="btn-small" data-cl="offer-role" data-id="${esc(m.id)}" title="Let ${esc(m.name)} help run the club">Make assistant</button>`;
-  if (m.agent === 'yes') {
-    h += `<button class="btn-small" data-cl="settle" data-id="${esc(m.id)}">Settle</button><button class="btn-small" data-cl="limit" data-id="${esc(m.id)}">Credit limit</button>`;
-    h += `<button class="btn-small" data-cl="revoke-agent" data-id="${esc(m.id)}" title="Stop ${esc(m.name)} being an agent">Agent ✕</button>`;
-  } else if (m.agent === 'offered') {
-    h += `<button class="btn-small" data-cl="revoke-agent" data-id="${esc(m.id)}" title="Withdraw the offer">Agent offered ✕</button>`;
-  } else if (!m.agentOf) {
-    h += `<button class="btn-small" data-cl="make-agent" data-id="${esc(m.id)}" title="Let ${esc(m.name)} bring in and back players">Make agent</button>`;
-  }
-  h += `<button class="btn-small" data-cl="remove" data-id="${esc(m.id)}">Remove</button></span>`;
+  const items = [];
+  if (m.role === 'assistant') items.push(['revoke-role', 'Stop being an assistant']);
+  else if (m.role === 'offered') items.push(['revoke-role', 'Withdraw the assistant offer']);
+  else items.push(['offer-role', 'Make assistant', `Let ${m.name} help run the club`]);
+  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['limit', 'Credit limit'], ['revoke-agent', 'Stop being an agent']);
+  else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
+  else if (!m.agentOf) items.push(['make-agent', 'Make agent', `Let ${m.name} bring in and back players`]);
+  items.push(['remove', 'Remove from the club']);
+  h += menuHtml(`More for ${m.name}`, items, m.id) + '</span>';
   if (!m.agent && agents.length) {
     h += `<label class="pl-meta cl-assign">Agent <select class="pl-text" data-assign="${esc(m.id)}"><option value="">none</option>`;
     h += agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('') + '</select></label>';
@@ -963,10 +1071,10 @@ function memberRowHtml(m, agents) {
 // tables; on My clubs ('clubs') the ones you help run, with those tools.
 const helps = m => m.status === 'member' && (m.role === 'assistant' || m.agent === 'yes');
 
-function membershipsHtml(mode) {
-  const list = memberships.filter(m => (mode === 'play' ? m.status === 'member' : helps(m)));
+function membershipsHtml(mode, only = '') {
+  const list = memberships.filter(m => (mode === 'play' ? m.status === 'member' : helps(m) && (!only || m.code === only)));
   if (!list.length) return '';
-  let h = `<section class="cl-card"><h2>${mode === 'play' ? 'Your clubs' : 'Clubs you help run'}</h2>`;
+  let h = `<section class="cl-card"><h2>${mode === 'play' ? 'Your clubs' : list.length === 1 ? esc(list[0].name || list[0].code) : 'Clubs you help run'}</h2>`;
   if (mode === 'play') {
     h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="cl-myname" maxlength="${MAX_PLAYER_NAME}" placeholder="Name" value="${esc(myName())}">`;
     h += '<button class="btn-small" data-cl="setname">Save</button><span class="pl-desc">What hosts see.</span></div>';
@@ -1201,6 +1309,14 @@ async function onClick(e) {
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'create-browser') { createWhere = 'browser'; createClub(root.querySelector('#cl-clubname')?.value || alwaysFailed?.name); }
+  else if (act === 'dash') { dashTab = b.dataset.tab; render(); }
+  else if (act === 'pick') { pick = b.dataset.code; render(); }
+  else if (act === 'settings') { settingsOpen = true; render(); root.querySelector('.cl-dialog [data-cl=settings-close]')?.focus(); }
+  else if (act === 'settings-close') { settingsOpen = false; render(); }
+  else if (act === 'wiz-skip') setWizard('invite');
+  else if (act === 'wiz-back') setWizard('table');
+  else if (act === 'wiz-done') { setWizard(null); location.hash = 'clubs'; }
+  else if (act === 'share') navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {});
   else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
   else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
   else if (act === 'remove') { if (confirm('Remove this member from the club?')) hostAct('remove', {id: b.dataset.id}); }
@@ -1288,8 +1404,10 @@ async function onClick(e) {
   } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
 }
 
-// The replayer's keys: ← → step, Space plays, Esc closes.
+// The replayer's keys: ← → step, Space plays, Esc closes. Esc also closes
+// the Club settings dialog.
 function onDocKey(e) {
+  if (e.key === 'Escape' && settingsOpen && open) { settingsOpen = false; render(); return; }
   if (!replay || !open || e.target.closest?.('input, select, textarea')) return;
   if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(replay.i + 1); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(replay.i - 1); }
@@ -1421,6 +1539,10 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
     document.addEventListener('keydown', onDocKey);
+    // A ⋯ menu closes when you click anywhere else.
+    document.addEventListener('click', e => {
+      for (const d of document.querySelectorAll('details.cl-menu[open]')) if (!d.contains(e.target)) d.open = false;
+    });
   }
   if (v !== 'join') justJoined.clear();
   view = v;
