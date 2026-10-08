@@ -24,6 +24,8 @@ import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 
 // How old a create request may be (its seq is at least the time it was signed).
 const CREATE_WINDOW_MS = 5 * 60_000;
+// Hands kept for the owner's history (#125); about 1–2 KB each.
+const MAX_HANDS = 500;
 
 // A signed request to create an always-on club in room `code`:
 // {type: 'create_club', club: code, name}. Returns {hostId, invite}, or
@@ -133,14 +135,41 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     }
     deleted = true;
     await saving;
-    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', ...(club.tables || []).map(t => `table:${t.id}`)];
+    const hands = ((await storage.get('hands')) || []).map(h => h.key);
+    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
     for (const k of keys) await storage.delete(k);
     await onDeleted();
+  }
+  // The host's hand history (#71, #125): each finished hand as the host sees
+  // it (no hidden cards), under its own key, with an index of {key, at}.
+  // Kept for the club's days, and at most MAX_HANDS.
+  async function storeHand(rec, {days}) {
+    const key = `hand:${String(rec.at || Date.now()).padStart(15, '0')}:${Math.random().toString(36).slice(2, 8)}`;
+    const index = (await storage.get('hands')) || [];
+    index.push({key, at: rec.at || Date.now()});
+    const keep = index.filter(h => Date.now() - h.at < days * 864e5).slice(-MAX_HANDS);
+    const drop = index.filter(h => !keep.includes(h));
+    await later(async () => {
+      await storage.put(key, {...rec, id: key});
+      await storage.put('hands', keep);
+      for (const h of drop) await storage.delete(h.key);
+    });
+  }
+  // The newest `limit` hands, for the owner's page.
+  async function hands({limit = 100} = {}) {
+    const index = (await storage.get('hands')) || [];
+    const out = [];
+    for (const h of index.slice(-Math.min(Math.max(1, Number(limit) || 100), 200)).reverse()) {
+      const rec = await storage.get(h.key);
+      if (rec) out.push(rec);
+    }
+    return out;
   }
   const server = createClubServer({
     identity, club, verifier,
     onChange: checkPlay,
-    extraOps: {delete_club: deleteClub},
+    extraOps: {delete_club: deleteClub, hands},
+    storeHand,
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
     transport: {send, ack() {}},
     engine: {

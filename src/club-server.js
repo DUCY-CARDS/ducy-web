@@ -123,14 +123,22 @@ export function createClubServer({
   }
 
   // An always-on club's owner sees the whole club, as their page's copy.
-  function sendOwnerView() {
+  // It carries the club's key for encrypted table updates, for watching a
+  // table (#125).
+  async function sendOwnerView() {
     if (!club.ownerId || !online.has(club.ownerId)) return;
     const running = (club.tables || []).filter(t => tableHost?.running(t.id)).map(t => t.id);
     // A copy: signing waits on WebCrypto, and the club may change before the
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
-    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online]}});
+    const hostKey = (await hostKeys()).pub;
+    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey}});
   }
+
+  // The owner watching a table (#73, #125): its spectator view, encrypted to
+  // them like a member's table updates.
+  let stopWatch = null;
+  function unwatch() { stopWatch?.(); stopWatch = null; }
 
   // The owner's check-in, or one of their host actions (run): they get the
   // result, then the club as it is now.
@@ -138,7 +146,8 @@ export function createClubServer({
     if (type === 'owner_cmd') {
       let error = '', value = null;
       try { value = (await run(String(body.op), body.args && typeof body.args === 'object' ? body.args : {})) ?? null; } catch (e) { error = e.message || String(e); }
-      if (typeof value !== 'string' && typeof value !== 'number') value = null;
+      // Results are plain data (e.g. the list of hands, #125).
+      value = value === undefined ? null : JSON.parse(JSON.stringify(value));
       await sendToPlayer({to: from, body: {type: 'owner_result', club: club.code, id: body.id ?? null, error, value}});
     }
     sendOwnerView();
@@ -208,7 +217,13 @@ export function createClubServer({
   async function message(msg) {
     if (!msg || !msg.from) return;
     if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); return; }
-    if (msg.event === 'close') { online.delete(msg.from); tableHost?.disconnected(msg.from); tableHost?.presence(msg.from); return; }
+    if (msg.event === 'close') {
+      online.delete(msg.from);
+      if (msg.from === club.ownerId) unwatch();
+      tableHost?.disconnected(msg.from);
+      tableHost?.presence(msg.from);
+      return;
+    }
     if (!('data' in msg)) return;
     await keysReady;
     const r = await hostReceive(club, verifier, msg.data);
@@ -293,6 +308,16 @@ export function createClubServer({
       if (tableHost) started(tableHost.start(t));
       return t.id;
     },
+    // The owner of an always-on club watches table `table` from their page
+    // (#125); in a host's tab, watching goes through `watch` below instead.
+    watch: ({table}) => {
+      if (!club.ownerId) throw new Error('Only an always-on club’s owner watches this way.');
+      if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
+      if (!memberKeys.has(club.ownerId)) throw new Error('This page couldn’t set up encryption with the club. Reload and try again.');
+      unwatch();
+      stopWatch = tableHost.watch(table, u => sendSealed(club.ownerId, {table, update: u}));
+    },
+    unwatch: () => unwatch(),
     close_table: ({table}) => {
       const t = tableById(club, table);
       if (!t || t.status !== 'open') return;
