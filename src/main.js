@@ -1,3 +1,5 @@
+// First, so a local test profile (?as=) is in place before anything reads storage.
+import { profile } from './profile.js';
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
@@ -156,7 +158,8 @@ let MC_MAX_SAMPLES = 100000;
 // Monte Carlo runs in a pool of workers, one per spare core, each taking an
 // equal share of the sample cap. If workers are unavailable, it falls back to
 // batches on the main thread.
-const MC_WORKERS = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+// One worker per test profile: sim.html runs ten pages at once.
+const MC_WORKERS = profile ? 1 : Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
 let mcPool = null;
 let mcRunId = 0;
 
