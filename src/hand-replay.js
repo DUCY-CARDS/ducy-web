@@ -1,12 +1,14 @@
 // Hand history for clubs (#71, #72): what's stored about a finished hand,
-// rebuilding it action by action for the replayer, and win/loss per table
-// session from the chip ledger. Pure functions; hand-store.js keeps the
-// records and clubs.js draws them.
+// rebuilding it action by action for the replayer (ducy does the replay),
+// and win/loss per table session from the chip ledger. hand-store.js keeps
+// the records and clubs.js draws them.
 //
 // A record is built from a finished hand's TableView as its viewer saw it:
 // the host's view at a club table shows no cards that weren't shown down,
 // and a player's shows their own. So a record never holds anyone's unshown
 // cards. Seat numbers are the viewer's (they're seat 0).
+
+import { replayFrames as ducyReplayFrames } from '../wasm/ducy_wasm.js';
 
 export const STREETS = ['preflop', 'flop', 'turn', 'river'];
 
@@ -34,62 +36,22 @@ export function summary(rec) {
   return winners.join(', ') || 'split';
 }
 
-function eventText(rec, e) {
-  const who = rec.seats[e.seat]?.name || `Seat ${e.seat}`;
-  switch (e.type) {
-    case 'ante': return `${who} antes ${num(e.amount)}`;
-    case 'small_blind': return `${who} posts the small blind ${num(e.amount)}`;
-    case 'big_blind': return `${who} posts the big blind ${num(e.amount)}`;
-    case 'post': return `${who} posts missed blinds: ${[num(e.dead) && `${num(e.dead)} dead`, num(e.live) && `${num(e.live)} live`].filter(Boolean).join(' + ')}`;
-    case 'fold': return `${who} folds`;
-    case 'check': return `${who} checks`;
-    case 'call': return `${who} calls ${num(e.amount)}${e.all_in ? ' (all-in)' : ''}`;
-    case 'bet': return `${who} bets ${num(e.to)}${e.all_in ? ' (all-in)' : ''}`;
-    case 'raise': return `${who} raises to ${num(e.to)}${e.all_in ? ' (all-in)' : ''}`;
-    case 'board': return `${String(e.street)[0].toUpperCase()}${String(e.street).slice(1)}: ${e.cards.join(' ')}`;
-    case 'award': return `${who} wins ${num(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
-    default: return '';
-  }
-}
-
 // The hand as a list of frames, one before any action and one after each
 // event: {street, board, pot, seats: [{name, stack, bet, folded, allIn,
-// cards}], text, event}. Stacks start at each seat's final stack minus its
-// net result.
+// cards, inHand}], text, event}. ducy replays it (replayFrames, from
+// ducy_play::replay); the record adds names, cards and who was in the hand.
+// Stacks start at each seat's final stack minus its net result.
 export function replayFrames(rec) {
-  const seats = rec.seats.map(s => ({
-    name: s.name, inHand: s.inHand, stack: s.inHand ? s.stackEnd - s.net : s.stackEnd, bet: 0, folded: false, allIn: false,
-    cards: s.cards,
+  const start = rec.seats.map(s => BigInt(s.inHand ? s.stackEnd - s.net : s.stackEnd));
+  const frames = ducyReplayFrames(rec.events, BigUint64Array.from(start), rec.seats.map(s => s.name));
+  return frames.map(f => ({
+    street: f.street, board: f.board, pot: num(f.pot), text: f.text,
+    event: f.event == null ? null : rec.events[f.event],
+    seats: f.seats.map((s, i) => ({
+      name: rec.seats[i].name, inHand: rec.seats[i].inHand, cards: rec.seats[i].cards,
+      stack: num(s.stack), bet: num(s.bet), folded: s.folded, allIn: s.all_in,
+    })),
   }));
-  let pot = 0, street = 'preflop', board = [], awarding = false;
-  const collect = () => { for (const s of seats) { pot += s.bet; s.bet = 0; } };
-  const frame = (text, event) => ({
-    street, board: [...board], pot, text, event,
-    seats: seats.map(s => ({...s})),
-  });
-  const frames = [frame('Cards are dealt', null)];
-  for (const e of rec.events) {
-    const s = seats[e.seat];
-    switch (e.type) {
-      case 'ante': s.stack -= num(e.amount); pot += num(e.amount); break;
-      // Missed blinds (#70): the dead part goes in the pot, the live part is a bet.
-      case 'post': s.stack -= num(e.dead) + num(e.live); pot += num(e.dead); s.bet += num(e.live); break;
-      case 'small_blind': case 'big_blind': case 'call':
-        s.stack -= num(e.amount); s.bet += num(e.amount); if (e.all_in || s.stack === 0) s.allIn = s.stack === 0; break;
-      case 'bet': case 'raise': {
-        const add = num(e.to) - s.bet;
-        s.stack -= add; s.bet = num(e.to); s.allIn = !!e.all_in || s.stack === 0; break;
-      }
-      case 'fold': s.folded = true; break;
-      case 'board': collect(); street = String(e.street); board = [...board, ...e.cards]; break;
-      case 'award':
-        if (!awarding) { collect(); awarding = true; }
-        s.stack += num(e.amount); pot -= num(e.amount); break;
-      default: break;
-    }
-    frames.push(frame(eventText(rec, e), e));
-  }
-  return frames;
 }
 
 // The frame index where each street starts (for jumping), from frames.

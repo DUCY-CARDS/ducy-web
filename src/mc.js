@@ -3,37 +3,13 @@
 // be posted to a worker as-is. Cards use the engine's "As" format.
 import { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
 
-function shuffleArray(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
+// Samples per engine call.
+const PER_CALL = 1000;
 
-// The engine only accepts a board of 0, 3, 4 or 5 cards, so a board with
-// 1-2 known cards gets a random flop completion for each sampling call.
-function completeFlops(allBoardCards, available) {
-  if (!allBoardCards.some(bc => bc.length === 1 || bc.length === 2)) return allBoardCards;
-  shuffleArray(available);
-  let dealt = 0;
-  return allBoardCards.map(bc => {
-    if (bc.length !== 1 && bc.length !== 2) return bc;
-    const extra = available.slice(dealt, dealt + 3 - bc.length);
-    dealt += extra.length;
-    return [...bc, ...extra];
-  });
-}
-
-// With a 1-2 card board each call shares one random flop completion, so small
-// calls spread samples over more flops: 25 per flop measured about half the
-// error of 100 at 100k samples, for ~1.7x the time.
-function samplesPerCall(allBoardCards) {
-  return allBoardCards.some(bc => bc.length === 1 || bc.length === 2) ? 25 : 1000;
-}
-
+// The flop may be 1-3 known cards: ducy deals the rest of it for each sample.
 function setBoard(game, bc, bi) {
   const args = bi == null ? [] : [bi];
-  if (bc.length >= 3) game.set_flop(...args, bc.slice(0, 3).join(' '));
+  if (bc.length >= 1) game.set_flop(...args, bc.slice(0, 3).join(' '));
   if (bc.length >= 4) game.set_turn(...args, bc[3]);
   if (bc.length >= 5) game.set_river(...args, bc[4]);
 }
@@ -98,34 +74,28 @@ export function mergeState(into, from) {
 export function runChunk(job, st, deadline, maxSamples) {
   const more = () => performance.now() < deadline && st.done < maxSamples;
   if (job.type === 'omaha') {
-    const available = job.available.slice();
-    const perCall = samplesPerCall([job.boardCards]);
-    while (more()) {
-      const [flop] = completeFlops([job.boardCards], available);
-      const game = job.hilo ? new OmahaHiLoGame(job.cardsPer) : new OmahaGame(job.cardsPer);
-      try {
-        for (const h of job.hands) game.add_player(h.join(' '));
-        setBoard(game, flop);
-        addDead(game, job.dead);
-        const eq = game.sample_equity(perCall);
-        for (let i = 0; i < st.totals.length; i++) st.totals[i] += eq[i] * perCall;
-        st.done += perCall;
-        st.weight += perCall;
-      } finally {
-        game.free();
+    const game = job.hilo ? new OmahaHiLoGame(job.cardsPer) : new OmahaGame(job.cardsPer);
+    try {
+      for (const h of job.hands) game.add_player(h.join(' '));
+      setBoard(game, job.boardCards);
+      addDead(game, job.dead);
+      while (more()) {
+        const eq = game.sample_equity(PER_CALL);
+        for (let i = 0; i < st.totals.length; i++) st.totals[i] += eq[i] * PER_CALL;
+        st.done += PER_CALL;
+        st.weight += PER_CALL;
       }
+    } finally {
+      game.free();
     }
   } else if (job.type === 'bombpot') {
-    const available = job.available.slice();
-    const perCall = samplesPerCall(job.allBoardCards);
-    while (more()) {
-      const boards = completeFlops(job.allBoardCards, available);
-      const game = new OmahaBombPotGame(job.numBoards, job.cardsPer);
-      try {
-        for (const h of job.hands) game.add_player(h.join(' '));
-        boards.forEach((bc, bi) => setBoard(game, bc, bi));
-        addDead(game, job.dead);
-        const r = game.sample(perCall, job.randomIndices);
+    const game = new OmahaBombPotGame(job.numBoards, job.cardsPer);
+    try {
+      for (const h of job.hands) game.add_player(h.join(' '));
+      job.allBoardCards.forEach((bc, bi) => setBoard(game, bc, bi));
+      addDead(game, job.dead);
+      while (more()) {
+        const r = game.sample(PER_CALL, job.randomIndices);
         for (let fi = 0; fi < st.totals.length; fi++) {
           st.totals[fi] += r.equity_sum[fi];
           st.scoops[fi] += r.scoops[fi];
@@ -134,37 +104,25 @@ export function runChunk(job, st, deadline, maxSamples) {
         }
         st.done += r.samples;
         st.weight += r.samples;
-      } finally {
-        game.free();
       }
+    } finally {
+      game.free();
     }
   } else if (job.type === 'orange') {
     // Omaha shorthand ranges: known hands first, then one player per range.
-    const available = job.available.slice();
-    const perCall = samplesPerCall([job.boardCards]);
-    const partialFlop = job.boardCards.length === 1 || job.boardCards.length === 2;
-    while (more()) {
-      const [board] = completeFlops([job.boardCards], available);
-      const game = job.hilo ? new OmahaHiLoGame(job.cardsPer) : new OmahaGame(job.cardsPer);
-      try {
-        for (const h of job.hands) game.add_player(h.join(' '));
-        setBoard(game, board);
-        addDead(game, job.dead);
-        let r;
-        try {
-          r = game.sample_range_equity(job.ranges, perCall);
-        } catch (err) {
-          // With 1-2 known board cards, skip random flop completions that
-          // block a range; otherwise the range really is unusable.
-          if (partialFlop && /invalid range/i.test(String(err && err.message || err))) continue;
-          throw err;
-        }
+    const game = job.hilo ? new OmahaHiLoGame(job.cardsPer) : new OmahaGame(job.cardsPer);
+    try {
+      for (const h of job.hands) game.add_player(h.join(' '));
+      setBoard(game, job.boardCards);
+      addDead(game, job.dead);
+      while (more()) {
+        const r = game.sample_range_equity(job.ranges, PER_CALL);
         for (let i = 0; i < st.totals.length; i++) st.totals[i] += r.equity_sum[i];
         st.done += r.samples;
         st.weight += r.samples;
-      } finally {
-        game.free();
       }
+    } finally {
+      game.free();
     }
   } else if (job.type === 'range') {
     if (job.exact) {
@@ -180,31 +138,16 @@ export function runChunk(job, st, deadline, maxSamples) {
       }
       return st;
     }
-    const available = job.available.slice();
-    const perCall = samplesPerCall([job.boardCards]);
-    const partialFlop = job.boardCards.length === 1 || job.boardCards.length === 2;
-    while (more()) {
-      const [board] = completeFlops([job.boardCards], available);
-      const game = holdemGame(job, board);
-      try {
-        // A random flop completion changes which combos are possible, so weight
-        // each batch by the engine's count of compatible combos for that flop,
-        // and skip completions that block a range entirely.
-        let weight = 1;
-        if (partialFlop) {
-          try {
-            weight = game.exact_range_evaluations(job.ranges);
-          } catch (err) {
-            continue;
-          }
-        }
-        const r = game.sample_range_equity(job.ranges, perCall);
-        for (let i = 0; i < st.totals.length; i++) st.totals[i] += weight * r.equity_sum[i];
-        st.weight += weight * r.samples;
+    const game = holdemGame(job, job.boardCards);
+    try {
+      while (more()) {
+        const r = game.sample_range_equity(job.ranges, PER_CALL);
+        for (let i = 0; i < st.totals.length; i++) st.totals[i] += r.equity_sum[i];
+        st.weight += r.samples;
         st.done += r.samples;
-      } finally {
-        game.free();
       }
+    } finally {
+      game.free();
     }
   } else {
     throw new Error('unknown job type ' + job.type);

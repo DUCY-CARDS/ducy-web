@@ -1,7 +1,9 @@
-// Hand history (#71) and the replayer (#72).
+// Hand history (#71) and the replayer (#72); ducy replays the hand, so this
+// needs the wasm build in wasm/.
 // Run with: node --test test/hand-replay.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember } from '../src/hand-replay.js';
 
 // A finished heads-up hand as the host sees it: Ann (seat 0, button and small

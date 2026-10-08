@@ -23,8 +23,6 @@ const GM = {
   'bomb-pot':  {cards:4, max:10, numBoards:2},
 };
 const CW = {2:42, 4:32, 5:28, 6:24};
-const ALL_CARDS = [];
-for (const suit of ST) for (const rank of RK) ALL_CARDS.push(rank + suit.c);
 
 let wasmReady = false;
 let curG = 'nlhe';
@@ -367,7 +365,6 @@ function runBombPotEquity(filled) {
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
 
-  const usedSet = used();
   const randomIndices = [];
   const hands = [];
   for (let fi = 0; fi < filled.length; fi++) {
@@ -378,7 +375,7 @@ function runBombPotEquity(filled) {
   const job = {
     type: 'bombpot', numPlayers: filled.length, numBoards, cardsPer: g().cards,
     hands, randomIndices, allBoardCards: allBoardCards.map(bc => bc.map(cardToWasm)),
-    dead: deadCards.map(cardToWasm), available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+    dead: deadCards.map(cardToWasm),
   };
 
   runSampling(job, (st, ms, failed) => {
@@ -458,11 +455,10 @@ function runMonteCarloEquity(filled, boardCards) {
   document.getElementById('timer').textContent = 'Calculating…';
   showCalcOverlay(true);
 
-  const usedSet = used();
   const job = {
     type: 'omaha', numPlayers: filled.length, hilo: curG.includes('hl'), cardsPer: g().cards,
     hands: filled.map(si => seats[si].cards.map(cardToWasm)), boardCards: boardCards.map(cardToWasm),
-    dead: deadCards.map(cardToWasm), available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
+    dead: deadCards.map(cardToWasm),
   };
 
   runSampling(job, (st, ms, failed) => finishSampling(filled, st, ms, failed, 'mc'));
@@ -498,13 +494,11 @@ function runRangeEquity(filled) {
   const cardSeats = filled.filter(si => seats[si].mode === 'cards');
   const rangeSeats = filled.filter(si => seats[si].mode === 'range');
   const order = [...cardSeats, ...rangeSeats];
-  const usedSet = used();
   const job = {
     type: 'range', numPlayers: order.length,
     hands: cardSeats.map(si => seats[si].cards.map(cardToWasm)),
     ranges: rangeSeats.map(si => [...seats[si].sel].join(',')),
     boardCards: boardCards.map(cardToWasm), dead: deadCards.map(cardToWasm),
-    available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
   };
 
   let cost;
@@ -529,13 +523,11 @@ function runOmahaRangeEquity(filled) {
   const cardSeats = filled.filter(si => seats[si].mode === 'cards');
   const rangeSeats = filled.filter(si => seats[si].mode === 'orange');
   const order = [...cardSeats, ...rangeSeats];
-  const usedSet = used();
   const job = {
     type: 'orange', numPlayers: order.length, hilo: curG.includes('hl'), cardsPer: g().cards,
     hands: cardSeats.map(si => seats[si].cards.map(cardToWasm)),
     ranges: rangeSeats.map(si => seats[si].text),
     boardCards: boardCards.map(cardToWasm), dead: deadCards.map(cardToWasm),
-    available: ALL_CARDS.filter(c => !usedSet.has(c)).map(cardToWasm),
   };
   calculating = true;
   document.getElementById('timer').textContent = 'Calculating…';
