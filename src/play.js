@@ -156,7 +156,14 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+}
+
+// Auto-deal is on by default, but off at GTO tables, where each hand's
+// review is worth reading first; the choice at each is remembered.
+const autoDealOn = () => !!(gtoTable ? setup.gtoAutoDeal : setup.autoDeal);
+function setAutoDeal(on) {
+  if (gtoTable) setup.gtoAutoDeal = on; else setup.autoDeal = on;
 }
 
 function loadSetup() {
@@ -166,6 +173,8 @@ function loadSetup() {
       // Saved before chips were hundredths: its blinds and buy-in would show
       // a hundred times too small, so they start over.
       if (s.chips !== 'cents') { delete s.sb; delete s.bb; delete s.buyIn; delete s.friends; }
+      // Saved before auto-deal was on by default (and off at GTO tables).
+      if (s.autoDealV !== 2) { delete s.autoDeal; delete s.gtoAutoDeal; }
       return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
     }
   } catch {}
@@ -486,7 +495,7 @@ function cancelDeal() {
 function armDeal() {
   cancelDeal();
   // A hosted table waits for the host's first deal; guests never deal.
-  if (!open || !seated || !state || !state.complete || !setup.autoDeal || holds.size || mode === 'guest' || !num(state.hand_number)) { syncDeal(); return; }
+  if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number)) { syncDeal(); return; }
   dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
   const mine = session;
   const tick = () => {
@@ -509,7 +518,7 @@ function hold(why, on) {
 }
 
 function nextLabel() {
-  if (!setup.autoDeal) return 'Next hand';
+  if (!autoDealOn()) return 'Next hand';
   if (holds.size || !dealTimer) return 'Next hand (paused)';
   return `Next hand in ${Math.max(1, Math.ceil((dealAt - performance.now()) / 1000))}…`;
 }
@@ -1053,8 +1062,8 @@ function renderTable() {
   h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
   if (mode !== 'solo') h += netBarHtml();
   h += '<span class="pl-tools">';
-  h += `<button class="cc-btn${setup.autoDeal ? ' on' : ''}" data-act="autodeal" aria-pressed="${!!setup.autoDeal}">Auto-deal</button>`;
-  if (setup.autoDeal) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
+  h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
+  if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   if (gtoTable && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
@@ -1129,7 +1138,7 @@ function controlsHtml() {
     } else {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
       raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
-      if (setup.autoDeal && num(s.hand_number)) call = `<button class="tr-btn" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
+      if (autoDealOn() && num(s.hand_number)) call = `<button class="tr-btn" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
     }
   } else if (foldQueued) {
     if (L) {
@@ -1578,7 +1587,7 @@ function onClick(e) {
     render();
     armDeal();
   }
-  else if (el.dataset.act === 'autodeal') { setup.autoDeal = !setup.autoDeal; saveSetup(); holds.delete('user'); render(); armDeal(); }
+  else if (el.dataset.act === 'autodeal') { setAutoDeal(!autoDealOn()); saveSetup(); holds.delete('user'); render(); armDeal(); }
   else if (el.dataset.act === 'leave') { if (mode === 'host') forgetSavedTable(); leaveTable(); }
   else if (el.dataset.act === 'resumehost') resumeHosting();
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
@@ -1621,7 +1630,7 @@ function onKey(e) {
   if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
-  if (state.complete && k === 'p' && setup.autoDeal) { hold('user', !holds.has('user')); return; }
+  if (state.complete && k === 'p' && autoDealOn()) { hold('user', !holds.has('user')); return; }
   // The rest are only for the player's turn.
   const L = state.legal;
   if (!L) {
