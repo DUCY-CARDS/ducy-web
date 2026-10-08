@@ -1,13 +1,19 @@
+// Blind structures as the tournament form sees them. ducy builds presets,
+// checks structures and estimates the length (ducy_play::structure, whose
+// own tests check the estimate against bot tournaments); these check the
+// page gets what it shows. Needs the wasm build in wasm/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import './wasm.mjs';
 import { PRESETS, checkStructure, durationText, estimate, presetStructure } from '../src/tourney-structure.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
-const sims = JSON.parse(readFileSync(new URL('./fixtures/tourney-sims.json', import.meta.url), 'utf8'));
+// The first big blind as a share of the starting stack, per preset.
+const START_BB = {turbo: 1 / 50, regular: 1 / 100, deep: 1 / 200};
 
 test('every preset gives a valid structure for any starting stack: blinds always rise', () => {
-  for (const p of PRESETS) {
+  assert.deepEqual(PRESETS().map(p => p.id), ['turbo', 'regular', 'deep']);
+  for (const p of PRESETS()) {
     for (const stack of [20, 100, 1000, 1500, 2500, 5000, 10000, 20000, 25000, 50000, 100000, 1000000]) {
       const steps = presetStructure(p.id, stack);
       assert.deepEqual(checkStructure(steps), [], `${p.id} ${stack}`);
@@ -18,7 +24,7 @@ test('every preset gives a valid structure for any starting stack: blinds always
         assert.equal(l.minutes, p.minutes);
       });
       assert.ok(levels.at(-1).bb >= stack * 4, `${p.id} ${stack}: lasts for a big field`);
-      assert.ok(Math.abs(stack / levels[0].bb - 1 / p.startBB) <= 1 / p.startBB, `${p.id} ${stack}: starting depth`);
+      assert.ok(Math.abs(stack / levels[0].bb - 1 / START_BB[p.id]) <= 1 / START_BB[p.id], `${p.id} ${stack}: starting depth`);
     }
   }
 });
@@ -45,19 +51,11 @@ test('checkStructure finds what makes a structure unplayable', () => {
   assert.match(checkStructure([ok, {break: true, minutes: 10}])[0], /end with a break/);
 });
 
-// The estimate against bot-only tournaments the engine played (#78: within
-// about ±25%). The fixture comes from ducy-play's tourney_time example.
-test('the estimate is within 25% of simulated bot tournaments, presets and a hand-made structure', () => {
-  const off = [];
-  for (const c of sims.presets) {
-    const e = estimate(sims.structures[`${c.preset}-${c.stack}`], c);
-    off.push([`${c.preset} ${c.stack} ${c.tableSize}-max ${c.players}p`, e.minutes / c.minutes - 1]);
-  }
-  const {levels, minutes, ...opts} = sims.custom;
-  for (const [n, m] of Object.entries(minutes)) off.push([`custom ${n}p`, estimate(levels, {...opts, players: +n}).minutes / m - 1]);
-  for (const [name, d] of off) assert.ok(Math.abs(d) <= 0.25, `${name}: ${(d * 100).toFixed(0)}% off`);
-  // And well inside it on the whole.
-  assert.ok(Math.max(...off.map(([, d]) => Math.abs(d))) < 0.15);
+test('checkStructure takes fields as the editor leaves them', () => {
+  const ok = {sb: 50, bb: 100, ante: 0, minutes: 15};
+  assert.match(checkStructure([{...ok, bb: NaN}])[0], /whole chips/, 'an emptied field');
+  assert.match(checkStructure(null)[0], /at least one level/);
+  assert.equal(checkStructure([{...ok, sb: 'x'}]).length, 1);
 });
 
 test('the estimate grows with the field and the structure, and counts breaks', () => {
