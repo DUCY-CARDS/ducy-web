@@ -133,6 +133,8 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     club: null,
     get view() { return view; },
     get online() { return online; },
+    // Trying to stay connected (false once it gave up, e.g. another tab took over).
+    get connected() { return !!net; },
     get record() { return rec; },
     // Connects to this browser's always-on club, if it has one. Resolves to
     // whether it does (looking in IndexedDB when localStorage lost it).

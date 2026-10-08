@@ -424,19 +424,6 @@ async function deleteAlwaysOn() {
   }
 }
 
-// How much always-on clubs use ducy's free server plan today (#98), from
-// the relay's /usage, fetched at most once a minute.
-let usage = null, usageAt = 0;
-function usageHtml() {
-  if (Date.now() - usageAt > 60_000) {
-    usageAt = Date.now();
-    fetch(relayUrl().replace(/^ws/, 'http') + '/usage').then(r => r.json()).then(u => { usage = u; render(); }).catch(() => {});
-  }
-  const d = usage?.days?.[0];
-  if (!d) return '';
-  const warn = d.share >= 80 ? ' pl-neterr' : '';
-  return `<p class="pl-meta${warn}">ducy’s server today: ${d.clubHours} club-hours of play across ${usage.clubs} always-on club${usage.clubs === 1 ? '' : 's'}, ${d.share}% of the free plan${d.share >= 80 ? '. Close to the limit: tables may stop for the rest of the day.' : '.'}</p>`;
-}
 
 function link() {
   const relay = relayUrl();
@@ -932,13 +919,17 @@ function hostHtml() {
   const remote = isRemote();
   const stalled = !remote && hostOnline && hostNet && !hostNet.healthy();
   const on = remote ? owner.online : hostOnline;
-  const badge = remote ? (owner.online ? 'Always on' : 'Connecting…') : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
-  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${on ? ' on' : ''}">${badge}</span>`;
+  // An always-on club shows nothing while connected (every club is always
+  // on); only reconnecting, or a Reconnect button once another tab has it.
+  const badge = remote ? (owner.online ? '' : owner.connected ? 'Reconnecting…' : 'Not connected')
+    : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
   if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
+  if (remote && !owner.connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
   h += '</div>';
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  h += `<p class="pl-meta">${remote ? 'Always on, on ducy’s server' : 'Runs in this tab'} · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  h += `<p class="pl-meta">${remote ? '' : 'Runs in this tab · '}code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
   // Four tabs (#152): Tables, Players (with what needs you, #143), Settings
   // and History.
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
@@ -946,7 +937,7 @@ function hostHtml() {
   const tables = openTables(club);
   const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
   const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
-  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('players', players)}${sub('settings', 'Settings')}${sub('history', 'History')}</div>`;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('players', players)}${sub('accounting', 'Accounting')}${sub('history', 'History')}${sub('settings', 'Settings')}</div>`;
   if (dashTab === 'tables') h += tablesHtml();
   else if (dashTab === 'settings') h += settingsHtml();
   else if (dashTab === 'players') {
@@ -983,13 +974,10 @@ function hostHtml() {
       for (const m of order) h += memberRowHtml(m, agents);
       h += '</ul>';
     }
-    h += chipsOutHtml();
-  } else {
-    // Hand history and results (#71): the host's hands show no hidden cards.
+  } else if (dashTab === 'accounting') h += accountingHtml();
+  else {
+    // Hand history (#71): the host's hands show no hidden cards.
     h += handsHtml(club.code, 'host', 'Hands at your tables');
-    const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
-    const tableNames = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
-    h += resultsHtml(club.chips.ledger, names, tableNames);
     if (club.log?.length) {
       h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
       for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
@@ -999,13 +987,44 @@ function hostHtml() {
   return h + '</section>';
 }
 
-// The club page's tab (#152): 'tables', 'players', 'settings' or 'history'.
+// The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
 let dashTab = 'tables';
 
-const chipsOutHtml = () => {
+// The Accounting tab: where the club's chips are, each member's balance and
+// results, and every chip movement (the ledger).
+function accountingHtml() {
   const t = totals(club);
-  return `<p class="pl-meta">Chips out: ${chips(t.issued - t.reclaimed)} (given ${chips(t.issued)}, taken back ${chips(t.reclaimed)}) · in balances ${chips(t.balances)} · on tables ${chips(t.onTables)}${t.conserved ? '' : ' · <span class="pl-neterr">doesn’t add up</span>'}</p>`;
-};
+  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+  const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
+  const results = totalsByMember(tableSessions(club.chips.ledger));
+  const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
+  let h = '<h3>Chips</h3><table class="cl-acct"><tbody>';
+  h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
+  h += `<tr><th>Taken back</th><td>${chips(t.reclaimed)}</td></tr>`;
+  h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued - t.reclaimed)}</td></tr>`;
+  h += `<tr><th>In balances</th><td>${chips(t.balances)}</td></tr>`;
+  h += `<tr><th>On tables</th><td>${chips(t.onTables)}</td></tr>`;
+  h += '</tbody></table>';
+  h += t.conserved ? '<p class="pl-meta">Adds up: balances and tables hold every chip in the club.</p>'
+    : '<p class="pl-desc pl-neterr">Doesn’t add up: balances and tables don’t hold every chip in the club.</p>';
+  const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
+  if (members.length) {
+    h += '<h3>Members</h3><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
+    for (const m of members) h += `<tr><th>${esc(m.name)}</th><td>${chips(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
+    h += '</tbody></table><p class="pl-meta">Results: what each member won or lost over the table sessions they finished.</p>';
+  }
+  h += resultsHtml(club.chips.ledger, names, tableNames);
+  const ledger = club.chips.ledger;
+  if (ledger.length) {
+    h += `<details class="cl-history"><summary>Ledger (${ledger.length})</summary><ul>`;
+    for (const e of [...ledger].reverse().slice(0, 200)) {
+      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
+      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+    }
+    h += '</ul></details>';
+  }
+  return h;
+}
 
 // A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
 // handled like any other data-cl click.
@@ -1037,9 +1056,7 @@ function settingsHtml() {
     } else h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Back up the club</button></div>';
     if (backupNote) h += `<p class="pl-desc">${esc(backupNote)}</p>`;
   } else h += '<p class="pl-desc">A club run in this tab is kept in this browser only. Move it to always on to back it up.</p>';
-  h += `<h3>Where it runs</h3><p class="pl-desc">${remote ? 'On ducy’s server: it stays open for its members with this page closed.' : 'In this tab: players reach it only while it’s open.'}</p>`;
-  if (remote) h += usageHtml();
-  h += `<div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
+  h += `<h3>Delete</h3><div class="pl-actions">${remote ?'<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
   return h;
 }
 
@@ -1339,6 +1356,7 @@ async function onClick(e) {
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }
+  else if (act === 'reconnect-owner') { note = ''; owner.start(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
