@@ -40,6 +40,8 @@ test('every hand is dealt from a seed the players helped make, and each playerâ€
     if (!p || !u) return;
     if (u.type === 'fair') {
       if (to === silent) return;
+      // Cy is away when the first result goes out.
+      if (to === 'cy' && u.step === 'result' && !p.missed) { p.missed = Number(u.hand); return; }
       if (u.step === 'commit') p.commits++;
       const check = p.fair.message(u, cmd => host.handle(t.id, to, cmd), p.seen.get(Number(u.hand)) || {});
       if (check) p.checks.push(check);
@@ -63,11 +65,20 @@ test('every hand is dealt from a seed the players helped make, and each playerâ€
   // Three hands.
   const start = Date.now();
   while (players.ann.checks.length < 3 && Date.now() - start < 60_000) await sleep(200);
-  for (const id of ['ann', 'bob', 'cy']) {
+  for (const id of ['ann', 'bob']) {
     const checks = players[id].checks;
     assert.ok(checks.length >= 3, `${id} checked ${checks.length} hands`);
     for (const c of checks) assert.ok(c.ok, `${id}, hand ${c.hand}: ${c.why}`);
   }
+  // Cy missed a result while away; coming back to the table, she gets it
+  // again and checks it, and each hand is checked only once.
+  assert.ok(players.cy.missed && !players.cy.checks.some(c => c.hand === players.cy.missed));
+  await host.handle(t.id, 'cy', {type: 'join'});
+  await sleep(300);
+  const cy = players.cy.checks;
+  assert.ok(cy.some(c => c.hand === players.cy.missed), 'the missed hand is checked after coming back');
+  assert.equal(new Set(cy.map(c => c.hand)).size, cy.length, 'no hand checked twice');
+  for (const c of cy) assert.ok(c.ok, `cy, hand ${c.hand}: ${c.why}`);
   // Dee was dealt in (and could check the deal too), but never helped make it.
   assert.ok(players.dee.checks.length === 0 || players.dee.checks.every(c => c.ok));
   assert.ok(Date.now() - start < 45_000, 'the silent player didnâ€™t hold the table up');

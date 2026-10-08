@@ -19,6 +19,7 @@ import { fairCommitment, fairDeal, fairSecret, fairSeed } from '../wasm/ducy_was
 export function fairPlayer() {
   // Rounds this player is in: round id → {secret, list}. A few at most.
   const rounds = new Map();
+  const checked = new Set(); // seeds of the hands already checked
   return {
     message(m, send, mine) {
       if (m.step === 'commit') {
@@ -40,6 +41,11 @@ export function fairPlayer() {
         return null;
       }
       if (m.step === 'result') {
+        // The host sends recent results again when a player comes back: each
+        // hand is checked once.
+        if (checked.has(m.seed)) return null;
+        checked.add(m.seed);
+        if (checked.size > 50) checked.delete(checked.values().next().value);
         const ours = [...rounds.values()].find(r => r.list && sameList(r.list, m.list));
         return {hand: Number(m.hand), ...checkDeal(m, mine, ours?.secret)};
       }
