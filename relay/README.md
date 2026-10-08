@@ -71,6 +71,30 @@ browser remembers it, and invite links from that browser carry it, so
 friends reach the same relay. `?relay=default#play` goes back to the
 site's relay.
 
+## Always-on clubs: timers and sleeping
+
+An always-on club's tables run in its room (#93). Everything that happens
+later is on the room's one Durable Object alarm, shared with backups:
+- turn time-outs;
+- the next deal;
+- the sit-out sweep;
+- the fair-deal round's steps (#135).
+
+Timers in memory would hold the room awake and be lost when the runtime
+evicts it. With the alarm:
+- **The room can hibernate** between alarms, and while no one plays.
+- **After an eviction**, the alarm wakes the room. The club opens from
+  storage, and its tables, which are saved after every change, restore and set
+  their timers again; any timer already due fires at once. Players still
+  connected count as back, so play goes straight on.
+- **Backups** keep their own due time (`backupDue`) on the same alarm.
+
+`test/club-alarms.test.mjs` evicts a room mid-hand and checks that, with no
+message afterwards, the player to act times out and the next hand is dealt.
+
+**Still to measure on the live relay** (#96): CPU per message, from
+`wrangler tail` or the dashboard, and that an idle club hibernates.
+
 ## Local development
 
 ```sh

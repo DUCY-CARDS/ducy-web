@@ -60,12 +60,18 @@ function workerCall(op, ...args) {
 
 const num = v => Number(v);
 
+// The page's timers.
+const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => clearTimeout(h)};
+
 // `call(op, ...args)` runs club-engine.js ops (by default in the page's
 // worker), and `store` keeps saved tables (by default in IndexedDB,
-// table-store.js); an always-on club passes its own (#93).
+// table-store.js); an always-on club passes its own (#93). `timers`
+// ({set(fn, ms) → handle, clear(handle)}) runs everything that happens
+// later; an always-on club's room backs it with its alarm (#135), so the
+// room can sleep between turns and a restart doesn't lose them.
 export function createTableHost({
   club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true,
-  call = workerCall, store = {get: getTable, put: putTable, drop: dropTable},
+  call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
 }) {
   const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
   const at = new Map(); // member id → table id
@@ -100,7 +106,7 @@ export function createTableHost({
     return () => watchers.get(tid)?.delete(fn);
   }
 
-  function clear(r, name) { clearTimeout(r.timers[name]); r.timers[name] = null; }
+  function clear(r, name) { timers.clear(r.timers[name]); r.timers[name] = null; }
 
   // Runs engine calls for a table one at a time, handling each result.
   function run(tid, method, ...args) {
@@ -211,8 +217,10 @@ export function createTableHost({
   // regularly, not only on the turn clock. An empty one doesn't, so nothing
   // keeps an always-on club's room awake while no one plays (#93).
   function sweep(tid, r) {
-    if (r.players.length && !r.sweep) r.sweep = setInterval(() => { if (!r.stopped) run(tid, 'tick'); }, 5_000);
-    else if (!r.players.length && r.sweep) { clearInterval(r.sweep); r.sweep = null; }
+    if (r.players.length && !r.sweep) {
+      const tick = () => { if (!running.has(tid)) return; if (!r.stopped) run(tid, 'tick'); r.sweep = timers.set(tick, 5_000); };
+      r.sweep = timers.set(tick, 5_000);
+    } else if (!r.players.length && r.sweep) { timers.clear(r.sweep); r.sweep = null; }
   }
 
   // What happens next at a table: an away player's or the clock's move, or
@@ -222,16 +230,16 @@ export function createTableHost({
     const t = tableById(club(), tid);
     if (!r || !t || r.stopped) return;
     clear(r, 'tick');
-    if (res.turnMsLeft != null) r.timers.tick = setTimeout(() => run(tid, 'tick'), num(res.turnMsLeft) + 50);
+    if (res.turnMsLeft != null) r.timers.tick = timers.set(() => run(tid, 'tick'), num(res.turnMsLeft) + 50);
     if (res.botToAct) {
       clear(r, 'advance');
-      r.timers.advance = setTimeout(() => run(tid, 'advance'), BOT_PACE_MS);
+      r.timers.advance = timers.set(() => run(tid, 'advance'), BOT_PACE_MS);
     }
     // A resumed table deals no new hand until its people are back.
     if (r.complete && !r.paused && !r.timers.deal && t.status === 'open' && num(res.playersIn) >= 2) {
       // The next hand's fair-deal round, if one isn't under way already.
       if (!r.fair) fairStart(tid);
-      r.timers.deal = setTimeout(() => deal(tid), r.handNumber ? NEXT_HAND_MS : 500);
+      r.timers.deal = timers.set(() => deal(tid), r.handNumber ? NEXT_HAND_MS : 500);
     }
   }
 
@@ -244,7 +252,7 @@ export function createTableHost({
     r.timers.deal = null;
     const f = r.fair;
     if (f && !f.seed && Date.now() - f.started < FAIR_WAIT_MS) {
-      r.timers.deal = setTimeout(() => deal(tid), 300);
+      r.timers.deal = timers.set(() => deal(tid), 300);
       return;
     }
     r.fair = null;
@@ -282,7 +290,7 @@ export function createTableHost({
     f.invited = new Set(players);
     for (const id of players) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'commit', round: f.id}});
     clear(r, 'fair');
-    r.timers.fair = setTimeout(() => fairCommitsIn(tid, f), FAIR_STEP_MS);
+    r.timers.fair = timers.set(() => fairCommitsIn(tid, f), FAIR_STEP_MS);
   }
 
   // Every commitment is in (or the time's up): everyone gets the list, then reveals.
@@ -293,7 +301,7 @@ export function createTableHost({
     f.list = [{id: 'host', c: f.host.commitment}, ...[...f.commits].map(([id, c]) => ({id, c}))];
     for (const [id] of f.commits) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'reveal', round: f.id, list: f.list}});
     if (!f.commits.size) { fairRevealsIn(tid, f); return; }
-    r.timers.fair = setTimeout(() => fairRevealsIn(tid, f), FAIR_STEP_MS);
+    r.timers.fair = timers.set(() => fairRevealsIn(tid, f), FAIR_STEP_MS);
   }
 
   // Every reveal is in (or the time's up): the seed, from the values in list order.
@@ -379,14 +387,20 @@ export function createTableHost({
       .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
       .catch(e => {
         if (!(e instanceof Closed)) console.warn(e);
-        clearInterval(r.sweep);
+        timers.clear(r.sweep);
         running.delete(t.id);
         if (resume && cashOutTable(club(), t.id).length) save();
         if (t.status === 'closing') { t.status = 'closed'; save(); }
       });
     await r.chain;
     // The resumed table's state: who's seated, for joins and the host's view.
-    if (r.paused) await run(t.id, 'state');
+    if (r.paused) {
+      await run(t.id, 'state');
+      // Players still connected never left (an always-on club's room woke
+      // after sleeping, #135): they're back already, and if everyone is,
+      // play goes straight on.
+      for (const p of r.players) if (online(p.client_id)) cameBack(t.id, p.client_id);
+    }
     // A table that was closing finishes its hand, then closes (#117).
     if (running.has(t.id) && t.status === 'closing') await close(t.id);
   }
@@ -405,7 +419,7 @@ export function createTableHost({
     r.back = new Set();
     r.savedSeq = rec.seq;
     // People get a while to come back; then the table goes on without them.
-    r.timers.grace = setTimeout(() => wake(t.id), RESUME_GRACE_MS);
+    r.timers.grace = timers.set(() => wake(t.id), RESUME_GRACE_MS);
     return true;
   }
 
@@ -439,7 +453,7 @@ export function createTableHost({
 
   function drop(tid) {
     const r = running.get(tid);
-    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); clearInterval(r.sweep); }
+    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); timers.clear(r.sweep); r.sweep = null; }
     running.delete(tid);
     call('clubDrop', tid).catch(() => {});
     store.drop(club().code, tid).catch(() => {});
@@ -479,7 +493,10 @@ export function createTableHost({
   // A member's connection changed (clubs.js keeps who's online).
   function presence(id) {
     const tid = at.get(id);
-    if (tid) syncClock(tid);
+    if (!tid) return;
+    syncClock(tid);
+    // Connected while their table waits after a restore: they're back (#135).
+    if (online(id)) cameBack(tid, id);
   }
 
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.players.length]));
