@@ -3,8 +3,7 @@ import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
-import { openPlay, closePlay, playOpen } from './play.js';
-import { openClubs, closeClubs } from './clubs.js';
+import { closeSection, lastTab, openSection, sectionOpen, startBackground, TABS } from './play-section.js';
 
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
@@ -1671,14 +1670,14 @@ function stateToHash() {
 }
 
 function syncHash() {
-  if (trainerOpen() || playOpen()) return;
+  if (trainerOpen() || sectionOpen()) return;
   const h = stateToHash();
   if (location.hash !== h) history.replaceState(null, '', h);
 }
 
 function loadFromHash() {
   const h = location.hash.slice(1);
-  if (h === 'trainer' || h === 'play' || h === 'codedoug') return;
+  if (h === 'trainer' || h === 'codedoug' || TABS.includes(h)) return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1737,22 +1736,20 @@ function loadFromHash() {
   dirty();
 }
 
-// Modes: the equity calculator, the range trainer at #trainer, or the hidden
-// bot table at #play (no tab links to it). The trainer doesn't need the
-// engine, so it's set up before the WASM load below; the bot table loads it.
-// `shortcut` opens the bot table straight into a preset game (see openPlay).
+// Modes: the equity calculator, the range trainer at #trainer, and the Play
+// section (play-section.js, #138), whose tabs are #play, #join, #host and
+// #clubs. The trainer doesn't need the engine, so it's set up before the
+// WASM load below. `shortcut` opens the bot table straight into a preset
+// game (see openPlay).
 function setMode(mode, shortcut) {
-  const trainer = mode === 'trainer', play = mode === 'play', clubs = mode === 'clubs';
+  const trainer = mode === 'trainer', section = TABS.includes(mode);
   document.body.classList.toggle('mode-trainer', trainer);
-  document.body.classList.toggle('mode-play', play);
-  document.body.classList.toggle('mode-clubs', clubs);
-  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  document.body.classList.toggle('mode-play', section);
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === (section ? 'play' : mode)));
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
-  if (play) openPlay(document.getElementById('play'), shortcut);
-  else closePlay();
-  if (clubs) openClubs(document.getElementById('clubs'));
-  else closeClubs();
+  if (section) openSection(mode, shortcut);
+  else closeSection();
 }
 
 document.querySelector('.mode-tabs').addEventListener('click', e => {
@@ -1760,6 +1757,7 @@ document.querySelector('.mode-tabs').addEventListener('click', e => {
   if (!b || b.classList.contains('on')) return;
   // Changing the hash adds a history entry, so Back returns to the other mode.
   if (b.dataset.mode === 'trainer') location.hash = 'trainer';
+  else if (b.dataset.mode === 'play') location.hash = lastTab();
   else { closeTrainer(); location.hash = stateToHash() || 'g=' + curG; }
 });
 
@@ -1771,19 +1769,26 @@ function openShortcut() {
   setMode('play', 'gto');
 }
 
+// The mode an address opens.
+function hashMode() {
+  const h = location.hash.slice(1);
+  return h === 'trainer' || TABS.includes(h) ? h : '';
+}
+
 window.addEventListener('hashchange', () => {
-  if (location.hash === '#trainer') { setMode('trainer'); return; }
-  if (location.hash === '#play') { setMode('play'); return; }
-  if (location.hash === '#clubs') { setMode('clubs'); return; }
   if (location.hash === '#codedoug') { openShortcut(); return; }
+  const m = hashMode();
+  if (m) { setMode(m); return; }
   setMode('equity');
   loadFromHash(); render(); updateGameUI();
 });
 
-// A club invite opens #clubs even if the #clubs on the end of the link was
-// lost (some apps cut links at the #).
+// Links that join something open the Join tab: a club invite (made with
+// #clubs before #138, and some apps cut links at the #), and a friends
+// table's link (made with #play before).
 const q = new URLSearchParams(location.search);
-if (q.has('club') && q.has('invite') && location.hash !== '#clubs') history.replaceState(null, '', location.pathname + location.search + '#clubs');
+const toJoin = (q.has('club') && q.has('invite')) || (q.has('table') && (!location.hash || location.hash === '#play'));
+if (toJoin && location.hash !== '#join') history.replaceState(null, '', location.pathname + location.search + '#join');
 
 // Init. Before any page opens: the trainer, stats and club pages call ducy's
 // bindings too (range text, hand counts, replays).
@@ -1800,10 +1805,11 @@ try {
   console.error('WASM init failed:', err);
 }
 
-if (location.hash === '#trainer') setMode('trainer');
-else if (location.hash === '#play') setMode('play');
-else if (location.hash === '#clubs') setMode('clubs');
-else if (location.hash === '#codedoug') openShortcut();
+// Clubs connect now, whichever page is open, so requests arrive live (#145).
+startBackground();
+
+if (location.hash === '#codedoug') openShortcut();
+else if (hashMode()) setMode(hashMode());
 
 loadFromHash();
 render();

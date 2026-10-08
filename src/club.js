@@ -72,7 +72,7 @@ export function inviteLink(club, base, relay = '') {
   u.searchParams.set('invite', club.invite);
   u.searchParams.set('host', club.hostId);
   if (relay) u.searchParams.set('relay', relay);
-  u.hash = 'clubs';
+  u.hash = 'join';
   return u.toString();
 }
 

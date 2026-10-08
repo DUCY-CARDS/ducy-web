@@ -28,7 +28,7 @@ test('invite links round-trip and carry the relay when given', async () => {
   const link = inviteLink(club, 'https://ducy.example/?table=X#play');
   const inv = parseInvite(link);
   assert.deepEqual(inv, {code: club.code, invite: club.invite, hostId: club.hostId});
-  assert.ok(link.endsWith('#clubs'));
+  assert.ok(link.endsWith('#join'), 'opens the Join tab');
   assert.equal(new URL(link).searchParams.get('table'), null);
   assert.equal(new URL(inviteLink(club, 'https://ducy.example/', 'ws://localhost:8787')).searchParams.get('relay'), 'ws://localhost:8787');
   assert.equal(parseInvite('https://ducy.example/#clubs'), null);

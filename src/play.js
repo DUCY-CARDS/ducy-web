@@ -1,5 +1,6 @@
-// Hidden page at #play: no-limit Hold'em or pot-limit Omaha (4, 5 or 6 cards)
-// against ducy's personality bots.
+// Playing in the Play section (play-section.js, #138): no-limit Hold'em or
+// pot-limit Omaha (4, 5 or 6 cards) against ducy's personality bots, a
+// friends table, or a club's table (clubs.js seats you through joinTableVia).
 // The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
@@ -15,7 +16,7 @@
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
-import { clientId, connect, joinLink, linkedCode, linkedHost, newCode, normCode, relayUrl } from './play-net.js';
+import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import {
   backupNeedsPassword, checkSignature, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId, signMessage,
 } from './identity.js';
@@ -136,13 +137,13 @@ let myChips = null;
 let mySeat = null;
 let chipAsk = 0; // the amount in a guest's request box
 let lastView = null; // a guest's last view from the host
-let joinCode = linkedCode();
+let errView = null; // the tab netNote is about, after leaving a table
 // This browser's player identity for clubs (identity.js), loaded on open.
 let me = null;
 let idNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, tab: 'bots', friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 1, bb: 2, buyIn: 200, hud: true, statsScope: 'session', autoDeal: false, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 function loadSetup() {
@@ -213,18 +214,30 @@ function fillBots() {
   setup.bots = bots;
 }
 
-// The setup screen: playing the bots, or (with a relay) a table for friends.
+// This module's part of each Play tab (play-section.js, #138):
+//   'play'  the bots, and a friends table you can resume
+//   'host'  start a friends table (a temporary game)
+//   'join'  only why joining a table didn't work (the form is the section's)
+//   'clubs' nothing
+// Seated at any table, the Play tab shows it.
+let view = 'play';
+
 function renderSetup() {
-  const tabs = !!relayUrl();
-  const friends = tabs && setup.tab === 'friends';
-  let h = '<div class="pl-wrap">';
-  if (tabs) {
-    const tab = (id, label) => `<button class="pl-tab${(id === 'friends') === friends ? ' on' : ''}" role="tab" aria-selected="${(id === 'friends') === friends}" data-tab="${id}">${label}</button>`;
-    h += `<div class="pl-tabs" role="tablist">${tab('bots', 'Play the bots')}${tab('friends', 'Play with friends')}</div>`;
-  }
-  h += friends ? friendsSetupHtml() : botsSetupHtml();
-  h += '</div>';
-  root.innerHTML = h;
+  let h = '';
+  const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
+  if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
+  else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
+  else if (view === 'join') h = err;
+  root.hidden = !h;
+  root.innerHTML = h ? `<div class="pl-wrap">${h}</div>` : '';
+}
+
+// A friends table this browser hosted that stopped mid-hand (#117).
+function resumeHtml() {
+  if (!savedTable || mode === 'host') return '';
+  const ago = Math.max(1, Math.round((Date.now() - savedTable.at) / 60_000));
+  let h = `<section class="cl-card pl-resume"><h2>Your game ${esc(savedTable.room)}</h2><p>It stopped ${ago < 60 ? `${ago} min` : `${Math.round(ago / 60)} h`} ago with a hand in progress. Resume it, and players rejoin with the same code.</p>`;
+  return h + '<div class="pl-actions"><button class="tr-start" data-act="resumehost">Resume game</button><button class="btn-small" data-act="forgethost">Discard</button></div></section>';
 }
 
 function optsRow(label, items) {
@@ -256,6 +269,7 @@ function botsSetupHtml() {
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
   h += '</div>';
+  if (relayUrl()) h += '<p class="pl-meta pl-elsewhere">Playing with people? <a href="#join">Join</a> with a code, or <a href="#host">host</a> a game or a club.</p>';
   return h;
 }
 
@@ -263,14 +277,9 @@ function botsSetupHtml() {
 // everyone asks the host for chips within the buy-in limits.
 function friendsSetupHtml() {
   const f = setup.friends;
-  let h = '<div class="pl-head"><h1>Play with friends</h1>';
-  h += '<p>Host a table and send friends the link. Seats stay empty until people join; each player asks you for chips, and you approve them. Running a regular game? <a href="#clubs">Start a club</a>.</p></div>';
+  let h = '<div class="pl-head"><h1>Start a game now</h1>';
+  h += '<p>A table for friends, just for now: send them the code or link. Seats stay empty until people join; each player asks you for chips, and you approve them. Nothing is kept once everyone has left.</p></div>';
   h += '<div class="pl-setup pl-multi">';
-  if (savedTable && mode !== 'host') {
-    const ago = Math.max(1, Math.round((Date.now() - savedTable.at) / 60_000));
-    h += `<div class="pl-resume"><p>Your table <b>${esc(savedTable.room)}</b> stopped ${ago < 60 ? `${ago} min` : `${Math.round(ago / 60)} h`} ago with a hand in progress. Resume it, and players rejoin with the same code.</p>`;
-    h += '<div class="pl-actions"><button class="tr-start" data-act="resumehost">Resume table</button><button class="btn-small" data-act="forgethost">Discard</button></div></div>';
-  }
   h += `<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="Name" value="${esc(setup.name)}"></div>`;
   h += identityRowHtml();
   h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
@@ -280,12 +289,7 @@ function friendsSetupHtml() {
   h += optsRow('Max buy-in', MAX_BUY_INS.map(n => optBtn(f.maxBB === n, 'data-fmax', n, `${n} BB`)));
   h += optsRow('Turn time', [15, 30, 60, 0].map(t => optBtn(setup.turnSecs === t, 'data-turn', t, t ? t + 's' : 'None')));
   h += `<p class="pl-desc">Up to ${f.seats} players, you included. Everyone, you too, holds between ${f.minBB * f.bb} and ${f.maxBB * f.bb} chips after a top-up (${f.minBB}–${f.maxBB} BB); chips carry over from hand to hand.</p>`;
-  h += '<div class="pl-actions"><button class="tr-start" data-act="host">Host a table</button></div>';
-  h += '<h2>Join a table</h2>';
-  h += '<div class="pl-row"><span class="pl-label">Table code</span><div class="pl-opts">';
-  h += `<input class="pl-text" id="pl-code" maxlength="9" placeholder="ABCD-EFGH" value="${esc(joinCode)}">`;
-  h += '<button class="tr-btn" data-act="join">Join table</button></div></div>';
-  if (netNote) h += `<p class="pl-desc pl-neterr">${esc(netNote)}</p>`;
+  h += '<div class="pl-actions"><button class="tr-start" data-act="host">Start the game</button></div>';
   h += '</div>';
   return h;
 }
@@ -687,6 +691,8 @@ async function hostTable() {
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
   request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
     .then(snap => { if (snap) show(snap); });
+  // The table shows on the Play tab.
+  location.hash = 'play';
 }
 
 // Hosting a friends table with code `code`: the relay connection, keys and
@@ -782,6 +788,7 @@ async function resumeHosting() {
   savedSeq = rec.seq;
   noSave = false;
   startHosting(rec.room, rec.game);
+  location.hash = 'play';
   resuming = setTimeout(() => wake(), RESUME_GRACE_MS);
   try {
     show(await hostCall('hostRestore', rec.json));
@@ -812,15 +819,18 @@ function wake() {
   hostEvent('hostResume');
 }
 
-function joinTable() {
-  readNameInput();
-  const code = normCode(root.querySelector('#pl-code')?.value || joinCode);
-  if (!code) { netNote = 'Enter the 8-character table code.'; render(); return; }
+// Joins the friends table `code` as `name` (the Join tab). `hostId`, from
+// the link, is the host's player ID the table's encryption key is checked
+// against. The table then shows on the Play tab; if joining fails, the Join
+// tab says why.
+export function joinTable({code, name, hostId = ''}) {
+  if (seated) leaveTable();
+  setup.name = String(name || '').trim().slice(0, 20);
   saveSetup();
-  joinCode = code;
   startGuest(code);
+  joinedByCode = true;
   const mine = session;
-  e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId: linkedHost(), inbox: Promise.resolve()};
+  e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId, inbox: Promise.resolve()};
   net = connect(code, 'guest', clientId(), {
     // Our key first, then the join, so the host can encrypt from the start.
     async onOpen() {
@@ -834,9 +844,14 @@ function joinTable() {
     // Once in, keep trying through an outage: the host holds the seat and
     // the hand waits (a wrong code still fails at once).
   }, {persistent: true});
-  render();
   startClock();
+  if (location.hash !== '#play') location.hash = 'play';
+  else render();
 }
+let joinedByCode = false; // at a table joined with its code (joinTable)
+
+// The name this browser plays friends tables as.
+export const tableName = () => setup.name;
 
 // Sits down at a table reached some other way than a table code: a club
 // table (clubs.js). `open(handlers)` returns {send(command), close()} and
@@ -870,6 +885,7 @@ let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the las
 
 function startGuest(code) {
   mode = 'guest';
+  joinedByCode = false;
   myChips = null;
   mySeat = null;
   chipAsk = 0;
@@ -969,8 +985,15 @@ function leaveTable(note = '') {
   netNote = note;
   const hook = leaveHook;
   leaveHook = null;
+  const byCode = joinedByCode;
+  joinedByCode = false;
+  errView = note ? (byCode ? 'join' : view) : null;
   document.body.classList.remove('club-table');
   if (hook) hook(note);
+  // Joining with a code didn't work: back to the Join tab, which says why.
+  if (!hook && byCode && note && location.hash !== '#join') location.hash = 'join';
+  // Redraw even when the address stays the same (a club table's onLeave
+  // goes to #play, often already there).
   else render();
 }
 
@@ -1270,7 +1293,16 @@ function netBarHtml() {
 }
 
 function render() {
+  // The club list steps aside while a table is on the Play tab (style.css).
+  document.body.classList.toggle('pl-seated', seated);
   if (!open) return;
+  if (seated && view !== 'play') {
+    // At a table, the other tabs can't start another one.
+    root.hidden = view === 'clubs';
+    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#play">Back to the table</a></div></section></div>`;
+    return;
+  }
+  root.hidden = false;
   if (seated && state) renderTable();
   else if (seated) root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">${esc(netNote || 'Connecting…')}</p><button class="link-btn" data-act="leave">Cancel</button></div>`;
   else renderSetup();
@@ -1466,7 +1498,7 @@ function reviewTotalsHtml() {
 // ---- events ----
 
 function onClick(e) {
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-tab],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev]');
   if (!el) return;
   const d = el.dataset;
   if (d.rev != null) {
@@ -1475,7 +1507,6 @@ function onClick(e) {
     render();
     return;
   }
-  if (d.tab) { readNameInput(); setup.tab = d.tab; saveSetup(); render(); return; }
   const f = setup.friends;
   if (d.fgame || d.fblinds || d.fseats || d.fmin || d.fmax) {
     readNameInput();
@@ -1540,7 +1571,6 @@ function onClick(e) {
   else if (el.dataset.act === 'resumehost') resumeHosting();
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();
-  else if (el.dataset.act === 'join') joinTable();
   else if (el.dataset.act === 'copy') copyLink();
   else if (el.dataset.act === 'idbackup') { idForm = idForm?.kind === 'backup' ? null : {kind: 'backup'}; idNote = ''; render(); root.querySelector('form[data-idform] [name=pw]')?.focus(); }
   else if (el.dataset.act === 'idcancel') { idForm = null; render(); }
@@ -1601,10 +1631,10 @@ function onKey(e) {
 // Bets or raises raiseTo through the Bet/Raise button, so all-in is decided there.
 const clickBet = () => root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
 
-// `shortcut` 'gto' sits straight down heads-up No-limit Hold'em against the
-// GTO bot with a 100 big blind buy-in (from #codedoug), unless a table is
-// already in play.
-export async function openPlay(el, shortcut) {
+// Draws tab `v` of the Play section (see `view`) into `el`. `shortcut` 'gto'
+// sits straight down heads-up No-limit Hold'em against the GTO bot with a
+// 100 big blind buy-in (from #codedoug), unless a table is already in play.
+export async function openPlay(el, shortcut, v = 'play') {
   if (!root) {
     root = el;
     root.addEventListener('click', onClick);
@@ -1617,8 +1647,9 @@ export async function openPlay(el, shortcut) {
     document.addEventListener('visibilitychange', onVisibility);
   }
   open = true;
-  // An invite link opens on the friends tab, with the code filled in.
-  if (joinCode && !seated && relayUrl()) setup.tab = 'friends';
+  // A message about leaving a table stays on the tab it was for.
+  if (v !== view && errView && v !== errView) { netNote = ''; errView = null; }
+  view = v;
   if (document.hidden) holds.add('hidden'); else holds.delete('hidden');
   if (!me) {
     loadIdentity().then(i => { me = i; if (!seated && personalities.length) render(); })

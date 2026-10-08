@@ -15,13 +15,14 @@
     <nav class="mode-tabs" aria-label="Mode">
       <button class="mode-tab on" data-mode="equity">Equity</button>
       <button class="mode-tab" data-mode="trainer">Trainer</button>
+      <button class="mode-tab" data-mode="play">Play</button>
     </nav>
     <div id="wasm-status" class="wasm-status">Loading…</div>
   </div>
 
   <!-- Shown on every page except the equity calculator (see style.css). -->
   <p class="beta-notice" role="note"><strong>Beta.</strong> This part of ducy is still in development and may change. Hand recommendations may not be accurate, and not every feature is fully tested. Don’t rely on it for anything significant.</p>
-  <!-- Shown on the clubs page and at club tables (see style.css). -->
+  <!-- Shown on the club tabs and at club tables (see style.css). -->
   <p class="beta-notice clubs-notice" role="note"><strong>Clubs are for testing only.</strong> Any club, with its members, chips and history, may be deleted at any time.</p>
 
   <div class="toolbar">
@@ -86,8 +87,16 @@
   </div>
 
   <main class="trainer" id="trainer"></main>
-  <main class="play" id="play"></main>
-  <main class="clubs" id="clubs"></main>
+  <!-- The Play section (play-section.js): its tabs, and each tab drawn by the
+       Join form, clubs.js and play.js (in an order per tab, style.css). -->
+  <div class="psec" id="psec">
+    <nav class="pt-tabs pl-tabs" id="pt-tabs" role="tablist" aria-label="Play"></nav>
+    <div class="pt-body">
+      <section class="pt-join" id="pjoin" hidden></section>
+      <main class="clubs" id="clubs"></main>
+      <main class="play" id="play"></main>
+    </div>
+  </div>
 
   <div class="modal-bg" id="mbg" hidden>
     <div class="modal" id="modal"></div>
