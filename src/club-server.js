@@ -124,7 +124,10 @@ export function createClubServer({
   function sendOwnerView() {
     if (!club.ownerId || !online.has(club.ownerId)) return;
     const running = (club.tables || []).filter(t => tableHost?.running(t.id)).map(t => t.id);
-    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data: club, seated: seatedCounts(), running, online: [...online]}});
+    // A copy: signing waits on WebCrypto, and the club may change before the
+    // view is sent, which would no longer match its signature.
+    const data = JSON.parse(JSON.stringify(club));
+    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online]}});
   }
 
   // The owner's check-in, or one of their host actions (run): they get the
