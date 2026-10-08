@@ -1108,7 +1108,11 @@ function renderTable() {
   h += '</div>';
   // Keep the stats table's sideways scroll across re-renders (narrow screens).
   const scrollX = root.querySelector('.pl-stats-scroll')?.scrollLeft || 0;
+  const box = document.activeElement?.id === 'pl-amtbox' ? document.activeElement.value : null;
   root.innerHTML = h;
+  // Someone typing an amount keeps it, and the box, through a redraw.
+  const nb = box != null && root.querySelector('#pl-amtbox');
+  if (nb) { nb.value = box; nb.focus(); }
   const sx = root.querySelector('.pl-stats-scroll');
   if (sx) sx.scrollLeft = scrollX;
   const lg = root.querySelector('#pl-log');
@@ -1117,7 +1121,8 @@ function renderTable() {
 
 // The action bar keeps every control in a fixed slot, whatever the state:
 // a status line, then a row of Fold, Check/Call and Bet/Raise, then the bet
-// sizes (½ pot, ¾ pot, Pot, All-in), then the amount slider. An action that
+// sizes (½ pot, ¾ pot, Pot, All-in), then the amount: a slider, and a box to
+// type it (Enter bets; an amount outside the range goes to its nearest end). An action that
 // isn't available leaves its slot blank, so a button never moves under the
 // pointer: a click aimed at Fold can't land on Call or Raise because the
 // screen changed. Between hands Next hand sits in the Raise slot.
@@ -1164,7 +1169,8 @@ function controlsHtml() {
       const word = L.raise ? 'Raise to' : 'Bet';
       raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${chipText(raiseTo)}</b> <kbd>R</kbd></button>`;
       sizes = `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
-      amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">`;
+      amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">` +
+        `<input type="number" class="pl-text pl-amtbox" id="pl-amtbox" inputmode="decimal" min="${chipInput(min)}" max="${chipInput(max)}" step="${CHIP_STEP}" value="${chipInput(raiseTo)}" aria-label="Amount to ${L.raise ? 'raise to' : 'bet'}">`;
     }
   }
   return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
@@ -1607,6 +1613,8 @@ function onClick(e) {
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
+    const typed = typedBet();
+    if (typed != null) raiseTo = typed;
     // Only a bet of the whole stack is "allin"; in pot-limit the top of the
     // range is usually the pot, which the engine takes as a plain bet/raise.
     act(raiseTo >= allInTo() ? 'allin' : el.dataset.act, raiseTo);
@@ -1619,6 +1627,19 @@ function onInput(e) {
     raiseTo = +e.target.value;
     const v = root.querySelector('#pl-amtv');
     if (v) v.textContent = chipText(raiseTo);
+    const b = root.querySelector('#pl-amtbox');
+    if (b) b.value = chipInput(raiseTo);
+  }
+  // A typed amount: the slider and the button follow while it's in range.
+  if (e.target.id === 'pl-amtbox') {
+    const n = parseChips(e.target.value), r = betRange();
+    if (r && n >= r.min && n <= r.max) {
+      raiseTo = n;
+      const v = root.querySelector('#pl-amtv');
+      if (v) v.textContent = chipText(raiseTo);
+      const s = root.querySelector('#pl-amt');
+      if (s) s.value = raiseTo;
+    }
   }
 }
 
@@ -1637,7 +1658,31 @@ function onVisibility() {
   hold('hidden', document.hidden);
 }
 
+// The legal bet or raise range now, in chips (hundredths), or null.
+function betRange() {
+  const range = state?.legal && (state.legal.raise || state.legal.bet);
+  return range ? {min: num(range.min_to), max: num(range.max_to)} : null;
+}
+
+// The typed amount, clamped to the legal range (to its nearest end when it's
+// outside it), becomes the bet. Null if nothing usable was typed.
+function typedBet() {
+  const el = root.querySelector('#pl-amtbox'), r = betRange();
+  const n = el && parseChips(el.value);
+  if (!r || !Number.isFinite(n)) return null;
+  return Math.max(r.min, Math.min(r.max, n));
+}
+
 function onKey(e) {
+  // Enter in the amount box bets what's typed; Escape leaves the box.
+  if (open && state && e.target.id === 'pl-amtbox') {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const n = typedBet();
+      if (n != null) { raiseTo = n; e.target.blur(); clickBet(); }
+    } else if (e.key === 'Escape') e.target.blur();
+    return;
+  }
   if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
   if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
