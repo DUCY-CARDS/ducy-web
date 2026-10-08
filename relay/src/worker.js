@@ -28,6 +28,7 @@
 
 import { createClub, importClub, openClub } from './club-room.js';
 import { limitsFrom, registry } from './registry.js';
+import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
 import { initSync, MultiTable } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
@@ -104,6 +105,7 @@ export class Registry {
     const body = req.method === 'POST' ? await req.json() : {};
     try {
       if (path === '/claim') await this.reg.claim(String(body.owner), String(body.code));
+      else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/release') await this.reg.release(String(body.code));
       else if (path === '/used') await this.reg.used(Number(body.minutes));
       else if (path === '/usage') return Response.json(await this.reg.usage());
@@ -129,6 +131,11 @@ export class Room {
     const code = (await this.clubP)?.club.code;
     this.clubP = null;
     if (code) await this.registry('/release', {code}).catch(e => console.warn(e));
+    // Its backups go too, so a deleted club is never rebuilt.
+    const cfg = backupConfig(this.env);
+    if (code && cfg) await dropBackups(cfg, code).catch(e => console.warn(e));
+    await this.state.storage.delete('backupAt');
+    await this.state.storage.deleteAlarm();
     setTimeout(() => { for (const g of this.state.getWebSockets('guest')) { try { g.close(4004, 'the club was closed'); } catch {} } }, 1000);
   }
 
@@ -141,17 +148,57 @@ export class Room {
   }
 
   // The always-on club in this room (club-room.js), or null if the room isn't one.
-  async club() {
+  // `code`: the room's code, if known, so a club whose storage was lost can
+  // be rebuilt from its backup.
+  async club(code = null) {
     if (this.clubP) return this.clubP;
-    if (!(await this.state.storage.get('club'))) return null;
+    if (!(await this.state.storage.get('club')) && !(code && await this.rebuild(code))) return null;
     const online = [...new Set(this.state.getWebSockets('guest').map(g => this.guestId(g)))];
     this.clubP = openClub({
       storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(),
       onUsage: minutes => this.registry('/used', {minutes}),
       onDeleted: () => this.deleted(),
+      onSaved: () => this.scheduleBackup(),
     })
       .catch(e => { this.clubP = null; throw e; });
     return this.clubP;
+  }
+
+  // A room the registry says holds an always-on club, with its storage
+  // empty (lost, or after moving providers): rebuilt from the latest backup
+  // (#97). Looked into once per object. Resolves to whether it was.
+  async rebuild(code) {
+    const cfg = backupConfig(this.env);
+    if (!cfg || this.rebuildChecked) return false;
+    this.rebuildChecked = true;
+    try {
+      if (!(await this.registry('/has', {code})).has) return false;
+      return await pullBackup(cfg, this.storage(), code);
+    } catch (e) {
+      console.warn('club: not rebuilt from backup:', e);
+      return false;
+    }
+  }
+
+  // The club changed: back it up now if the last backup is 5 minutes old,
+  // else when that's up (an alarm, which doesn't keep the room awake).
+  async scheduleBackup() {
+    if (!backupConfig(this.env)) return;
+    const last = (await this.state.storage.get('backupAt')) || 0;
+    if (Date.now() - last >= BACKUP_EVERY_MS) await this.backupNow();
+    else if (!(await this.state.storage.getAlarm())) await this.state.storage.setAlarm(last + BACKUP_EVERY_MS);
+  }
+
+  async backupNow() {
+    const cfg = backupConfig(this.env);
+    const club = await this.state.storage.get('club');
+    if (!cfg || !club) return;
+    await this.state.storage.put('backupAt', Date.now());
+    try { await pushBackup(cfg, this.storage(), club.code); } catch (e) { console.warn('club: not backed up:', e); }
+  }
+
+  async alarm() {
+    await this.backupNow();
   }
 
   storage() {
@@ -213,7 +260,7 @@ export class Room {
       return new Response(null, {status: 101, webSocket: client});
     };
     const host = this.host();
-    const club = await this.club();
+    const club = await this.club(code);
     if (role === 'host') {
       if (host) return refuse(4001, 'the table already has a host');
       if (club) return refuse(4001, 'this club runs on the relay');
@@ -281,7 +328,7 @@ export class Room {
     if (id) {
       // An always-on club runs here: it gets the message. Or someone asks
       // to make this room one, or to move their club here.
-      const club = await this.club();
+      const club = await this.club(this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2));
       if (club || msg.includes('"create_club"') || msg.includes('"import_club"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }

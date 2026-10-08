@@ -95,8 +95,9 @@ async function isHandoff(club, env) {
 // `onUsage(minutes)`: the club's tables were in play that long (registry.js
 // counts it against the free plan). `onDeleted()`: the owner deleted the
 // club and its storage is gone; the caller drops the server and its
-// connections.
-export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}}) {
+// connections. `onSaved()`: the club was saved (the caller may back it up,
+// backup.js).
+export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -140,7 +141,7 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     identity, club, verifier,
     onChange: checkPlay,
     extraOps: {delete_club: deleteClub},
-    persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])),
+    persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
     transport: {send, ack() {}},
     engine: {
       call: async (op, ...args) => engine.ops[op](...args),
