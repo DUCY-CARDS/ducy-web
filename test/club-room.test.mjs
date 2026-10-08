@@ -159,3 +159,36 @@ test('a browser-run club moves to its room (#98): balances kept, members follow 
   await server.message({from: ann.id, event: 'open'});
   assert.equal(box.got.get(ann.id)[0].body.type, 'host_moved');
 });
+
+test('the owner deletes an always-on club (#98): members are told, storage is wiped, usage reported', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const MultiTable = await engine();
+  const storage = memoryStorage();
+  const owner = await createIdentity(), ann = await createIdentity();
+  const code = 'GONE-SOON';
+  const claimed = [];
+  const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Short Lived'}), code, async (o, c) => claimed.push([o, c]));
+  assert.deepEqual(claimed, [[owner.id, code]], 'the registry was asked');
+  const box = inbox(hostId);
+  let deleted = 0;
+  const used = [];
+  const server = await openClub({storage, send: box.send, online: [owner.id, ann.id], MultiTable, onDeleted: () => { deleted++; }, onUsage: m => used.push(m)});
+  const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
+  await say(ann, {type: 'join', invite, name: 'Ann'});
+  await say(owner, {type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1});
+
+  // Seated players hold up deletion, and the time their table is in play counts.
+  server.club.members[ann.id].seat = {table: 't', stack: 100};
+  await say(owner, {type: 'owner_cmd', op: 'settings', args: {sitOutMins: 5}, id: 2});
+  await say(owner, {type: 'owner_cmd', op: 'delete_club', id: 3});
+  server.club.members[ann.id].seat = null;
+  await say(owner, {type: 'owner_cmd', op: 'settings', args: {sitOutMins: 10}, id: 4});
+  assert.equal(used.length, 1, 'play time reported when the table emptied');
+  await say(owner, {type: 'owner_cmd', op: 'delete_club', id: 5});
+  await settle();
+  const results = await box.bodies(owner.id, 'owner_result');
+  assert.match(results.find(r => r.id === 3).error, /at tables/);
+  assert.equal(results.find(r => r.id === 5).error, '');
+  assert.equal(deleted, 1);
+  assert.equal((await box.bodies(ann.id, 'status')).at(-1).status, 'closed', 'Ann is told the club closed');
+  assert.deepEqual(storage.keys(), [], 'nothing is left in the room');
+});

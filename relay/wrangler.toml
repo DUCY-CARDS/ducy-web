@@ -8,12 +8,27 @@ compatibility_date = "2026-09-01"
 name = "ROOMS"
 class_name = "Room"
 
+# Always-on clubs: who has them, and how much they're used (registry.js).
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Registry"]
 
 [vars]
 # Comma-separated page origins allowed to connect, e.g. "https://ducy.example".
 # Empty allows any origin. The site only, so other pages can't use the relay (#103);
 # a page opened from elsewhere (e.g. localhost) uses a local relay instead.
 ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
+# Always-on clubs (#98): at most this many per owner, and in all, while on
+# Cloudflare's free plan. CLUB_CREATORS, if set, is a comma-separated list
+# of the only player IDs that may create one (empty: anyone).
+MAX_CLUBS_PER_OWNER = "3"
+MAX_CLUBS = "25"
+CLUB_CREATORS = ""

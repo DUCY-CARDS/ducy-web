@@ -14,7 +14,7 @@
 // (table-store.js, written durably): losing it would cut the owner off
 // from their club, and a browser that crashes can lose recent localStorage.
 
-import { signMessage, Verifier } from './identity.js';
+import { checkSignature, signMessage, Verifier } from './identity.js';
 import { connect, newCode } from './play-net.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -43,7 +43,8 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     net = connect(code, 'guest', identity.id, {
       async onOpen() {
         online = true;
-        if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
+        if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code}));
+        else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
         else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
         else await sendSigned({type: 'owner_hello'});
         onChange();
@@ -79,6 +80,17 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
       net?.close();
       net = null;
       return;
+    }
+    // Opening a club this player owns from another browser: the club's
+    // first signed view, naming this player as owner, says who it is.
+    if (creating?.attach && m?.body?.type === 'owner_view') {
+      const d = m.body.data;
+      if (m.body.club !== creating.code || d?.ownerId !== identity.id || d?.hostId !== m.from || await checkSignature(m)) return;
+      rec = {code: creating.code, hostId: m.from, name: d.name};
+      await save(rec);
+      clearTimeout(creating.timer);
+      creating.resolve(rec);
+      creating = null;
     }
     // Everything else is signed by the club itself, in order.
     if (!rec || m?.from !== rec.hostId) return;
@@ -120,6 +132,18 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
       return new Promise((resolve, reject) => {
         const code = newCode();
         creating = {name, code, resolve, reject};
+        connectTo(code);
+      });
+    },
+    // Opens the always-on club with this code, owned by this player, from
+    // this browser (e.g. after restoring the player ID from a backup).
+    attach(code) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (creating?.attach) { creating = null; owner.stop(); }
+          reject(new Error('No always-on club of yours has that code.'));
+        }, 15_000);
+        creating = {attach: true, code, resolve, reject, timer};
         connectTo(code);
       });
     },

@@ -24,6 +24,8 @@
 //   memberPubs     members' public keys already known ({id: pub}), and
 //   onMemberKey(id, pub)  a member sent a new one: an always-on club keeps
 //                  them, so it can carry on after its object restarts
+//   extraOps       more host actions {op: fn(args)}, where only the club's
+//                  home can do them
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -51,7 +53,7 @@ const SETTINGS = {
 
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, storeHand = () => {}, engine = {},
-  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {},
+  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {},
 }) {
   const online = new Set(); // members connected now
   let tableHost = null;
@@ -301,7 +303,10 @@ export function createClubServer({
     },
   };
 
+  // `extraOps`: actions only where the club runs can do them (an always-on
+  // club's room: deleting the club, #98).
   function run(op, args = {}) {
+    if (Object.hasOwn(extraOps, op)) return extraOps[op](args);
     if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
     return OPS[op](args);
   }

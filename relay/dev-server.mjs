@@ -5,7 +5,9 @@
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { pingReply } from './src/ping.js';
+import { createServer } from 'node:http';
 import { createClub, importClub, openClub } from './src/club-room.js';
+import { limitsFrom, registry } from './src/registry.js';
 
 // The engine for always-on clubs (#93), loaded on first use from the site's
 // wasm build (../wasm, as the Worker bundles it).
@@ -70,6 +72,11 @@ function inRoom(room, fn) {
   return room.chain;
 }
 
+// The registry of always-on clubs (registry.js), in memory, with the limits
+// from the environment as in wrangler.toml (MAX_CLUBS_PER_OWNER, MAX_CLUBS,
+// CLUB_CREATORS).
+const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
+
 // The always-on club running in the room, opening it if needed; null if none.
 async function clubOf(room) {
   if (!room.store.has('club')) return null;
@@ -78,6 +85,14 @@ async function clubOf(room) {
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],
     MultiTable,
+    onUsage: minutes => reg.used(minutes),
+    // Deleted by its owner: an ordinary room again; members are let go.
+    onDeleted: async () => {
+      const code = (await room.club)?.club.code;
+      room.club = null;
+      if (code) await reg.release(code);
+      setTimeout(() => { for (const g of room.guests.values()) g.ws.close(4004, 'the club was closed'); }, 1000);
+    },
   }));
   return room.club;
 }
@@ -92,7 +107,14 @@ function enqueue(room, from, raw) {
 }
 
 // Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
-const wss = new WebSocketServer({port, maxPayload: 1024 * 1024});
+// GET /usage, as the Worker answers it; everything else is WebSockets.
+const http = createServer(async (req, res) => {
+  if (req.url !== '/usage') { res.writeHead(404); res.end('ducy relay'); return; }
+  res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': '*'});
+  res.end(JSON.stringify(await reg.usage()));
+});
+const wss = new WebSocketServer({server: http, maxPayload: 1024 * 1024});
+http.listen(port);
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
   const m = url.pathname.match(/^\/room\/([^/]+)$/);
@@ -160,11 +182,11 @@ wss.on('connection', (ws, req) => {
             if (msg.from !== id) throw new Error('The request must come from you.');
             if (type === 'create_club') {
               if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
-              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code))});
+              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
               await clubOf(room);
             } else {
               if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
-              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code))});
+              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
               const c = await clubOf(room);
               // What members left while the host was away goes to the club.
               const waiting = room.queued;

@@ -11,7 +11,7 @@
 //   ducyClubName      the display name sent with join requests
 
 import { loadIdentity, showId, signMessage, Verifier } from './identity.js';
-import { connect, DEFAULT_RELAY, newCode, relayUrl, wsUrl } from './play-net.js';
+import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, parseInvite, playerReceive,
@@ -61,6 +61,7 @@ const STATUS_TEXT = {
   declined: 'The host declined your request',
   removed: 'You were removed from this club',
   bad_invite: 'That invite link isn’t valid any more; ask the host for a new one',
+  closed: 'The owner closed this club',
 };
 
 // ---- hosting ----
@@ -335,6 +336,42 @@ async function moveToAlwaysOn() {
     startHosting();
   }
   render();
+}
+
+// Opens an always-on club this player owns, made in another browser (#98).
+async function attachAlwaysOn(code) {
+  code = normCode(code || '');
+  if (!code) { alert('Enter the club’s code, like ABCD-EFGH.'); return; }
+  if (owner.record) { alert('This browser already runs an always-on club; one per browser for now.'); return; }
+  note = 'Looking for your club…';
+  render();
+  try { await owner.attach(code); note = ''; } catch (e) { note = e.message; }
+  render();
+}
+
+// Deletes the always-on club: members are told, and it's gone from the server.
+async function deleteAlwaysOn() {
+  if (!confirm(`Delete ${club.name}? Its members, balances and records are deleted from the server for good, and members are told the club closed.`)) return;
+  if (await hostAct('delete_club')) {
+    owner.forget();
+    club = null;
+    note = 'The club was deleted.';
+    render();
+  }
+}
+
+// How much always-on clubs use ducy's free server plan today (#98), from
+// the relay's /usage, fetched at most once a minute.
+let usage = null, usageAt = 0;
+function usageHtml() {
+  if (Date.now() - usageAt > 60_000) {
+    usageAt = Date.now();
+    fetch(relayUrl().replace(/^ws/, 'http') + '/usage').then(r => r.json()).then(u => { usage = u; render(); }).catch(() => {});
+  }
+  const d = usage?.days?.[0];
+  if (!d) return '';
+  const warn = d.share >= 80 ? ' pl-neterr' : '';
+  return `<p class="pl-meta${warn}">ducy’s server today: ${d.clubHours} club-hours of play across ${usage.clubs} always-on club${usage.clubs === 1 ? '' : 's'}, ${d.share}% of the free plan${d.share >= 80 ? '. Close to the limit: tables may stop for the rest of the day.' : '.'}</p>`;
 }
 
 function link() {
@@ -721,7 +758,10 @@ function hostHtml() {
     h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b>: on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser.</label>`;
     h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
     h += '</div></div>';
-    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div></section>';
+    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div>';
+    // An always-on club this player owns, opened from another browser (#98).
+    h += '<div class="pl-row"><span class="pl-label">Own one already?</span><div class="pl-opts"><input class="pl-text" id="cl-attach" maxlength="9" placeholder="Club code"><button class="btn-small" data-cl="attach">Open it here</button></div></div>';
+    h += '<p class="pl-desc">An always-on club you own, run from another browser. This one needs your player ID too: restore it from your backup first.</p></section>';
     return h;
   }
   const pending = membersByStatus(club, 'pending');
@@ -796,7 +836,8 @@ function hostHtml() {
     for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
     h += '</ul></details>';
   }
-  h += `<div class="pl-actions">${remote ? '' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
+  if (remote) h += usageHtml();
+  h += `<div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete this club</button>' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div></section>`;
   return h;
 }
 
@@ -1074,6 +1115,8 @@ async function onClick(e) {
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
   else if (act === 'move-always') moveToAlwaysOn();
+  else if (act === 'delete-always') deleteAlwaysOn();
+  else if (act === 'attach') attachAlwaysOn(root.querySelector('#cl-attach')?.value);
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }

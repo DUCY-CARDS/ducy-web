@@ -27,6 +27,7 @@
 // same id, 4029 the room is full.
 
 import { createClub, importClub, openClub } from './club-room.js';
+import { limitsFrom, registry } from './registry.js';
 import { pingReply } from './ping.js';
 import { initSync, MultiTable } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
@@ -66,12 +67,22 @@ function allow(ws, rate, burst, now = Date.now()) {
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
 
+// The relay's one registry of always-on clubs (registry.js).
+const registryOf = env => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+    // How much always-on clubs use against the free plan (#98): numbers only.
+    if (url.pathname === '/usage' && req.method === 'GET') {
+      const res = await registryOf(env).fetch('https://registry/usage');
+      const origin = req.headers.get('Origin');
+      const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
+      return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
+    }
     const m = url.pathname.match(/^\/room\/([^/]+)$/);
     if (!m) return new Response('ducy relay', {status: 404});
-    const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
     if (allowed.length && !allowed.includes(req.headers.get('Origin'))) return new Response('forbidden', {status: 403});
     const code = decodeURIComponent(m[1]);
     if (!CODE.test(code)) return new Response('bad table code', {status: 400});
@@ -80,10 +91,53 @@ export default {
   },
 };
 
+// The registry of always-on clubs (registry.js), one for the relay: limits
+// on creating them, and their usage. Only rooms reach it, except /usage.
+export class Registry {
+  constructor(state, env) {
+    const s = state.storage;
+    this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(env));
+  }
+
+  async fetch(req) {
+    const path = new URL(req.url).pathname;
+    const body = req.method === 'POST' ? await req.json() : {};
+    try {
+      if (path === '/claim') await this.reg.claim(String(body.owner), String(body.code));
+      else if (path === '/release') await this.reg.release(String(body.code));
+      else if (path === '/used') await this.reg.used(Number(body.minutes));
+      else if (path === '/usage') return Response.json(await this.reg.usage());
+      else return new Response('not found', {status: 404});
+      return Response.json({ok: true});
+    } catch (e) {
+      return Response.json({error: e.message}, {status: 409});
+    }
+  }
+}
+
 export class Room {
-  constructor(state) {
+  constructor(state, env) {
     this.state = state;
+    this.env = env;
     this.clubP = null; // the always-on club running here, once opened
+  }
+
+  // The owner deleted the always-on club here (#98): the room is an
+  // ordinary one again. Connections close a moment later, once the owner
+  // has their answer and members their notice.
+  async deleted() {
+    const code = (await this.clubP)?.club.code;
+    this.clubP = null;
+    if (code) await this.registry('/release', {code}).catch(e => console.warn(e));
+    setTimeout(() => { for (const g of this.state.getWebSockets('guest')) { try { g.close(4004, 'the club was closed'); } catch {} } }, 1000);
+  }
+
+  // A request to the relay's registry; throws its error, if any.
+  async registry(path, body) {
+    const res = await registryOf(this.env).fetch(`https://registry${path}`, {method: 'POST', body: JSON.stringify(body)});
+    const out = await res.json();
+    if (out.error) throw new Error(out.error);
+    return out;
   }
 
   // The always-on club in this room (club-room.js), or null if the room isn't one.
@@ -91,7 +145,11 @@ export class Room {
     if (this.clubP) return this.clubP;
     if (!(await this.state.storage.get('club'))) return null;
     const online = [...new Set(this.state.getWebSockets('guest').map(g => this.guestId(g)))];
-    this.clubP = openClub({storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine()})
+    this.clubP = openClub({
+      storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(),
+      onUsage: minutes => this.registry('/used', {minutes}),
+      onDeleted: () => this.deleted(),
+    })
       .catch(e => { this.clubP = null; throw e; });
     return this.clubP;
   }
@@ -113,7 +171,7 @@ export class Room {
     try {
       if (!code || this.host() || others || (await this.queued()).length) throw new Error('That club code is in use.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await createClub(this.storage(), env, code);
+      const made = await createClub(this.storage(), env, code, (owner, c) => this.registry('/claim', {owner, code: c}));
       ws.send(JSON.stringify({type: 'club_created', ...made}));
       await this.club();
     } catch (e) {
@@ -130,7 +188,7 @@ export class Room {
       if (!code) throw new Error('Not a club room.');
       if (this.host()) throw new Error('The club is still open in a tab as its host. Close it there first.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await importClub(this.storage(), env, code);
+      const made = await importClub(this.storage(), env, code, (owner, c) => this.registry('/claim', {owner, code: c}));
       ws.send(JSON.stringify({type: 'club_imported', ...made}));
       const club = await this.club();
       for (const q of await this.queued()) {
