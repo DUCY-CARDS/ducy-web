@@ -853,6 +853,8 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   handHook = onHand;
   hookedHand = 0;
   leaveHook = onLeave;
+  // Shows the clubs' testing notice above the table (style.css).
+  document.body.classList.add('club-table');
   const mine = session;
   net = open({
     onMessage(m) { if (mine === session) guestMessage(m); },
@@ -967,6 +969,7 @@ function leaveTable(note = '') {
   netNote = note;
   const hook = leaveHook;
   leaveHook = null;
+  document.body.classList.remove('club-table');
   if (hook) hook(note);
   else render();
 }

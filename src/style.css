@@ -84,6 +84,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 }
 .beta-notice strong { font-weight: 700; }
 body:is(.mode-trainer, .mode-play, .mode-clubs) .beta-notice { display: block; }
+body .beta-notice.clubs-notice { display: none; }
+body:is(.mode-clubs, .mode-play.club-table) .clubs-notice { display: block; }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 
