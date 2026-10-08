@@ -15,7 +15,7 @@
 // bot's strategy (play-review.js) in the background.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
-import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
+import { emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
@@ -1450,7 +1450,11 @@ function decisionHtml(d, i) {
   else h += '<span class="pl-rev-best"></span>';
   const cost = d.bb_lost > 0 ? `−${bbText(d.bb_lost)} bb` : '';
   const label = isVariant(d) ? 'Fine (mixed)' : GRADE_LABEL[d.grade] || d.grade;
-  h += `<span class="pl-rev-grade">${esc(label)}${cost ? ` <b>${cost}</b>` : ''}</span>`;
+  // A play the bot mixes in isn't charged, but can still be worth less
+  // than the best one here: shown, not counted.
+  const mc = mixCost(d);
+  const uncharged = mc && !mc.close ? ` <span class="pl-rev-mixcost" title="Not charged: the bot plays this too, but here it’s worth less than ${esc(mc.best)}">(−${bbText(mc.loss)} bb)</span>` : '';
+  h += `<span class="pl-rev-grade">${esc(label)}${cost ? ` <b>${cost}</b>` : ''}${uncharged}</span>`;
   h += '</button>';
   if (open) {
     h += '<div class="pl-rev-more">';
@@ -1463,6 +1467,11 @@ function decisionHtml(d, i) {
       h += `<div>Value of each play (bb): ${evs}${d.stderr > 0 ? ` <span class="pl-meta">(± ${bbText(d.stderr)})</span>` : ''}</div>`;
     }
     if (d.note) h += `<div class="pl-meta">${esc(d.note[0].toUpperCase() + d.note.slice(1))}.</div>`;
+    if (mc) {
+      h += mc.close
+        ? `<div class="pl-meta">About as good as ${esc(mc.best)} here: the difference (${bbText(mc.loss)} bb) is within the estimate’s error.</div>`
+        : `<div class="pl-rev-mixnote">Not charged, since the bot plays it too, but here it’s worth ${bbText(mc.loss)} bb less than ${esc(mc.best)}.</div>`;
+    }
     h += '</div>';
   }
   return h + '</li>';
@@ -1493,6 +1502,8 @@ function reviewTotalsHtml() {
   if (!t.hands) return h + '<span class="pl-meta">no reviewed hands yet</span></div>';
   const p = per100(t);
   h += `<span>${t.hands} hands · ${t.decisions} decisions · ${bbText(t.bbLost)} bb lost (${bbText(p)} per 100 hands)</span> `;
+  // What mixed plays gave up, not counted above.
+  if (t.mixLoss > 0) h += `<span class="pl-meta">Mixed plays gave up another ${bbText(t.mixLoss)} bb against the best play (not charged) · </span>`;
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   h += `<span class="pl-meta">${n(t.inaccuracies, 'inaccuracy', 'inaccuracies')} · ${n(t.mistakes, 'mistake', 'mistakes')} · ${n(t.blunders, 'blunder', 'blunders')} · ${t.deviations} off-strategy preflop</span>`;
   return h + '</div>';

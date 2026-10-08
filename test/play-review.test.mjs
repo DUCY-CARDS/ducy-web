@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  emptyTotals, addReview, addTotals, per100, bbText, mixText, worstIndex, isVariant, FLAGGED, GRADE_LABEL,
+  emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, worstIndex, isVariant, FLAGGED, GRADE_LABEL,
 } from '../src/play-review.js';
 
 const review = JSON.parse(readFileSync(new URL('./fixtures/review.json', import.meta.url)));
@@ -79,4 +79,32 @@ test('bb amounts read cleanly', () => {
 test('flagged grades are the ones worth pointing out', () => {
   assert.deepEqual(FLAGGED, ['blunder', 'mistake', 'inaccuracy', 'deviation']);
   assert.ok(!FLAGGED.includes('fine'));
+});
+
+test('an uncharged mixed play still shows what it gave up against the best play', () => {
+  const d = {grade: 'fine', bb_lost: 0, action: 'call', best: 'raise to 9bb', ev_loss: 0.6, stderr: 0.05};
+  assert.deepEqual(mixCost(d), {loss: 0.6, best: 'raise to 9bb', close: false});
+  // Within the estimate's error: about as good.
+  assert.equal(mixCost({...d, ev_loss: 0.08}).close, true);
+  // Not for the best play, a charged one, an unvalued one, or a worse grade.
+  assert.equal(mixCost({...d, best: 'call'}), null);
+  assert.equal(mixCost({...d, bb_lost: 0.6}), null);
+  assert.equal(mixCost({...d, ev_loss: null}), null);
+  assert.equal(mixCost({...d, ev_loss: 0}), null);
+  assert.equal(mixCost({...d, grade: 'mistake'}), null);
+  // Every one the fixture has is a fine, uncharged play worth less than its best.
+  for (const r of review.decisions) {
+    const c = mixCost(r);
+    if (c) assert.ok(r.grade === 'fine' && r.bb_lost === 0 && r.ev_loss > 0 && r.best !== r.action);
+  }
+});
+
+test('totals add up what mixed plays gave up, apart from bb lost', () => {
+  const mixed = {grade: 'fine', bb_lost: 0, action: 'call', best: 'raise to 9bb', ev_loss: 0.6, stderr: 0.05, note: 'a less common choice: …'};
+  const close = {...mixed, ev_loss: 0.05};
+  const t = addReview(emptyTotals(), {decisions: [mixed, close, {...mixed, grade: 'mistake', bb_lost: 1.2, ev_loss: 1.2}]});
+  assert.ok(Math.abs(t.mixLoss - 0.6) < 1e-9, 'only the uncharged one, outside the error');
+  assert.ok(Math.abs(t.bbLost - 1.2) < 1e-9);
+  const both = addTotals(addTotals(emptyTotals(), t), t);
+  assert.ok(Math.abs(both.mixLoss - 1.2) < 1e-9);
 });

@@ -1048,6 +1048,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-rev-best { color: var(--fg-muted); font-size: 12px; }
 .pl-rev-grade { font-size: 12px; font-weight: 600; white-space: nowrap; text-align: right; color: var(--fg-muted); }
 .pl-rev-grade b { font-family: var(--font-data); }
+/* What a mixed play gave up: shown, not charged. */
+.pl-rev-mixcost { font-family: var(--font-data); font-weight: 400; color: var(--amber); }
+.pl-rev-mixnote { color: var(--amber); }
 /* Fine decisions stay quiet; the rest stand out by how much they cost. */
 .pl-rev-row.g-fine .pl-rev-act { color: var(--fg); }
 .pl-rev-row.g-inaccuracy .pl-rev-grade { color: var(--amber); }
