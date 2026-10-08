@@ -1793,12 +1793,8 @@ window.addEventListener('hashchange', () => {
 const q = new URLSearchParams(location.search);
 if (q.has('club') && q.has('invite') && location.hash !== '#clubs') history.replaceState(null, '', location.pathname + location.search + '#clubs');
 
-if (location.hash === '#trainer') setMode('trainer');
-else if (location.hash === '#play') setMode('play');
-else if (location.hash === '#clubs') setMode('clubs');
-else if (location.hash === '#codedoug') openShortcut();
-
-// Init
+// Init. Before any page opens: the trainer, stats and club pages call ducy's
+// bindings too (range text, hand counts, replays).
 const statusEl = document.getElementById('wasm-status');
 try {
   await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
@@ -1811,6 +1807,11 @@ try {
   statusEl.className = 'wasm-status err';
   console.error('WASM init failed:', err);
 }
+
+if (location.hash === '#trainer') setMode('trainer');
+else if (location.hash === '#play') setMode('play');
+else if (location.hash === '#clubs') setMode('clubs');
+else if (location.hash === '#codedoug') openShortcut();
 
 loadFromHash();
 render();
