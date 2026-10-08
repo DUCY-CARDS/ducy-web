@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, worstIndex, isVariant, FLAGGED, GRADE_LABEL,
+  emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, mixRows, isYourPlay, worstIndex, isVariant, FLAGGED, GRADE_LABEL,
 } from '../src/play-review.js';
 
 const review = JSON.parse(readFileSync(new URL('./fixtures/review.json', import.meta.url)));
@@ -68,8 +68,34 @@ test('mixes read most frequent first and skip rare plays', () => {
   assert.equal(mixText([]), '');
 });
 
+test('the review table has a row per play, most frequent first, with its value', () => {
+  const rows = mixRows([
+    {action: 'check', frequency: 0.3, ev: 1.2},
+    {action: 'bet 75% pot', frequency: 0.695, ev: 1.5},
+    {action: 'all-in', frequency: 0.005, ev: -3},
+    {action: 'fold', frequency: 0},
+  ]);
+  assert.deepEqual(rows, [
+    {action: 'bet 75% pot', pct: 70, ev: 1.5},
+    {action: 'check', pct: 30, ev: 1.2},
+    // Rare, but it has a value, so it's shown: under 1%.
+    {action: 'all-in', pct: null, ev: -3},
+  ]);
+  assert.deepEqual(mixRows([{action: 'check', frequency: 1}]), [{action: 'check', pct: 100, ev: null}]);
+  assert.deepEqual(mixRows(null), []);
+});
+
+test('your play is found in the table, with or without its amount', () => {
+  assert.ok(isYourPlay({action: 'call'}, 'call 1.5bb'));
+  assert.ok(isYourPlay({action: 'fold'}, 'fold'));
+  assert.ok(isYourPlay({action: 'all-in'}, 'all-in'));
+  assert.ok(!isYourPlay({action: 'raise to 100% pot'}, 'raise to 7.5bb'), 'a size isn’t matched by guessing');
+  assert.ok(!isYourPlay({action: 'call'}, 'check'));
+});
+
 test('bb amounts read cleanly', () => {
   assert.equal(bbText(0), '0');
+  assert.equal(bbText(-0.001), '0', 'never −0.00');
   assert.equal(bbText(0.04), '0.04');
   assert.equal(bbText(1.76), '1.8');
   assert.equal(bbText(12), '12');

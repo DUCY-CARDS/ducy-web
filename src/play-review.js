@@ -91,7 +91,8 @@ export const per100 = t => (t.hands ? (100 * t.bbLost) / t.hands : null);
 // "1.5" or "0.25": bb amounts with as few decimals as read well.
 export function bbText(x) {
   const v = Number(x) || 0;
-  if (v === 0) return '0';
+  // Nothing that would show as 0.00 (or −0.00).
+  if (Math.abs(v) < 0.005) return '0';
   if (Math.abs(v) < 0.1) return v.toFixed(2);
   return (Math.sign(v) * Math.round(Math.abs(v) * 10) / 10).toString();
 }
@@ -104,6 +105,24 @@ export function mixText(gto) {
     .sort((a, b) => b.frequency - a.frequency)
     .map(a => `${a.action} ${Math.round(a.frequency * 100)}%`)
     .join(' · ');
+}
+
+// The bot's plays for the review's table, most frequent first: those it
+// makes at least 1% of the time, and any with a value. Each is {action, pct
+// (whole percent, or null under 1%), ev (bb, or null)}.
+export function mixRows(gto) {
+  return (gto || [])
+    .filter(a => a.frequency >= 0.01 || a.ev != null)
+    .sort((a, b) => b.frequency - a.frequency || (b.ev ?? -Infinity) - (a.ev ?? -Infinity))
+    .map(a => ({action: a.action, pct: a.frequency >= 0.01 ? Math.round(a.frequency * 100) : null, ev: a.ev ?? null}));
+}
+
+// Whether a row of the table is the play that was made. The review names
+// your play with its amount ("call 1.5bb"); the bot's plays without one
+// ("call") or with a size ("raise to 100% pot").
+export function isYourPlay(row, action) {
+  if (row.action === action) return true;
+  return !/\d/.test(row.action) && String(action).startsWith(`${row.action} `);
 }
 
 // The decision that cost the most in a review, as its index, or -1.
