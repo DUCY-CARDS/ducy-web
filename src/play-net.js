@@ -126,6 +126,15 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
     ws.onclose = e => {
       check();
       if (closed) return;
+      // 4009: a newer connection with the same id took over, from another tab
+      // or window. Reconnecting would knock that one off in turn, and the two
+      // would trade places every second; the newer one keeps it.
+      if (e.code === 4009) {
+        closed = true;
+        clearInterval(beat);
+        onFail('This is open in another tab or window, which took it over. Use that one, or reload this page to take it back.');
+        return;
+      }
       // 4001: the room already has a host; 4004: no such table. After a drop
       // a guest keeps trying while the host comes back.
       // 4008: this page sent faster than the relay allows (#103).

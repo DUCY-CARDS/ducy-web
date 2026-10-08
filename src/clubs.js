@@ -18,7 +18,9 @@
 //   ducyClubs         clubs this browser has asked to join
 //   ducyClubName      the display name sent with join requests
 
-import { loadIdentity, showId, signMessage, Verifier } from './identity.js';
+import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
+import { hostPick, onHostPick, setHostPick } from './host-choice.js';
+import { downloadFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -59,9 +61,9 @@ let server = null; // runs the hosted club (club-server.js)
 // its latest view from the relay, and host actions go there as commands.
 let owner = null;
 const isRemote = () => !!owner?.record;
-let createWhere = 'always'; // the New club form's choice: 'always' or 'browser'
-// Why the last Always on create failed, and the name it was for: the form
-// then offers running it in this browser instead (#134).
+// Why the last create failed (the relay down or full), and the name it was
+// for: the form says so and offers to try again. New clubs are always on
+// (#152); a club run in a browser is still opened and moved as before.
 let alwaysFailed = null;
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
@@ -128,46 +130,31 @@ function startHosting() {
   }, {heartbeat: true, persistent: true, retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can host it: close the other one, then click Reconnect.'});
 }
 
+// A new club, always on (#93, #152): its room on the relay becomes the club.
 async function createClub(name) {
-  if (createWhere === 'always') {
-    // An always-on club (#93): its room on the relay becomes the club.
-    note = 'Setting up your club on the server…';
-    alwaysFailed = null;
-    render();
-    try {
-      await owner.create(String(name || '').trim() || 'My club');
-      note = '';
-      setWizard('table');
-    } catch (e) {
-      // The relay is down or full (limits, #123): offer this browser instead.
-      note = '';
-      alwaysFailed = {reason: e.message, name};
-    }
-    render();
-    return;
-  }
+  const n = String(name || '').trim();
+  if (!n) { note = 'Give your club a name.'; render(); return; }
+  note = 'Setting up your club on the server…';
   alwaysFailed = null;
+  render();
   try {
-    club = newClub(name, newCode(), me.id);
+    await owner.create(n.slice(0, MAX_CLUB_NAME));
+    note = '';
+    setWizard('backup');
   } catch (e) {
-    note = e.message;
-    render();
-    return;
+    // The relay is down or full (limits, #123).
+    note = '';
+    alwaysFailed = {reason: e.message, name: n};
   }
-  verifier = new Verifier();
-  note = '';
-  ensureTables(club);
-  saveClub();
-  startHosting();
-  setWizard('table');
   render();
 }
 
-// Creating a club (#111): 1 name, 2 its first table (or skip), 3 invite.
-// The club exists from step 1, so closing the page mid-way resumes at the
-// step after the last one done.
+// Creating a club (#152): a name, then a backup (or skipping it, warned).
+// The club exists from the first step, so closing the page mid-way comes
+// back to the backup step.
 const WIZARD_KEY = 'ducyClubWizard';
-let wizard = load(WIZARD_KEY, null); // {code, step: 'table' | 'invite'}
+let wizard = load(WIZARD_KEY, null); // {code, step: 'backup' | 'skip'}
+if (wizard && wizard.step !== 'backup' && wizard.step !== 'skip') wizard = null; // an older step (#111)
 const myClubCode = () => club?.code || owner?.record?.code || '';
 
 function setWizard(step) {
@@ -240,7 +227,6 @@ function submitTable(f) {
   hostAct('new_table', {table: settings}).then(ok => {
     if (!ok) return;
     tableForm = false;
-    if (f.dataset.wizard) setWizard('invite');
     render();
   });
 }
@@ -335,6 +321,8 @@ function openChipForm(kind, id) {
 function onSubmit(e) {
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  const bf = e.target.closest('form[data-clform="backup"]');
+  if (bf) { e.preventDefault(); submitBackup(bf); return; }
   const gf = e.target.closest('form[data-agentform]');
   if (gf) {
     e.preventDefault();
@@ -436,19 +424,6 @@ async function deleteAlwaysOn() {
   }
 }
 
-// How much always-on clubs use ducy's free server plan today (#98), from
-// the relay's /usage, fetched at most once a minute.
-let usage = null, usageAt = 0;
-function usageHtml() {
-  if (Date.now() - usageAt > 60_000) {
-    usageAt = Date.now();
-    fetch(relayUrl().replace(/^ws/, 'http') + '/usage').then(r => r.json()).then(u => { usage = u; render(); }).catch(() => {});
-  }
-  const d = usage?.days?.[0];
-  if (!d) return '';
-  const warn = d.share >= 80 ? ' pl-neterr' : '';
-  return `<p class="pl-meta${warn}">ducy’s server today: ${d.clubHours} club-hours of play across ${usage.clubs} always-on club${usage.clubs === 1 ? '' : 's'}, ${d.share}% of the free plan${d.share >= 80 ? '. Close to the limit: tables may stop for the rest of the day.' : '.'}</p>`;
-}
 
 function link() {
   const relay = relayUrl();
@@ -858,53 +833,72 @@ function requestsHtml() {
   return h + '</ul></section>';
 }
 
-// The Host tab's club card: create one in three steps (#111), or say where
-// yours is.
+// The Host tab's club part (#152), once "Create a club" is picked: just a
+// name. The club is always on; there's nothing else to choose here.
 function createHtml() {
-  if ((club || isRemote()) && wizard?.code === myClubCode()) return wizardHtml();
-  if (club || isRemote()) {
+  const mine = club || isRemote();
+  if (mine && wizard?.code === myClubCode()) return wizardHtml();
+  if (hostPick() !== 'club') return '';
+  if (mine) {
     const name = club?.name || owner.record.name;
     return `<section class="cl-card"><h2>Create a club</h2><p class="pl-desc">You run <b>${esc(name)}</b>: manage it in <a href="#clubs">My clubs</a>. A browser runs one club for now.</p></section>`;
   }
-  let h = '<section class="cl-card"><h2>Create a club</h2><span class="pl-meta">Step 1 of 3: its name</span>';
-  h += '<p class="pl-desc">A lasting club: members join with your invite link, you give them chips (play money), and they play at your tables.</p>';
-  h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game"></div>`;
+  let h = '<section class="cl-card"><h2>Create a club</h2>';
+  h += '<p class="pl-desc">Members join with your invite link, you give them chips (play money), and they play at your tables. It runs on ducy’s server, so they can play whenever, with this page closed.</p>';
+  h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game" value="${esc(alwaysFailed?.name || '')}"></div>`;
   if (alwaysFailed) {
-    h += `<p class="pl-meta cl-down">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
-    h += '<div class="pl-actions"><button class="tr-start" data-cl="create-browser">Run it in this browser instead</button><button class="btn-small" data-cl="create">Try the server again</button></div>';
+    h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
+    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Try again</button></div>';
   } else {
-    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Next</button></div>';
+    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create the club</button></div>';
   }
-  h += '<p class="pl-meta">Got an invite link? <a href="#join">Join</a> instead.</p>';
-  // Where it runs (#93), and an always-on club from another browser (#98):
-  // both have good defaults, so they wait under More options.
-  h += `<details class="tf-more"${createWhere === 'browser' ? ' open' : ''}><summary>More options</summary><div class="cl-more">`;
-  h += '<div class="pl-row"><span class="pl-label">Runs</span><div class="cl-where">';
-  h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b> (the default): on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser.</label>`;
-  h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
-  h += '</div></div>';
-  h += '<div class="pl-row"><span class="pl-label">Own one already?</span><div class="pl-opts"><input class="pl-text" id="cl-attach" maxlength="9" placeholder="Club code"><button class="btn-small" data-cl="attach">Open it here</button></div></div>';
-  h += '<p class="pl-desc">An always-on club you own, run from another browser. This one needs your player ID too: restore it from your backup first.</p>';
-  return h + '</div></details></section>';
+  return h + '</section>';
 }
 
-// Steps 2 and 3 of creating a club.
+// Right after creating a club (#152): back it up with a password, or skip
+// that knowing it then can't be recovered.
 function wizardHtml() {
   const name = club?.name || owner?.record?.name || '';
-  let h = `<section class="cl-card"><h2>Create a club: ${esc(name)}</h2>`;
-  if (wizard.step === 'table') {
-    h += '<span class="pl-meta">Step 2 of 3: its first table</span>';
-    h += '<p class="pl-desc">Pick the game, blinds and seats; the rest has good defaults. You can open more tables later, in My clubs.</p>';
-    return h + tableFormHtml('', {wizard: true}) + '</section>';
+  let h = `<section class="cl-card"><h2>${esc(name)} is ready</h2>`;
+  if (wizard.step === 'skip') {
+    h += '<p class="pl-desc pl-neterr"><b>Without a backup, your club can’t be recovered.</b> If this browser’s data is cleared, or you lose this device, nobody can run the club again: not its members, its chips or its history.</p>';
+    return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-back">Back up after all</button><button class="btn-small" data-cl="wiz-done">Skip anyway</button></div></section>';
   }
-  h += '<span class="pl-meta">Step 3 of 3: invite people</span>';
-  if (!club) return h + '<p class="pl-meta">Getting your invite link…</p></section>';
-  h += '<p class="pl-desc">Send this link to the people you want in the club. You approve each one, then give them chips.</p>';
-  h += `<div class="pl-row"><div class="pl-opts cl-link"><input class="pl-text" readonly value="${esc(link())}" id="cl-link"><button class="btn-small primary" data-cl="copy">${copied ? 'Copied' : 'Copy link'}</button>`;
-  if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
-  h += '</div></div>';
-  h += `<p class="pl-desc">${isRemote() ? 'Your club runs on ducy’s server: players can join and play with this page closed.' : 'Your club runs in this tab: keep it open while people join and play.'}</p>`;
-  return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-done">Done</button><button class="btn-small" data-cl="wiz-back">Back</button></div></section>';
+  h += '<p class="pl-desc">Back it up now. The backup is a file, locked with a password you choose, that lets you run the club again from any browser if this one loses it. You can make another later, in the club’s Settings.</p>';
+  h += '<form class="pl-idform" data-clform="backup">';
+  h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+  h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+  h += '<p class="pl-desc">It isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
+  if (backupNote) h += `<p class="pl-desc pl-neterr">${esc(backupNote)}</p>`;
+  h += '<div class="pl-actions"><button class="tr-start" type="submit">Save the backup</button><button class="btn-small" type="button" data-cl="wiz-skip">Skip</button></div></form>';
+  return h + '</section>';
+}
+
+// The backup form, after creating the club or from its Settings.
+async function submitBackup(f) {
+  const pw = f.elements.pw.value;
+  if (pw !== f.elements.pw2.value) { backupNote = 'The passwords don’t match.'; render(); return; }
+  try {
+    await backupClub(pw);
+  } catch (e) {
+    backupNote = e.message;
+    render();
+    return;
+  }
+  backupNote = 'Backup saved. Keep the file and the password safe: with both, anyone can run this club.';
+  backupForm = false;
+  if (wizard) { setWizard(null); dashTab = 'tables'; location.hash = 'clubs'; }
+  render();
+}
+let backupNote = '', backupForm = false; // the Settings tab's backup form
+
+// Saves the club's backup (#152): your player ID, which owns the club, locked
+// with `password`, with the club's code and name. Restoring it (Player
+// settings) brings the ID back and reopens the club in that browser.
+async function backupClub(password) {
+  const code = myClubCode(), name = club?.name || owner?.record?.name || '';
+  const locked = JSON.parse(await exportLockedIdentity(me, password));
+  downloadFile(JSON.stringify({...locked, club: {code, name}}), `ducy-club-${code}.json`);
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -925,46 +919,51 @@ function hostHtml() {
   const remote = isRemote();
   const stalled = !remote && hostOnline && hostNet && !hostNet.healthy();
   const on = remote ? owner.online : hostOnline;
-  const badge = remote ? (owner.online ? 'Always on' : 'Connecting…') : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
-  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2><span class="cl-badge${on ? ' on' : ''}">${badge}</span>`;
+  // An always-on club shows nothing while connected (every club is always
+  // on); only reconnecting, or a Reconnect button once another tab has it.
+  const badge = remote ? (owner.online ? '' : owner.connected ? 'Reconnecting…' : 'Not connected')
+    : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
   if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
-  h += menuHtml('Club menu', [
-    ['settings', 'Club settings…'],
-    ['revoke', 'New invite link', 'Make a new link; the old one stops working'],
-  ]);
+  if (remote && !owner.connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
   h += '</div>';
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  h += `<p class="pl-meta">${remote ? 'Always on, on ducy’s server' : 'Runs in this tab'} · code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
-  // What needs the host, always first (#143).
+  h += `<p class="pl-meta">${remote ? '' : 'Runs in this tab · '}code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  // Four tabs (#152): Tables, Players (with what needs you, #143), Settings
+  // and History.
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
-  if (pending.length || asking.length) {
-    h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
-    for (const m of pending) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
-      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
-    }
-    for (const m of asking) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
-      if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
-      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
-      h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other amount</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
-      if (chipForm?.kind === 'grant') h += chipFormHtml(m);
-      h += '</li>';
-    }
-    h += '</ul></div>';
-  }
-  h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
-  h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
-  h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button>`;
-  if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
-  h += '</div></div>';
-  // Tables, members and history, one at a time.
+  const waiting = pending.length + asking.length;
   const tables = openTables(club);
   const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
-  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('members', `Members (${members.length})`)}${sub('history', 'History')}</div>`;
+  const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('players', players)}${sub('accounting', 'Accounting')}${sub('history', 'History')}${sub('settings', 'Settings')}</div>`;
   if (dashTab === 'tables') h += tablesHtml();
-  else if (dashTab === 'members') {
+  else if (dashTab === 'settings') h += settingsHtml();
+  else if (dashTab === 'players') {
+    if (pending.length || asking.length) {
+      h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
+      for (const m of pending) {
+        h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
+        h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
+      }
+      for (const m of asking) {
+        h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
+        if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
+        h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
+        h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other amount</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
+        if (chipForm?.kind === 'grant') h += chipFormHtml(m);
+        h += '</li>';
+      }
+      h += '</ul></div>';
+    }
+    h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
+    h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
+    h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button>`;
+    if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
+    h += '<button class="link-btn" data-cl="revoke" title="Make a new link; the old one stops working">New link</button>';
+    h += '</div></div>';
+    h += `<h3>Members (${members.length})</h3>`;
     if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
     else {
       // Agents' players are listed under their agent (#75).
@@ -975,31 +974,57 @@ function hostHtml() {
       for (const m of order) h += memberRowHtml(m, agents);
       h += '</ul>';
     }
-    h += chipsOutHtml();
-  } else {
-    // Hand history and results (#71): the host's hands show no hidden cards.
+  } else if (dashTab === 'accounting') h += accountingHtml();
+  else {
+    // Hand history (#71): the host's hands show no hidden cards.
     h += handsHtml(club.code, 'host', 'Hands at your tables');
-    const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
-    const tableNames = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
-    h += resultsHtml(club.chips.ledger, names, tableNames);
     if (club.log?.length) {
       h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
       for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
       h += '</ul></details>';
     }
   }
-  h += '</section>';
-  if (settingsOpen) h += settingsHtml();
-  return h;
+  return h + '</section>';
 }
 
-// My clubs' sub-tab, and whether the Club settings dialog is open.
-let dashTab = 'tables', settingsOpen = false;
+// The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
+let dashTab = 'tables';
 
-const chipsOutHtml = () => {
+// The Accounting tab: where the club's chips are, each member's balance and
+// results, and every chip movement (the ledger).
+function accountingHtml() {
   const t = totals(club);
-  return `<p class="pl-meta">Chips out: ${chips(t.issued - t.reclaimed)} (given ${chips(t.issued)}, taken back ${chips(t.reclaimed)}) · in balances ${chips(t.balances)} · on tables ${chips(t.onTables)}${t.conserved ? '' : ' · <span class="pl-neterr">doesn’t add up</span>'}</p>`;
-};
+  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+  const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
+  const results = totalsByMember(tableSessions(club.chips.ledger));
+  const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
+  let h = '<h3>Chips</h3><table class="cl-acct"><tbody>';
+  h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
+  h += `<tr><th>Taken back</th><td>${chips(t.reclaimed)}</td></tr>`;
+  h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued - t.reclaimed)}</td></tr>`;
+  h += `<tr><th>In balances</th><td>${chips(t.balances)}</td></tr>`;
+  h += `<tr><th>On tables</th><td>${chips(t.onTables)}</td></tr>`;
+  h += '</tbody></table>';
+  h += t.conserved ? '<p class="pl-meta">Adds up: balances and tables hold every chip in the club.</p>'
+    : '<p class="pl-desc pl-neterr">Doesn’t add up: balances and tables don’t hold every chip in the club.</p>';
+  const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
+  if (members.length) {
+    h += '<h3>Members</h3><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
+    for (const m of members) h += `<tr><th>${esc(m.name)}</th><td>${chips(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
+    h += '</tbody></table><p class="pl-meta">Results: what each member won or lost over the table sessions they finished.</p>';
+  }
+  h += resultsHtml(club.chips.ledger, names, tableNames);
+  const ledger = club.chips.ledger;
+  if (ledger.length) {
+    h += `<details class="cl-history"><summary>Ledger (${ledger.length})</summary><ul>`;
+    for (const e of [...ledger].reverse().slice(0, 200)) {
+      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
+      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+    }
+    h += '</ul></details>';
+  }
+  return h;
+}
 
 // A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
 // handled like any other data-cl click.
@@ -1009,24 +1034,30 @@ function menuHtml(label, items, id = '') {
   return h + '</div></details>';
 }
 
-// The Club settings dialog (#143, #144): the rules with good defaults,
-// where the club runs, and closing or deleting it.
+// The Settings tab (#152): the rules, with good defaults; a backup; where the
+// club runs; and deleting it.
 function settingsHtml() {
   const remote = isRemote();
-  let h = '<div class="cl-replay-bg" data-cl="settings-close"></div><div class="cl-replay cl-dialog" role="dialog" aria-label="Club settings">';
-  h += `<div class="cl-replay-head"><b>Club settings</b><span class="pl-meta">${esc(club.name)}</span><button class="link-btn" data-cl="settings-close">Close</button></div>`;
-  h += '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
+  let h = '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
   h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
   h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
   h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
   h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
   h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div><span class="pl-desc">How long the hands at your tables are kept for the history.</span></div>`;
-  h += chipsOutHtml();
-  h += `<h3>Where it runs</h3><p class="pl-desc">${remote ? 'On ducy’s server: it stays open for its members with this page closed.' : 'In this tab: players reach it only while it’s open.'}</p>`;
-  if (remote) h += usageHtml();
-  h += `<div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete this club</button>' : '<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button>'}<button class="link-btn" data-cl="close">${remote ? 'Stop running it from this browser' : 'Close this club'}</button></div>`;
-  return h + '</div>';
+  h += '<h3>Backup</h3>';
+  if (remote) {
+    h += '<p class="pl-desc">A file, locked with a password, that lets you run the club again from any browser if this one loses it.</p>';
+    if (backupForm) {
+      h += '<form class="pl-idform" data-clform="backup">';
+      h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+      h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+      h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save the backup</button><button class="btn-small" type="button" data-cl="backup-cancel">Cancel</button></div></form>';
+    } else h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Back up the club</button></div>';
+    if (backupNote) h += `<p class="pl-desc">${esc(backupNote)}</p>`;
+  } else h += '<p class="pl-desc">A club run in this tab is kept in this browser only. Move it to always on to back it up.</p>';
+  h += `<h3>Delete</h3><div class="pl-actions">${remote ?'<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
+  return h;
 }
 
 // One member on the host's dashboard: balance, chips on a table, and what the
@@ -1300,14 +1331,14 @@ async function onClick(e) {
   if (!b) return;
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
-  else if (act === 'create-browser') { createWhere = 'browser'; createClub(root.querySelector('#cl-clubname')?.value || alwaysFailed?.name); }
   else if (act === 'dash') { dashTab = b.dataset.tab; render(); }
   else if (act === 'pick') { pick = b.dataset.code; render(); }
-  else if (act === 'settings') { settingsOpen = true; render(); root.querySelector('.cl-dialog [data-cl=settings-close]')?.focus(); }
-  else if (act === 'settings-close') { settingsOpen = false; render(); }
-  else if (act === 'wiz-skip') setWizard('invite');
-  else if (act === 'wiz-back') setWizard('table');
-  else if (act === 'wiz-done') { setWizard(null); location.hash = 'clubs'; }
+  else if (act === 'backup') { backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
+  else if (act === 'backup-cancel') { backupForm = false; render(); }
+  // After creating a club: Skip asks once more, warning it can't be recovered.
+  else if (act === 'wiz-skip') setWizard('skip');
+  else if (act === 'wiz-back') setWizard('backup');
+  else if (act === 'wiz-done') { setWizard(null); dashTab = 'tables'; location.hash = 'clubs'; }
   else if (act === 'share') navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {});
   else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
   else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
@@ -1325,6 +1356,7 @@ async function onClick(e) {
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect') { note = ''; startHosting(); render(); }
+  else if (act === 'reconnect-owner') { note = ''; owner.start(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
@@ -1396,10 +1428,8 @@ async function onClick(e) {
   } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
 }
 
-// The replayer's keys: ← → step, Space plays, Esc closes. Esc also closes
-// the Club settings dialog.
+// The replayer's keys: ← → step, Space plays, Esc closes.
 function onDocKey(e) {
-  if (e.key === 'Escape' && settingsOpen && open) { settingsOpen = false; render(); return; }
   if (!replay || !open || e.target.closest?.('input, select, textarea')) return;
   if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(replay.i + 1); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(replay.i - 1); }
@@ -1408,7 +1438,6 @@ function onDocKey(e) {
 }
 
 function onFilter(e) {
-  if (e.target.name === 'cl-where') { createWhere = e.target.value; return; }
   const pid = e.target.dataset?.assign;
   if (pid != null) {
     hostAct('assign_agent', {id: pid, agent: e.target.value || null});
@@ -1518,6 +1547,12 @@ export function startClubs() {
     });
     // Finds the always-on club's record, from IndexedDB if need be.
     await owner.start();
+    // A club backup was just restored (Player settings): reopen its club.
+    const restored = load(RESTORE_CLUB_KEY, null);
+    if (restored) {
+      try { localStorage.removeItem(RESTORE_CLUB_KEY); } catch {}
+      if (!isRemote() && !club && restored.code) await attachAlwaysOn(restored.code);
+    }
     reconnectAll();
   })());
 }
@@ -1535,12 +1570,25 @@ export async function openClubs(el, v = 'clubs') {
     document.addEventListener('click', e => {
       for (const d of document.querySelectorAll('details.cl-menu[open]')) if (!d.contains(e.target)) d.open = false;
     });
+    onHostPick(() => { alwaysFailed = null; if (open && view === 'host') render(); });
   }
   if (v !== 'join') justJoined.clear();
   view = v;
   open = true;
   render();
   await startClubs();
+  // A club created but not yet backed up (the page closed mid-way): Host
+  // goes back to its backup step.
+  if (view === 'host' && wizard && wizard.code === myClubCode()) setHostPick('club');
+  render();
+}
+
+// Opens My clubs on the Players tab, where requests are answered (from a
+// notification, play-section.js).
+export function showClubPlayers() {
+  dashTab = 'players';
+  pick = 'own';
+  location.hash = 'clubs';
   render();
 }
 

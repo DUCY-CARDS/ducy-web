@@ -1084,9 +1084,37 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .ts-levels th, .ts-levels td { padding: 2px 3px; }
 }
 
-/* Where a new club runs (#93) */
-.cl-where { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg); }
-.cl-where label { display: flex; gap: 6px; align-items: baseline; }
+/* The Host tab's two choices (#152) */
+.ph-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.ph-choice {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; font: inherit; cursor: pointer;
+  padding: 16px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raised); color: var(--fg);
+}
+.ph-choice b { font-size: 15px; color: var(--fg-strong); }
+.ph-choice span { font-size: 13px; color: var(--fg-muted); }
+.ph-choice:hover, .ph-choice:focus-visible { border-color: var(--teal); background: var(--teal-faint); }
+.ph-back { margin: 0; }
+/* Start a game's number fields (blinds, buy-in) */
+.pf-num { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
+.pf-num .pl-text { width: 96px; }
+/* A new request, on whichever tab is showing (#152) */
+.pt-toast {
+  position: fixed; z-index: 60; left: 50%; bottom: 16px; transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 32px);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-raised); color: var(--fg); font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+}
+.pt-toast[hidden] { display: none; }
+/* A club's Accounting tab */
+.cl-acct { border-collapse: collapse; font-size: 13px; min-width: min(420px, 100%); }
+.cl-acct th, .cl-acct td { padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.cl-acct th { text-align: left; font-weight: 500; color: var(--fg); }
+.cl-acct td { text-align: right; font-family: var(--font-data); color: var(--fg-strong); }
+.cl-acct thead th { color: var(--fg-muted); font-weight: 500; }
+.cl-acct thead th:not(:first-child) { text-align: right; }
+.cl-acct-sum th, .cl-acct-sum td { font-weight: 700; }
 
 /* A local test profile (?as=, #146) */
 .profile-badge {

@@ -20,6 +20,7 @@ import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
+import { hostPick, onHostPick } from './host-choice.js';
 
 let worker = null;
 let nextId = 0;
@@ -58,12 +59,13 @@ const GAMES = [
   {id: 'plo6', label: 'PLO6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
 ];
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
-// A friends table: game, blinds, seats in all (the host's included) and the
-// buy-in limits in big blinds.
-const FRIENDS_DEFAULT = {game: 'nlhe', sb: 1, bb: 2, seats: 6, minBB: 50, maxBB: 200};
+// A friends table: its name, game, blinds, seats in all (the host's
+// included) and the buy-in limits in big blinds (min and max, in chips, are
+// minBB × bb and maxBB × bb).
+const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 1, bb: 2, seats: 6, minBB: 50, maxBB: 200};
 const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
-const MIN_BUY_INS = [20, 40, 50, 100];
-const MAX_BUY_INS = [100, 200, 300, 500];
+const FRIENDS_BLINDS = [[1, 2], [2, 5], [5, 10], [25, 50]];
+const MAX_CHIPS = 1e9;
 
 let root = null;
 let open = false;
@@ -111,6 +113,9 @@ let statsSort = {key: 'seat', dir: 1};
 let mode = 'solo';
 let net = null; // relay connection
 let room = ''; // table code
+// A friends table's name (#152): the host's, sent to each player.
+let hostTitle = '';
+let tableTitle = '';
 let netNote = ''; // connection status, e.g. "Reconnecting…"
 let noteUntil = 0; // keep netNote on screen until then (a refused chip request)
 let shownSeq = -1; // state number on screen, so late results are dropped
@@ -223,7 +228,9 @@ function renderSetup() {
   let h = '';
   const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
   if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
-  else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
+  // Host (#152): a game for friends once that's picked (play-section.js
+  // draws the choices).
+  else if (view === 'host') h = err + resumeHtml() + (hostPick() !== 'game' ? '' : relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
   else if (view === 'join') h = err;
   root.hidden = !h;
   root.innerHTML = h ? `<div class="pl-wrap">${h}</div>` : '';
@@ -274,29 +281,75 @@ function botsSetupHtml() {
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
   h += '</div>';
-  if (relayUrl()) h += '<p class="pl-meta pl-elsewhere">Playing with people? <a href="#join">Join</a> with a code, or <a href="#host">host</a> a game or a club.</p>';
   return h;
 }
 
-// A table for friends: no bots, seats stay empty until people join, and
-// everyone asks the host for chips within the buy-in limits.
+// A table for friends (#152), in three steps: 1 its name (and yours, the
+// first time), 2 the game and table size, 3 the blinds and buy-in, presets
+// or any values. No bots; seats stay empty until people join, and everyone
+// asks the host for chips within the buy-in. Turns use the default time.
+let fstep = 1;
+let fnote = '';
+const FRIENDS_TURN_SECS = 30;
+
 function friendsSetupHtml() {
   const f = setup.friends;
-  let h = '<div class="pl-head"><h1>Start a game now</h1>';
-  h += '<p>A table for friends, just for now: send them the code or link. Seats stay empty until people join; each player asks you for chips, and you approve them. Nothing is kept once everyone has left.</p></div>';
-  h += '<div class="pl-setup pl-multi">';
-  // Your name, the first time; after that it's in Player settings (#144).
-  if (!setup.name) h += '<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see"></div>';
-  h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
-  h += optsRow('Blinds', [[1, 2], [5, 10], [25, 50]].map(([sb, bb]) => optBtn(f.bb === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)));
-  h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
-  h += optsRow('Min buy-in', MIN_BUY_INS.map(n => optBtn(f.minBB === n, 'data-fmin', n, `${n} BB`)));
-  h += optsRow('Max buy-in', MAX_BUY_INS.map(n => optBtn(f.maxBB === n, 'data-fmax', n, `${n} BB`)));
-  h += optsRow('Turn time', [15, 30, 60, 0].map(t => optBtn(setup.turnSecs === t, 'data-turn', t, t ? t + 's' : 'None')));
-  h += `<p class="pl-desc">Up to ${f.seats} players, you included. Everyone, you too, holds between ${f.minBB * f.bb} and ${f.maxBB * f.bb} chips after a top-up (${f.minBB}–${f.maxBB} BB); chips carry over from hand to hand.</p>`;
-  h += '<div class="pl-actions"><button class="tr-start" data-act="host">Start the game</button></div>';
-  h += '</div>';
+  let h = '<div class="pl-head"><h1>Start a game to invite friends</h1>';
+  h += '<p>Send them the code or link once it starts. Nothing is kept once everyone has left.</p></div>';
+  h += `<div class="pl-setup pl-multi"><span class="pl-meta">Step ${fstep} of 3: ${['', 'its name', 'the game', 'blinds and buy-in'][fstep]}</span>`;
+  if (fstep === 1) {
+    h += `<div class="pl-row"><span class="pl-label">Game name</span><input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}"></div>`;
+    // Your name, the first time; after that it's in Player settings (#144).
+    if (!setup.name) h += '<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see"></div>';
+  } else if (fstep === 2) {
+    h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
+    h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
+    h += `<p class="pl-desc">${gameOf(f.game).name}, up to ${f.seats} players, you included.</p>`;
+  } else {
+    const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
+    h += optsRow('Blinds', [...FRIENDS_BLINDS.map(([sb, bb]) => optBtn(preset?.[1] === bb, 'data-fblinds', `${sb}/${bb}`, `${sb}/${bb}`)), optBtn(!preset, 'data-fblinds', 'custom', 'Custom')]);
+    if (!preset || f.customBlinds) {
+      h += '<div class="pl-row"><span class="pl-label"></span><div class="pl-opts">';
+      h += `<label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="1" step="1" value="${f.sb}"></label>`;
+      h += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="1" step="1" value="${f.bb}"></label></div></div>`;
+    }
+    h += '<div class="pl-row"><span class="pl-label">Buy-in</span><div class="pl-opts">';
+    h += `<label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="1" step="1" value="${f.minBB * f.bb}"></label>`;
+    h += `<label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="1" step="1" value="${f.maxBB * f.bb}"></label>`;
+    h += '</div></div>';
+    h += `<p class="pl-desc">In chips: ${f.minBB}–${f.maxBB} big blinds. Everyone, you too, tops up to between these, and chips carry over from hand to hand.</p>`;
+  }
+  if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
+  h += '<div class="pl-actions">';
+  if (fstep < 3) h += '<button class="tr-start" data-act="fnext">Next</button>';
+  else h += '<button class="tr-start" data-act="host">Start the game</button>';
+  if (fstep > 1) h += '<button class="btn-small" data-act="fback">Back</button>';
+  h += '</div></div>';
   return h;
+}
+
+// Reads the step's fields into the setup; returns what's wrong, if anything.
+function readFriendsStep() {
+  const f = setup.friends;
+  const val = id => root.querySelector('#' + id);
+  readNameInput();
+  if (val('pf-title')) f.title = val('pf-title').value.trim().slice(0, 40);
+  if (fstep === 1 && !setup.name) return 'Enter your name: it’s what the others see.';
+  if (val('pf-sb')) {
+    const sb = Math.floor(+val('pf-sb').value), bb = Math.floor(+val('pf-bb').value);
+    if (!(sb >= 1 && bb >= sb && bb <= MAX_CHIPS)) return 'Blinds are whole chips: a small blind of at least 1, and a big blind at least that.';
+    f.sb = sb;
+    f.bb = bb;
+  }
+  if (val('pf-min')) {
+    const min = Math.floor(+val('pf-min').value), max = Math.floor(+val('pf-max').value);
+    if (!(min >= f.bb)) return `The minimum buy-in must be at least the big blind (${f.bb}).`;
+    if (!(max >= min && max <= MAX_CHIPS)) return 'The maximum buy-in must be at least the minimum.';
+    f.minBB = min / f.bb;
+    f.maxBB = max / f.bb;
+  }
+  saveSetup();
+  return '';
 }
 
 // ---- table ----
@@ -513,6 +566,8 @@ function hostIncoming(client, data) {
       if (!isPublicKey(data.key)) return;
       const hk = await e2eHost.keys;
       g.key = await sharedKey(hk, data.key, e2eContext(client, hk.pub, data.key));
+      // The game's name, now that it can go encrypted (#152).
+      if (hostTitle) sendToGuest(client, {type: 'table', name: hostTitle});
       return;
     }
     hostEvent('hostHandle', client, data);
@@ -596,16 +651,18 @@ function hostEvent(op, ...args) {
 }
 
 async function hostTable() {
-  readNameInput();
+  fnote = readFriendsStep();
+  if (fnote) { render(); return; }
   setupNote = '';
-  saveSetup();
   const f = setup.friends;
   forgetSavedTable();
   startHosting(newCode(), f.game);
+  hostTitle = f.title || `${setup.name}’s game`;
+  fstep = 1;
   // The host starts with 100 BB, kept within the table's limits.
-  const min = f.minBB * f.bb, max = f.maxBB * f.bb;
+  const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, setup.turnSecs * 1000)
+  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
     .then(snap => { if (snap) show(snap); });
   // The table shows on the Play tab.
   location.hash = 'play';
@@ -681,7 +738,7 @@ async function saveHostTable(r) {
   try {
     const json = await call('hostSave');
     if (json == null) { noSave = true; return; }
-    await putTable(...SAVED, {json, room, game: hostGame, seq: r.seq, at: Date.now()});
+    await putTable(...SAVED, {json, room, game: hostGame, title: hostTitle, seq: r.seq, at: Date.now()});
     savedSeq = r.seq;
   } catch (e) {
     console.warn('table: not saved:', e);
@@ -704,6 +761,7 @@ async function resumeHosting() {
   savedSeq = rec.seq;
   noSave = false;
   startHosting(rec.room, rec.game);
+  hostTitle = rec.title || '';
   location.hash = 'play';
   resuming = setTimeout(() => wake(), RESUME_GRACE_MS);
   try {
@@ -815,6 +873,7 @@ function startGuest(code) {
   sessionStats = {};
   recordedHand = 0;
   room = code;
+  tableTitle = '';
   netNote = 'Connecting…';
   shownSeq = -1;
   seated = true;
@@ -825,6 +884,7 @@ function startGuest(code) {
 }
 
 function guestMessage(m) {
+  if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
   if (m.type === 'state') {
     lastView = m.view;
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
@@ -1205,7 +1265,8 @@ function chipAmount() {
 }
 
 function netBarHtml() {
-  let h = `<span class="pl-meta">Table <b>${esc(room)}</b>`;
+  const title = mode === 'host' ? hostTitle : tableTitle;
+  let h = `<span class="pl-meta">${title ? `<b>${esc(title)}</b> · ` : ''}Table <b>${esc(room)}</b>`;
   if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
   else h += '</span>';
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
@@ -1432,15 +1493,21 @@ function onClick(e) {
     return;
   }
   const f = setup.friends;
-  if (d.fgame || d.fblinds || d.fseats || d.fmin || d.fmax) {
-    readNameInput();
+  if (d.fgame || d.fblinds || d.fseats) {
+    readFriendsStep();
     if (d.fgame) f.game = d.fgame;
-    if (d.fblinds) [f.sb, f.bb] = d.fblinds.split('/').map(Number);
     if (d.fseats) f.seats = +d.fseats;
-    // Keep min ≤ max.
-    if (d.fmin) { f.minBB = +d.fmin; f.maxBB = Math.max(f.maxBB, f.minBB); }
-    if (d.fmax) { f.maxBB = +d.fmax; f.minBB = Math.min(f.minBB, f.maxBB); }
+    // A preset keeps the buy-in in big blinds; Custom shows the two fields.
+    if (d.fblinds === 'custom') f.customBlinds = true;
+    else if (d.fblinds) { [f.sb, f.bb] = d.fblinds.split('/').map(Number); f.customBlinds = false; }
+    fnote = '';
     saveSetup();
+    render();
+    return;
+  }
+  if (d.act === 'fnext' || d.act === 'fback') {
+    fnote = d.act === 'fnext' ? readFriendsStep() : '';
+    if (!fnote) fstep = Math.max(1, Math.min(3, fstep + (d.act === 'fnext' ? 1 : -1)));
     render();
     return;
   }
@@ -1565,6 +1632,8 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVisibility);
+    // Picking "Start a game" on the Host tab starts at its first step.
+    onHostPick(() => { fstep = 1; fnote = ''; if (open && view === 'host') render(); });
   }
   open = true;
   // A message about leaving a table stays on the tab it was for.

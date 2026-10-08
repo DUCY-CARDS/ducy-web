@@ -89,10 +89,10 @@ function render() {
     h += `<label class="pl-row ps-check"><input type="checkbox" data-ps="notify"${notifyOn() ? ' checked' : ''}${denied ? ' disabled' : ''}> Tell me when someone asks to join or for chips while this page isn’t in front</label>`;
     if (denied) h += '<p class="pl-desc">This browser blocks notifications from ducy; allow them in its site settings first.</p>';
   }
-  const relay = relayUrl();
+  // The relay isn't shown (#152): only the warning for a local test page
+  // that's talking to the live one.
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-  h += `<p class="pl-meta">Relay: ${esc(relay)}</p>`;
-  if (local && relay === wsUrl(DEFAULT_RELAY)) h += '<p class="pl-desc pl-neterr">This local page is using the live relay. To test against a local relay, open it with <code>?relay=ws://localhost:8788</code>; links then carry it.</p>';
+  if (local && relayUrl() === wsUrl(DEFAULT_RELAY)) h += '<p class="pl-desc pl-neterr">This local page is using the live relay. To test against a local relay, open it with <code>?relay=ws://localhost:8788</code>; links then carry it.</p>';
   el.innerHTML = h + '</div>';
 }
 
@@ -137,16 +137,25 @@ function onSubmit(e) {
   } else if (idForm?.kind === 'restore') restore(idForm.text, pw);
 }
 
+// Hands the browser `text` as a file to save.
+export function downloadFile(text, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// A club backup (#152) is a player ID backup with the club's code and name
+// added: restoring it brings back the ID that owns the club, and the club is
+// reopened here once the page has reloaded (clubs.js).
+export const RESTORE_CLUB_KEY = 'ducyRestoreClub';
+
 // Saves a backup file locked with `password`.
 async function backup(password) {
   if (!me) return;
   try {
-    const blob = new Blob([await exportLockedIdentity(me, password)], {type: 'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `ducy-identity-${showId(me.id)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadFile(await exportLockedIdentity(me, password), `ducy-identity-${showId(me.id)}.json`);
     idForm = null;
     note = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
   } catch (e) {
@@ -176,7 +185,15 @@ async function restore(text, password) {
     if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
     await saveIdentity(ident);
     idForm = null;
-    note = `Restored player ID ${showId(ident.id)}.${password ? '' : ' That backup had no password: make a new one with Back up, and delete the old file.'} Reloading…`;
+    let clubNote = '';
+    try {
+      const c = JSON.parse(text).club;
+      if (c && typeof c.code === 'string') {
+        localStorage.setItem(RESTORE_CLUB_KEY, JSON.stringify({code: c.code, name: String(c.name || '')}));
+        clubNote = ` Your club ${c.name || c.code} reopens once the page has reloaded.`;
+      }
+    } catch {}
+    note = `Restored player ID ${showId(ident.id)}.${clubNote}${password ? '' : ' That backup had no password: make a new one with Back up, and delete the old file.'} Reloading…`;
     render();
     // Every part of the page (clubs, tables) picks the restored ID up.
     setTimeout(() => location.reload(), 1500);
