@@ -106,8 +106,10 @@ export function tableSessions(entries) {
   const open = new Map(); // member → session
   const out = [];
   for (const e of [...entries].sort((a, b) => a.n - b.n)) {
-    if (!['buy_in', 'top_up', 'cash_out'].includes(e.kind)) continue;
+    if (!['buy_in', 'top_up', 'top_up_refund', 'cash_out'].includes(e.kind)) continue;
     let s = open.get(e.member);
+    // A top-up handed back (ducy#118) wasn't put on the table after all.
+    if (e.kind === 'top_up_refund') { if (s) { s.put -= e.amount; s.net = s.took - s.put; } continue; }
     if (e.kind === 'buy_in' || !s) {
       s = {member: e.member, table: e.table, start: e.at, end: null, put: 0, took: 0, net: 0, open: true};
       open.set(e.member, s);

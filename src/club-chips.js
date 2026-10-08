@@ -151,6 +151,17 @@ export function topUp(club, id, amt, max, now = Date.now()) {
   return record(club, m, 'top_up', moved, now, {table: m.seat.table});
 }
 
+// The table handed back part of a top-up: added at the deal, it would have
+// taken the stack over the table's maximum (allenpiscitello/ducy#118). Those
+// chips leave the seat and go back to the member's balance.
+export function refundTopUp(club, id, amt, now = Date.now()) {
+  const m = member(club, id);
+  amount(amt);
+  if (m.seat) m.seat.stack = Math.max(0, m.seat.stack - amt);
+  m.balance += amt;
+  return record(club, m, 'top_up_refund', amt, now, {table: m.seat?.table});
+}
+
 // The table reports a seated member's stack after a hand.
 export function setStack(club, id, stack) {
   const m = club.members[id];

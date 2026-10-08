@@ -20,6 +20,7 @@
 // shouldn't fold everyone).
 
 import { canJoin, cashOutTable, chipsForTable, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
+import { refundTopUp } from './club-chips.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
 const NEXT_HAND_MS = 3000;
@@ -153,6 +154,13 @@ export function createTableHost({
     for (const d of res.departed || []) {
       if (at.get(d.client_id) === tid) at.delete(d.client_id);
       if (leftTable(club(), d.client_id, num(d.chips))) { changed = true; chipsChanged(d.client_id); }
+    }
+    // Top-ups the table capped at its maximum: the rest goes back to the balance.
+    for (const f of res.refunds || []) {
+      if (!club().members[f.client_id]?.seat || !num(f.chips)) continue;
+      refundTopUp(club(), f.client_id, num(f.chips));
+      changed = true;
+      chipsChanged(f.client_id);
     }
     const state = res.state;
     r.complete = !!state.complete;

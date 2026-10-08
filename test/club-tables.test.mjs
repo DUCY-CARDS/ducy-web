@@ -145,3 +145,22 @@ test('a closing table kept for resuming stays closing; others that were closing 
   assert.equal(a.status, 'closing', 'A may still finish its hand');
   assert.equal(b.status, 'closed');
 });
+
+test('a top-up the table hands back returns to the balance, and the totals still add up (ducy#118)', async () => {
+  const {refundTopUp} = await import('../src/club-chips.js');
+  const {tableSessions} = await import('../src/hand-replay.js');
+  const club = clubWith('ann', 'bob');
+  const t = newTable(club, {name: 'T', sb: 1, bb: 2, minBB: 40, maxBB: 100}); // buy-ins up to 200
+  chipsForTable(club, 'ann', t, 150, 0);
+  chipsForTable(club, 'bob', t, 150, 0);
+  // Ann asks to top up 50 during a hand, then wins 30 from Bob: at the deal
+  // only 20 fits under 200, and the table hands back 30.
+  chipsForTable(club, 'ann', t, 50, 0);
+  const before = club.members.ann.balance;
+  refundTopUp(club, 'ann', 30, 1);
+  assert.equal(club.members.ann.balance, before + 30);
+  syncStacks(club, [{client_id: 'ann', chips: 200}, {client_id: 'bob', chips: 120}]);
+  assert.ok(totals(club).conserved, 'every chip accounted for');
+  const s = tableSessions(club.chips.ledger).find(x => x.member === 'ann');
+  assert.equal(s.put, 170, 'the session counts only what stayed on the table');
+});
