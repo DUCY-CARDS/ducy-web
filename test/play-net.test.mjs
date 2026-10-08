@@ -33,7 +33,7 @@ test('the site relay is the default', () => {
   const link = new URL(joinLink('ABCD-EFGH'));
   assert.equal(link.searchParams.get('table'), 'ABCD-EFGH');
   assert.equal(link.searchParams.get('relay'), null);
-  assert.equal(link.hash, '#play');
+  assert.equal(link.hash, '#join');
 });
 
 test('?relay= is remembered, carried in invite links, and ?relay=default clears it', () => {

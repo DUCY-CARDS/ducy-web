@@ -83,9 +83,10 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
   color: var(--amber); background: var(--amber-faint); border-bottom: 1px solid var(--border);
 }
 .beta-notice strong { font-weight: 700; }
-body:is(.mode-trainer, .mode-play, .mode-clubs) .beta-notice { display: block; }
+body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
-body:is(.mode-clubs, .mode-play.club-table) .clubs-notice { display: block; }
+/* The clubs' testing note: on Join, Host and My clubs, and at a club table. */
+body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice { display: block; }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 
@@ -97,6 +98,11 @@ body:is(.mode-clubs, .mode-play.club-table) .clubs-notice { display: block; }
 }
 .mode-tab:hover { color: var(--fg); }
 .mode-tab.on { background: var(--bg-inset); color: var(--fg-strong); }
+/* Things waiting for you in the Play section (#145). */
+.mode-tab[data-badge]:not([data-badge=""])::after {
+  content: attr(data-badge); margin-left: 5px; padding: 0 5px; border-radius: 8px;
+  font-size: 10px; line-height: 15px; display: inline-block; background: var(--amber); color: #1a1a1a;
+}
 .trainer { display: none; }
 body.mode-trainer .trainer { display: block; }
 body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
@@ -726,13 +732,34 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-weak .link-btn { font-size: 12px; padding: 0; }
 .tr-next-drill { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; padding: 10px 12px; border-radius: 8px; background: var(--bg-inset); color: var(--fg); }
 
-/* Hidden bot table (#play) */
-.play { display: none; }
-body.mode-play .play { display: block; }
+/* The Play section (#138): tabs, then each tab's parts (play-section.js). */
+.psec { display: none; }
+body.mode-play .psec { display: block; }
 body.mode-play :is(.toolbar, .table-wrap) { display: none; }
-.clubs { display: none; }
-body.mode-clubs .clubs { display: block; }
-body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
+.psec [hidden] { display: none !important; }
+.pt-tabs { max-width: 980px; margin: 0 auto; padding: 8px 20px 0; }
+.pt-tabs .pl-tab { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.pt-badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #1a1a1a; font-size: 11px; line-height: 18px; text-align: center; }
+.pt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+.pt-body { display: flex; flex-direction: column; }
+/* Order within a tab: Play lists your clubs, then the bots; Join has its
+   form, then why joining a table didn't work, then your requests. */
+.psec[data-tab="join"] .pt-join { order: 0; }
+.psec[data-tab="join"] .play { order: 1; }
+.psec[data-tab="join"] .clubs { order: 2; }
+.psec[data-tab="host"] .play { order: 0; }
+.psec[data-tab="host"] .clubs { order: 1; }
+/* At a table, the Play tab is the table. */
+body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
+/* Host: start a game and create a club, side by side when there's room. */
+@media (min-width: 1100px) {
+  .psec[data-tab="host"] .pt-body { display: grid; grid-template-columns: 1fr 1fr; max-width: 1240px; margin: 0 auto; align-items: start; }
+  .psec[data-tab="host"] .pl-wrap { max-width: none; margin: 0; }
+}
+.pj-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.pj-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pj-code { width: 260px; font-family: var(--font-data); text-transform: none; }
+.pl-elsewhere { max-width: 640px; }
 .cl-wrap { max-width: 760px; }
 .cl-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .cl-card h2 { font-size: 16px; color: var(--fg-strong); margin: 0; }
@@ -748,7 +775,7 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
 .cl-list li:first-child { border-top: 0; }
 .cl-list code { font-family: var(--font-data); font-size: 12px; color: var(--fg-muted); }
 .cl-name { font-weight: 600; color: var(--fg-strong); }
-.cl-acts { margin-left: auto; display: flex; gap: 6px; }
+.cl-acts { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
 .cl-status { color: var(--fg-muted); }
 .cl-err { flex-basis: 100%; font-size: 12px; }
 .cl-tableform { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; padding: 10px 0; }

@@ -43,7 +43,7 @@ export function linkedHost() {
   return /^[1-9A-HJ-NP-Za-km-z]{8}$/.test(h) ? h : '';
 }
 
-// A link that opens #play ready to join `code`. It names the relay too when
+// A link that opens the Join tab ready to join `code`. It names the relay too when
 // it isn't the default, so friends reach the same one, and the host's player
 // ID, so guests can check the host's encryption key (play.js).
 export function joinLink(code, hostId = '') {
@@ -53,7 +53,7 @@ export function joinLink(code, hostId = '') {
   if (hostId) u.searchParams.set('host', hostId);
   const relay = relayUrl();
   if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
-  u.hash = 'play';
+  u.hash = 'join';
   return u.toString();
 }
 
