@@ -1012,3 +1012,7 @@ body.mode-clubs :is(.toolbar, .table-wrap) { display: none; }
   .ts-levels .pl-text { width: 64px; }
   .ts-levels th, .ts-levels td { padding: 2px 3px; }
 }
+
+/* Where a new club runs (#93) */
+.cl-where { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg); }
+.cl-where label { display: flex; gap: 6px; align-items: baseline; }

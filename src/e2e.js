@@ -15,11 +15,21 @@ const subtle = () => globalThis.crypto.subtle;
 const ECDH = {name: 'ECDH', namedCurve: 'P-256'};
 const enc = new TextEncoder(), dec = new TextDecoder();
 
-// A session key pair, and its public half to send (base64url, raw).
-export async function newKeyPair() {
-  const kp = await subtle().generateKey(ECDH, false, ['deriveBits']);
+// A session key pair, and its public half to send (base64url, raw). With
+// `keep`, the private key can be exported (keyPairToJSON), for an always-on
+// club that must keep its key across restarts (#93); pages never do.
+export async function newKeyPair({keep = false} = {}) {
+  const kp = await subtle().generateKey(ECDH, keep, ['deriveBits']);
   const pub = b64url(await subtle().exportKey('raw', kp.publicKey));
   return {privateKey: kp.privateKey, pub};
+}
+
+// A kept key pair (newKeyPair({keep: true})) as JSON, and back.
+export async function keyPairToJSON(kp) {
+  return {pub: kp.pub, jwk: await subtle().exportKey('jwk', kp.privateKey)};
+}
+export async function keyPairFromJSON({pub, jwk}) {
+  return {pub, privateKey: await subtle().importKey('jwk', jwk, ECDH, true, ['deriveBits'])};
 }
 
 // The shared AES-GCM key between this side's key pair and the other side's

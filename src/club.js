@@ -100,6 +100,12 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   if (body.club !== club.code) return {replies: [], changed: false, reason: 'wrong club'};
   ensureChips(club);
   const m = club.members[id];
+  // An always-on club's owner (#93), who runs it from their page: their
+  // check-ins and commands. The caller handles them (club-server.js).
+  if (body.type === 'owner_hello' || body.type === 'owner_cmd') {
+    if (!club.ownerId || id !== club.ownerId) return {replies: [], changed: false, reason: 'not the owner'};
+    return {replies: [], changed: false, owner: {type: body.type, from: id, body}};
+  }
   if (body.type === 'join') {
     const name = playerName(body.name);
     if (m?.status === 'member' || m?.status === 'pending') {
