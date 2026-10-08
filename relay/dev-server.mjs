@@ -8,6 +8,7 @@ import { pingReply } from './src/ping.js';
 import { createServer } from 'node:http';
 import { createClub, importClub, openClub } from './src/club-room.js';
 import { limitsFrom, registry } from './src/registry.js';
+import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 
 // The engine for always-on clubs (#93), loaded on first use from the site's
 // wasm build (../wasm, as the Worker bundles it).
@@ -77,20 +78,44 @@ function inRoom(room, fn) {
 // CLUB_CREATORS).
 const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
 
-// The always-on club running in the room, opening it if needed; null if none.
-async function clubOf(room) {
-  if (!room.store.has('club')) return null;
+// Backups (#97), as in the Worker, when BACKUP_URL, BACKUP_SECRET and
+// BACKUP_KEY are set in the environment.
+const backups = backupConfig(process.env);
+
+// The club changed: back it up now, or when 5 minutes have passed since the last.
+function scheduleBackup(room, code) {
+  if (!backups || room.backupTimer) return;
+  const wait = Math.max(0, (room.backupAt || 0) + BACKUP_EVERY_MS - Date.now());
+  room.backupTimer = setTimeout(() => {
+    room.backupTimer = null;
+    room.backupAt = Date.now();
+    if (room.store.has('club')) pushBackup(backups, storageOf(room), code).catch(e => console.warn('club: not backed up:', e));
+  }, wait);
+}
+
+// The always-on club running in the room, opening it if needed; null if
+// none. A room the registry says holds a club, with no storage, is rebuilt
+// from its backup (once).
+async function clubOf(room, code) {
+  if (!room.store.has('club')) {
+    if (!backups || room.rebuildChecked || !(await reg.has(code))) return null;
+    room.rebuildChecked = true;
+    if (!(await pullBackup(backups, storageOf(room), code).catch(e => { console.warn('club: not rebuilt:', e); return false; }))) return null;
+  }
   room.club ||= engine().then(MultiTable => openClub({
     storage: storageOf(room),
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],
     MultiTable,
     onUsage: minutes => reg.used(minutes),
+    onSaved: () => scheduleBackup(room, code),
     // Deleted by its owner: an ordinary room again; members are let go.
     onDeleted: async () => {
-      const code = (await room.club)?.club.code;
       room.club = null;
-      if (code) await reg.release(code);
+      await reg.release(code);
+      clearTimeout(room.backupTimer);
+      room.backupTimer = null;
+      if (backups) await dropBackups(backups, code).catch(e => console.warn(e));
       setTimeout(() => { for (const g of room.guests.values()) g.ws.close(4004, 'the club was closed'); }, 1000);
     },
   }));
@@ -159,9 +184,22 @@ wss.on('connection', (ws, req) => {
     room.guests.delete(id);
     if (room.guests.size >= MAX_GUESTS) return ws.close(4029, 'the room is full');
     room.guests.set(id, {ws, queue});
-    if (isClub) inRoom(room, async () => (await clubOf(room)).message({from: id, event: 'open'}));
+    if (isClub) inRoom(room, async () => (await clubOf(room, code)).message({from: id, event: 'open'}));
     else if (room.host) send(room.host, {from: id, event: 'open'});
-    else send(ws, {type: 'host_away'});
+    else {
+      send(ws, {type: 'host_away'});
+      // A club whose storage was lost comes back from its backup (#97), with
+      // whatever was queued meanwhile.
+      if (backups && !room.rebuildChecked) {
+        inRoom(room, async () => {
+          const c = await clubOf(room, code);
+          if (!c) return;
+          const waiting = room.queued;
+          room.queued = [];
+          for (const q of waiting) await c.message({from: q.from, data: q.data});
+        });
+      }
+    }
     ws.on('message', data => {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
@@ -174,7 +212,7 @@ wss.on('connection', (ws, req) => {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
         inRoom(room, async () => {
-          const club = await clubOf(room);
+          const club = await clubOf(room, code);
           if (club) return club.message({from: id, data: msg});
           const type = msg?.body?.type;
           if (type !== 'create_club' && type !== 'import_club') return;
@@ -183,11 +221,11 @@ wss.on('connection', (ws, req) => {
             if (type === 'create_club') {
               if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
               send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
-              await clubOf(room);
+              await clubOf(room, code);
             } else {
               if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
               send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
-              const c = await clubOf(room);
+              const c = await clubOf(room, code);
               // What members left while the host was away goes to the club.
               const waiting = room.queued;
               room.queued = [];

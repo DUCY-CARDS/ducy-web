@@ -40,6 +40,11 @@ export function registry(storage, limits) {
       all[code] = {owner, at: now};
       await storage.put('clubs', all);
     },
+    // Is there an always-on club in room `code`? (A room that should hold one
+    // but finds its storage empty rebuilds it from a backup, #97.)
+    async has(code) {
+      return !!(await clubs())[code];
+    },
     async release(code) {
       const all = await clubs();
       if (!all[code]) return;
