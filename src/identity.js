@@ -3,10 +3,11 @@
 // that a host can check.
 //
 // The keys are Ed25519 where the browser has it, otherwise ECDSA P-256. They
-// live in IndexedDB (loadIdentity) and can be exported to a file and imported
-// on another browser (exportIdentity / importIdentity), which keeps the same
-// player ID. Everything except loadIdentity / saveIdentity works without a
-// browser, so the tests run it in Node.
+// live in IndexedDB (loadIdentity) and can be saved to a backup file locked
+// with a password (exportLockedIdentity) and restored on another browser
+// (importIdentity), which keeps the same player ID. Everything except
+// loadIdentity / saveIdentity works without a browser, so the tests run it
+// in Node.
 //
 // A signed message is an envelope {v, from, alg, pub, seq, body, sig}:
 //   from  the sender's player ID       pub  their public key (base64url, raw)
@@ -120,16 +121,52 @@ export async function createIdentity() {
   throw new Error('This browser can’t create signing keys.');
 }
 
-// The identity as a backup file's JSON. It holds the private key: whoever has
-// the file can act as this player.
+// Backups are locked with a password: the private key (the part that lets
+// someone act as this player) is encrypted with AES-256-GCM under a key
+// derived from the password by PBKDF2-SHA-256. The file says which ID it is
+// without the password.
+export const MIN_PASSWORD = 8;
+const PBKDF2_ITERATIONS = 600_000;
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+async function passwordKey(password, salt, iterations) {
+  const base = await subtle().importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return subtle().deriveKey({name: 'PBKDF2', hash: 'SHA-256', salt, iterations}, base, {name: 'AES-GCM', length: 256}, false, ['encrypt', 'decrypt']);
+}
+
+// The identity as unlocked JSON (version 1), holding the private key: for
+// storage only the holder reads, such as an always-on club's own identity
+// on the relay. A player's backup file uses exportLockedIdentity.
 export async function exportIdentity(ident) {
   const key = await subtle().exportKey('jwk', ident.privateKey);
   return JSON.stringify({type: 'ducy-identity', v: 1, id: ident.id, alg: ident.alg, seq: ident.seq, key});
 }
 
-export async function importIdentity(text) {
+// The identity as a backup file's JSON, locked with `password`. Version 2:
+// {type, v: 2, id, alg, seq, lock: {kdf, iterations, salt, iv, ct}}, where
+// ct is the private key (JWK) encrypted. The ID, algorithm and seq are
+// bound to it as associated data, so they can't be changed either.
+export async function exportLockedIdentity(ident, password) {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD) throw new Error(`Use a password of at least ${MIN_PASSWORD} characters.`);
+  const jwk = await subtle().exportKey('jwk', ident.privateKey);
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const head = {type: 'ducy-identity', v: 2, id: ident.id, alg: ident.alg, seq: ident.seq};
+  const key = await passwordKey(password, salt, PBKDF2_ITERATIONS);
+  const ct = await subtle().encrypt({name: 'AES-GCM', iv, additionalData: enc.encode(canonical(head))}, key, enc.encode(JSON.stringify(jwk)));
+  return JSON.stringify({...head, lock: {kdf: 'PBKDF2-SHA256', iterations: PBKDF2_ITERATIONS, salt: b64url(salt), iv: b64url(iv), ct: b64url(ct)}});
+}
+
+// Whether a backup file's text needs a password to open (a version 2 file).
+export function backupNeedsPassword(text) {
+  try { const f = JSON.parse(text); return f?.type === 'ducy-identity' && f.v === 2; } catch { return false; }
+}
+
+// Opens a backup: a password-locked one (version 2) with `password`, or an
+// older unlocked one (version 1), which needs none.
+export async function importIdentity(text, password = '') {
   let f;
   try { f = JSON.parse(text); } catch { throw new Error('That isn’t a ducy identity file.'); }
+  if (f?.type === 'ducy-identity' && f.v === 2) f = await unlock(f, password);
   if (!f || f.type !== 'ducy-identity' || f.v !== 1 || !KEY_ALGS[f.alg] || !f.key) throw new Error('That isn’t a ducy identity file.');
   const gen = KEY_ALGS[f.alg].gen;
   const privateKey = await subtle().importKey('jwk', f.key, gen, true, ['sign']);
@@ -138,6 +175,22 @@ export async function importIdentity(text) {
   const ident = await fromKeys(f.alg, privateKey, publicKey, Number(f.seq) || 0);
   if (f.id && f.id !== ident.id) throw new Error('The identity file is damaged.');
   return ident;
+}
+
+// A locked (version 2) backup's contents as a version 1 one, or throws.
+async function unlock(f, password) {
+  const l = f.lock;
+  if (!l || l.kdf !== 'PBKDF2-SHA256' || !Number.isSafeInteger(l.iterations) || l.iterations < 1 || l.iterations > 10_000_000) throw new Error('That isn’t a ducy identity file.');
+  if (!password) throw new Error('This backup is locked with a password. Enter it to restore.');
+  const head = {type: 'ducy-identity', v: 2, id: f.id, alg: f.alg, seq: f.seq};
+  let jwk;
+  try {
+    const key = await passwordKey(password, fromB64url(l.salt), l.iterations);
+    jwk = JSON.parse(dec.decode(await subtle().decrypt({name: 'AES-GCM', iv: fromB64url(l.iv), additionalData: enc.encode(canonical(head))}, key, fromB64url(l.ct))));
+  } catch {
+    throw new Error('Wrong password, or the backup is damaged.');
+  }
+  return {type: 'ducy-identity', v: 1, id: f.id, alg: f.alg, seq: f.seq, key: jwk};
 }
 
 // ---- messages ----

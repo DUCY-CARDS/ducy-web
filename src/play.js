@@ -16,7 +16,9 @@
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixText, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, linkedCode, linkedHost, newCode, normCode, relayUrl } from './play-net.js';
-import { checkSignature, exportIdentity, importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
+import {
+  backupNeedsPassword, checkSignature, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId, signMessage,
+} from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -297,33 +299,84 @@ function identityRowHtml() {
   h += `<button class="btn-small" data-act="idbackup"${me ? '' : ' disabled'}>Back up</button>`;
   h += '<label class="btn-small">Restore<input type="file" id="pl-idfile" accept=".json,application/json" hidden></label>';
   h += '</div></div>';
+  if (idForm?.kind === 'backup') {
+    h += '<form class="pl-idform" data-idform="backup">';
+    h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
+    h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+    h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+    h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save backup</button><button class="btn-small" type="button" data-act="idcancel">Cancel</button></div></form>';
+  } else if (idForm?.kind === 'restore') {
+    h += '<form class="pl-idform" data-idform="restore">';
+    h += `<p class="pl-desc">This backup of player ID ${esc(showId(idForm.id))} is locked. Enter its password.</p>`;
+    h += '<label>Password<input class="pl-text" type="password" name="pw" required autocomplete="current-password"></label>';
+    h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Restore</button><button class="btn-small" type="button" data-act="idcancel">Cancel</button></div></form>';
+  }
   if (idNote) h += `<p class="pl-desc">${esc(idNote)}</p>`;
   return h;
 }
 
-async function backupIdentity() {
-  if (!me) return;
-  const blob = new Blob([await exportIdentity(me)], {type: 'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `ducy-identity-${showId(me.id)}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  idNote = 'Keep this file private: anyone who has it can play as you.';
-  render();
-}
+// The backup and restore forms: {kind: 'backup'}, or {kind: 'restore', text,
+// id} for a locked file waiting for its password.
+let idForm = null;
 
-async function restoreIdentity(file) {
+// Saves a backup file locked with `password` (identity.js).
+async function backupIdentity(password) {
+  if (!me) return;
   try {
-    const ident = await importIdentity(await file.text());
-    if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
-    await saveIdentity(ident);
-    me = ident;
-    idNote = `Restored player ID ${showId(ident.id)}.`;
+    const blob = new Blob([await exportLockedIdentity(me, password)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ducy-identity-${showId(me.id)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    idForm = null;
+    idNote = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
   } catch (e) {
     idNote = e.message;
   }
   render();
+}
+
+// A backup file was chosen: a locked one asks for its password first.
+async function chooseBackup(file) {
+  const text = await file.text();
+  if (backupNeedsPassword(text)) {
+    let id = '';
+    try { id = JSON.parse(text).id || ''; } catch {}
+    idForm = {kind: 'restore', text, id};
+    idNote = '';
+    render();
+    root.querySelector('form[data-idform] [name=pw]')?.focus();
+    return;
+  }
+  restoreIdentity(text, '');
+}
+
+async function restoreIdentity(text, password) {
+  try {
+    const ident = await importIdentity(text, password);
+    if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
+    await saveIdentity(ident);
+    me = ident;
+    idForm = null;
+    idNote = `Restored player ID ${showId(ident.id)}.${password ? '' : ' That backup had no password: make a new one with Back up, and delete the old file.'}`;
+  } catch (e) {
+    idNote = e.message;
+  }
+  render();
+}
+
+function onIdSubmit(e) {
+  const f = e.target.closest('form[data-idform]');
+  if (!f) return;
+  e.preventDefault();
+  const pw = f.elements.pw.value;
+  if (f.dataset.idform === 'backup') {
+    if (pw !== f.elements.pw2.value) { idNote = 'The passwords don’t match.'; render(); return; }
+    backupIdentity(pw);
+  } else if (idForm?.kind === 'restore') {
+    restoreIdentity(idForm.text, pw);
+  }
 }
 
 // ---- table ----
@@ -1486,7 +1539,8 @@ function onClick(e) {
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'join') joinTable();
   else if (el.dataset.act === 'copy') copyLink();
-  else if (el.dataset.act === 'idbackup') backupIdentity();
+  else if (el.dataset.act === 'idbackup') { idForm = idForm?.kind === 'backup' ? null : {kind: 'backup'}; idNote = ''; render(); root.querySelector('form[data-idform] [name=pw]')?.focus(); }
+  else if (el.dataset.act === 'idcancel') { idForm = null; render(); }
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
@@ -1507,7 +1561,7 @@ function onInput(e) {
 
 function onChange(e) {
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
-  if (e.target.id === 'pl-idfile' && e.target.files[0]) restoreIdentity(e.target.files[0]);
+  if (e.target.id === 'pl-idfile' && e.target.files[0]) { chooseBackup(e.target.files[0]); e.target.value = ''; }
 }
 
 // The countdown waits while a mouse is over the result, the log or the
@@ -1553,6 +1607,7 @@ export async function openPlay(el, shortcut) {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
+    root.addEventListener('submit', onIdSubmit);
     root.addEventListener('pointerover', onPointer);
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
