@@ -93,6 +93,7 @@ async function hostAct(op, args) {
 }
 
 const seatedCounts = () => (isRemote() ? owner.view?.seated || {} : server?.seatedCounts() || {});
+const tableRunning = id => (isRemote() ? !!owner.view?.running?.includes(id) : !!server?.running(id));
 
 function startHosting() {
   if (!club || hostNet || isRemote()) return;
@@ -180,9 +181,16 @@ function submitTable(f) {
 // the engine (no one's cards before they're shown down), nothing to act on.
 function watchTable(id) {
   const t = tableById(club, id);
-  if (!t || !server?.running(id)) return;
+  if (!t || !tableRunning(id)) return;
+  const toPage = handlers => u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u));
   joinTableVia(handlers => {
-    const stop = server.watch(id, u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u)));
+    // An always-on club's table runs in its room: its view comes encrypted
+    // over the owner's connection (#125).
+    if (isRemote()) {
+      owner.watch(id, toPage(handlers)).catch(e => handlers.onFail(e.message));
+      return {send() {}, close: () => owner.unwatch()};
+    }
+    const stop = server.watch(id, toPage(handlers));
     return {send() {}, close: stop};
   }, {
     label: `${club.name} · ${t.name} (watching)`,
@@ -208,7 +216,7 @@ function tablesHtml() {
       h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${t.sb}/${t.bb} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
       h += t.status === 'closing'
         ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
-        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${server?.running(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
+        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
       if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
       h += '</li>';
@@ -523,7 +531,9 @@ async function storeHand(rec, keep) {
 
 async function loadHands(code, who) {
   try {
-    handLists.set(`${code}|${who}`, await listHands(code, who));
+    // An always-on club's hands are kept in its room (#125).
+    const remoteHost = isRemote() && who === 'host' && code === club?.code;
+    handLists.set(`${code}|${who}`, remoteHost ? await owner.run('hands', {limit: 100}) : await listHands(code, who));
   } catch (e) {
     console.warn(e);
     handLists.set(`${code}|${who}`, []);
@@ -586,7 +596,9 @@ function resultsHtml(entries, names = null, tableNames = {}) {
 }
 
 async function openReplay(id) {
-  const rec = await getHand(id);
+  // One loaded from an always-on club's room is already in the list (#125).
+  const listed = [...handLists.values()].flat().find(r => r.id === id);
+  const rec = listed || await getHand(id);
   if (!rec) return;
   replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
   render();

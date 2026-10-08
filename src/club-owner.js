@@ -15,6 +15,7 @@
 // from their club, and a browser that crashes can lose recent localStorage.
 
 import { checkSignature, signMessage, Verifier } from './identity.js';
+import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
 import { connect, newCode } from './play-net.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -34,6 +35,11 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
   let creating = null; // {name, resolve, reject} while asking a room to become the club
   const verifier = new Verifier();
   const waiting = new Map(); // command id → {resolve, reject, timer}
+  // Watching a table (#125): this page's key pair for encrypted table
+  // updates, the key shared with the club (for its key in aesFor), and the
+  // function updates go to.
+  const keys = newKeyPair();
+  let aes = null, aesFor = '', watching = null;
   let nextId = 0;
 
   const sendSigned = async body => net?.send(await signMessage(identity, {club: rec?.code || creating?.code, ...body}));
@@ -43,10 +49,10 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     net = connect(code, 'guest', identity.id, {
       async onOpen() {
         online = true;
-        if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code}));
+        if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code, key: (await keys).pub}));
         else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
         else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
-        else await sendSigned({type: 'owner_hello'});
+        else await sendSigned({type: 'owner_hello', key: (await keys).pub});
         onChange();
       },
       onMessage: m => receive(m).catch(e => console.warn(e)),
@@ -63,6 +69,13 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
   }
 
   async function receive(m) {
+    // A watched table's update, encrypted with the key shared with the club.
+    // Anything else unsigned is ignored.
+    if (m?.type === 'table' && !m.sig) {
+      if (!watching || !aes || !m.enc) return;
+      try { watching(await openBox(aes, m.enc)); } catch { console.warn('club: a table update didn’t decrypt; ignored'); }
+      return;
+    }
     if ((m?.type === 'club_created' || m?.type === 'club_imported') && creating) {
       rec = {code: creating.code, hostId: m.hostId, name: creating.name};
       await save(rec);
@@ -71,7 +84,7 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
       if (m.type === 'club_imported') await sendSigned({type: 'host_moved', hostId: m.hostId});
       creating.resolve(rec);
       creating = null;
-      await sendSigned({type: 'owner_hello'});
+      await sendSigned({type: 'owner_hello', key: (await keys).pub});
       return;
     }
     if (m?.type === 'club_error' && creating) {
@@ -98,6 +111,11 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     if (!v.ok || v.body?.club !== rec.code) return;
     const body = v.body;
     if (body.type === 'owner_view') {
+      if (typeof body.hostKey === 'string' && body.hostKey !== aesFor) {
+        const k = await keys;
+        aes = await sharedKey(k, body.hostKey, {context: `club:${rec.code}`, hostId: rec.hostId, playerId: identity.id, hostPub: body.hostKey, playerPub: k.pub});
+        aesFor = body.hostKey;
+      }
       view = {seated: body.seated || {}, running: body.running || [], online: body.online || []};
       owner.club = body.data;
       onChange();
@@ -128,6 +146,16 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
     // The page is going away (or into the back/forward cache): disconnect;
     // start() connects again.
     stop() { net?.close(); net = null; online = false; },
+    // Watches table `table`: its spectator updates go to onUpdate (#125).
+    watch(table, onUpdate) {
+      watching = onUpdate;
+      return owner.run('watch', {table}).catch(e => { watching = null; throw e; });
+    },
+    unwatch() {
+      if (!watching) return;
+      watching = null;
+      owner.run('unwatch').catch(() => {});
+    },
     create(name) {
       return new Promise((resolve, reject) => {
         const code = newCode();
