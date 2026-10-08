@@ -22,6 +22,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 const KEY = 'ducyClubRemote';
 const DB_KEY = ['owner', 'club'];
 const RESULT_MS = 20_000;
+const CREATE_MS = 15_000;
 
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
 function save(v) {
@@ -156,10 +157,19 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
       watching = null;
       owner.run('unwatch').catch(() => {});
     },
+    // Rejects if the relay doesn't answer in time, so the page can offer to
+    // run the club in the browser instead (#134).
     create(name) {
       return new Promise((resolve, reject) => {
         const code = newCode();
-        creating = {name, code, resolve, reject};
+        const timer = setTimeout(() => {
+          if (creating?.code !== code) return;
+          creating = null;
+          owner.stop();
+          reject(new Error('ducy’s server didn’t answer.'));
+        }, CREATE_MS);
+        const done = f => v => { clearTimeout(timer); f(v); };
+        creating = {name, code, resolve: done(resolve), reject: done(reject)};
         connectTo(code);
       });
     },
