@@ -44,7 +44,10 @@ let server = null; // runs the hosted club (club-server.js)
 // its latest view from the relay, and host actions go there as commands.
 let owner = null;
 const isRemote = () => !!owner?.record;
-let createWhere = 'browser'; // the New club form's choice: 'always' or 'browser'
+let createWhere = 'always'; // the New club form's choice: 'always' or 'browser'
+// Why the last Always on create failed, and the name it was for: the form
+// then offers running it in this browser instead (#134).
+let alwaysFailed = null;
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
@@ -114,16 +117,20 @@ async function createClub(name) {
   if (createWhere === 'always') {
     // An always-on club (#93): its room on the relay becomes the club.
     note = 'Setting up your club on the server…';
+    alwaysFailed = null;
     render();
     try {
       await owner.create(String(name || '').trim() || 'My club');
       note = '';
     } catch (e) {
-      note = e.message;
+      // The relay is down or full (limits, #123): offer this browser instead.
+      note = '';
+      alwaysFailed = {reason: e.message, name};
     }
     render();
     return;
   }
+  alwaysFailed = null;
   try {
     club = newClub(name, newCode(), me.id);
   } catch (e) {
@@ -767,10 +774,15 @@ function hostHtml() {
     h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game"></div>`;
     // Where it runs (#93): on ducy's relay, or in this browser.
     h += '<div class="pl-row"><span class="pl-label">Runs</span><div class="cl-where">';
-    h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b>: on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser.</label>`;
+    h += `<label><input type="radio" name="cl-where" value="always"${createWhere === 'always' ? ' checked' : ''}> <b>Always on</b>: on ducy's server, so players can join, play and ask for chips whenever, with this page closed. You run it from this browser. Like every club for now, it may be deleted.</label>`;
     h += `<label><input type="radio" name="cl-where" value="browser"${createWhere === 'browser' ? ' checked' : ''}> <b>In this browser</b>: keep this page open while you run it. Players who ask to join while you’re away are waiting for you when you come back.</label>`;
     h += '</div></div>';
-    h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div>';
+    if (alwaysFailed) {
+      h += `<p class="pl-meta cl-down">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
+      h += '<div class="pl-actions"><button class="tr-start" data-cl="create-browser">Run it in this browser instead</button><button class="btn-small" data-cl="create">Try the server again</button></div>';
+    } else {
+      h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create club</button></div>';
+    }
     // An always-on club this player owns, opened from another browser (#98).
     h += '<div class="pl-row"><span class="pl-label">Own one already?</span><div class="pl-opts"><input class="pl-text" id="cl-attach" maxlength="9" placeholder="Club code"><button class="btn-small" data-cl="attach">Open it here</button></div></div>';
     h += '<p class="pl-desc">An always-on club you own, run from another browser. This one needs your player ID too: restore it from your backup first.</p></section>';
@@ -1114,6 +1126,7 @@ async function onClick(e) {
   if (!b) return;
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
+  else if (act === 'create-browser') { createWhere = 'browser'; createClub(root.querySelector('#cl-clubname')?.value || alwaysFailed?.name); }
   else if (act === 'join') joinFromInvite(root.querySelector('#cl-name')?.value);
   else if (act === 'dismiss') { invite = null; clearInviteFromAddress(); render(); }
   else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
