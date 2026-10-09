@@ -23,7 +23,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 import { hostPick, onHostPick } from './host-choice.js';
 import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { handWords } from './hand-words.js';
+import { handText, handWords } from './hand-words.js';
 
 let worker = null;
 let nextId = 0;
@@ -1052,6 +1052,7 @@ function clockText() {
 
 function leaveTable(note = '') {
   wholeChips = false;
+  lastSummary = null;
   clearTimeout(timer);
   clearTimeout(resuming);
   resuming = null;
@@ -1138,6 +1139,75 @@ function lastActions() {
   return out;
 }
 
+// ---- the hand's summary ----
+//
+// After a hand, a short account of what happened beside the table: who won
+// each pot and with what, the hands shown down (in words, on each board
+// when it ran twice), and everyone's result. On a wide screen the last
+// hand's summary stays up while the next one is played; on a narrow one it
+// shows under the table between hands.
+let lastSummary = null; // {hand, html}
+
+const smallCard = c => `<span class="pl-sc${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0] === 'T' ? '10' : c[0]}${SUITS[c[1]]}</span>`;
+
+function summaryBody(s) {
+  const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
+  const words = hand => (hand ? esc(handText(hand) || hand) : '');
+  let h = `<div class="pl-sum-head"><b>Hand ${num(s.hand_number)}</b>`;
+  h += s.board?.length ? ` <span class="pl-sum-board">${s.board.map(smallCard).join('')}</span>` : '';
+  if (s.second_board?.length) h += ` <span class="pl-sum-board" title="The second run">${s.second_board.map(smallCard).join('')}</span>`;
+  h += '</div>';
+
+  // Who won what. A pot only one player could win is an uncalled bet coming
+  // back, or a pot everyone else folded to.
+  const pots = (s.pots || []).filter(p => p.awards?.length);
+  const contested = pots.filter(p => p.eligible.length > 1);
+  h += '<ul class="pl-sum-pots">';
+  if (!s.showdown) {
+    for (const p of pots) for (const a of p.awards) h += `<li><b>${who(a.seat)}</b> ${a.seat === 0 && !watching ? 'win' : 'wins'} ${c(a.amount)}, uncontested</li>`;
+  } else {
+    contested.forEach((p, k) => {
+      const label = contested.length > 1 ? (k === 0 ? 'Main pot' : `Side pot ${k}`) : 'Pot';
+      const names = p.awards.map(a => who(a.seat));
+      const split = p.awards.length > 1 ? ` split ${p.awards.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}` : '';
+      h += `<li>${label} ${c(p.amount)}: <b>${names.join(' and ')}</b>${split}${p.winning_hand ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : ''}</li>`;
+    });
+    for (const p of pots.filter(x => x.eligible.length === 1)) {
+      for (const a of p.awards) h += `<li class="pl-meta">${who(a.seat)} ${a.seat === 0 && !watching ? 'get' : 'gets'} ${c(a.amount)} back, uncalled</li>`;
+    }
+  }
+  h += '</ul>';
+
+  // The hands shown down, in words.
+  const shown = s.seats.map((x, i) => ({...x, i})).filter(x => x.cards?.length && !x.folded && !x.empty && !x.sitting_out && (s.showdown || (x.i === 0 && !watching)));
+  if (shown.length) {
+    h += '<ul class="pl-sum-shown">';
+    for (const x of shown) {
+      const first = handWords(x.cards, s.board);
+      const second = s.second_board?.length === 5 ? handWords(x.cards, s.second_board) : null;
+      const name = second && second !== first ? `${esc(first || '')} / ${esc(second)}` : esc(first || '');
+      h += `<li><span class="pl-sum-who">${who(x.i)}</span> ${x.cards.map(smallCard).join('')}${name ? ` <span class="pl-sum-hand">${name}</span>` : ''}</li>`;
+    }
+    h += '</ul>';
+  }
+
+  // Everyone's result, biggest win first.
+  const results = s.seats.map((x, i) => ({i, net: num(x.net)})).filter(r => r.net !== 0).sort((a, b) => b.net - a.net);
+  if (results.length) {
+    h += `<div class="pl-sum-nets">${results.map(r => `<span class="${r.net > 0 ? 'up' : 'down'}">${who(r.i)} ${r.net > 0 ? '+' : '−'}${c(Math.abs(r.net))}</span>`).join('')}</div>`;
+  }
+  return h;
+}
+
+function summaryHtml() {
+  const s = state;
+  const done = s?.complete && num(s.hand_number) > 0;
+  if (done && lastSummary?.hand !== num(s.hand_number)) lastSummary = {hand: num(s.hand_number), html: null};
+  if (done) lastSummary.html = summaryBody(s);
+  if (!lastSummary?.html) return '';
+  return `<aside class="pl-summary${done ? ' now' : ''}" aria-label="What happened in hand ${lastSummary.hand}">${lastSummary.html}</aside>`;
+}
+
 function renderTable() {
   const s = state, n = s.seats.length;
   const last = lastActions();
@@ -1190,6 +1260,7 @@ function renderTable() {
     h += '</div>';
   });
   h += '</div>';
+  h += summaryHtml();
   h += controlsHtml();
   h += sitOutHtml();
   h += chipsHtml();
