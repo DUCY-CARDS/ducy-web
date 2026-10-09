@@ -1296,9 +1296,10 @@ function renderTable() {
   h += sitOutHtml();
   h += chipsHtml();
   h += reviewHtml();
-  if (statsOpen) h += statsHtml();
+  // The hand's action, then the stats below it.
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
+  if (statsOpen) h += statsHtml();
   h += '</div>';
   // Keep the stats table's sideways scroll across re-renders (narrow screens).
   const scrollX = root.querySelector('.pl-stats-scroll')?.scrollLeft || 0;
