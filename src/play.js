@@ -150,6 +150,9 @@ let myChips = null;
 // missed_big_blind, outEnds}, from the host's updates.
 let mySeat = null;
 let chipAsk = 0; // the amount in a guest's request box
+// Your answer to running it twice, at a bot table or as the host: {hand, yes}.
+// (A guest's comes back from the host in its seat status.)
+let myRunAnswer = null;
 let lastView = null; // a guest's last view from the host
 let errView = null; // the tab netNote is about, after leaving a table
 // This browser's player identity for clubs (identity.js), loaded on open.
@@ -933,6 +936,20 @@ function guestMessage(m) {
   }
 }
 
+// Your answer to running it twice.
+async function runChoice(yes) {
+  if (mode === 'guest') {
+    net?.send({type: 'run_twice', yes});
+    mySeat = {...mySeat, run_twice: yes};
+    render();
+    return;
+  }
+  myRunAnswer = {hand: num(state.hand_number), yes};
+  render();
+  const snap = await request('runTwice', yes);
+  if (snap) show(snap);
+}
+
 // Sends the action to the host; the next view shows the result.
 function guestAct(kind, amount) {
   if (!state?.legal) return false;
@@ -1037,6 +1054,8 @@ function eventText(e) {
     case 'bet': return `${who} ${v('bet')} ${c(e.to)}${allIn}`;
     case 'raise': return `${who} ${v('raise', 'raises')} to ${c(e.to)}${allIn}`;
     case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
+    case 'runs': return e.count === 2 ? 'Running it twice' : 'Running it once';
+    case 'second_board': return `Second run: ${e.cards.join(' ')}`;
     case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
     default: return '';
   }
@@ -1070,6 +1089,8 @@ function renderTable() {
   h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
+  // Run twice: the second board, each pot split between the two.
+  if (s.second_board?.length) h += `<div class="pl-board pl-board2" title="The second run">${s.second_board.map(cardHtml).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
@@ -1152,6 +1173,19 @@ function controlsHtml() {
     } else {
       status = 'Folding when it’s your turn';
       fold = '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button>';
+    }
+  } else if (s.run_choice) {
+    // Everyone left is all-in: run the rest of the board twice? Everyone
+    // still in must say yes (bots go along).
+    const me = s.seats[0];
+    const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
+    const answer = mode === 'guest' ? mySeat?.run_twice : myRunAnswer?.hand === num(s.hand_number) ? myRunAnswer.yes : undefined;
+    if (asked && answer == null) {
+      status = 'Everyone’s all-in. Run it twice?';
+      call = '<button class="tr-btn" data-act="runonce">Run it once</button>';
+      raise = '<button class="tr-btn yes" data-act="runtwice">Run it twice</button>';
+    } else {
+      status = asked ? `You said ${answer ? 'twice' : 'once'}; waiting for the others…` : 'The players are choosing whether to run it twice…';
     }
   } else if (!L) {
     status = `${esc(nameOf(s.to_act))} is thinking…`;
@@ -1611,6 +1645,7 @@ function onClick(e) {
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'copy') copyLink();
   else if (el.dataset.act === 'prefold') togglePrefold();
+  else if (el.dataset.act === 'runtwice' || el.dataset.act === 'runonce') runChoice(el.dataset.act === 'runtwice');
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     const typed = typedBet();

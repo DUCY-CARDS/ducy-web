@@ -2,8 +2,8 @@
 // stays responsive while a bot thinks; Omaha decisions can take a second or
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
-//        newHand(reset) | advance | act(kind, amount) | loadGto(manifestUrl) |
-//        review
+//        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
+//        loadGto(manifestUrl) | review
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -11,6 +11,7 @@
 // Hosting a table for friends uses MultiTable (ops starting with "host"):
 //   hostFriends(seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed,
 //     game, turnMs) | hostNewHand | hostAdvance | hostAct(kind, amount) |
+//   hostRunTwice(yes) |
 //   hostHandle(client, msg) | hostDisconnected(client) | hostTick |
 //   hostApprove(seat) | hostDeny(seat) | hostChips(amount) | hostRemove(seat)
 // Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
@@ -86,6 +87,8 @@ const ops = {
   review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
+  // All-in with cards to come: run it twice (yes) or once; the bots go along.
+  runTwice: yes => snapshot(table.runTwice(!!yes)),
   loadGto: manifestUrl => loadGtoModel(manifestUrl),
   hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
@@ -119,6 +122,7 @@ const ops = {
   hostNewHand: () => host.newHand(now('host')),
   hostAdvance: () => host.advance(now('host')),
   hostAct: (kind, amount) => host.act(kind, BigInt(amount), now('host')),
+  hostRunTwice: yes => host.hostRunTwice(!!yes, now('host')),
   hostHandle: (client, msg) => host.handle(client, msg, now('host')),
   hostDisconnected: client => host.disconnected(client, now('host')),
   hostTick: () => host.tick(now('host')),
