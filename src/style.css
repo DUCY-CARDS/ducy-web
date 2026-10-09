@@ -939,10 +939,19 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 }
 .pl-summary ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .pl-sum-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: var(--fg-strong); }
+.pl-sum-boardrow { display: flex; align-items: center; gap: 8px; }
+.pl-sum-boardrow .pl-sum-label { min-width: 3.5em; margin: 0; }
 .pl-sum-board { display: inline-flex; gap: 3px; }
+.pl-sum-board .pl-sc { font-size: 14px; padding: 1px 4px; }
+.pl-sum-cards { display: inline-flex; gap: 2px; }
 .pl-sc { font-family: var(--font-data); font-size: 12px; font-weight: 700; padding: 0 3px; border: 1px solid var(--border); border-radius: 3px; background: #fff; color: #1a1a1a; }
 .pl-sc.r { color: #c0392b; }
-.pl-sum-shown li { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+/* A hand shown down: name and cards, what they made under them. */
+.pl-summary ul.pl-sum-shown { gap: 6px; }
+.pl-sum-shown li { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 6px; }
+.pl-sum-shown li .pl-sum-hand { grid-column: 1 / -1; font-size: 12px; }
+.pl-sum-shown li.won .pl-sum-who, .pl-sum-shown li.won .pl-sum-hand { color: var(--fg-strong); font-weight: 700; }
+.pl-sum-won { color: var(--green); font-weight: 700; }
 .pl-sum-who { min-width: 5em; font-weight: 600; }
 .pl-sum-hand { color: var(--fg-muted); }
 .pl-sum-nets { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-data); font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }

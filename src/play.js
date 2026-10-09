@@ -1159,7 +1159,8 @@ function summaryLine(s) {
   let line = '';
   if (s.showdown && contested.length) {
     const p = contested[0];
-    const names = p.awards.map(a => who(a.seat)).join(' and ');
+    const cards = i => (s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` ${s.seats[i].cards.map(smallCard).join('')}` : '');
+    const names = p.awards.map(a => `${who(a.seat)}${cards(a.seat)}`).join(' and ');
     line = `${names} ${p.awards.length > 1 ? 'split' : 'won'} ${c(p.amount)}`;
     if (p.winning_hand) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
     if (contested.length > 1) line += `, and ${contested.length - 1} side pot${contested.length > 2 ? 's' : ''}`;
@@ -1177,10 +1178,14 @@ const smallCard = c => `<span class="pl-sc${c[1] === 'h' || c[1] === 'd' ? ' r' 
 function summaryBody(s) {
   const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
   const words = hand => (hand ? esc(handText(hand) || hand) : '');
-  let h = `<div class="pl-sum-head"><b>Hand ${num(s.hand_number)}</b>`;
-  h += s.board?.length ? ` <span class="pl-sum-board">${s.board.map(smallCard).join('')}</span>` : '';
-  if (s.second_board?.length) h += ` <span class="pl-sum-board" title="The second run">${s.second_board.map(smallCard).join('')}</span>`;
-  h += '</div>';
+  // A winner's cards, when they were shown down.
+  const holeOf = i => (s.showdown && s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` <span class="pl-sum-cards">${s.seats[i].cards.map(smallCard).join('')}</span>` : '');
+  let h = `<div class="pl-sum-head"><b>Hand ${num(s.hand_number)}</b></div>`;
+  // The board (each run's, when it ran twice), on its own rows.
+  const boards = s.second_board?.length ? [['Run 1', s.board], ['Run 2', s.second_board]] : [['Board', s.board]];
+  for (const [label, cards] of boards) {
+    if (cards?.length) h += `<div class="pl-sum-boardrow"><span class="pl-sum-label">${label}</span><span class="pl-sum-board">${cards.map(smallCard).join('')}</span></div>`;
+  }
 
   // Who won what. A pot only one player could win is an uncalled bet coming
   // back, or a pot everyone else folded to.
@@ -1192,9 +1197,9 @@ function summaryBody(s) {
   } else {
     contested.forEach((p, k) => {
       const label = contested.length > 1 ? (k === 0 ? 'Main pot' : `Side pot ${k}`) : 'Pot';
-      const names = p.awards.map(a => who(a.seat));
+      const names = p.awards.map(a => `<b>${who(a.seat)}</b>${holeOf(a.seat)}`);
       const split = p.awards.length > 1 ? ` split ${p.awards.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}` : '';
-      h += `<li>${label} ${c(p.amount)}: <b>${names.join(' and ')}</b>${split}${p.winning_hand ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : ''}</li>`;
+      h += `<li>${label} ${c(p.amount)}: ${names.join(' and ')}${split}${p.winning_hand ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : ''}</li>`;
     });
     for (const p of pots.filter(x => x.eligible.length === 1)) {
       for (const a of p.awards) h += `<li class="pl-meta">${who(a.seat)} ${a.seat === 0 && !watching ? 'get' : 'gets'} ${c(a.amount)} back, uncalled</li>`;
@@ -1202,15 +1207,18 @@ function summaryBody(s) {
   }
   h += '</ul>';
 
-  // The hands shown down, in words.
-  const shown = s.seats.map((x, i) => ({...x, i})).filter(x => x.cards?.length && !x.folded && !x.empty && !x.sitting_out && (s.showdown || (x.i === 0 && !watching)));
+  // The hands shown down: each player's cards and what they made, winners
+  // marked. When it ran twice, what they made on each run.
+  const shown = s.seats.map((x, i) => ({...x, i})).filter(x => x.cards?.length && x.cards.every(Boolean) && !x.folded && !x.empty && !x.sitting_out && (s.showdown || (x.i === 0 && !watching)));
   if (shown.length) {
-    h += '<ul class="pl-sum-shown">';
+    const won = new Set(pots.flatMap(p => (p.eligible.length > 1 ? p.awards.map(a => a.seat) : [])));
+    h += `<div class="pl-sum-label">${s.showdown ? 'Showdown' : 'Your hand'}</div><ul class="pl-sum-shown">`;
     for (const x of shown) {
       const first = handWords(x.cards, s.board);
       const second = s.second_board?.length === 5 ? handWords(x.cards, s.second_board) : null;
       const name = second && second !== first ? `${esc(first || '')} / ${esc(second)}` : esc(first || '');
-      h += `<li><span class="pl-sum-who">${who(x.i)}</span> ${x.cards.map(smallCard).join('')}${name ? ` <span class="pl-sum-hand">${name}</span>` : ''}</li>`;
+      const mark = s.showdown && won.has(x.i);
+      h += `<li${mark ? ' class="won"' : ''}><span class="pl-sum-who">${who(x.i)}</span><span class="pl-sum-cards">${x.cards.map(smallCard).join('')}</span>${name || mark ? `<span class="pl-sum-hand">${name}${mark ? ' <span class="pl-sum-won" title="Won">✓ won</span>' : ''}</span>` : ''}</li>`;
     }
     h += '</ul>';
   }
