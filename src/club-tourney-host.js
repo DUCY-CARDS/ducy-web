@@ -15,17 +15,22 @@
 //   tourneysChanged()    the lobby changed (entries, places, status): tell members
 //   liveChanged()        only the live standings moved (the caller throttles it)
 //   online(id)           whether a member is connected
-//   call, timers         the engine and timers (an always-on club's room passes its own)
+//   call, timers, store  the engine, timers and where tournaments are saved
+//                        (an always-on club's room passes its own)
 //   turnMs, nextHandMs, botPaceMs, levelMs   pacing (tests use short ones;
 //                        levelMs replaces each level's minutes)
 //   observe(tid, res)    sees every engine result (tests)
 //
-// A tournament's tables can't yet be saved and restored mid-tournament
-// (ducy's TournamentHost doesn't save its clocks): if the host restarts
-// while one is running, it's cancelled and every buy-in is refunded.
+// A running tournament is saved after every change (its tables, hands in
+// play, turn clocks and the level clock), so when the host restarts it
+// carries on where it was: members still connected are back at once, and
+// anyone who isn't is blinded off until they are. Only if nothing usable was
+// saved (or it's out of step with the club) is it cancelled, with every
+// buy-in refunded.
 
 import { atStart, cancelTourney, finishTourney, isIn, knockedOut, lateEntry, prizes, startTourney, tourneyById } from './club-tourneys.js';
 import { browserTimers, workerCall } from './club-host.js';
+import { dropTable, getTable, putTable } from './table-store.js';
 import { logAction } from './club-roles.js';
 
 const BOT_PACE_MS = 700;
@@ -35,7 +40,7 @@ export const tourneyTable = tid => `tourney:${tid}`;
 
 export function createTourneyHost({
   club, save, sendTable, chipsChanged, tourneysChanged = () => {}, liveChanged = () => {}, online = () => true,
-  call = workerCall, timers = browserTimers, turnMs = TURN_MS, nextHandMs = NEXT_HAND_MS, botPaceMs = BOT_PACE_MS, levelMs = null,
+  call = workerCall, timers = browserTimers, store = {get: getTable, put: putTable, drop: dropTable}, turnMs = TURN_MS, nextHandMs = NEXT_HAND_MS, botPaceMs = BOT_PACE_MS, levelMs = null,
   observe = () => {},
 }) {
   const running = new Map(); // tid → {chain, step, onBreak, level, timers, live}
@@ -45,12 +50,62 @@ export function createTourneyHost({
   const names = id => club().members[id]?.name || id;
   const changed = () => { save(); tourneysChanged(); };
 
-  // Starts, or schedules the start of, every tournament waiting for it.
-  // One that was running when the host stopped can't go on: refunded.
+  // Starts, or schedules the start of, every tournament waiting for it, and
+  // picks up any that was running when the host stopped.
   function startAll() {
     for (const t of club().tourneys || []) {
       if (t.status === 'scheduled') schedule(t);
-      else if (t.status === 'running' && !running.has(t.id)) abandon(t.id, 'the club’s host restarted while it was running');
+      else if (t.status === 'running' && !running.has(t.id)) resume(t);
+    }
+  }
+
+  const outCount = t => t.entries.filter(e => e.place != null).length;
+
+  // A tournament that was running when the host stopped: loaded from where
+  // it was saved, if that's in step with the club (the same entries, the
+  // same players out); otherwise cancelled with refunds, as before.
+  async function resume(t) {
+    const tid = t.id;
+    let rec = null;
+    try { rec = await store.get(club().code, tourneyTable(tid)); } catch (e) { console.warn(`tournament ${tid}: not loaded:`, e); }
+    if (!rec?.json) return abandon(tid, 'the club’s host restarted, and its tables weren’t saved');
+    if (rec.entries !== t.entries.length || rec.out !== outCount(t)) return abandon(tid, 'the club’s host restarted, and its saved tables were out of step with the club');
+    const r = {chain: Promise.resolve(), step: rec.step ?? 0, onBreak: false, level: rec.level ?? 0, timers: {}, live: null, savedSeq: rec.seq};
+    running.set(tid, r);
+    try {
+      await call('tourneyRestore', tid, rec.json);
+    } catch (e) {
+      console.warn(`tournament ${tid}: not resumed:`, e);
+      running.delete(tid);
+      return abandon(tid, 'the club’s host restarted, and its saved tables couldn’t be loaded');
+    }
+    // The level clock goes on with the time it had left.
+    startStep(tid, r.step, rec.stepLeftMs);
+    // Members still connected are back at once; anyone who isn't is
+    // blinded off until they're back.
+    for (const id of new Set(t.entries.filter(e => e.place == null).map(e => e.member))) {
+      if (online(id)) run(tid, 'handle', id, {type: 'join', name: names(id)});
+      else run(tid, 'disconnected', id);
+    }
+  }
+
+  // Saves the tournament after a change: the engine's tables and clocks,
+  // the level clock, and how many entries and players out the club had then.
+  async function persist(tid, res) {
+    const r = running.get(tid);
+    const t = tourneyById(club(), tid);
+    if (!r || !t || r.noSave || res?.seq === r.savedSeq) return;
+    try {
+      const json = await call('tourneySave', tid);
+      if (json == null) { r.noSave = true; return; }
+      const now = Date.now();
+      await store.put(club().code, tourneyTable(tid), {
+        json, seq: res?.seq, step: r.step, stepLeftMs: r.stepEndsAt ? Math.max(0, r.stepEndsAt - now) : null,
+        level: r.level, entries: t.entries.length, out: outCount(t), at: now,
+      });
+      r.savedSeq = res?.seq;
+    } catch (e) {
+      console.warn(`tournament ${tid}: not saved:`, e);
     }
   }
 
@@ -78,6 +133,7 @@ export function createTourneyHost({
       changed();
       startStep(tid, 0);
       take(tid, res);
+      await persist(tid, res);
     } catch (e) {
       running.delete(tid);
       console.warn(`tournament ${tid}:`, e);
@@ -105,13 +161,15 @@ export function createTourneyHost({
       running.delete(tid);
       call('tourneyDrop', tid).catch(() => {});
     }
+    store.drop(club().code, tourneyTable(tid)).catch(() => {});
     timers.clear(scheduled.get(tid));
     scheduled.delete(tid);
   }
 
   // The level clock: step `i` of the structure (a level, or a break) starts
-  // now. The last level stays once it's reached.
-  function startStep(tid, i) {
+  // now, or, resuming, goes on with `leftMs` to go. The last level stays
+  // once it's reached.
+  function startStep(tid, i, leftMs = null) {
     const r = running.get(tid);
     const t = tourneyById(club(), tid);
     if (!r || !t) return;
@@ -120,7 +178,7 @@ export function createTourneyHost({
     const s = steps[r.step];
     r.onBreak = !!s.break;
     const level = steps.slice(0, r.step + 1).filter(x => !x.break).length - 1;
-    const ms = levelMs ?? s.minutes * 60_000;
+    const ms = leftMs ?? levelMs ?? s.minutes * 60_000;
     r.stepEndsAt = i < steps.length ? Date.now() + ms : null;
     clear(r, 'level');
     if (i < steps.length - 1 || s.break) r.timers.level = timers.set(() => startStep(tid, r.step + 1), ms);
@@ -136,6 +194,7 @@ export function createTourneyHost({
       if (!running.has(tid)) return null;
       const res = await call('tourneyCall', tid, method, ...args);
       take(tid, res);
+      await persist(tid, res);
       return res;
     });
     r.chain = p.catch(e => console.warn(`tournament ${tid} ${method}:`, e));

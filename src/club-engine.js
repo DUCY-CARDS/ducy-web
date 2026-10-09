@@ -20,7 +20,8 @@
 // Tournaments (#81, club-tourney-host.js): tourneyCreate(id, config,
 // players, turnMs) | tourneyCall(id, method, ...args) for handle,
 // disconnected, advance, tick, newHands, setLevel, addEntry, state (the
-// time is added) | tourneyTable(id, table) | tourneyDrop(id).
+// time is added) | tourneyTable(id, table) | tourneyDrop(id) |
+// tourneySave(id) | tourneyRestore(id, json).
 
 import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
 // The whole module too: ClubTournament is only in newer builds.
@@ -92,6 +93,17 @@ export function clubEngine(MultiTable) {
     // The host's view of one of its tables (no hole cards until shown down).
     tourneyTable: (id, table) => tourneys.get(id)?.tableView(table) ?? null,
     tourneyDrop: id => { tourneys.get(id)?.free(); return tourneys.delete(id); },
+    // The tournament as JSON, hands in play and clocks included, for
+    // resuming it after the host restarts; null with a ducy-wasm that can't.
+    tourneySave: id => { const t = tourneys.get(id); return t?.save ? t.save(Date.now()) : null; },
+    // A tournament saved with tourneySave; throws if it can't be loaded.
+    tourneyRestore: (id, json) => {
+      if (!ducy.ClubTournament?.restore) throw new Error('this ducy-wasm can’t restore tournaments');
+      const t = ducy.ClubTournament.restore(json, Date.now());
+      tourneys.get(id)?.free();
+      tourneys.set(id, t);
+      return t.state(Date.now());
+    },
     // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
     clubSitOutLimit: (id, ms) => { tables.get(id)?.setSitOutLimit(ms); return true; },
     // Stops (on) or restarts a table's clock: while stopped no time passes

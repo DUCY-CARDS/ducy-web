@@ -233,7 +233,7 @@ export function createClubServer({
     tableHost.setLink(linkOk);
     for (const t of live) started(tableHost.start(t, {resume: true}));
     // Tournaments (#81): each starts at its time; one that was running
-    // when the club stopped can't resume, and is refunded.
+    // when the club stopped carries on from where it was saved.
     tourneyHost = createTourneyHost({
       club: () => club,
       save: () => { persist(); scheduleAdmin(); onChange(); },

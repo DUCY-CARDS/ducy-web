@@ -61,6 +61,7 @@ test('30 entrants on 3 tables play to a single winner, balanced and conserved, p
   host = createTourneyHost({
     club: () => club, save() {}, sendTable: deliver, chipsChanged() {}, online: id => joined.has(id),
     call: async (op, ...args) => engine.ops[op](...args),
+    store: {get: async () => null, put: async () => {}, drop: async () => {}},
     turnMs: 3000, nextHandMs: 5, botPaceMs: 5, levelMs: 1500,
     observe: (tid, res) => {
       checks.levels.add(res.level);
@@ -109,4 +110,93 @@ test('30 entrants on 3 tables play to a single winner, balanced and conserved, p
   assert.ok(club.members[winner].balance > 10000 - 100, 'the winner was paid');
   assert.ok(totals(club).conserved, JSON.stringify(totals(club)));
   assert.equal(tourneysBody(club).tourneys[0].status, 'finished');
+});
+
+test('a tournament carries on when its host restarts, instead of being cancelled', {skip: !ducy.ClubTournament?.restore && 'this ducy-wasm can’t restore tournaments'}, async () => {
+  const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
+  const ids = Array.from({length: 12}, (_, i) => `p${i}`);
+  for (const id of ids) {
+    club.members[id] = {id, name: id.toUpperCase(), status: 'pending', requestedAt: 0};
+    approve(club, id, 0);
+    issue(club, id, 10000, 0);
+  }
+  const t = newTourney(club, {
+    name: 'Restart Cup', buyIn: 100, added: 0, stack: 1500, structure: LEVELS,
+    opensAt: 0, startsAt: Date.now() + 300, minPlayers: 2, maxPlayers: 20, tableSize: 6, lateLevel: 0,
+  });
+  for (const id of ids) register(club, t.id, id, 10);
+  // Where tables are saved, as the page's IndexedDB or an always-on club's room storage.
+  const saved = new Map();
+  const memory = {
+    get: async (code, key) => structuredClone(saved.get(`${code}/${key}`)),
+    put: async (code, key, rec) => { saved.set(`${code}/${key}`, structuredClone(rec)); },
+    drop: async (code, key) => { saved.delete(`${code}/${key}`); },
+  };
+  const online = new Set(ids);
+  let host = null;
+  const deliver = (to, msg) => queueMicrotask(() => {
+    const u = msg.update;
+    if (u?.type !== 'state' || !u.view.legal || u.view.complete) return;
+    const r = Math.random();
+    const kind = r < 0.05 ? 'allin' : u.view.legal.can_check ? 'check' : 'call';
+    // (A reply that reaches a host that just crashed goes nowhere.)
+    host.handle(t.id, to, {type: 'act', seq: u.seq, kind, amount: 0}).catch(() => {});
+  });
+  // A host that can crash: after that, none of its timers fire and it saves
+  // nothing. With `crashAfterOut`, it crashes right after the first save
+  // that has someone knocked out: mid-tournament, just after a save.
+  const makeHost = ({crashAfterOut = false} = {}) => {
+    const life = {alive: true, calls: 0, restored: false, crashed: null};
+    life.crashed = new Promise(r => { life.onCrash = r; });
+    const engine = clubEngine(ducy.MultiTable);
+    const h = createTourneyHost({
+      club: () => club, save() {}, sendTable: (to, m) => life.alive && deliver(to, m), chipsChanged() {}, online: id => online.has(id),
+      call: async (op, ...args) => {
+        if (!life.alive) throw new Error('crashed');
+        life.calls++;
+        if (op === 'tourneyRestore') life.restored = true;
+        return engine.ops[op](...args);
+      },
+      timers: {set: (fn, ms) => setTimeout(() => life.alive && fn(), ms), clear: x => clearTimeout(x)},
+      store: {
+        ...memory,
+        put: async (code, key, rec) => {
+          if (!life.alive) return;
+          await memory.put(code, key, rec);
+          if (crashAfterOut && rec.out > 0) { life.alive = false; life.onCrash(rec.out); }
+        },
+      },
+      turnMs: 3000, nextHandMs: 5, botPaceMs: 5, levelMs: 1500,
+    });
+    return {h, life};
+  };
+
+  const first = makeHost({crashAfterOut: true});
+  host = first.h;
+  host.startAll();
+  assert.ok(await until(() => host.running(t.id), 5000), 'it started');
+  // Play starts as people join, so the host may crash before they all have.
+  for (const id of ids) await host.handle(t.id, id, {type: 'join', name: id}).catch(() => {});
+  // Play until the first save with someone knocked out; the host crashes there.
+  const outBefore = await first.life.crashed;
+  assert.equal(t.status, 'running', 'still running when the host crashed');
+
+  // The host restarts: a fresh engine; the club and what was saved are all
+  // that's left. Players are still connected.
+  const second = makeHost();
+  host = second.h;
+  host.startAll();
+  // The new host loads it from where it was saved and plays it to the end.
+  assert.ok(await until(() => t.status === 'finished' || t.status === 'cancelled', 240_000), `over (status ${t.status})`);
+  assert.equal(t.status, 'finished', `not cancelled (log: ${(club.log || []).slice(-2).map(l => l.text).join(' | ')})`);
+  assert.ok(second.life.restored, 'the new host restored the saved tournament');
+  assert.ok(second.life.calls > 20, `and played it on (${second.life.calls} engine calls)`);
+  assert.ok(t.entries.filter(e => e.place != null).length >= outBefore, 'no one came back in');
+
+  const places = t.entries.map(e => e.place).sort((a, b) => a - b);
+  assert.deepEqual(places, Array.from({length: 12}, (_, i) => i + 1), 'every entry has its own place');
+  assert.equal(t.paid.reduce((s, p) => s + p.amount, 0), 12 * 100, 'the whole pool paid out');
+  assert.ok(!(club.log || []).some(l => /cancelled/.test(l.text)), 'no cancellation in the log');
+  assert.ok(totals(club).conserved, JSON.stringify(totals(club)));
+  assert.equal(saved.size, 0, 'the saved tournament is gone once it’s over');
 });
