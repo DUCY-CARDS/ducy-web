@@ -24,6 +24,7 @@ import { hostPick, onHostPick } from './host-choice.js';
 import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
+import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 
 let worker = null;
 let nextId = 0;
@@ -173,7 +174,7 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
@@ -880,6 +881,14 @@ export function setTableName(n) {
   render();
 }
 
+// Your seat's avatar, picked in Player settings: one of PLAYER_AVATARS, or ''.
+export const tableAvatar = () => (PLAYER_AVATARS.some(a => a.id === setup.avatar) ? setup.avatar : '');
+export function setTableAvatar(id) {
+  setup.avatar = PLAYER_AVATARS.some(a => a.id === id) ? id : '';
+  saveSetup();
+  render();
+}
+
 // Sits down at a table reached some other way than a table code: a club
 // table (clubs.js). `open(handlers)` returns {send(command), close()} and
 // calls handlers.onMessage(update) for each update from the table's host,
@@ -1100,6 +1109,16 @@ function seatPos(i, n) {
   return {x: 50 + 44 * Math.cos(a), y: 50 + 40 * Math.sin(a)};
 }
 
+// A seat's avatar: yours as picked in Player settings, a bot's main look by
+// its personality id. Anyone else (the GTO bot, other people at a friends or
+// club table) gets the first letter of their name.
+function avatarHtml(i) {
+  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' && BOT_AVATARS.has(seatId(i)) ? seatId(i) : '';
+  if (id) return `<div class="pl-av"><img src="${avatarUrl(id)}" alt=""></div>`;
+  const letter = [...String(state.seats[i].name || '?').trim()][0] || '?';
+  return `<div class="pl-av none" aria-hidden="true">${esc(letter.toUpperCase())}</div>`;
+}
+
 function eventText(e) {
   // Seat 0 is you: "You call" but "Rampart calls". At friends and club tables
   // your seat shows your name, so the log says "You" rather than "Ann call".
@@ -1277,12 +1296,13 @@ function renderTable() {
     }
     if (seat.sitting_out) {
       const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
-      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
     const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
+    h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.

@@ -1,6 +1,6 @@
 // Player settings (#144): everything about you that most people set once
 // and leave, in a dialog opened from the Play section's tab bar: your name,
-// your player ID with its backup and restore, how many club hands to keep,
+// your avatar at the table, your player ID with its backup and restore, how many club hands to keep,
 // notifications when something needs you (#145), and the relay in use.
 //
 // The player ID only lives in this browser, so a backup file (locked with a
@@ -12,7 +12,8 @@ import {
   backupNeedsPassword, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId,
 } from './identity.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
-import { setTableName, tableName } from './play.js';
+import { setTableAvatar, setTableName, tableAvatar, tableName } from './play.js';
+import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { keepHands, memberName, renameMember, setKeepHands, hasClubs } from './clubs.js';
 
 const NOTIFY_KEY = 'ducyNotify';
@@ -60,6 +61,13 @@ function render() {
   h += '<div class="cl-replay-head"><b>Player settings</b><button class="link-btn" data-ps="close">Close</button></div>';
   h += `<form class="pl-row" data-psform="name"><span class="pl-label">Your name</span><input class="pl-text" name="name" maxlength="20" placeholder="What others see" value="${esc(myName())}"><button class="btn-small" type="submit">Save</button></form>`;
   h += '<p class="pl-desc">What other players and club hosts see.</p>';
+  // Your avatar at the table, or none (your initial).
+  const mine = tableAvatar();
+  h += '<div class="pl-row ps-avrow"><span class="pl-label">Avatar</span><div class="ps-avatars" role="radiogroup" aria-label="Avatar">';
+  h += `<button type="button" class="ps-av none${mine ? '' : ' on'}" role="radio" aria-checked="${!mine}" data-ps="avatar" data-id="" title="None">${esc([...myName().trim()][0]?.toUpperCase() || '?')}</button>`;
+  for (const a of PLAYER_AVATARS) h += `<button type="button" class="ps-av${a.id === mine ? ' on' : ''}" role="radio" aria-checked="${a.id === mine}" data-ps="avatar" data-id="${a.id}" title="${esc(a.label)}"><img src="${avatarUrl(a.id)}" alt="${esc(a.label)}"></button>`;
+  h += '</div></div>';
+  h += '<p class="pl-desc">Shown at your seat at the table.</p>';
   // The player ID, with backup and restore.
   h += '<div class="pl-row"><span class="pl-label">Player ID</span><div class="pl-opts">';
   h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(showId(me.id)) : '…'}</code>`;
@@ -104,6 +112,7 @@ async function onClick(e) {
   else if (a === 'backup') { idForm = idForm?.kind === 'backup' ? null : {kind: 'backup'}; note = ''; render(); el.querySelector('[data-psform=backup] [name=pw]')?.focus(); }
   else if (a === 'cancel') { idForm = null; render(); }
   else if (a === 'keep') { setKeepHands(Number(b.dataset.n)); render(); }
+  else if (a === 'avatar') { setTableAvatar(b.dataset.id); render(); el.querySelector('.ps-av.on')?.focus(); }
 }
 
 async function onChange(e) {

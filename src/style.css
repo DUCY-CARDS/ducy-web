@@ -769,6 +769,16 @@ body.mode-play :is(.toolbar, .table-wrap) { display: none; }
 }
 .ps .pl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ps-check { font-size: 13px; color: var(--fg); }
+/* The avatar picker: the player avatars as they look at the table. */
+.ps .ps-avrow { align-items: flex-start; }
+.ps-avrow .pl-label { padding-top: 12px; }
+.ps-avatars { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.ps-av { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; overflow: hidden; cursor: pointer; background: var(--felt-border); box-shadow: 0 0 0 2px var(--border); }
+.ps-av img { display: block; width: 100%; height: 100%; }
+.ps-av.none { font: 700 18px var(--font-body, inherit); color: #e9ecef; }
+.ps-av:hover { box-shadow: 0 0 0 2px var(--teal-faint), 0 0 0 4px var(--teal); }
+.ps-av.on { box-shadow: 0 0 0 3px var(--teal); }
+.ps-av:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .pt-badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: #1a1a1a; font-size: 11px; line-height: 18px; text-align: center; }
 .pt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
 .pt-body { display: flex; flex-direction: column; }
@@ -924,6 +934,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-card.back { background: repeating-linear-gradient(45deg, #4b6f78, #4b6f78 4px, #3e5f67 4px, #3e5f67 8px); border-color: rgba(255,255,255,0.25); }
 .pl-card.slot { background: transparent; border: 1px dashed rgba(255,255,255,0.18); box-shadow: none; }
 .pl-seat { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 3px; width: 112px; }
+/* Seat avatars (avatars.js): a bot's main look, or the one you picked. */
+.pl-av { width: 56px; height: 56px; flex: none; border-radius: 50%; overflow: hidden; background: var(--felt-border); box-shadow: 0 0 0 2px var(--felt-border); }
+.pl-av img { display: block; width: 100%; height: 100%; }
+.pl-av.none { display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; color: #e9ecef; }
+.pl-seat.acting .pl-av { box-shadow: 0 0 0 3px var(--teal); }
+.pl-seat.winner .pl-av { box-shadow: 0 0 0 3px var(--green); }
+/* The cards sit in front of the avatar, over its lower edge, which keeps the
+   seat short enough not to run into its neighbours. */
+.pl-av + .pl-hole { margin-top: -20px; position: relative; }
 .pl-hole { display: flex; gap: 3px; }
 .pl-hole .pl-card { width: 32px; height: 45px; font-size: 13px; }
 .pl-seat.hero .pl-hole .pl-card { width: 40px; height: 56px; font-size: 16px; }
@@ -987,7 +1006,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-summary.last { padding: 6px 12px; }
   .pl-summary.last .pl-sum-full { display: none; }
 }
-.pl-bet { position: absolute; top: -14px; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
+/* Beside the avatar's shoulder, clear of its face. */
+.pl-bet { position: absolute; top: 4px; left: calc(50% + 30px); z-index: 1; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
 /* Beside the name plate, so it never covers hole cards. */
 .pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
 
@@ -1053,6 +1073,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-act-raise kbd, .pl-act-call kbd, .pl-act-fold kbd { display: none; }
   .pl-felt { aspect-ratio: 3 / 4; margin: 24px 30px 34px; border-radius: 120px; }
   .pl-seat { width: 84px; }
+  .pl-av { width: 40px; height: 40px; }
+  .pl-av.none { font-size: 16px; }
+  .pl-av + .pl-hole { margin-top: -14px; }
+  .pl-bet { top: 0; left: calc(50% + 21px); }
   .pl-plate { min-width: 76px; padding: 2px 4px; }
   .pl-plate b { max-width: 78px; font-size: 10px; }
   .pl-card { width: 28px; height: 40px; font-size: 12px; }
