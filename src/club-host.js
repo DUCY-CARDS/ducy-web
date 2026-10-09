@@ -86,6 +86,7 @@ export function createTableHost({
     if (stop === !!r.stopped) return;
     r.stopped = stop;
     if (stop) for (const k of Object.keys(r.timers)) clear(r, k);
+    sweep(tid, r);
     r.chain = r.chain.then(() => call('clockPause', tid, stop)).catch(e => console.warn(e));
     // Restarted: the state's turn clock and next step set the timers again.
     if (!stop) run(tid, 'state');
@@ -214,13 +215,21 @@ export function createTableHost({
   }
 
   // The sit-out limit is checked on tick, so a table with people at it ticks
-  // regularly, not only on the turn clock. An empty one doesn't, so nothing
-  // keeps an always-on club's room awake while no one plays (#93).
+  // regularly, not only on the turn clock. An empty one doesn't, and nor does
+  // one whose clock is stopped (no one seated is connected, #96): the limit
+  // doesn't count then anyway, and the tick would wake an always-on club's
+  // room every 5 s for nothing (#93). It starts again when the clock does.
   function sweep(tid, r) {
-    if (r.players.length && !r.sweep) {
-      const tick = () => { if (!running.has(tid)) return; if (!r.stopped) run(tid, 'tick'); r.sweep = timers.set(tick, 5_000); };
+    const want = r.players.length && !r.stopped;
+    if (want && !r.sweep) {
+      const tick = () => {
+        r.sweep = null;
+        if (!running.has(tid) || r.stopped) return;
+        run(tid, 'tick');
+        r.sweep = timers.set(tick, 5_000);
+      };
       r.sweep = timers.set(tick, 5_000);
-    } else if (!r.players.length && r.sweep) { timers.clear(r.sweep); r.sweep = null; }
+    } else if (!want && r.sweep) { timers.clear(r.sweep); r.sweep = null; }
   }
 
   // What happens next at a table: an away player's or the clock's move, or

@@ -92,8 +92,38 @@ evicts it. With the alarm:
 `test/club-alarms.test.mjs` evicts a room mid-hand and checks that, with no
 message afterwards, the player to act times out and the next hand is dealt.
 
-**Still to measure on the live relay** (#96): CPU per message, from
-`wrangler tail` or the dashboard, and that an idle club hibernates.
+### Measured on the live relay (#96)
+
+On 2026-10-09 an always-on club on the live relay (relay version
+`f689f17a`) had two players at one No-limit Hold'em table, with the owner's
+browser closed. CPU is from `wrangler tail`; active time and duration are
+from the account's Durable Object analytics (GraphQL
+`durableObjectsPeriodicGroups`), per minute.
+
+| Phase | What wakes the room | CPU per event | Active time | Duration |
+|---|---|---|---|---|
+| Creating the club, members joining | signed messages | 4 ms median, 16 ms max | | |
+| Playing: 34 hands in 3 minutes, 269 actions | 122 messages, 51 alarms | messages 2 ms median, 4 ms p99, 6 ms max; alarms 1 ms median, 3 ms max | 6–7.5 s a minute | 0.8–0.96 GB-s a minute |
+| Seated and connected, no one acting | an alarm every 5 s | under 1 ms | 0.43 s a minute | 0.055 GB-s a minute |
+| Everyone gone | an alarm every 5 s, with no end (fixed, below) | under 1 ms | 0.43–0.53 s a minute | 0.05–0.07 GB-s a minute |
+
+**CPU per message is far under the 30 s limit:** the slowest event seen, of
+about 1,100, used 40 ms; play itself never more than 6 ms. Wall time per
+event is mostly storage, about 35 ms.
+
+**The room does hibernate between events.** Active time while idle is only
+the alarm wakes themselves (12 of about 35 ms a minute), not the minute.
+
+**But it was never left alone.** The sit-out sweep (`club-host.js`) re-armed
+itself every 5 s while anyone was seated, even when the table's clock was
+stopped because no one seated was connected. In that state the sit-out limit
+doesn't count, so the seats never clear and the wakes never end: the test
+club woke 12 times a minute for over an hour after everyone left, until it
+was deleted. That's 17,280 requests a day per abandoned club, against the
+free plan's 100,000. The sweep now stops with the clock and starts again
+when someone seated reconnects (`test/club-alarms.test.mjs`), so a club with
+no one connected sets no alarms; only a pending backup (at most one, 5
+minutes after the last change) wakes it.
 
 ## Local development
 
