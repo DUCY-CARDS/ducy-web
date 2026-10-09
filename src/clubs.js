@@ -38,6 +38,9 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { joinTableVia, showFairCheck } from './play.js';
+import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm } from './club-tourneys-ui.js';
+import { payoutShares, tourneyById } from './club-tourneys.js';
+import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
@@ -70,6 +73,10 @@ const isRemote = () => !!owner?.record;
 // (#152); a club run in a browser is still opened and moved as before.
 let alwaysFailed = null;
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
+// Tournaments (#64): the New tournament form and its blind structure
+// editor, and the payouts being edited ({id, places}).
+let tourneyForm = false, tEditor = null, payoutEdit = null;
+const TOURNEY_KEY = 'ducyTourneyChoice';
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -118,6 +125,8 @@ async function hostAct(op, args) {
 
 const seatedCounts = () => (isRemote() ? owner.view?.seated || {} : server?.seatedCounts() || {});
 const tableRunning = id => (isRemote() ? !!owner.view?.running?.includes(id) : !!server?.running(id));
+// How running tournaments are going (club-tourney-host.js).
+const tourneyLive = () => (isRemote() ? owner.view?.tourneys || {} : server?.tourneyLive?.() || {});
 
 function startHosting() {
   if (!club || hostNet || isRemote()) return;
@@ -330,6 +339,27 @@ function openChipForm(kind, id) {
 function onSubmit(e) {
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  // A new tournament (#77), or its payouts (#79).
+  const tof = e.target.closest('form[data-tourneyform]');
+  if (tof) {
+    e.preventDefault();
+    let tourney;
+    try { tourney = readTourneyForm(tof, tEditor); } catch (err) { alert(err.message); return; }
+    hostAct('new_tourney', {tourney}).then(ok => {
+      if (!ok) return;
+      const {name: _, opensAt: __, startsAt: ___, structure: ____, ...last} = tourney;
+      save(TOURNEY_KEY, last);
+      tourneyForm = false;
+      render();
+    });
+    return;
+  }
+  const pf = e.target.closest('form[data-payoutform]');
+  if (pf) {
+    e.preventDefault();
+    hostAct('set_payout', {id: pf.dataset.payoutform, places: readPayoutForm(pf)}).then(ok => { if (ok) { payoutEdit = null; render(); } });
+    return;
+  }
   const bf = e.target.closest('form[data-clform="backup"]');
   if (bf) { e.preventDefault(); submitBackup(bf); return; }
   const gf = e.target.closest('form[data-agentform]');
@@ -719,7 +749,9 @@ function replayHtml() {
 // commands go to the host signed, over this club's connection.
 function sitAt(code, table) {
   const mem = memberships.find(m => m.code === code);
-  const t = mem?.tables?.find(x => x.id === table);
+  // A tournament's tables are table 'tourney:<id>' (#81): its chips are whole.
+  const tourney = table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === table.slice(8)) : null;
+  const t = tourney || mem?.tables?.find(x => x.id === table);
   if (!mem || !t) return;
   joinTableVia(handlers => {
     seatedAt = {code, table, handlers};
@@ -729,6 +761,7 @@ function sitAt(code, table) {
     };
   }, {
     label: `${mem.name} · ${t.name}`,
+    whole: !!tourney,
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = 'play'; },
     // Each hand you played goes in your hand history (#71), as you saw it,
     // kept here a moment for checking its deal (#136).
@@ -795,9 +828,21 @@ function render() {
   if (replay) h += replayHtml();
   h += '</div>';
   // Messages arriving redraw the page; keep what the host is typing in an open form.
+  const named = [...root.querySelectorAll('form[data-tourneyform], form[data-payoutform]')].map(fm => ({
+    key: fm.dataset.tourneyform || fm.dataset.payoutform,
+    values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.type === 'checkbox' ? el.checked : el.value])),
+  }));
   const typing = root.querySelector('form[data-chipform]');
   const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
   root.innerHTML = h;
+  for (const k of named) {
+    const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
+    if (!fm) continue;
+    for (const [name, v] of Object.entries(k.values)) {
+      const el = fm.elements[name];
+      if (el && !(el instanceof RadioNodeList)) { if (el.type === 'checkbox') el.checked = v; else el.value = v; }
+    }
+  }
   const form = root.querySelector('form[data-chipform]');
   if (kept && form && form.dataset.chipform + form.dataset.id === kept.key) {
     [...form.elements].forEach((el, i) => { if (kept.values[i] != null && el.tagName === 'INPUT') el.value = kept.values[i]; });
@@ -968,8 +1013,10 @@ function hostHtml() {
   const tables = openTables(club);
   const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
   const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
-  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('players', players)}${sub('accounting', 'Accounting')}${sub('history', 'History')}${sub('settings', 'Settings')}</div>`;
+  const tourneys = (club.tourneys || []).filter(t => t.status === 'scheduled' || t.status === 'running').length;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('tourneys', `Tournaments${tourneys ? ` (${tourneys})` : ''}`)}${sub('players', players)}${sub('accounting', 'Accounting')}${sub('history', 'History')}${sub('settings', 'Settings')}</div>`;
   if (dashTab === 'tables') h += tablesHtml();
+  else if (dashTab === 'tourneys') h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
   else if (dashTab === 'settings') h += settingsHtml();
   else if (dashTab === 'players') {
     if (pending.length || asking.length) {
@@ -1166,7 +1213,7 @@ function membershipsHtml(mode, only = '') {
   return h;
 }
 
-const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded'};
+const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize'};
 
 // A member's chips in a club: balance, a request, and their own ledger copy.
 function accountHtml(m, hostHere) {
@@ -1196,13 +1243,14 @@ function accountHtml(m, hostHere) {
     }
     h += '</ul>';
   } else h += '<p class="pl-meta">No tables open right now.</p>';
+  h += memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null});
   h += handsHtml(m.code, me.id, 'Your hands');
   const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
   h += resultsHtml(m.entries || [], null, tableNames);
   if (m.entries?.length) {
     h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
     for (const e of [...m.entries].reverse().slice(0, 50)) {
-      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
+      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin'].includes(e.kind) ? '−' : '+';
       h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
     }
     h += '</ul></details>';
@@ -1358,6 +1406,9 @@ function sendToHost(code, body) {
 // ---- events ----
 
 async function onClick(e) {
+  // The blind structure editor in the New tournament form redraws itself.
+  const ed = tourneyForm && e.target.closest('[data-tseditor]');
+  if (ed && tEditor.click(e)) { ed.innerHTML = tEditor.html(); return; }
   const b = e.target.closest('[data-cl]');
   if (!b) return;
   const act = b.dataset.cl;
@@ -1449,6 +1500,32 @@ async function onClick(e) {
   else if (act === 'keep-days') { hostAct('settings', {keepDays: Number(b.dataset.days)}); prune(club.code, 'host', {days: club.keepDays}).then(() => loadHands(club.code, 'host')); render(); }
   else if (act === 'keep-hands') { try { localStorage.setItem(KEEP_KEY, b.dataset.n); } catch {} for (const m of memberships) prune(m.code, me.id, {keep: keepHands()}); render(); }
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
+  // Tournaments: the host's.
+  else if (act === 'new-tourney') {
+    const last = load(TOURNEY_KEY, {});
+    tEditor = structureEditor({stack: last.stack || 10000, tableSize: last.tableSize || 9});
+    tourneyForm = true;
+    render();
+    root.querySelector('form[data-tourneyform] [name=name]')?.focus();
+  } else if (act === 'cancel-tourney-form') { tourneyForm = false; render(); }
+  else if (act === 'cancel-tourney') { if (confirm('Cancel this tournament? Every buy-in goes back to the players.')) hostAct('cancel_tourney', {id: b.dataset.id}); }
+  else if (act === 'payout-edit') { const t = tourneyById(club, b.dataset.id); payoutEdit = t ? {id: t.id, places: payoutShares(t).slice()} : null; render(); }
+  else if (act === 'payout-cancel') { payoutEdit = null; render(); }
+  else if (act === 'payout-default') { payoutEdit = null; hostAct('set_payout', {id: b.dataset.id, places: null}); }
+  else if (act === 'payout-add' || act === 'payout-remove') {
+    const fm = root.querySelector(`form[data-payoutform="${b.dataset.id}"]`);
+    if (!payoutEdit || !fm) return;
+    payoutEdit.places = readPayoutForm(fm);
+    if (act === 'payout-add') payoutEdit.places.push(Math.max(1, Math.round((payoutEdit.places.at(-1) || 1000) / 2)));
+    else if (payoutEdit.places.length > 1) payoutEdit.places.splice(Number(b.dataset.i), 1);
+    render();
+  }
+  // Tournaments: a member's.
+  else if (['t-register', 't-unregister', 't-enter'].includes(act)) {
+    const mem = memberships.find(m => m.code === b.dataset.code);
+    if (mem) mem.tourneyError = null;
+    sendToHost(b.dataset.code, {type: 'tourney', club: b.dataset.code, tourney: b.dataset.tourney, op: act.slice(2)});
+  } else if (act === 't-play') sitAt(b.dataset.code, `tourney:${b.dataset.tourney}`);
   else if (act === 'to-table') location.hash = 'play';
   else if (act === 'ask') {
     const code = b.dataset.code;
@@ -1596,6 +1673,13 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
+    // The blind structure editor's fields, and the starting stack it follows.
+    root.addEventListener('change', e => {
+      if (!tourneyForm || !tEditor) return;
+      const ed = root.querySelector('[data-tseditor]');
+      if (e.target.dataset.tstack) { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 20) { tEditor.setStack(n); if (ed) ed.innerHTML = tEditor.html(); } return; }
+      if (e.target.closest('[data-tseditor]') && tEditor.input(e) && ed) ed.innerHTML = tEditor.html();
+    });
     document.addEventListener('keydown', onDocKey);
     // A ⋯ menu closes when you click anywhere else.
     document.addEventListener('click', e => {

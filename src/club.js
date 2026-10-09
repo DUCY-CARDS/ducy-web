@@ -16,7 +16,10 @@
 //   {type: 'chip_request', club, amount, note}   ask the host for chips (#67)
 //   {type: 'cancel_request', club}
 //   {type: 'table', club, table, cmd}    a command for a club table (#68): join, act,
-//                                        sit_in, leave, request_chips
+//                                        sit_in, leave, request_chips; a tournament's
+//                                        tables are table 'tourney:<id>' (#81)
+//   {type: 'tourney', club, tourney, op} op: 'register' | 'unregister' (#77), or
+//                                        'enter' (late registration or re-entry, #80)
 //   {type: 'role_reply', club, accept}   answer to an assistant offer (#62)
 //   {type: 'admin_cmd', club, cmd}       an assistant's command (club-roles.js)
 // Host → player bodies:
@@ -24,6 +27,8 @@
 //                                        | 'removed' | 'bad_invite' | 'unknown'
 //   {type: 'account', club, balance, request, entries}   see club-chips.js
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
+//   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
+//   {type: 'tourney_error', club, tourney, reason}   why a tournament op was refused
 //   {type: 'role', club, role}           'offered' | 'assistant' | null (#62)
 //   {type: 'admin', club, pending, members, tables}   an assistant's view
 //   {type: 'admin_result', club, error}  how an assistant's command went
@@ -142,6 +147,13 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (typeof body.table !== 'string' || !body.cmd || typeof body.cmd !== 'object') return {replies: [], changed: false, reason: 'bad table command'};
     return {replies: [], changed: false, table: {id: body.table, cmd: body.cmd, from: id}};
   }
+  // Registering for a tournament, and the like (club-tourneys.js): the
+  // caller runs it (club-server.js).
+  if (body.type === 'tourney') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    if (typeof body.tourney !== 'string' || !['register', 'unregister', 'enter'].includes(body.op)) return {replies: [], changed: false, reason: 'bad tournament command'};
+    return {replies: [], changed: false, tourney: {id: body.tourney, op: body.op, from: id}};
+  }
   if (body.type === 'chip_request' || body.type === 'cancel_request') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     try {
@@ -232,6 +244,16 @@ export async function playerReceive(mem, env) {
   if (b.type === 'tables') {
     mem.hostSeq = env.seq;
     mem.tables = Array.isArray(b.tables) ? b.tables : [];
+    return true;
+  }
+  if (b.type === 'tourneys') {
+    mem.hostSeq = env.seq;
+    mem.tourneys = Array.isArray(b.tourneys) ? b.tourneys : [];
+    return true;
+  }
+  if (b.type === 'tourney_error') {
+    mem.hostSeq = env.seq;
+    mem.tourneyError = {tourney: b.tourney, reason: String(b.reason || '')};
     return true;
   }
   if (b.type === 'role') {

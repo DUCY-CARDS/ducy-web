@@ -41,7 +41,7 @@ let worker = null, nextId = 0;
 const pending = new Map();
 
 // The page's engine: play-worker.js in a Web Worker.
-function workerCall(op, ...args) {
+export function workerCall(op, ...args) {
   if (!worker) {
     worker = new Worker(new URL('./play-worker.js', import.meta.url), {type: 'module'});
     worker.onmessage = e => {
@@ -61,7 +61,7 @@ function workerCall(op, ...args) {
 const num = v => Number(v);
 
 // The page's timers.
-const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => clearTimeout(h)};
+export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => clearTimeout(h)};
 
 // `call(op, ...args)` runs club-engine.js ops (by default in the page's
 // worker), and `store` keeps saved tables (by default in IndexedDB,

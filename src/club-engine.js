@@ -16,14 +16,26 @@
 // Fair deals (#136): clubCall(id, 'newHand', seed) deals from a commit–reveal
 // seed, and fairSecret() | fairCommitment(value, nonce) | fairSeed(values)
 // are ducy's fair-deal functions, for the host's side of the round.
+//
+// Tournaments (#81, club-tourney-host.js): tourneyCreate(id, config,
+// players, turnMs) | tourneyCall(id, method, ...args) for handle,
+// disconnected, advance, tick, newHands, setLevel, addEntry, state (the
+// time is added) | tourneyTable(id, table) | tourneyDrop(id) |
+// tourneySave(id) | tourneyRestore(id, json).
 
 import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
+// The whole module too: ClubTournament is only in newer builds.
+import * as ducy from '../wasm/ducy_wasm.js';
+
+// Tournaments (#81): ducy's ClubTournament, by tournament id.
+const TOURNEY_METHODS = new Set(['handle', 'disconnected', 'advance', 'tick', 'newHands', 'setLevel', 'addEntry', 'state']);
 
 const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state', 'resume']);
 
 export function clubEngine(MultiTable) {
   const tables = new Map();
   const clocks = new Map();
+  const tourneys = new Map();
 
   function now(key) {
     const c = clocks.get(key);
@@ -60,6 +72,36 @@ export function clubEngine(MultiTable) {
       const t = MultiTable.restore(json, Date.now());
       tables.get(id)?.free();
       tables.set(id, t);
+      return t.state(Date.now());
+    },
+    // A tournament (#81): every table of it, for remote players. `config` =
+    // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},
+    // `players` = [{id, name}], seated at random; all absent until they join.
+    tourneyCreate: (id, config, players, turnMs) => {
+      if (!ducy.ClubTournament) throw new Error('this ducy-wasm has no tournaments');
+      tourneys.get(id)?.free();
+      const t = new ducy.ClubTournament(config, players, turnMs);
+      tourneys.set(id, t);
+      return t.state(Date.now());
+    },
+    // A call on tournament id; the time is added.
+    tourneyCall: (id, method, ...args) => {
+      const t = tourneys.get(id);
+      if (!t || !TOURNEY_METHODS.has(method)) throw new Error(`no tournament ${id} or method ${method}`);
+      return t[method](...args, Date.now());
+    },
+    // The host's view of one of its tables (no hole cards until shown down).
+    tourneyTable: (id, table) => tourneys.get(id)?.tableView(table) ?? null,
+    tourneyDrop: id => { tourneys.get(id)?.free(); return tourneys.delete(id); },
+    // The tournament as JSON, hands in play and clocks included, for
+    // resuming it after the host restarts; null with a ducy-wasm that can't.
+    tourneySave: id => { const t = tourneys.get(id); return t?.save ? t.save(Date.now()) : null; },
+    // A tournament saved with tourneySave; throws if it can't be loaded.
+    tourneyRestore: (id, json) => {
+      if (!ducy.ClubTournament?.restore) throw new Error('this ducy-wasm can’t restore tournaments');
+      const t = ducy.ClubTournament.restore(json, Date.now());
+      tourneys.get(id)?.free();
+      tourneys.set(id, t);
       return t.state(Date.now());
     },
     // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
