@@ -10,7 +10,8 @@
 // their own entries, signed, so the member keeps a copy that proves their
 // balance.
 //
-// Conservation: issued − reclaimed = all club balances + all table stacks.
+// Conservation: issued − reclaimed = all club balances + all table stacks +
+// the buy-ins tournaments hold (club-tourneys.js).
 //
 // Amounts are whole hundredths, shown divided by 100 (chip-format.js).
 
@@ -190,8 +191,10 @@ export function totals(club) {
   const ms = Object.values(club.members);
   const balances = ms.reduce((s, m) => s + m.balance, 0);
   const onTables = ms.reduce((s, m) => s + (m.seat?.stack || 0), 0);
-  return {issued: club.chips.issued, reclaimed: club.chips.reclaimed, balances, onTables,
-    conserved: club.chips.issued - club.chips.reclaimed === balances + onTables};
+  // Buy-ins held by tournaments until they pay out or refund (club-tourneys.js).
+  const inTourneys = (club.tourneys || []).reduce((s, t) => s + (t.held || 0), 0);
+  return {issued: club.chips.issued, reclaimed: club.chips.reclaimed, balances, onTables, inTourneys,
+    conserved: club.chips.issued - club.chips.reclaimed === balances + onTables + inTourneys};
 }
 
 // What a member is told about their account: balance, open request, and
@@ -212,6 +215,8 @@ export function balanceChange(e) {
     // A top-up the table handed back (over its maximum) returns to the balance.
     top_up_refund: e.amount,
     reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
+    // Tournaments (club-tourneys.js).
+    tourney_buyin: -e.amount, tourney_refund: e.amount, tourney_prize: e.amount,
   }[e.kind] || 0;
 }
 

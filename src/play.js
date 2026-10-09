@@ -70,8 +70,14 @@ const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
 const MAX_CHIPS = 1e11;
-// An amount from the engine, for the screen.
-const c = n => chipText(num(n));
+// An amount from the engine, for the screen: cash chips divided by 100,
+// tournament chips whole (wholeChips, set for a club tournament's tables).
+let wholeChips = false;
+const c = n => chipText(num(n), {whole: wholeChips});
+// The bet amount box, the same way: a value to show, what was typed, the step.
+const amtInput = n => (wholeChips ? String(num(n)) : chipInput(n));
+const readAmt = s => (wholeChips ? (/^\s*\d+\s*$/.test(String(s)) ? Number(s) : NaN) : parseChips(s));
+const amtStep = () => (wholeChips ? '1' : CHIP_STEP);
 
 let root = null;
 let open = false;
@@ -871,9 +877,10 @@ export function setTableName(n) {
 let leaveHook = null;
 // With `watch`, only watch the table (a club host, #73): no seat, nothing to
 // act on, and the hands aren't added to your stats.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null} = {}) {
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false} = {}) {
   if (seated) leaveTable();
   startGuest(label);
+  wholeChips = whole;
   watching = watch;
   handHook = onHand;
   hookedHand = 0;
@@ -895,6 +902,7 @@ let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the las
 
 function startGuest(code) {
   mode = 'guest';
+  wholeChips = false;
   joinedByCode = false;
   myChips = null;
   mySeat = null;
@@ -1001,6 +1009,7 @@ function clockText() {
 }
 
 function leaveTable(note = '') {
+  wholeChips = false;
   clearTimeout(timer);
   clearTimeout(resuming);
   resuming = null;
@@ -1199,10 +1208,10 @@ function controlsHtml() {
       // Pot-limit defaults to the pot, no-limit to the minimum.
       if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
       const word = L.raise ? 'Raise to' : 'Bet';
-      raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${chipText(raiseTo)}</b> <kbd>R</kbd></button>`;
+      raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${c(raiseTo)}</b> <kbd>R</kbd></button>`;
       sizes = `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
       amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">` +
-        `<input type="number" class="pl-text pl-amtbox" id="pl-amtbox" inputmode="decimal" min="${chipInput(min)}" max="${chipInput(max)}" step="${CHIP_STEP}" value="${chipInput(raiseTo)}" aria-label="Amount to ${L.raise ? 'raise to' : 'bet'}">`;
+        `<input type="number" class="pl-text pl-amtbox" id="pl-amtbox" inputmode="decimal" min="${amtInput(min)}" max="${amtInput(max)}" step="${amtStep()}" value="${amtInput(raiseTo)}" aria-label="Amount to ${L.raise ? 'raise to' : 'bet'}">`;
     }
   }
   return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
@@ -1670,17 +1679,17 @@ function onInput(e) {
   if (e.target.id === 'pl-amt') {
     raiseTo = +e.target.value;
     const v = root.querySelector('#pl-amtv');
-    if (v) v.textContent = chipText(raiseTo);
+    if (v) v.textContent = c(raiseTo);
     const b = root.querySelector('#pl-amtbox');
-    if (b) b.value = chipInput(raiseTo);
+    if (b) b.value = amtInput(raiseTo);
   }
   // A typed amount: the slider and the button follow while it's in range.
   if (e.target.id === 'pl-amtbox') {
-    const n = parseChips(e.target.value), r = betRange();
+    const n = readAmt(e.target.value), r = betRange();
     if (r && n >= r.min && n <= r.max) {
       raiseTo = n;
       const v = root.querySelector('#pl-amtv');
-      if (v) v.textContent = chipText(raiseTo);
+      if (v) v.textContent = c(raiseTo);
       const s = root.querySelector('#pl-amt');
       if (s) s.value = raiseTo;
     }
@@ -1712,7 +1721,7 @@ function betRange() {
 // outside it), becomes the bet. Null if nothing usable was typed.
 function typedBet() {
   const el = root.querySelector('#pl-amtbox'), r = betRange();
-  const n = el && parseChips(el.value);
+  const n = el && readAmt(el.value);
   if (!r || !Number.isFinite(n)) return null;
   return Math.max(r.min, Math.min(r.max, n));
 }

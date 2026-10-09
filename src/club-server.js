@@ -36,6 +36,8 @@ import { account, approve, decline, hostReceive, removeMember, revokeInvite } fr
 import { declineRequest, grantRequest, issue, reclaim } from './club-chips.js';
 import { cashOutEveryone, ensureTables, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
+import { cancelTourney, newTourney, register, setPayout, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
+import { createTourneyHost } from './club-tourney-host.js';
 import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
@@ -57,6 +59,7 @@ export function createClubServer({
 }) {
   const online = new Set(); // members connected now
   let tableHost = null;
+  let tourneyHost = null; // the club's tournaments (#81), started with the tables
   let linkOk = true;
   // Encrypted table updates (e2e.js): the host's key pair for this session,
   // and per member {pub, key, sends} (their public key, the shared AES key,
@@ -132,7 +135,7 @@ export function createClubServer({
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
     const hostKey = (await hostKeys()).pub;
-    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey}});
+    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive()}});
   }
 
   // The owner watching a table (#73, #125): its spectator view, encrypted to
@@ -154,6 +157,44 @@ export function createClubServer({
   }
 
   const seatedCounts = () => tableHost?.seatedCounts() || {};
+  const tourneyLive = () => tourneyHost?.live() || {};
+
+  // The tournaments' lobby (#77) to every member online. Live standings
+  // alone go out at most every few seconds.
+  function broadcastTourneys() {
+    clearTimeout(liveTimer);
+    liveTimer = null;
+    const body = tourneysBody(club, tourneyLive());
+    for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
+    sendOwnerView();
+  }
+  let liveTimer = null;
+  function liveChanged() {
+    if (!liveTimer) liveTimer = setTimeout(broadcastTourneys, 3000);
+  }
+
+  // A member's account after a chip change.
+  const accountTo = id => {
+    const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
+    sendToPlayer(account(club, id, n ? n - 1 : Infinity));
+  };
+
+  // A member registering, unregistering, or entering late (#77, #80).
+  async function handleTourney({id: tid, op, from}) {
+    try {
+      if (op === 'register') register(club, tid, from);
+      else if (op === 'unregister') unregister(club, tid, from);
+      else if (op === 'enter') {
+        if (!tourneyHost) throw new Error('The club’s tables aren’t running.');
+        await tourneyHost.enter(tid, from);
+      }
+      accountTo(from);
+      changed();
+      broadcastTourneys();
+    } catch (e) {
+      sendToPlayer({to: from, body: {type: 'tourney_error', club: club.code, tourney: tid, reason: e.message}});
+    }
+  }
 
   function broadcastTables() {
     if (!tableHost) return;
@@ -191,6 +232,19 @@ export function createClubServer({
     });
     tableHost.setLink(linkOk);
     for (const t of live) started(tableHost.start(t, {resume: true}));
+    // Tournaments (#81): each starts at its time; one that was running
+    // when the club stopped can't resume, and is refunded.
+    tourneyHost = createTourneyHost({
+      club: () => club,
+      save: () => { persist(); scheduleAdmin(); onChange(); },
+      sendTable: sendSealed,
+      chipsChanged: accountTo,
+      tourneysChanged: broadcastTourneys,
+      liveChanged: () => { liveChanged(); onChange(); },
+      online: id => online.has(id),
+      ...engine,
+    });
+    tourneyHost.startAll();
   }
 
   // A role answer, or an assistant's or agent's command, already verified as from `from`.
@@ -222,6 +276,7 @@ export function createClubServer({
       if (msg.from === club.ownerId) unwatch();
       tableHost?.disconnected(msg.from);
       tableHost?.presence(msg.from);
+      tourneyHost?.disconnected(msg.from);
       return;
     }
     if (!('data' in msg)) return;
@@ -239,8 +294,10 @@ export function createClubServer({
     if (r.table && r.table.from === msg.from) {
       if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
         sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the host. Reload and try again.'}});
-      } else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
+      } else if (r.table.id.startsWith('tourney:')) tourneyHost?.handle(r.table.id.slice(8), r.table.from, r.table.cmd);
+      else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
     }
+    if (r.tourney && r.tourney.from === msg.from) { await handleTourney(r.tourney); return; }
     if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); changed(); return; }
     if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner); return; }
     const m = club.members[msg.from];
@@ -248,6 +305,7 @@ export function createClubServer({
       // Members checking in get the tables, the host's key for encrypted
       // table updates, their role, and an assistant or agent their view.
       if (tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, seatedCounts())});
+      sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
       if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
       if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, seatedCounts())});
@@ -318,6 +376,29 @@ export function createClubServer({
       stopWatch = tableHost.watch(table, u => sendSealed(club.ownerId, {table, update: u}));
     },
     unwatch: () => unwatch(),
+    // Tournaments (#77, #79): a new one (it starts at its time), cancelling
+    // one (every buy-in refunded), and the host's payouts (null: defaults).
+    new_tourney: ({tourney}) => {
+      const t = newTourney(club, tourney);
+      changed();
+      tourneyHost?.schedule(t);
+      broadcastTourneys();
+      return t.id;
+    },
+    cancel_tourney: ({id}) => {
+      const t = tourneyById(club, id);
+      if (!t) throw new Error('No such tournament.');
+      const who = [...new Set(t.entries.map(e => e.member))];
+      if (tourneyHost) tourneyHost.cancel(id);
+      else { cancelTourney(club, id, Date.now(), 'the host cancelled it'); changed(); }
+      for (const m of who) accountTo(m);
+      broadcastTourneys();
+    },
+    set_payout: ({id, places}) => {
+      setPayout(club, id, places ?? null);
+      changed();
+      broadcastTourneys();
+    },
     close_table: ({table}) => {
       const t = tableById(club, table);
       if (!t || t.status !== 'open') return;
@@ -351,6 +432,7 @@ export function createClubServer({
     seatedCounts,
     running: tid => !!tableHost?.running(tid),
     watch: (tid, fn) => tableHost?.watch(tid, fn),
+    tourneyLive,
     tablesRunning: () => !!tableHost,
   };
 }
