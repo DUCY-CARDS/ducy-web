@@ -23,6 +23,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 import { hostPick, onHostPick } from './host-choice.js';
 import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
+import { handWords } from './hand-words.js';
 
 let worker = null;
 let nextId = 0;
@@ -1175,6 +1176,11 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
+    // Your hand in words ("Straight, 8 high"), from the flop on.
+    if (i === 0 && !watching && !seat.folded) {
+      const words = handWords(seat.cards, s.board);
+      if (words) h += `<div class="pl-handname">${esc(words)}</div>`;
+    }
     const note = s.complete ? (num(seat.net) > 0 ? `+${c(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;

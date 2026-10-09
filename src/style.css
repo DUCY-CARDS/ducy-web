@@ -928,6 +928,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-seat.winner .pl-plate { border-color: var(--green); }
 .pl-note { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #e9ecef; background: rgba(0,0,0,0.35); padding: 1px 6px; border-radius: 3px; }
 .pl-seat.winner .pl-note { background: var(--green); }
+/* Your hand in words, under your seat. */
+.pl-handname { font-size: 11px; font-weight: 600; color: #fff; background: rgba(0,0,0,0.45); padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
 .pl-bet { position: absolute; top: -14px; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
 /* Beside the name plate, so it never covers hole cards. */
 .pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
