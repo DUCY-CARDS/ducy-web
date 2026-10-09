@@ -142,10 +142,11 @@ let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
 // Sounds at tables with other people (sounds.js): the turn the chime was
-// played for ("hand:events"), and whether its 5-second alert has gone.
+// played for ("hand:events"), and the deadline its 5-second alert went for
+// (0: none yet), so a time bank that extends the turn gets its own alert.
 const HURRY_MS = 5000;
 let soundTurn = '';
-let hurried = false;
+let hurried = 0;
 // A hosted table's clock stops while the host can't reach the relay or none
 // of the people seated is connected, so an outage doesn't fold everyone:
 // no turn runs out and no hand is dealt until someone is back.
@@ -1006,17 +1007,34 @@ function turnChime() {
   const key = `${num(state.hand_number)}:${state.events?.length ?? 0}`;
   if (key === soundTurn) return;
   soundTurn = key;
-  hurried = false;
+  hurried = 0;
   if (soundsOn()) turnSound();
 }
 
 // The alert once, when 5 seconds are left on this person's turn clock.
 function hurryAlert() {
-  if (hurried || !soundTurn || !myTurn() || !turnEnds || clockStopped) return;
+  // Once per deadline; the deadline moves a little with each update, so only
+  // a real extension (a time bank) counts as a new one.
+  if ((hurried && turnEnds <= hurried + 2000) || !soundTurn || !myTurn() || !turnEnds || clockStopped) return;
   const left = turnEnds - Date.now();
   if (left > HURRY_MS || left <= 0) return;
-  hurried = true;
+  hurried = turnEnds;
   if (soundsOn()) hurrySound();
+}
+
+// The time bank (at a friends or club table with a turn clock): on your
+// turn, a button adds what's in it to your clock; what you don't use goes
+// back in, and each hand puts 5 s back, up to a minute.
+function timeBankHtml() {
+  if (mode !== 'guest' || watching || !turnEnds || mySeat?.time_bank_ms == null) return '';
+  if (mySeat.time_bank_on) return ' <span class="pl-meta pl-bank on">· time bank on</span>';
+  const secs = Math.floor(num(mySeat.time_bank_ms) / 1000);
+  if (secs < 1) return ' <span class="pl-meta pl-bank">· time bank empty</span>';
+  return ` <button class="btn-small pl-bank" data-act="timebank" title="Add your time bank to your clock; what you don’t use goes back">Time bank +${secs}s <kbd>T</kbd></button>`;
+}
+
+function useTimeBank() {
+  if (mode === 'guest' && mySeat?.time_bank_ms > 0 && !mySeat.time_bank_on) net?.send({type: 'time_bank'});
 }
 
 function clockText() {
@@ -1232,7 +1250,7 @@ function controlsHtml() {
     status = `${esc(nameOf(s.to_act))} is thinking…`;
     if (canPrefold()) fold = '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>';
   } else {
-    status = 'Your turn';
+    status = `Your turn${timeBankHtml()}`;
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
     if (L.can_check) call = '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
     else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${c(L.call)} <kbd>C</kbd></button>`;
@@ -1656,6 +1674,7 @@ function onClick(e) {
   if (d.act === 'sitout') { net?.send({type: 'sit_out'}); return; }
   if (d.act === 'sitin') { net?.send({type: 'sit_in', wait_for_big_blind: d.wait === '1'}); return; }
   if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
+  if (d.act === 'timebank') { useTimeBank(); return; }
   if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
   else if (el.dataset.sort) {
     const key = el.dataset.sort;
@@ -1789,6 +1808,7 @@ function onKey(e) {
   else if (k === 'c') act(L.can_check ? 'check' : 'call');
   else if (k === 'r' && range) clickBet();
   else if (k === 'p' && range) { raiseTo = potTo(num(range.min_to), num(range.max_to)); clickBet(); }
+  else if (k === 't') useTimeBank();
 }
 
 // Bets or raises raiseTo through the Bet/Raise button, so all-in is decided there.
