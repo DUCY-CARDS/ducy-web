@@ -445,6 +445,12 @@ function canPrefold() {
   return !state.legal && !state.complete && !me.folded && !me.all_in && !me.sitting_out && !me.empty;
 }
 
+// Whether checking is free for the player right now (e.g. the big blind,
+// unraised): then a queued fold checks, so it's offered as Check/Fold.
+function checkIsFree() {
+  return num(state.seats[0].street_bet) >= num(state.current_bet);
+}
+
 function togglePrefold() {
   foldQueued = !foldQueued && canPrefold();
   render();
@@ -1230,7 +1236,7 @@ function controlsHtml() {
       // With the turn here, the queued fold (or check) is on its way.
       status = `${L.can_fold ? 'Folding' : 'Checking'}…`;
     } else {
-      status = 'Folding when it’s your turn';
+      status = checkIsFree() ? 'Checking when it’s your turn, or folding to a bet' : 'Folding when it’s your turn';
       fold = '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button>';
     }
   } else if (s.run_choice) {
@@ -1248,7 +1254,7 @@ function controlsHtml() {
     }
   } else if (!L) {
     status = `${esc(nameOf(s.to_act))} is thinking…`;
-    if (canPrefold()) fold = '<button class="tr-btn no" data-act="prefold">Fold <kbd>F</kbd></button>';
+    if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
   } else {
     status = `Your turn${timeBankHtml()}`;
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
