@@ -930,6 +930,30 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-seat.winner .pl-note { background: var(--green); }
 /* Your hand in words, under your seat. */
 .pl-handname { font-size: 11px; font-weight: 600; color: #fff; background: rgba(0,0,0,0.45); padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
+/* The hand's summary: beside the table on a wide screen (outside the
+   column, so the table keeps its size), under it between hands otherwise. */
+.pl-play { position: relative; }
+.pl-summary {
+  display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--fg);
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px;
+}
+.pl-summary ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.pl-sum-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: var(--fg-strong); }
+.pl-sum-board { display: inline-flex; gap: 3px; }
+.pl-sc { font-family: var(--font-data); font-size: 12px; font-weight: 700; padding: 0 3px; border: 1px solid var(--border); border-radius: 3px; background: #fff; color: #1a1a1a; }
+.pl-sc.r { color: #c0392b; }
+.pl-sum-shown li { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.pl-sum-who { min-width: 5em; font-weight: 600; }
+.pl-sum-hand { color: var(--fg-muted); }
+.pl-sum-nets { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-data); font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+.pl-sum-nets .up { color: var(--green); }
+.pl-sum-nets .down { color: var(--red); }
+@media (min-width: 1500px) {
+  .pl-summary { position: absolute; left: calc(100% + 8px); top: 60px; width: 240px; }
+}
+@media (max-width: 1499px) {
+  .pl-summary:not(.now) { display: none; }
+}
 .pl-bet { position: absolute; top: -14px; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
 /* Beside the name plate, so it never covers hole cards. */
 .pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
