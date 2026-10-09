@@ -82,6 +82,7 @@ function targetFor(choice) {
 }
 
 function spotContext(p) {
+  if (p.context) return p.context;
   if (p.spot === 'open') return `${p.hero}, folded to you`;
   if (p.spot === '3bet') return p.hero ? `${p.hero} vs ${p.villain.join('/')} open` : `Facing a ${p.villain.join('/')} open`;
   if (p.spot === '4bet') return p.villain ? `Facing a ${p.villain.join('/')} 3-bet` : 'Facing a 3-bet';

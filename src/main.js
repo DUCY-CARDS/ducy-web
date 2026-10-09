@@ -881,7 +881,7 @@ let presetsOpen = (() => { try { return localStorage.getItem(PRESETS_OPEN_KEY) =
 
 function presetsHtml(sel) {
   let h = `<details class="presets" id="rpresets"${presetsOpen ? ' open' : ''}>`;
-  h += '<summary class="saved-head"><span>Presets</span><span class="presets-note">approx. 6-max 100bb</span></summary>';
+  h += '<summary class="saved-head"><span>Presets</span><span class="presets-note">100bb: 6-max approx., heads-up GTO</span></summary>';
   for (const g of PRESET_GROUPS) {
     const items = RANGE_PRESETS.filter(p => p.spot === g.spot);
     h += `<div class="preset-group">${escapeHtml(g.label)}</div><div class="preset-grid">`;
@@ -895,7 +895,7 @@ function presetsHtml(sel) {
     }
     h += '</div>';
   }
-  h += '<div class="presets-foot">Overall frequencies match published solver figures; hands are approximate. Hover a preset to see its value hands and bluffs.</div>';
+  h += '<div class="presets-foot">6-max: overall frequencies match published solver figures; hands are approximate. Heads-up: straight from ducy’s GTO bot, each hand in the range of the action it takes most often. Hover a preset to see its hands and notes.</div>';
   h += '</details>';
   return h;
 }
