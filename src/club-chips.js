@@ -209,6 +209,8 @@ export function accountBody(club, id, since = 0) {
 export function balanceChange(e) {
   return {
     issue: e.amount, grant: e.amount, settle: e.amount, cash_out: e.amount, transfer_in: e.amount,
+    // A top-up the table handed back (over its maximum) returns to the balance.
+    top_up_refund: e.amount,
     reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
   }[e.kind] || 0;
 }
