@@ -15,7 +15,7 @@
 // bot's strategy (play-review.js) in the background.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
-import { emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
+import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
@@ -1474,12 +1474,21 @@ function decisionHtml(d, i) {
   if (open) {
     h += '<div class="pl-rev-more">';
     h += `<div>Pot ${bbText(d.pot)} bb${d.to_call > 0 ? `, ${bbText(d.to_call)} bb to call` : ''}</div>`;
-    const mix = mixText(d.gto);
-    if (mix) h += `<div>GTO mix with your hand: ${esc(mix)}</div>`;
-    const valued = (d.gto || []).filter(a => a.ev != null);
-    if (valued.length) {
-      const evs = valued.slice().sort((a, b) => b.ev - a.ev).map(a => `${esc(a.action)} ${bbText(a.ev)}`).join(' · ');
-      h += `<div>Value of each play (bb): ${evs}${d.stderr > 0 ? ` <span class="pl-meta">(± ${bbText(d.stderr)})</span>` : ''}</div>`;
+    // The bot's plays with your hand, one row each: how often it makes
+    // each, and what each is worth.
+    const rows = mixRows(d.gto);
+    if (rows.length) {
+      const values = rows.some(r => r.ev != null);
+      h += '<table class="pl-rev-mix"><thead><tr><th>Play</th><th>GTO plays it</th>';
+      if (values) h += `<th>Value (bb)${d.stderr > 0 ? ` <span class="pl-meta">± ${bbText(d.stderr)}</span>` : ''}</th>`;
+      h += '</tr></thead><tbody>';
+      for (const r of rows) {
+        const yours = isYourPlay(r, d.action) ? ' class="yours"' : '';
+        h += `<tr${yours}><td>${esc(r.action)}</td><td>${r.pct == null ? '<1%' : `${r.pct}%`}</td>`;
+        if (values) h += `<td>${r.ev == null ? '–' : bbText(r.ev)}</td>`;
+        h += '</tr>';
+      }
+      h += '</tbody></table>';
     }
     if (d.note) h += `<div class="pl-meta">${esc(d.note[0].toUpperCase() + d.note.slice(1))}.</div>`;
     if (mc) {
