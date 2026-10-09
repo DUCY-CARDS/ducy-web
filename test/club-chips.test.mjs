@@ -6,7 +6,7 @@ import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive, removeMember, lastEntry } from '../src/club.js';
 import {
   accountBody, buyIn, cashOut, checkOwnLedger, declineRequest, grantRequest, issue, ratholeMin, reclaim,
-  requestChips, setStack, topUp, totals,
+  refundTopUp, requestChips, setStack, topUp, totals,
 } from '../src/club-chips.js';
 
 const H = 3600e3;
@@ -136,6 +136,19 @@ test('a player’s own ledger checks out against the balance, and tampering is c
   assert.equal(checkOwnLedger(body.entries, 600), false);
   const tampered = body.entries.map(e => (e.kind === 'issue' ? {...e, amount: 900} : e));
   assert.equal(checkOwnLedger(tampered, body.balance), false);
+});
+
+test('a top-up the table hands back still checks out in the player’s own ledger', () => {
+  const club = clubWith('ann');
+  issue(club, 'ann', 500, 1);
+  buyIn(club, 'ann', 't1', 200, {min: 1, max: 300}, 2);
+  topUp(club, 'ann', 100, 300, 3);
+  // Ann won meanwhile: 40 of the top-up doesn't fit under the maximum.
+  refundTopUp(club, 'ann', 40, 4);
+  const body = accountBody(club, 'ann');
+  assert.equal(body.balance, 240);
+  assert.equal(body.entries.at(-1).kind, 'top_up_refund');
+  assert.ok(checkOwnLedger(body.entries, body.balance), 'the refund counts toward the balance');
 });
 
 test('over the wire: request chips, host grants, player keeps a signed copy that agrees', async () => {
