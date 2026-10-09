@@ -97,3 +97,48 @@ test('a room evicted mid-hand wakes on its alarm: the player to act times out an
   assert.ok(await until(async () => (await hands()) >= 2, 25_000), 'the next hand was dealt and played out');
   server.club.tables[0].status = 'closed';
 });
+
+// #96: measured on the live relay, a room whose seated players had all
+// closed their tabs still woke every 5 s, for the sit-out tick, which
+// re-armed itself while the table's clock was stopped. With no one there to
+// connect, nothing should wake it.
+test('a table whose seated players are all gone sets no timers, so the room can sleep; one coming back starts them again', async () => {
+  const storage = memoryStorage();
+  const owner = await createIdentity(), ann = await createIdentity(), bob = await createIdentity();
+  const code = 'IDLE-TEST';
+  const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Idle'}), code);
+  const clock = alarmTimers();
+  const server = await openClub({storage, send: () => {}, online: [], MultiTable, timers: clock.timers});
+  const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
+  for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'open'});
+  await say(owner, {type: 'owner_hello'});
+  let id = 1;
+  for (const [p, name] of [[ann, 'Ann'], [bob, 'Bob']]) {
+    await say(p, {type: 'join', invite, name});
+    await say(owner, {type: 'owner_cmd', op: 'approve', args: {id: p.id}, id: id++});
+    await say(owner, {type: 'owner_cmd', op: 'give', args: {id: p.id, amount: 500}, id: id++});
+  }
+  await say(owner, {type: 'owner_cmd', op: 'new_table', args: {table: {name: 'Main', sb: 1, bb: 2, turnSecs: 30}}, id: id++});
+  await sleep(100);
+  const tid = server.club.tables[0].id;
+  for (const p of [ann, bob]) {
+    await say(p, {type: 'hello', key: (await newKeyPair()).pub});
+    await say(p, {type: 'table', table: tid, cmd: {type: 'join'}});
+    await say(p, {type: 'table', table: tid, cmd: {type: 'request_chips', amount: 100}});
+  }
+  const pending = () => Number.isFinite(clock.next);
+  const settle = async () => { for (let i = 0; i < 20; i++) { clock.pump(); await sleep(50); } await server.flush(); };
+  await settle();
+  assert.ok(pending(), 'two seated and connected: the table has timers');
+
+  // Everyone leaves: the owner's tab and both players' tabs close.
+  for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'close'});
+  await settle();
+  assert.ok(!pending(), 'no one connected: no timer left to wake the room');
+
+  // Ann comes back: the table's clock, and its sit-out tick, run again.
+  await server.message({from: ann.id, event: 'open'});
+  await settle();
+  assert.ok(pending(), 'someone back: the table has timers again');
+  server.club.tables[0].status = 'closed';
+});
