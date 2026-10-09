@@ -948,11 +948,19 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-sum-nets { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-data); font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
 .pl-sum-nets .up { color: var(--green); }
 .pl-sum-nets .down { color: var(--red); }
+.pl-sum-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); margin-bottom: 2px; }
+.pl-sum-full { display: flex; flex-direction: column; gap: 6px; }
+.pl-sum-compact > summary { cursor: pointer; }
+.pl-sum-compact[open] > summary { margin-bottom: 6px; }
+.pl-sum-compact { display: flex; flex-direction: column; gap: 6px; }
 @media (min-width: 1500px) {
   .pl-summary { position: absolute; left: calc(100% + 8px); top: 60px; width: 240px; }
+  .pl-summary.last .pl-sum-compact { display: none; }
 }
+/* Narrow screens: during the next hand, one line that opens to the rest. */
 @media (max-width: 1499px) {
-  .pl-summary:not(.now) { display: none; }
+  .pl-summary.last { padding: 6px 12px; }
+  .pl-summary.last .pl-sum-full { display: none; }
 }
 .pl-bet { position: absolute; top: -14px; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
 /* Beside the name plate, so it never covers hole cards. */

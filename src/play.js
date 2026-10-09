@@ -1144,9 +1144,33 @@ function lastActions() {
 // After a hand, a short account of what happened beside the table: who won
 // each pot and with what, the hands shown down (in words, on each board
 // when it ran twice), and everyone's result. On a wide screen the last
-// hand's summary stays up while the next one is played; on a narrow one it
-// shows under the table between hands.
-let lastSummary = null; // {hand, html}
+// hand's summary stays up while the next one is played, marked "Last hand";
+// on a narrow one it shows under the table between hands, and during the
+// next hand as one line ("Last hand 12: Ann won 15 with Pair of 8s") that
+// opens to the whole summary.
+let lastSummary = null; // {hand, html, line}
+let lastSummaryOpen = false; // the one-line version opened, kept from hand to hand
+
+// The summary in one line: who won the (main) pot, how, and your result.
+function summaryLine(s) {
+  const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
+  const pots = (s.pots || []).filter(p => p.awards?.length);
+  const contested = pots.filter(p => p.eligible.length > 1);
+  let line = '';
+  if (s.showdown && contested.length) {
+    const p = contested[0];
+    const names = p.awards.map(a => who(a.seat)).join(' and ');
+    line = `${names} ${p.awards.length > 1 ? 'split' : 'won'} ${c(p.amount)}`;
+    if (p.winning_hand) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
+    if (contested.length > 1) line += `, and ${contested.length - 1} side pot${contested.length > 2 ? 's' : ''}`;
+  } else if (pots.length) {
+    const a = pots[0].awards[0];
+    line = `${who(a.seat)} won ${c(a.amount)}, uncontested`;
+  }
+  const me = !watching && s.seats[0] && num(s.seats[0].net);
+  if (me) line += ` · you ${me > 0 ? '+' : '−'}${c(Math.abs(me))}`;
+  return line;
+}
 
 const smallCard = c => `<span class="pl-sc${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0] === 'T' ? '10' : c[0]}${SUITS[c[1]]}</span>`;
 
@@ -1202,10 +1226,17 @@ function summaryBody(s) {
 function summaryHtml() {
   const s = state;
   const done = s?.complete && num(s.hand_number) > 0;
-  if (done && lastSummary?.hand !== num(s.hand_number)) lastSummary = {hand: num(s.hand_number), html: null};
-  if (done) lastSummary.html = summaryBody(s);
+  if (done && lastSummary?.hand !== num(s.hand_number)) lastSummary = {hand: num(s.hand_number), html: null, line: ''};
+  if (done) { lastSummary.html = summaryBody(s); lastSummary.line = summaryLine(s); }
   if (!lastSummary?.html) return '';
-  return `<aside class="pl-summary${done ? ' now' : ''}" aria-label="What happened in hand ${lastSummary.hand}">${lastSummary.html}</aside>`;
+  const label = `What happened in hand ${lastSummary.hand}`;
+  if (done) return `<aside class="pl-summary now" aria-label="${label}">${lastSummary.html}</aside>`;
+  // During the next hand: the whole summary beside the table (wide
+  // screens), or one line that opens to it (narrow ones).
+  return `<aside class="pl-summary last" aria-label="${label}">` +
+    `<div class="pl-sum-full"><div class="pl-sum-label">Last hand</div>${lastSummary.html}</div>` +
+    `<details class="pl-sum-compact"${lastSummaryOpen ? ' open' : ''}><summary><b>Last hand ${lastSummary.hand}:</b> ${lastSummary.line}</summary>${lastSummary.html}</details>` +
+    '</aside>';
 }
 
 function renderTable() {
@@ -1906,6 +1937,9 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.addEventListener('click', onClick);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
+    // The last hand's one-line summary stays open (or shut) from hand to hand.
+    // (toggle doesn't bubble: caught on the way down.)
+    root.addEventListener('toggle', e => { if (e.target.matches?.('.pl-sum-compact')) lastSummaryOpen = e.target.open; }, true);
     root.addEventListener('pointerover', onPointer);
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
