@@ -21,6 +21,7 @@ import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { hostPick, onHostPick } from './host-choice.js';
+import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 
 let worker = null;
@@ -134,6 +135,11 @@ let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
+// Sounds at tables with other people (sounds.js): the turn the chime was
+// played for ("hand:events"), and whether its 5-second alert has gone.
+const HURRY_MS = 5000;
+let soundTurn = '';
+let hurried = false;
 // A hosted table's clock stops while the host can't reach the relay or none
 // of the people seated is connected, so an outage doesn't fold everyone:
 // no turn runs out and no hand is dealt until someone is back.
@@ -156,7 +162,7 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
@@ -418,7 +424,7 @@ function show(snap) {
   if (L && !auto) foldQueued = false;
   render();
   armDeal();
-  if (!auto) { pace(); return; }
+  if (!auto) { turnChime(); pace(); return; }
   act(auto).then(ok => { if (!ok) { foldQueued = false; render(); } });
 }
 
@@ -954,13 +960,38 @@ function readNameInput() {
   if (el) setup.name = el.value.trim().slice(0, 20);
 }
 
-// Ticks the turn clocks on screen.
+// Ticks the turn clocks on screen, and sounds the alert when 5 seconds
+// are left to act.
 function startClock() {
   clearInterval(clockTimer);
   clockTimer = setInterval(() => {
     for (const el of root.querySelectorAll('[data-clock]')) el.textContent = clockText();
     for (const el of root.querySelectorAll('[data-outclock]')) el.textContent = outClockText();
+    hurryAlert();
   }, 250);
+}
+
+// Sounds are for tables with other people, while it's this person's turn.
+const soundsOn = () => setup.sounds && mode !== 'solo' && !watching;
+const myTurn = () => !!state?.legal && !state.complete;
+
+// A chime once when the turn comes to this person.
+function turnChime() {
+  if (!myTurn()) { soundTurn = ''; return; }
+  const key = `${num(state.hand_number)}:${state.events?.length ?? 0}`;
+  if (key === soundTurn) return;
+  soundTurn = key;
+  hurried = false;
+  if (soundsOn()) turnSound();
+}
+
+// The alert once, when 5 seconds are left on this person's turn clock.
+function hurryAlert() {
+  if (hurried || !soundTurn || !myTurn() || !turnEnds || clockStopped) return;
+  const left = turnEnds - Date.now();
+  if (left > HURRY_MS || left <= 0) return;
+  hurried = true;
+  if (soundsOn()) hurrySound();
 }
 
 function clockText() {
@@ -1065,6 +1096,7 @@ function renderTable() {
   h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
   if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
+  if (mode !== 'solo' && !watching) h += `<button class="cc-btn${setup.sounds ? ' on' : ''}" data-act="sounds" aria-pressed="${!!setup.sounds}" title="A chime when it’s your turn, and an alert at 5 seconds left">Sound</button>`;
   if (gtoTable && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
   h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
@@ -1536,6 +1568,8 @@ function reviewTotalsHtml() {
 // ---- events ----
 
 function onClick(e) {
+  // Browsers play sound only after the person has interacted with the page.
+  unlockSounds();
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
@@ -1587,6 +1621,7 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
   else if (el.dataset.act === 'reset-stats') resetStats();
@@ -1683,6 +1718,7 @@ function typedBet() {
 }
 
 function onKey(e) {
+  if (open) unlockSounds();
   // Enter in the amount box bets what's typed; Escape leaves the box.
   if (open && state && e.target.id === 'pl-amtbox') {
     if (e.key === 'Enter') {
