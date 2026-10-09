@@ -937,6 +937,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   gap: 8px 10px; justify-content: center; align-items: center;
 }
 .pl-status { grid-area: status; text-align: center; color: var(--fg-muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The time bank, on your turn. */
+.pl-status .pl-bank { margin-left: 6px; }
+.pl-status .pl-bank.on { color: var(--red); }
 .pl-result { color: var(--fg-strong); font-weight: 600; }
 .pl-act-fold { grid-area: fold; }
 .pl-act-call { grid-area: call; }
