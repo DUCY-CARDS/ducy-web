@@ -3,7 +3,7 @@
 # v/<version>/, so a page only ever loads files from a single release.
 #
 #   OUT_DIR/index.html, favicon.svg, apple-touch-icon.png, .htaccess
-#   OUT_DIR/v/<version>/src/*.js, style.css
+#   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #
 # Only index.html is rewritten (to point at v/<version>/src/). The JS loads
@@ -30,6 +30,7 @@ REL="$OUT/v/$VERSION"
 mkdir -p "$REL/src" "$REL/wasm"
 
 cp src/*.js src/*.css "$REL/src/"
+cp -r src/avatars "$REL/src/"
 cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
 cp favicon.svg apple-touch-icon.png .htaccess "$OUT/"
 
