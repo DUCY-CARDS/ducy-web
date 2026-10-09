@@ -270,6 +270,22 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 .tr-level.lvl-medium { background: var(--teal-faint); color: var(--teal); }
 .tr-level.lvl-hard { background: rgba(192,138,46,0.18); color: #a2721f; }
 .tr-level.lvl-challenge { background: rgba(198,88,88,0.16); color: var(--red); }
+.tr-level.lvl-mastered { background: rgba(46,122,60,0.22); color: var(--green); }
+.tr-skills { border-top: 1px solid var(--border); padding-top: 12px; }
+.tr-skills > summary { cursor: pointer; font-size: 14px; }
+.tr-skills > summary b { color: var(--fg-strong); }
+.tr-skills > summary span { font-size: 12px; color: var(--fg-muted); margin-left: 6px; }
+.tr-skill-table { border-collapse: collapse; margin-top: 8px; font-size: 12px; width: 100%; max-width: 360px; }
+.tr-skill-table th { font-weight: 600; color: var(--fg-muted); text-align: center; padding: 3px 4px; }
+.tr-skill-table tbody th { text-align: right; font-family: var(--font-data); }
+.tr-skill-table td { padding: 2px; text-align: center; }
+.tr-skill {
+  font: inherit; font-family: var(--font-data); width: 100%; min-width: 44px; padding: 4px 2px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--fg-muted); cursor: pointer;
+}
+.tr-skill.started { color: var(--fg-strong); }
+.tr-skill.mastered { background: rgba(46,122,60,0.16); border-color: var(--green); color: var(--green); font-weight: 700; }
+.tr-skill.on { box-shadow: 0 0 0 2px var(--teal); }
 .tr-score { display: flex; flex-direction: column; gap: 4px; }
 .tr-score-num { display: flex; align-items: baseline; gap: 6px; font-family: var(--font-data); }
 .tr-score-num b { font-size: 30px; color: var(--fg-strong); font-variant-numeric: tabular-nums; }

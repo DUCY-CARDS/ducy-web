@@ -8,6 +8,7 @@ import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './rang
 import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
+import { MASTERY, gainFor, skillKey, skillState, skillTable } from './trainer-skills.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -219,6 +220,7 @@ function renderOmahaSetup() {
   h += `<div class="tr-group">Just outside</div>${ex.outside.map(row).join('')}`;
   if (cards === 2) h += rangeGrid(holdemTopTarget(pct));
   h += practiceCard(cards, pct);
+  h += skillsList(cards, pct);
   h += '<div class="tr-mode"><div class="tr-mode-row"><div><b>Test</b><span>A fixed set with no feedback until the end.</span></div></div>';
   h += handCountAndStart().replace('class="tr-start"', 'class="tr-start secondary"').replace('>Start<', '>Start test<');
   h += '</div>';
@@ -279,7 +281,33 @@ function weakestKinds(rec, tags) {
 
 function levelChip(rec) {
   const score = rec ? rec.score : 0;
+  if (skillState(rec).status === 'mastered') return `<span class="tr-level lvl-mastered">✓ Mastered · ${score}</span>`;
   return `<span class="tr-level lvl-${levelFor(score).name.toLowerCase()}">${rec ? `${levelFor(score).name} · ${score}` : 'New'}</span>`;
+}
+
+// Every skill (game × target) with where it stands: mastered (✓, once 100 is
+// reached; the current score is shown too), started (its score) or not yet.
+// Picking one selects that game and target.
+function skillsList(cards, pct) {
+  const t = skillTable(loadProgress(), OMAHA_CARDS, OMAHA_TARGETS);
+  let h = `<details class="tr-skills"${st.skillsOpen ? ' open' : ''}><summary><b>Skills</b> <span>${t.mastered} of ${t.total} mastered · ${t.started} started</span></summary>`;
+  h += '<table class="tr-skill-table"><thead><tr><th>Top</th>';
+  for (const n of OMAHA_CARDS) h += `<th>${gameName(n)}</th>`;
+  h += '</tr></thead><tbody>';
+  for (const row of t.rows) {
+    h += `<tr><th>${row.pct}%</th>`;
+    for (const c of row.cells) {
+      const on = c.cards === cards && c.pct === pct ? ' on' : '';
+      const label = c.status === 'mastered' ? `✓ ${c.score}` : c.status === 'started' ? `${c.score}` : '–';
+      const title = c.status === 'new' ? 'Not started'
+        : `${c.status === 'mastered' ? 'Mastered' : levelFor(c.score).name}: score ${c.score}, best ${c.best}, ${c.answered} hands`;
+      h += `<td><button class="tr-skill ${c.status}${on}" data-skill="${c.cards}:${c.pct}" title="${title}">${label}</button></td>`;
+    }
+    h += '</tr>';
+  }
+  h += '</tbody></table>';
+  h += `<p class="tr-note">Practice raises a skill’s score toward 100: about 50 right answers in a row from 0, with the last 20 points all close calls. Reaching 100 masters it (✓). You can keep practicing; right answers hold it at 100, and mistakes still cost points.</p>`;
+  return h + '</details>';
 }
 
 function practiceCard(cards, pct) {
@@ -300,7 +328,8 @@ function practiceCard(cards, pct) {
   for (const t of tags) {
     const r = all[`${base}:${t}`];
     const isWeak = weak.some(w => w.tag === t);
-    h += `<button class="tr-drill${st.drill === t ? ' on' : ''}${isWeak ? ' weak' : ''}" data-drill="${t}" title="${esc(labelsFor(cards)[t])}">${esc(shortLabel(cards, t))}${r ? ` <em>${r.score}</em>` : ''}</button>`;
+    const done = skillState(r).status === 'mastered' ? '✓ ' : '';
+    h += `<button class="tr-drill${st.drill === t ? ' on' : ''}${isWeak ? ' weak' : ''}" data-drill="${t}" title="${esc(labelsFor(cards)[t])}">${esc(shortLabel(cards, t))}${r ? ` <em>${done}${r.score}</em>` : ''}</button>`;
   }
   h += '</div>';
   if (weak.length) {
@@ -448,13 +477,7 @@ function resetProgress(key) {
   } catch {}
 }
 
-const practiceKey = (cards, pct) => (cards === 2 ? `holdem:${pct}` : `omaha:${cards}:${pct}`);
-
-// The Challenge zone (90+) moves one point at a time, so mastery means about
-// ten close calls in a row.
-function gainFor(score) {
-  return score < 50 ? 8 : score < 70 ? 5 : score < 80 ? 4 : score < 90 ? 3 : 1;
-}
+const practiceKey = skillKey;
 
 // How bad a wrong answer is, from 0 (right at the cutoff) to 1. It scales
 // with how far the hand is from the target, measured against the target
@@ -656,8 +679,10 @@ function answerPractice(yes) {
   const prev = loadProgress()[pr.key] || {};
   saveProgress(pr.key, {...prev, score: pr.score, best: pr.best, answered: pr.total});
   recordLifetime(pr, tags, correct);
-  // Mastery is announced once per session; after that, practice carries on.
-  if (pr.score >= 100 && !pr.masteredShown) { pr.mastered = pr.masteredShown = true; render(); return; }
+  // Mastery is announced when the score reaches 100. After that, practice
+  // carries on: right answers keep it at 100 and mistakes still cost points,
+  // so it's announced again only after dropping below 100 and climbing back.
+  if (pr.score >= MASTERY && before < MASTERY) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
   else {
     // Mention the trend only with a long record behind it, when this mistake
@@ -698,7 +723,7 @@ function renderPractice() {
 
   if (pr.mastered) {
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. Try a tighter or looser target, keep practicing to stay sharp, or start over from 0 and work back up.</p>`;
+    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. It stays mastered. Keep practicing to stay sharp: right answers hold your score at 100, and mistakes still cost points. Or try another skill, or start over from 0.</p>`;
     h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
     h += '<button class="tr-btn" data-act="restart-practice">Start over from 0</button>';
     h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
@@ -1114,10 +1139,17 @@ function answer(yes) {
 }
 
 function onClick(e) {
-  const el = e.target.closest('[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
+  // The skills list stays open (or closed) across re-renders.
+  if (e.target.closest('.tr-skills > summary')) { st.skillsOpen = !st.skillsOpen; return; }
+  const el = e.target.closest('[data-skill],[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
   if (!el) return;
   if (el.dataset.act !== 'reset-progress') st.confirmReset = false;
-  if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
+  if (el.dataset.skill) {
+    const [cards, pct] = el.dataset.skill.split(':').map(Number);
+    st.omaha.cards = cards; st.omaha.pct = pct; st.drill = null;
+    render();
+  }
+  else if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
   else if (el.dataset.drillStart) { st.drill = el.dataset.drillStart; startPractice(); }
   else if (el.dataset.tgame) { st.game = el.dataset.tgame; st.edit = null; render(); }
   else if (el.dataset.ocards) { st.omaha.cards = +el.dataset.ocards; render(); }
