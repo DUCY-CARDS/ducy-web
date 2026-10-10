@@ -3,7 +3,8 @@
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
-//        loadGto(manifestUrl) | review
+//        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
+//        review
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -20,8 +21,12 @@
 // A club's tables (club-host.js) use the ops in club-engine.js (clubCreate,
 // clubCall, clubSave, clubRestore, ...), the same code an always-on club
 // runs in the relay's Worker.
-import init, { BotTable, MultiTable, botPersonalities, loadGto } from '../wasm/ducy_wasm.js';
+import init, * as wasm from '../wasm/ducy_wasm.js';
 import { clubEngine } from './club-engine.js';
+
+// A namespace import, so bindings an older ducy-wasm lacks (loadGtoPlo) are
+// just undefined instead of failing the whole module.
+const { BotTable, MultiTable, botPersonalities, loadGto } = wasm;
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
 // Club tables, and the clocks every hosted table runs on (the friends
@@ -35,13 +40,15 @@ const snapshot = state => ({state, botToAct: table.botToAct()});
 
 // The GTO bot's files are big (a few MB), so they're kept in Cache Storage:
 // downloaded once, then read from disk on later visits. Each model lives in
-// its own folder, so a cached file never goes stale.
+// its own folder, so a cached file never goes stale. Hold'em's and PLO's
+// models each have their own cache, so loading one doesn't drop the other.
 const GTO_CACHE = 'ducy-gto';
-let gtoLoaded = '';
+const GTO_PLO_CACHE = 'ducy-gto-plo';
+const gtoLoaded = {};
 
-async function cachedBytes(url) {
+async function cachedBytes(cacheName, url) {
   let cache = null;
-  try { cache = await caches.open(GTO_CACHE); } catch {}
+  try { cache = await caches.open(cacheName); } catch {}
   let res = cache && await cache.match(url);
   if (!res) {
     res = await fetch(url);
@@ -51,22 +58,23 @@ async function cachedBytes(url) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-// Loads the model named by the manifest ({dir, cards, blueprint}), once.
-async function loadGtoModel(manifestUrl) {
+// Loads the model named by the manifest ({dir, cards, blueprint}) into the
+// engine with `load(cards, blueprint)`, once.
+async function loadGtoModel(manifestUrl, cacheName, load) {
   const res = await fetch(manifestUrl, {cache: 'no-cache'});
   if (!res.ok) throw new Error(`no GTO bot here (${res.status})`);
   const m = await res.json();
   const base = new URL(`${m.dir}/`, manifestUrl);
-  if (gtoLoaded === base.href) return true;
+  if (gtoLoaded[cacheName] === base.href) return true;
   const [cards, blueprint] = await Promise.all([
-    cachedBytes(new URL(m.cards, base).href),
-    cachedBytes(new URL(m.blueprint, base).href),
+    cachedBytes(cacheName, new URL(m.cards, base).href),
+    cachedBytes(cacheName, new URL(m.blueprint, base).href),
   ]);
-  loadGto(cards, blueprint);
-  gtoLoaded = base.href;
+  load(cards, blueprint);
+  gtoLoaded[cacheName] = base.href;
   // Drop older models from the cache.
   try {
-    const cache = await caches.open(GTO_CACHE);
+    const cache = await caches.open(cacheName);
     for (const req of await cache.keys()) if (!req.url.startsWith(base.href)) await cache.delete(req);
   } catch {}
   return true;
@@ -89,7 +97,11 @@ const ops = {
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.
   runTwice: yes => snapshot(table.runTwice(!!yes)),
-  loadGto: manifestUrl => loadGtoModel(manifestUrl),
+  loadGto: manifestUrl => loadGtoModel(manifestUrl, GTO_CACHE, loadGto),
+  // The PLO GTO bot ("gto-plo" at a plo4 table) came later; an older
+  // ducy-wasm doesn't have it. Its blueprint is for a depth of `bb` big blinds.
+  gtoPloSupported: () => typeof wasm.loadGtoPlo === 'function',
+  loadGtoPlo: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
   hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(now('host')); // deal once the players are in

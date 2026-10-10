@@ -11,8 +11,9 @@
 // seats stay empty until people join, and chips are real, handed out by the
 // host on request within the table's buy-in limits.
 // Heads-up against the GTO bot is training: both players start every hand
-// with 100 BB, and each finished hand's decisions are reviewed against the
-// bot's strategy (play-review.js) in the background.
+// with 100 BB, and in Hold'em each finished hand's decisions are reviewed
+// against the bot's strategy (play-review.js) in the background. PLO4 has
+// its own GTO bot, without the review.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
@@ -91,6 +92,13 @@ const GTO_MANIFEST = new URL('gto/current.json', document.baseURI).href;
 const GTO = {id: 'gto', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
 let gtoAvailable = false;
 let gtoReady = false;
+// The PLO GTO bot, for heads-up PLO4 the same way: hosted at gto/ with its
+// own manifest, and offered when it's there and the engine can play it.
+const GTO_PLO_MANIFEST = new URL('gto/plo-current.json', document.baseURI).href;
+const GTO_PLO = {id: 'gto-plo', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'};
+let gtoPloAvailable = false;
+let gtoPloReady = false;
+const GTO_IDS = [GTO.id, GTO_PLO.id];
 let setupNote = '';
 let seated = false; // a table is in play
 let botToAct = false;
@@ -111,8 +119,10 @@ let sessionStats = {};
 let allStats = loadStats();
 let recordedHand = 0; // hand_number of the last hand added to the stats
 let statsOpen = false;
-// GTO training: the table is heads-up against the GTO bot.
+// GTO training: the table is heads-up against a GTO bot.
 let gtoTable = false;
+// Hand review works against the Hold'em GTO bot only.
+const reviewTable = () => gtoTable && tableGame.id === 'nlhe';
 // The last finished hand's review: {hand, data} once it's back, {hand,
 // pending: true} while it's worked out. `reviewOpen` holds the decisions
 // expanded to show the bot's mix.
@@ -241,15 +251,24 @@ const nameOf = seat => (state ? state.seats[seat].name : '');
 
 // ---- setup ----
 
-// The GTO bot plays heads-up No-limit Hold'em only.
-const gtoAllowed = () => gtoAvailable && setup.game === 'nlhe' && setup.count === 1;
-const botChoices = () => (gtoAllowed() ? [GTO, ...personalities] : personalities);
+// The GTO bots play heads-up only: one No-limit Hold'em, the other PLO4.
+// The one for the game picked, or null.
+function gtoBot() {
+  if (setup.count !== 1) return null;
+  if (setup.game === 'nlhe' && gtoAvailable) return GTO;
+  if (setup.game === 'plo4' && gtoPloAvailable) return GTO_PLO;
+  return null;
+}
+const botChoices = () => (gtoBot() ? [gtoBot(), ...personalities] : personalities);
 
-// Fills empty or unknown bot picks with random personalities not already seated.
+// Fills empty or unknown bot picks with random personalities not already
+// seated. A GTO pick follows the game when there's a GTO bot for it.
 function fillBots() {
   const ids = personalities.map(p => p.id);
   const valid = botChoices().map(p => p.id);
-  const bots = setup.bots.slice(0, setup.count).map(b => (valid.includes(b) ? b : null));
+  const bots = setup.bots.slice(0, setup.count)
+    .map(b => (GTO_IDS.includes(b) && gtoBot() ? gtoBot().id : b))
+    .map(b => (valid.includes(b) ? b : null));
   while (bots.length < setup.count) bots.push(null);
   for (let i = 0; i < bots.length; i++) {
     if (bots[i]) continue;
@@ -318,8 +337,9 @@ function botsSetupHtml() {
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   if (setup.count > 1) h += picks;
   h += '</div></details>';
-  if (gtoAvailable && !gtoAllowed()) h += '<p class="pl-desc">Play heads-up No-limit Hold’em (1 opponent) to face the GTO bot.</p>';
-  if (gtoAllowed() && setup.bots[0] === 'gto') h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in, and your decisions are reviewed after each hand.</p>`;
+  const gtoGames = [gtoAvailable && 'No-limit Hold’em', gtoPloAvailable && 'PLO4'].filter(Boolean);
+  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gtoGames.join(' or ')} (1 opponent) to face the GTO bot.</p>`;
+  if (gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
@@ -460,12 +480,18 @@ function togglePrefold() {
 
 // Downloads (the first time) and loads the GTO bot's files in the worker.
 async function prepareGto() {
-  if (gtoReady || !setup.bots.includes('gto')) return true;
-  root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about 3 MB the first time, then it’s kept on this device)…</p></div>';
+  const plo = setup.bots.includes(GTO_PLO.id);
+  if (plo ? gtoPloReady : (gtoReady || !setup.bots.includes(GTO.id))) return true;
+  root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
   try { navigator.storage?.persist?.(); } catch {}
   try {
-    await call('loadGto', GTO_MANIFEST);
-    gtoReady = true;
+    if (plo) {
+      await call('loadGtoPlo', GTO_PLO_MANIFEST, GTO_BUY_IN_BB);
+      gtoPloReady = true;
+    } else {
+      await call('loadGto', GTO_MANIFEST);
+      gtoReady = true;
+    }
     return true;
   } catch (e) {
     console.warn(e);
@@ -486,7 +512,7 @@ async function startTable() {
   foldQueued = false;
   sessionStats = {};
   recordedHand = 0;
-  gtoTable = setup.game === 'nlhe' && setup.bots.length === 1 && setup.bots[0] === 'gto';
+  gtoTable = setup.bots.length === 1 && setup.bots[0] === gtoBot()?.id;
   review = null;
   sessionReview = emptyTotals();
   const buyIn = gtoTable ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
@@ -1278,7 +1304,7 @@ function renderTable() {
   if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   if (mode !== 'solo' && !watching) h += `<button class="cc-btn${setup.sounds ? ' on' : ''}" data-act="sounds" aria-pressed="${!!setup.sounds}" title="A chime when it’s your turn, and an alert at 5 seconds left">Sound</button>`;
-  if (gtoTable && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
+  if (reviewTable() && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
   h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
   h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
   h += '<div class="pl-felt">';
@@ -1639,7 +1665,7 @@ function statsHtml() {
     h += '</tr>';
   }
   h += '</tbody></table></div>';
-  if (gtoTable && mode === 'solo') h += reviewTotalsHtml();
+  if (reviewTable() && mode === 'solo') h += reviewTotalsHtml();
   h += '<p class="pl-meta">Raw rates with the sample size in brackets. Bots are tracked by personality, so their stats follow them to new tables. Each game keeps its own stats.</p>';
   h += '</div>';
   return h;
@@ -1650,7 +1676,7 @@ function resetStats() {
   if (!confirm(`Reset ${all ? 'all-time' : 'this session’s'} ${tableGame.name} stats for everyone?`)) return;
   if (all) { delete allStats[tableGame.id]; saveStats(); }
   else delete sessionStats[tableGame.id];
-  if (gtoTable) {
+  if (reviewTable()) {
     if (all) { allReview = emptyTotals(); saveReviewTotals(); }
     else sessionReview = emptyTotals();
   }
@@ -1663,7 +1689,7 @@ function resetStats() {
 // holding up play: the review shows when it's back, and the next hand can be
 // dealt meanwhile (the worker takes it right after).
 function startReview() {
-  if (mode !== 'solo' || !gtoTable || !setup.review || !state?.complete) return;
+  if (mode !== 'solo' || !reviewTable() || !setup.review || !state?.complete) return;
   const hand = num(state.hand_number);
   if (!hand || review?.hand === hand) return;
   review = {hand, pending: true};
@@ -1740,7 +1766,7 @@ function decisionHtml(d, i) {
 // The review panel under the controls, once a hand against the GTO bot is
 // over. It sits below the action bar, so the buttons never move.
 function reviewHtml() {
-  if (mode !== 'solo' || !gtoTable || !setup.review || !state.complete || !review || review.hand !== num(state.hand_number)) return '';
+  if (mode !== 'solo' || !reviewTable() || !setup.review || !state.complete || !review || review.hand !== num(state.hand_number)) return '';
   let h = '<div class="pl-review"><div class="pl-review-head"><b>Hand review</b>';
   if (review.pending) return h + '<span class="pl-meta">Reviewing your decisions…</span></div></div>';
   if (review.error || !review.data) return h + '<span class="pl-meta">No review for this hand.</span></div></div>';
@@ -1989,6 +2015,7 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
     try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
+    try { gtoPloAvailable = await call('gtoPloSupported') && (await fetch(GTO_PLO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
   }
   if (shortcut === 'gto' && !seated) {
     setup.game = 'nlhe';
