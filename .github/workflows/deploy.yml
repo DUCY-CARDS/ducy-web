@@ -53,21 +53,28 @@ jobs:
       - name: Deploy via rsync
         run: scripts/deploy.sh _site "${{ secrets.SSH_DEPLOY_TARGET }}"
 
-      # The GTO bot's model is published as a release of the ducy repo tagged
-      # gto-<name> (assets cards.bin and blueprint.bin). The newest one is
+      # The GTO bots' models are published as releases of the ducy repo
+      # (assets cards.bin and blueprint.bin): gto-hunl-<name> for heads-up
+      # No-limit Hold'em, pointed at by gto/current.json, and gto-plo-<name>
+      # for heads-up PLO4, by gto/plo-current.json. The newest of each is
       # uploaded to gto/<tag>/ unless it's already there; see
       # scripts/upload-gto.sh.
-      - name: Publish the GTO bot model
+      - name: Publish the GTO bot models
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
         run: |
-          TAG="$(gh release list -R allenpiscitello/ducy --limit 100 --json tagName,publishedAt \
-            -q '[.[] | select(.tagName | startswith("gto-"))] | sort_by(.publishedAt) | last | .tagName // empty')"
-          if [ -z "$TAG" ]; then echo "no GTO model release yet"; exit 0; fi
-          if rsync --list-only "$TARGET/gto/$TAG/blueprint.bin" >/dev/null 2>&1; then
-            echo "$TAG is already published"
-            exit 0
-          fi
-          gh release download "$TAG" -R allenpiscitello/ducy -p cards.bin -p blueprint.bin -D gto-model
-          scripts/upload-gto.sh gto-model/cards.bin gto-model/blueprint.bin "$TAG" "$TARGET"
+          for PAIR in gto-hunl-:current.json gto-plo-:plo-current.json; do
+            PREFIX="${PAIR%%:*}"
+            MANIFEST="${PAIR#*:}"
+            TAG="$(gh release list -R allenpiscitello/ducy --limit 100 --json tagName,publishedAt \
+              -q "[.[] | select(.tagName | startswith(\"$PREFIX\"))] | sort_by(.publishedAt) | last | .tagName // empty")"
+            if [ -z "$TAG" ]; then echo "no $PREFIX model release yet"; continue; fi
+            if rsync --list-only "$TARGET/gto/$TAG/blueprint.bin" >/dev/null 2>&1; then
+              echo "$TAG is already published"
+              continue
+            fi
+            rm -rf gto-model
+            gh release download "$TAG" -R allenpiscitello/ducy -p cards.bin -p blueprint.bin -D gto-model
+            scripts/upload-gto.sh gto-model/cards.bin gto-model/blueprint.bin "$TAG" "$TARGET" "$MANIFEST"
+          done
