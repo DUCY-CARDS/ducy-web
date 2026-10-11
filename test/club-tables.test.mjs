@@ -29,7 +29,7 @@ test('tables: defaults, validation and what members are told', () => {
   assert.throws(() => newTable(club, {game: 'stud'}), /Pick a game/);
   assert.throws(() => newTable(club, {sb: 5, bb: 2}), /big blind/);
   assert.throws(() => newTable(club, {minBB: 100, maxBB: 50}), /maximum buy-in/);
-  assert.throws(() => newTable(club, {seats: 11}), /2 to 10/);
+  assert.throws(() => newTable(club, {seats: 10}), /2 to 9/);
   newTable(club, {name: 'High stakes', sb: 5, bb: 10});
   const body = tablesBody(club, {[t.id]: 2});
   assert.equal(body.tables.length, 2);
@@ -55,7 +55,8 @@ test('seats: no more than the game can deal to', () => {
   const club = clubWith();
   assert.equal(maxSeats('plo6'), 6);
   assert.equal(maxSeats('plo5'), 8); // running it twice: 52 − 10 board cards = 42 = 8 × 5 + 2
-  assert.equal(maxSeats('nlhe'), 10);
+  assert.equal(maxSeats('nlhe'), 9); // 9-handed at most anywhere
+  assert.equal(maxSeats('plo4'), 9);
   assert.throws(() => newTable(club, {game: 'plo6', seats: 9}), /PLO 6-card table seats 2 to 6/);
   assert.throws(() => newTable(club, {game: 'plo5', seats: 9}), /2 to 8/);
   assert.equal(newTable(club, {game: 'plo6', seats: 6}).seats, 6);

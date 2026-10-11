@@ -70,7 +70,7 @@ const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
 // shows as 1/2.
 const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200};
-const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9];
 const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
 const MAX_CHIPS = 1e11;

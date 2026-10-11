@@ -1,5 +1,5 @@
 // Running a club tournament (#81, club-tourney-host.js with ducy's engine):
-// 30 entrants on 3 tables, played by simulated players who check, call,
+// 30 entrants on 4 tables, played by simulated players who check, call,
 // fold and shove, run to a single winner. Chips are conserved throughout,
 // at the tables and in the club; tables stay balanced within one player;
 // levels change on schedule; absent registrants are blinded off and never
@@ -29,7 +29,7 @@ const LEVELS = [
   {sb: 500, bb: 1000, ante: 100, minutes: 1}, {sb: 1000, bb: 2000, ante: 200, minutes: 1}, {sb: 2000, bb: 4000, ante: 500, minutes: 1},
 ];
 
-test('30 entrants on 3 tables play to a single winner, balanced and conserved, prizes paid', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, async () => {
+test('30 entrants on 4 tables play to a single winner, balanced and conserved, prizes paid', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, async () => {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
   const ids = Array.from({length: 31}, (_, i) => `p${i}`);
   for (const id of ids) {
@@ -39,7 +39,7 @@ test('30 entrants on 3 tables play to a single winner, balanced and conserved, p
   }
   const t = newTourney(club, {
     name: 'Friday Freezeout', buyIn: 100, added: 1000, stack: 1500, structure: LEVELS,
-    opensAt: 0, startsAt: Date.now() + 300, minPlayers: 2, maxPlayers: 40, tableSize: 10, lateLevel: 3,
+    opensAt: 0, startsAt: Date.now() + 300, minPlayers: 2, maxPlayers: 40, tableSize: 9, lateLevel: 3,
   });
   for (const id of ids.slice(0, 30)) register(club, t.id, id, 10);
   // p24–p29 never come: blinded off. p24 comes back later.
@@ -97,7 +97,7 @@ test('30 entrants on 3 tables play to a single winner, balanced and conserved, p
   // One winner, every entry placed, none removed.
   const places = t.entries.map(e => e.place).sort((a, b) => a - b);
   assert.deepEqual(places, Array.from({length: 31}, (_, i) => i + 1), 'every entry has its own place');
-  assert.equal(checks.maxTables, 3, 'three tables (the late entry took a seat at the shortest)');
+  assert.equal(checks.maxTables, 4, 'four 9-seat tables (the late entry took a seat at the shortest)');
   // Chips at the tables: always every entry's starting stack.
   for (const [have, want] of checks.chips) assert.equal(have, want);
   assert.ok(checks.balanced > 0, 'balance was checked');
