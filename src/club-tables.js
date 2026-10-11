@@ -17,13 +17,14 @@ import { buyIn, cashOut, ensureChips, setStack, topUp } from './club-chips.js';
 import { chipInput } from './chip-format.js';
 
 // `short` names tables by default ("NLH - 1/2"); `seats` is the most a game
-// can deal to: everyone's hole cards and the board come from 52 cards, so
-// PLO5 seats 9 (10 × 5 + 5 is 55) and PLO6 seats 6. `defaultSeats` is a new
-// table's size unless the host picks another.
+// can deal to: everyone's hole cards and two boards (running it twice) come
+// from 52 cards, leaving 42 for hole cards, so PLO5 seats 8 (42 / 5) and
+// PLO6 6 (42 / 6 would allow 7; 6 is the limit we keep). `defaultSeats` is a
+// new table's size unless the host picks another.
 export const GAMES = [
   {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: 10, defaultSeats: 9},
   {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: 10, defaultSeats: 8},
-  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 9, defaultSeats: 6},
+  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 8, defaultSeats: 6},
   {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6, defaultSeats: 6},
 ];
 export const MAX_TABLE_NAME = 30;
