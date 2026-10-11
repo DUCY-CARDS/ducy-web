@@ -345,7 +345,7 @@ export function createClubServer({
     give: ({id, amount, note = ''}) => chips(id, () => issue(club, id, amount, Date.now(), note)),
     take: ({id, amount, note = ''}) => chips(id, () => reclaim(club, id, amount, Date.now(), note)),
     grant: ({id, amount}) => chips(id, () => grantRequest(club, id, amount)),
-    deny: ({id}) => chips(id, () => { declineRequest(club, id); return null; }),
+    deny: ({id, note = ''}) => chips(id, () => { declineRequest(club, id, note); return null; }),
     settle: ({id, amount, note = ''}) => chips(id, () => settle(club, id, amount, Date.now(), note)),
     offer_agent: ({id, amount}) => reply(offerAgent(club, id, amount)),
     credit_limit: ({id, amount}) => reply(setCreditLimit(club, id, amount)),

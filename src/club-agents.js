@@ -18,7 +18,7 @@
 
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
-import { cancelRequest, ensureChips, issue, transfer } from './club-chips.js';
+import { answerRequest, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
 import { logAction } from './club-roles.js';
 
 const whole = n => Number.isSafeInteger(n) && n >= 0;
@@ -144,7 +144,7 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       if (!Number.isSafeInteger(amt) || amt <= 0) throw new Error('Enter a whole number of chips above 0.');
       // Inside the account: the agent's own balance may go negative, down to −limit.
       const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -(a.creditLimit || 0)});
-      if (cmd.op === 'grant') cancelRequest(club, cmd.id);
+      if (cmd.op === 'grant') answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
       logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
@@ -156,7 +156,7 @@ export function runAgent(club, by, cmd, now = Date.now()) {
     }
     case 'deny': {
       const p = mine(club, by, cmd.id);
-      if (!cancelRequest(club, cmd.id)) throw new Error('There’s no request to decline.');
+      if (!declineRequest(club, cmd.id, cmd.note, now, by)) throw new Error('There’s no request to decline.');
       logAction(club, by, `${a.name} declined ${p.name}’s chip request`, now);
       return {replies: [account(club, cmd.id, Infinity)]};
     }

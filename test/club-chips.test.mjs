@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive, removeMember, lastEntry } from '../src/club.js';
 import {
-  accountBody, buyIn, cashOut, checkOwnLedger, declineRequest, grantRequest, issue, ratholeMin, reclaim,
-  refundTopUp, requestChips, setStack, topUp, totals,
+  accountBody, buyIn, cashOut, checkOwnLedger, declineRequest, grantRequest, issue, ledgerCsv, ratholeMin, reclaim,
+  refundTopUp, REQUEST_LOG, requestChips, setStack, topUp, totals,
 } from '../src/club-chips.js';
 
 const H = 3600e3;
@@ -47,6 +47,37 @@ test('requests: ask, replace, grant (for a different amount), decline', () => {
   assert.ok(declineRequest(club, 'ann'));
   assert.equal(club.members.ann.request, null);
   assert.throws(() => grantRequest(club, 'ann'), /no request/);
+  assert.equal(declineRequest(club, 'ann'), false, 'nothing to decline');
+});
+
+test('answered requests: the member is told how, and the club keeps a log (#188)', () => {
+  const club = clubWith('ann', 'bo');
+  requestChips(club, 'ann', 400, 'rebuy', 1);
+  grantRequest(club, 'ann', 250, 2);
+  assert.deepEqual(club.members.ann.answer, {asked: 400, given: 250, outcome: 'granted', note: '', at: 2});
+  requestChips(club, 'bo', 1000, '', 3);
+  assert.ok(declineRequest(club, 'bo', '  settle up first  ', 4, 'ann'));
+  assert.deepEqual(club.members.bo.answer, {asked: 1000, given: 0, outcome: 'declined', note: 'settle up first', at: 4});
+  assert.deepEqual(club.requestLog.map(r => [r.member, r.outcome, r.by]), [['ann', 'granted', undefined], ['bo', 'declined', 'ann']]);
+  // The member's account carries it.
+  assert.deepEqual(accountBody(club, 'bo').answer, club.members.bo.answer);
+  // The log keeps the newest REQUEST_LOG.
+  for (let i = 0; i < REQUEST_LOG + 5; i++) { requestChips(club, 'ann', 100, '', 10 + i); declineRequest(club, 'ann', '', 10 + i); }
+  assert.equal(club.requestLog.length, REQUEST_LOG);
+  assert.equal(club.requestLog.at(-1).at, 10 + REQUEST_LOG + 4);
+});
+
+test('the ledger as CSV: names, signed changes in plain amounts, quoting (#188)', () => {
+  const club = clubWith('ann');
+  issue(club, 'ann', 500, Date.UTC(2026, 9, 1), 'welcome, "friend"');
+  reclaim(club, 'ann', 150, Date.UTC(2026, 9, 2));
+  const csv = ledgerCsv(club.chips.ledger, {ann: 'Ann'}, {}, {issue: 'Given by the host', reclaim: 'Taken back'});
+  assert.equal(csv, [
+    'when,member,what,table,change,balance,note',
+    '2026-10-01T00:00:00.000Z,Ann,Given by the host,,5,5,"welcome, ""friend"""',
+    '2026-10-02T00:00:00.000Z,Ann,Taken back,,-1.5,3.5,',
+    '',
+  ].join('\n'));
 });
 
 test('buy in, play, cash out: balance = issued + net result; conservation holds throughout', () => {

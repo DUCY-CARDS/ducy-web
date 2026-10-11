@@ -27,7 +27,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, parseInvite, playerReceive,
 } from './club.js';
-import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
+import { ensureChips, issue, ledgerCsv, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -401,6 +401,8 @@ const FORM_TEXT = {
   give: m => ({label: `Give ${m.name}`, submit: 'Give', value: '', max: null, note: true}),
   take: m => ({label: `Take back from ${m.name} (has ${chips(m.balance)})`, submit: 'Take back', value: m.balance, max: m.balance, note: true}),
   grant: m => ({label: `Give ${m.name} (asked for ${chips(m.request?.amount)})`, submit: 'Give', value: m.request?.amount ?? '', max: null, note: false}),
+  // Declining says why, if you like; the member sees it (#188).
+  deny: m => ({label: `Decline ${m.name}’s request for ${chips(m.request?.amount)}`, submit: 'Decline', noAmount: true, note: true, notePlaceholder: 'Why (optional; they see it)'}),
   // Agents (#74, #76).
   agent: m => ({label: `Make ${m.name} an agent with a credit limit of`, submit: 'Offer', value: 0, max: null, note: false, min: 0}),
   limit: m => ({label: `${m.name}'s credit limit`, submit: 'Save', value: m.creditLimit || 0, max: null, note: false, min: 0}),
@@ -415,10 +417,25 @@ function chipFormHtml(m) {
   const t = FORM_TEXT[chipForm.kind](m);
   let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
   h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
-  h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
-  if (t.note) h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Note (optional)">`;
+  if (!t.noAmount) {
+    h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
+    // The usual amounts, from the open tables' buy-ins (#188).
+    if (chipForm.kind === 'give' || chipForm.kind === 'grant') {
+      for (const v of quickAmounts()) h += `<button type="button" class="cc-btn" data-cl="quick" data-v="${esc(chipInput(v))}">${chips(v)}</button>`;
+    }
+  }
+  if (t.note) h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="${esc(t.notePlaceholder || 'Note (optional)')}">`;
   h += `<button class="btn-small primary" type="submit">${t.submit}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></form>`;
   return h;
+}
+
+// Quick amounts for giving chips: the open tables' smallest and biggest
+// buy-ins and twice the biggest, without repeats.
+function quickAmounts() {
+  const tables = openTables(club);
+  if (!tables.length) return [];
+  const min = Math.min(...tables.map(t => t.minBB * t.bb)), max = Math.max(...tables.map(t => t.maxBB * t.bb));
+  return [...new Set([min, max, 2 * max])].filter(v => v > 0);
 }
 
 function openChipForm(kind, id) {
@@ -476,10 +493,10 @@ function onSubmit(e) {
   if (!f) return;
   e.preventDefault();
   const id = f.dataset.id, kind = f.dataset.chipform;
-  const amount = parseChips(f.elements.amount.value);
+  const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
   chipForm = null;
-  const op = {give: 'give', take: 'take', grant: 'grant', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle'}[kind];
+  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle'}[kind];
   if (op) hostAct(op, {id, amount, note: why});
 }
 
@@ -1179,11 +1196,12 @@ function hostHtml() {
         if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
         h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
         h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other amount</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
-        if (chipForm?.kind === 'grant') h += chipFormHtml(m);
+        if (chipForm?.kind === 'grant' || chipForm?.kind === 'deny') h += chipFormHtml(m);
         h += '</li>';
       }
       h += '</ul></div>';
     }
+    h += requestLogHtml();
     h += inviteRowHtml();
     h += `<h3>Members (${members.length})</h3>`;
     if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
@@ -1238,14 +1256,52 @@ function accountingHtml() {
   h += resultsHtml(club.chips.ledger, names, tableNames);
   const ledger = club.chips.ledger;
   if (ledger.length) {
-    h += `<details class="cl-history"><summary>Ledger (${ledger.length})</summary><ul>`;
-    for (const e of [...ledger].reverse().slice(0, 200)) {
+    // Filtered by member, kind and table, and exported as CSV (#188).
+    const shown = ledger.filter(e => (!ledgerFilter.member || e.member === ledgerFilter.member)
+      && (!ledgerFilter.kind || e.kind === ledgerFilter.kind) && (!ledgerFilter.table || e.table === ledgerFilter.table));
+    const sel = (key, all, opts) => `<select class="pl-text" data-lf="${key}"><option value="">${all}</option>${opts.map(([v, t]) => `<option value="${esc(v)}"${ledgerFilter[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+    const kinds = [...new Set(ledger.map(e => e.kind))].map(k => [k, KIND_TEXT[k] || k]);
+    const people = [...new Set(ledger.map(e => e.member))].map(id => [id, names[id] || id]).sort((a, b) => a[1].localeCompare(b[1]));
+    const tables = [...new Set(ledger.filter(e => e.table).map(e => e.table))].map(id => [id, tableNames[id] || id]);
+    h += `<details class="cl-history" data-keep="ledger"><summary>Ledger (${ledger.length})</summary>`;
+    h += `<div class="pl-row cl-ledger-filters">${sel('member', 'Everyone', people)}${sel('kind', 'Everything', kinds)}${tables.length ? sel('table', 'Every table', tables) : ''}`;
+    h += `<button class="btn-small" data-cl="ledger-csv">Export CSV${shown.length < ledger.length ? ` (${shown.length})` : ''}</button></div><ul>`;
+    for (const e of [...shown].reverse().slice(0, 200)) {
       const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
       h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
     }
-    h += '</ul></details>';
+    h += '</ul>';
+    if (shown.length > 200) h += `<p class="pl-meta">The newest 200 of ${shown.length}; Export CSV has them all.</p>`;
+    if (!shown.length) h += '<p class="pl-meta">Nothing matches.</p>';
+    h += '</details>';
   }
   return h;
+}
+
+// The Accounting tab's ledger filters (#188): '' for all.
+let ledgerFilter = {member: '', kind: '', table: ''};
+
+function exportLedger() {
+  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+  const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
+  const shown = club.chips.ledger.filter(e => (!ledgerFilter.member || e.member === ledgerFilter.member)
+    && (!ledgerFilter.kind || e.kind === ledgerFilter.kind) && (!ledgerFilter.table || e.table === ledgerFilter.table));
+  downloadFile(ledgerCsv(shown, names, tableNames, KIND_TEXT), `ducy-ledger-${myClubCode()}.csv`, 'text/csv');
+}
+
+// Chip requests answered lately (#188), newest first, under Needs you.
+function requestLogHtml() {
+  const log = club.requestLog || [];
+  if (!log.length) return '';
+  const name = id => club.members[id]?.name || id;
+  let h = `<details class="cl-history" data-keep="reqlog"><summary>Answered requests (${log.length})</summary><ul>`;
+  for (const r of [...log].reverse().slice(0, 50)) {
+    const what = r.outcome === 'granted'
+      ? `asked for ${chips(r.asked)}, given ${chips(r.given)}`
+      : `asked for ${chips(r.asked)}, declined${r.note ? ` (“${esc(r.note)}”)` : ''}`;
+    h += `<li><span class="pl-meta">${when(r.at)}</span> ${esc(name(r.member))}: ${what}${r.by ? ` <span class="pl-meta">by ${esc(name(r.by))}</span>` : ''}</li>`;
+  }
+  return h + '</ul></details>';
 }
 
 // A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
@@ -1314,7 +1370,7 @@ function memberRowHtml(m, agents) {
     h += `<label class="pl-meta cl-assign">Agent <select class="pl-text" data-assign="${esc(m.id)}"><option value="">none</option>`;
     h += agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('') + '</select></label>';
   }
-  if (chipForm && chipForm.kind !== 'grant') h += chipFormHtml(m);
+  if (chipForm && chipForm.kind !== 'grant' && chipForm.kind !== 'deny') h += chipFormHtml(m);
   return h + '</li>';
 }
 
@@ -1378,9 +1434,18 @@ function accountHtml(m, hostHere) {
     const fresh = !m.balance && !m.entries?.length;
     const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
     if (fresh) h += `<p class="pl-desc cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
-    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`;
-    h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
-    h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
+    // How your last request went, for a week (#188).
+    const a = m.answer;
+    if (a && Date.now() - a.at < 7 * 24 * 3600e3) {
+      h += a.outcome === 'granted'
+        ? `<p class="pl-meta cl-answer">You asked for ${chips(a.asked)} and were given ${chips(a.given)} (${when(a.at)}).</p>`
+        : `<p class="pl-meta cl-answer">Your request for ${chips(a.asked)} was declined${a.note ? `: “${esc(a.note)}”` : ''} (${when(a.at)}).</p>`;
+    }
+    const form = `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`
+      + `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`
+      + `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
+    // Open when it's the first step; otherwise behind a button (#188).
+    h += fresh ? form : `<details class="cl-askd" data-keep="ask:${esc(m.code)}"><summary class="btn-small">Ask for chips</summary>${form}</details>`;
   }
   // Your last table session, while it's recent (#187).
   const last = tableSessions(m.entries || []).find(s => !s.open);
@@ -1623,7 +1688,9 @@ async function onClick(e) {
   else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
-  else if (act === 'deny') hostAct('deny', {id: b.dataset.id});
+  else if (act === 'deny') openChipForm('deny', b.dataset.id);
+  else if (act === 'ledger-csv') exportLedger();
+  else if (act === 'quick') { const f = b.closest('form'); if (f?.elements.amount) f.elements.amount.value = b.dataset.v; }
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
   else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
@@ -1730,6 +1797,9 @@ function onFilter(e) {
     render();
     return;
   }
+  // The ledger's filters (#188).
+  const lf = e.target.dataset?.lf;
+  if (lf) { ledgerFilter[lf] = e.target.value; render(); return; }
   const k = e.target.dataset?.handfilter;
   if (k == null) return;
   historyTable[k] = e.target.value;

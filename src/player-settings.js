@@ -146,10 +146,10 @@ function onSubmit(e) {
   } else if (idForm?.kind === 'restore') restore(idForm.text, pw);
 }
 
-// Hands the browser `text` as a file to save.
-export function downloadFile(text, filename) {
+// Hands the browser `text` as a file to save (JSON unless `type` says).
+export function downloadFile(text, filename, type = 'application/json') {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+  a.href = URL.createObjectURL(new Blob([text], {type}));
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);

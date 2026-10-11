@@ -15,7 +15,7 @@
 //
 // Amounts are whole hundredths, shown divided by 100 (chip-format.js).
 
-import { chipText } from './chip-format.js';
+import { chipInput, chipText } from './chip-format.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
@@ -91,16 +91,41 @@ export function cancelRequest(club, id) {
   return true;
 }
 
+// How many answered requests the club keeps (#188).
+export const REQUEST_LOG = 100;
+
+// A request is answered (#188): it's cleared, the member is told how
+// (m.answer: {asked, given, outcome, note, at}), and the club keeps it in
+// club.requestLog (newest last, REQUEST_LOG at most). `outcome` is
+// 'granted' or 'declined'; `note` is the reason for a decline; `by` who
+// answered when it wasn't the host (an assistant or agent).
+export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', now = Date.now()} = {}) {
+  const m = member(club, id);
+  if (!m.request) return null;
+  const a = {asked: m.request.amount, given, outcome, note: note(why), at: now};
+  m.answer = a;
+  m.request = null;
+  club.requestLog ??= [];
+  club.requestLog.push({member: id, ...a, ...(by ? {by} : {})});
+  if (club.requestLog.length > REQUEST_LOG) club.requestLog.splice(0, club.requestLog.length - REQUEST_LOG);
+  return a;
+}
+
 // The host grants a request, for the amount asked or a different one.
 export function grantRequest(club, id, amt, now = Date.now()) {
   const m = member(club, id);
   if (!m.request) throw new Error('There’s no request to grant.');
-  const e = issue(club, id, amt ?? m.request.amount, now, m.request.note, 'grant');
-  m.request = null;
+  const given = amt ?? m.request.amount;
+  const e = issue(club, id, given, now, m.request.note, 'grant');
+  answerRequest(club, id, 'granted', {given, now});
   return e;
 }
 
-export const declineRequest = (club, id) => cancelRequest(club, id);
+// The host (or an assistant or agent, `by`) declines a request, saying why
+// if they like. False if there's none.
+export function declineRequest(club, id, why = '', now = Date.now(), by = '') {
+  return !!answerRequest(club, id, 'declined', {why, by, now});
+}
 
 // One member gives chips to another from their own club balance (a game
 // assistant, #62): two entries, so each sees their side. Total chips don't
@@ -203,7 +228,7 @@ export function accountBody(club, id, since = 0) {
   ensureChips(club);
   const m = club.members[id];
   return {
-    type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null,
+    type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null, answer: m?.answer || null,
     entries: club.chips.ledger.filter(e => e.member === id && e.n > since),
   };
 }
@@ -218,6 +243,25 @@ export function balanceChange(e) {
     // Tournaments (club-tourneys.js).
     tourney_buyin: -e.amount, tourney_refund: e.amount, tourney_prize: e.amount,
   }[e.kind] || 0;
+}
+
+// The ledger as CSV (#188): one row per entry, oldest first, with the
+// member's name, what happened (`kindText`), the table's name, the signed
+// change to their balance and the balance after, in plain amounts (1.5,
+// not 150 hundredths).
+export function ledgerCsv(entries, names = {}, tableNames = {}, kindText = {}) {
+  const cell = v => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = [['when', 'member', 'what', 'table', 'change', 'balance', 'note']];
+  for (const e of [...entries].sort((a, b) => a.n - b.n)) {
+    rows.push([
+      new Date(e.at).toISOString(), names[e.member] || e.member, kindText[e.kind] || e.kind,
+      e.table ? tableNames[e.table] || e.table : '', chipInput(balanceChange(e)), chipInput(e.balance), e.note || '',
+    ]);
+  }
+  return rows.map(r => r.map(cell).join(',')).join('\n') + '\n';
 }
 
 // A player's check of their own copy: the entries add up to the balance the

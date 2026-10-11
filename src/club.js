@@ -314,6 +314,8 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     mem.balance = Number(b.balance) || 0;
     mem.request = b.request || null;
+    // How their last request was answered (#188).
+    if (b.answer !== undefined) mem.answer = b.answer || null;
     const have = new Set((mem.entries || []).map(e => e.n));
     const fresh = (Array.isArray(b.entries) ? b.entries : []).filter(e => Number.isSafeInteger(e?.n) && !have.has(e.n));
     mem.entries = [...(mem.entries || []), ...fresh].sort((x, y) => x.n - y.n);
