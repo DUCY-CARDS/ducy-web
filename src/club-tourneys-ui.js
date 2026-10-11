@@ -167,6 +167,78 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
 
 // ---- a member ----
 
+// Tournaments calling member `me` (#189), across `memberships`: one they're
+// in that has started while they aren't at its table (`seatedAt`: {code,
+// table} or null), or one they registered for that starts within `soonMs`.
+// [{kind: 'started' | 'soon', key, mem, t}], keys unique per call.
+export function tourneyCallsFor(memberships, me, seatedAt, soonMs, now = Date.now()) {
+  const calls = [];
+  for (const m of memberships) {
+    if (m.status !== 'member') continue;
+    for (const t of m.tourneys || []) {
+      const key = `${m.code}:${t.id}`;
+      const atIt = seatedAt?.code === m.code && seatedAt.table === `tourney:${t.id}`;
+      if (t.status === 'running' && t.in.includes(me) && !atIt) calls.push({kind: 'started', key: `${key}:started`, mem: m, t});
+      else if (t.status === 'scheduled' && t.players.some(p => p.id === me) && t.startsAt > now && t.startsAt - now <= soonMs) {
+        calls.push({kind: 'soon', key: `${key}:soon`, mem: m, t});
+      }
+    }
+  }
+  return calls;
+}
+
+// A tournament's lobby, under its row (#189): the format, the payouts, who's
+// registered and the blind structure, so players can decide before they
+// register.
+function lobbyHtml(t, me, code, now) {
+  let h = `<details class="cl-tdetails" data-keep="tl:${esc(code)}:${esc(t.id)}"><summary>Details</summary><div class="cl-tlobby">`;
+  const format = [`starting stack ${whole(t.stack)}`, `${t.tableSize} a table`, `at least ${t.minPlayers} players`];
+  if (t.lateLevel) format.push(`late registration until the end of level ${t.lateLevel}`);
+  if (t.reentry) format.push(t.maxReentries ? `up to ${t.maxReentries} re-entr${t.maxReentries === 1 ? 'y' : 'ies'}` : 're-entry');
+  h += `<p class="pl-meta">${esc(format.join(' · '))}</p>`;
+  if (t.status === 'scheduled') {
+    h += `<p class="pl-meta">Starts ${esc(dateTime(t.startsAt))}${now < t.opensAt ? ` · registration opens ${esc(until(t.opensAt, now))}` : ''}</p>`;
+  }
+  if (t.prizes?.length) {
+    h += `<span class="pl-label">Payouts${t.status === 'scheduled' ? ' (for the entries so far)' : ''}</span><table class="cl-acct"><tbody>`;
+    h += t.prizes.map((a, i) => `<tr><th>${ordinal(i + 1)}</th><td>${club$(a)}</td></tr>`).join('');
+    h += '</tbody></table>';
+  }
+  if (t.players.length) {
+    const names = t.players.map(p => (p.id === me ? `<b>${esc(p.name)} (you)</b>` : esc(p.name)));
+    h += `<span class="pl-label">Registered (${t.players.length})</span><p class="pl-desc">${names.join(', ')}</p>`;
+  }
+  const levels = (t.structure || []).filter(s => !s.break);
+  if (levels.length) {
+    h += '<span class="pl-label">Blinds</span><table class="cl-acct"><thead><tr><th>Level</th><th>Blinds</th><th>Ante</th><th>Minutes</th></tr></thead><tbody>';
+    let n = 0;
+    for (const s of t.structure) {
+      if (s.break) { h += `<tr><td colspan="3" class="pl-meta">Break</td><td>${s.minutes}</td></tr>`; continue; }
+      n++;
+      h += `<tr><td>${n}</td><td>${whole(s.sb)}/${whole(s.bb)}</td><td>${s.ante ? whole(s.ante) : '–'}</td><td>${s.minutes}</td></tr>`;
+    }
+    h += '</tbody></table>';
+  }
+  return h + '</div></details>';
+}
+
+// How a running tournament is going, for a member (#189): the level and
+// when it changes, players left, the average stack, the places paid, and
+// their own stack and rank when they're in the standings.
+function liveHtml(t, me, now) {
+  const l = t.live;
+  if (!l) return '';
+  const parts = [levelText(t.structure, l)];
+  if (l.stepEndsAt) parts.push(`next ${until(l.stepEndsAt, now)}`);
+  parts.push(`${l.playersLeft} left`);
+  if (l.playersLeft) parts.push(`average ${whole(Math.round((t.entries * t.stack) / l.playersLeft))}`);
+  if (t.prizes?.length) parts.push(l.playersLeft <= t.prizes.length ? 'in the money' : `${t.prizes.length} paid`);
+  let h = `<span class="pl-meta cl-tlive">${esc(parts.filter(Boolean).join(' · '))}</span>`;
+  const i = (l.standings || []).findIndex(s => s.id === me);
+  if (i >= 0) h += `<span class="pl-meta">You: <b>${whole(l.standings[i].stack)}</b>, ${ordinal(i + 1)} of ${l.playersLeft}</span>`;
+  return h;
+}
+
 // A member's list of the club's tournaments. `me`: their id; `playing`: the
 // tournament they're at, if any.
 export function memberTourneysHtml(mem, me, {hostHere, playing}, now = Date.now()) {
@@ -180,10 +252,13 @@ export function memberTourneysHtml(mem, me, {hostHere, playing}, now = Date.now(
     const btn = (act, label, primary = false) => `<button class="btn-small${primary ? ' primary' : ''}" data-cl="${act}" data-code="${code}" data-tourney="${esc(t.id)}"${hostHere ? '' : ' disabled title="The host is away"'}>${label}</button>`;
     h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameName(t.game))} · buy-in ${club$(t.buyIn)} · ${t.players.length}/${t.maxPlayers} players · pool ${club$(t.pool)}`;
     if (t.status === 'scheduled') h += ` · starts ${until(t.startsAt, now)}`;
-    if (t.status === 'running') h += t.live ? ` · ${esc(levelText(t.structure, t.live))} · ${t.live.playersLeft} left` : ' · running';
+    if (t.status === 'running' && !t.live) h += ' · running';
     if (t.status === 'finished') h += ' · finished';
     if (t.status === 'cancelled') h += ` · cancelled${t.why ? ` (${esc(t.why)})` : ''}`;
     h += '</span>';
+    if (t.status === 'running') h += liveHtml(t, me, now);
+    // Cancelled: the buy-in went back (club-tourneys.js cancelTourney).
+    if (t.status === 'cancelled' && mine && t.buyIn) h += `<span class="pl-meta">Your ${club$(t.buyIn)} buy-in is back in your balance.</span>`;
     if (t.status === 'scheduled') {
       if (mine) h += btn('t-unregister', 'Unregister');
       else if (now >= t.opensAt && t.players.length < t.maxPlayers) h += btn('t-register', `Register (${club$(t.buyIn)})`, true);
@@ -198,6 +273,7 @@ export function memberTourneysHtml(mem, me, {hostHere, playing}, now = Date.now(
       const top = t.places.filter(p => p.place <= t.prizes.length).sort((a, b) => a.place - b.place);
       h += `<span class="pl-desc">${top.map(p => `${ordinal(p.place)} ${esc(p.name)} ${club$(t.prizes[p.place - 1])}`).join(' · ')}</span>`;
     }
+    if (t.status === 'scheduled' || t.status === 'running') h += lobbyHtml(t, me, mem.code, now);
     h += '</li>';
   }
   return h + '</ul></div>';
