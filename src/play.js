@@ -1827,7 +1827,7 @@ function onClick(e) {
   const f = setup.friends;
   if (d.fgame || d.fblinds || d.fseats) {
     readFriendsStep();
-    // Picking a game picks its usual size (Hold'em 9, PLO 8, PLO6 6).
+    // Picking a game picks its usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6).
     if (d.fgame && d.fgame !== f.game) { f.game = d.fgame; f.seats = defaultSeats(f.game); }
     if (d.fseats) f.seats = +d.fseats;
     f.seats = Math.min(f.seats, maxSeats(f.game));

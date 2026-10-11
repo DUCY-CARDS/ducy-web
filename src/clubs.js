@@ -192,7 +192,7 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
   const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
-  // The game's usual size (Hold'em 9, PLO 8, PLO6 6), or the last one picked
+  // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
   // for this game; never more than the game can deal to (PLO6: 6).
   const most = maxSeats(game);
   const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), most);

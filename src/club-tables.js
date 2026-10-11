@@ -23,7 +23,7 @@ import { chipInput } from './chip-format.js';
 export const GAMES = [
   {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: 10, defaultSeats: 9},
   {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: 10, defaultSeats: 8},
-  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 9, defaultSeats: 8},
+  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 9, defaultSeats: 6},
   {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6, defaultSeats: 6},
 ];
 export const MAX_TABLE_NAME = 30;

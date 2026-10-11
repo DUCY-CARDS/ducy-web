@@ -59,10 +59,10 @@ test('seats: no more than the game can deal to', () => {
   assert.throws(() => newTable(club, {game: 'plo6', seats: 9}), /PLO 6-card table seats 2 to 6/);
   assert.throws(() => newTable(club, {game: 'plo5', seats: 10}), /2 to 9/);
   assert.equal(newTable(club, {game: 'plo6', seats: 6}).seats, 6);
-  // Each game's usual size: Hold'em 9, PLO 8, PLO6 6.
+  // Each game's usual size: Hold'em 9, PLO 8, PLO5 and PLO6 6.
   assert.equal(newTable(club, {game: 'nlhe'}).seats, 9);
   assert.equal(newTable(club, {game: 'plo4'}).seats, 8);
-  assert.equal(newTable(club, {game: 'plo5'}).seats, 8);
+  assert.equal(newTable(club, {game: 'plo5'}).seats, 6);
   assert.equal(newTable(club, {game: 'plo6'}).seats, 6);
   assert.equal(defaultSeats('plo6'), 6);
 });
