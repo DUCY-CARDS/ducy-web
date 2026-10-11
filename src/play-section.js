@@ -17,11 +17,13 @@ import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
+import { setTitleSection, setTitleWaiting } from './title.js';
 
 export const TABS = ['play', 'join', 'host', 'clubs'];
 const LABELS = {play: 'Play', join: 'Join', host: 'Host', clubs: 'My clubs'};
+// Each tab's window title (#195): "My clubs · DUCY".
+const TITLES = {play: 'Play', join: 'Join a game', host: 'Host a game', clubs: 'My clubs'};
 const TAB_KEY = 'ducyPlayTab';
-const TITLE = document.title;
 
 let tab = null; // the tab showing, or null when the section is closed
 let seenSeats = 0; // open seats the last time the Play tab was looked at
@@ -55,6 +57,7 @@ export function openSection(t, shortcut) {
   // created picks itself again, clubs.js).
   if (t === 'host' && tab !== 'host') setHostPick(null);
   tab = t;
+  setTitleSection(TITLES[t]);
   try { localStorage.setItem(TAB_KEY, t); } catch {}
   if (t === 'play') seenSeats = openSeats();
   const sec = el('psec');
@@ -120,7 +123,7 @@ function renderTabs() {
 let lastNeeds = 0;
 function changed() {
   const n = needsYou();
-  document.title = n ? `(${n}) ${TITLE}` : TITLE;
+  setTitleWaiting(n);
   const top = document.querySelector('.mode-tab[data-mode="play"]');
   if (top) top.dataset.badge = n ? String(n) : '';
   if (tab) renderTabs();
