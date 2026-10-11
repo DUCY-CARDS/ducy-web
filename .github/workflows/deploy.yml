@@ -55,8 +55,10 @@ jobs:
 
       # The GTO bots' models are published as releases of the ducy repo
       # (assets cards.bin and blueprint.bin): gto-hunl-<name> for heads-up
-      # No-limit Hold'em, pointed at by gto/current.json, and gto-plo-<name>
-      # for heads-up PLO4, by gto/plo-current.json. The newest of each is
+      # No-limit Hold'em, pointed at by gto/current.json, gto-plo-<name> for
+      # heads-up PLO4, by gto/plo-current.json, and gto-plo6-<name> for
+      # heads-up PLO6, by gto/plo6-current.json (the prefixes don't overlap:
+      # "gto-plo6-" doesn't start with "gto-plo-"). The newest of each is
       # uploaded to gto/<tag>/ unless it's already there; see
       # scripts/upload-gto.sh.
       - name: Publish the GTO bot models
@@ -64,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
         run: |
-          for PAIR in gto-hunl-:current.json gto-plo-:plo-current.json; do
+          for PAIR in gto-hunl-:current.json gto-plo-:plo-current.json gto-plo6-:plo6-current.json; do
             PREFIX="${PAIR%%:*}"
             MANIFEST="${PAIR#*:}"
             TAG="$(gh release list -R allenpiscitello/ducy --limit 100 --json tagName,publishedAt \
