@@ -92,7 +92,19 @@ export function tablesBody(club, seatedCounts = {}) {
       id: t.id, name: t.name, game: t.game, sb: t.sb, bb: t.bb, min: limits(t).min, max: limits(t).max,
       seats: t.seats, taken: seatedCounts[t.id] || 0,
     })),
+    // The rathole rule's window, so members see it before they sit (#187).
+    rathole: club.ratholeHours ?? 0,
   };
+}
+
+// What a member may buy in for at table `t` (from tablesBody), by their own
+// ledger copy `entries` (#187): {min, max, rathole}, where `rathole` is the
+// stack they left the table with less than `ratholeHours` ago (the rule's
+// floor, club-chips.js ratholeMin), or 0.
+export function buyInRange(t, entries = [], ratholeHours = 0, now = Date.now()) {
+  const left = [...entries].reverse().find(e => e.kind === 'cash_out' && e.table === t.id);
+  const rathole = left && ratholeHours && now - left.at < ratholeHours * 3600e3 ? left.amount : 0;
+  return {min: Math.min(t.max, Math.max(t.min, rathole)), max: t.max, rathole};
 }
 
 // May member `id` join table `t`? '' if so, else why not. `atTable` is the
