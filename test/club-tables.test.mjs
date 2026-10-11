@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  canJoin, cashOutEveryone, cashOutTable, chipsForTable, leftTable, limits, newTable, openTables, syncStacks,
+  canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
   tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
 
@@ -24,7 +24,7 @@ function clubWith(...ids) {
 test('tables: defaults, validation and what members are told', () => {
   const club = clubWith();
   const t = newTable(club, {game: 'plo4', sb: 1, bb: 2, minBB: 50, maxBB: 100, seats: 6});
-  assert.equal(t.name, 'Table 1');
+  assert.equal(t.name, 'PLO - 0.01/0.02'); // in hundredths: 1/2 is 0.01/0.02
   assert.deepEqual(limits(t), {min: 100, max: 200});
   assert.throws(() => newTable(club, {game: 'stud'}), /Pick a game/);
   assert.throws(() => newTable(club, {sb: 5, bb: 2}), /big blind/);
@@ -33,7 +33,33 @@ test('tables: defaults, validation and what members are told', () => {
   newTable(club, {name: 'High stakes', sb: 5, bb: 10});
   const body = tablesBody(club, {[t.id]: 2});
   assert.equal(body.tables.length, 2);
-  assert.deepEqual(body.tables[0], {id: t.id, name: 'Table 1', game: 'plo4', sb: 1, bb: 2, min: 100, max: 200, seats: 6, taken: 2});
+  assert.deepEqual(body.tables[0], {id: t.id, name: 'PLO - 0.01/0.02', game: 'plo4', sb: 1, bb: 2, min: 100, max: 200, seats: 6, taken: 2});
+});
+
+test('default names: game and blinds, numbered when an open table has the name', () => {
+  const club = clubWith();
+  const a = newTable(club, {game: 'nlhe', sb: 100, bb: 200});
+  assert.equal(a.name, 'NLH - 1/2');
+  assert.equal(newTable(club, {game: 'nlhe', sb: 100, bb: 200}).name, 'NLH - 1/2 - #2');
+  assert.equal(newTable(club, {game: 'nlhe', sb: 100, bb: 200}).name, 'NLH - 1/2 - #3');
+  assert.equal(newTable(club, {game: 'plo6', sb: 25, bb: 50}).name, 'PLO6 - 0.25/0.5');
+  // A closed table's name is free again.
+  a.status = 'closed';
+  assert.equal(newTable(club, {game: 'nlhe', sb: 100, bb: 200}).name, 'NLH - 1/2');
+  assert.equal(defaultTableName(club, 'plo5', 500, 1000), 'PLO5 - 5/10');
+  // A name the host gives is kept.
+  assert.equal(newTable(club, {name: 'Main', game: 'nlhe', sb: 100, bb: 200}).name, 'Main');
+});
+
+test('seats: no more than the game can deal to', () => {
+  const club = clubWith();
+  assert.equal(maxSeats('plo6'), 6);
+  assert.equal(maxSeats('plo5'), 9);
+  assert.equal(maxSeats('nlhe'), 10);
+  assert.throws(() => newTable(club, {game: 'plo6', seats: 9}), /PLO 6-card table seats 2 to 6/);
+  assert.throws(() => newTable(club, {game: 'plo5', seats: 10}), /2 to 9/);
+  assert.equal(newTable(club, {game: 'plo6', seats: 6}).seats, 6);
+  assert.equal(newTable(club, {game: 'plo6'}).seats, 6); // the default fits the game
 });
 
 test('who can join: members only, open tables only, one table at a time', () => {
