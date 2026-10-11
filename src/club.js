@@ -70,25 +70,36 @@ export function revokeInvite(club) {
 
 // The invite link for `club` on a page at `base` (location.href), carrying
 // `relay` when it isn't the default.
-export function inviteLink(club, base, relay = '') {
+// The link also names the club and, given `by`, who sent it (#185), so the
+// page it opens can say what you're joining. They're only for showing: the
+// club's real name comes from its host once you've asked.
+export function inviteLink(club, base, relay = '', by = '') {
   const u = new URL(base);
   u.search = '';
   u.searchParams.set('club', club.code);
   u.searchParams.set('invite', club.invite);
   u.searchParams.set('host', club.hostId);
+  if (club.name) u.searchParams.set('name', club.name);
+  if (by) u.searchParams.set('by', by);
   if (relay) u.searchParams.set('relay', relay);
   u.hash = 'join';
   return u.toString();
 }
 
-// The invite in a page address, or null.
+// The invite in a page address, or null: {code, invite, hostId}, with the
+// club's `name` and who it's `by` when the link has them.
 export function parseInvite(href) {
   const p = new URL(href).searchParams;
   const code = normCode(p.get('club') || '');
   const invite = p.get('invite') || '';
   const host = p.get('host') || '';
   if (!code || !invite || !host) return null;
-  return {code, invite, hostId: host};
+  const inv = {code, invite, hostId: host};
+  const name = (p.get('name') || '').trim().slice(0, MAX_CLUB_NAME);
+  const by = (p.get('by') || '').trim().slice(0, MAX_PLAYER_NAME);
+  if (name) inv.name = name;
+  if (by) inv.by = by;
+  return inv;
 }
 
 export const statusBody = (club, id) => ({type: 'status', club: club.code, name: club.name, status: club.members[id]?.status || 'unknown'});
@@ -210,7 +221,8 @@ export function membersByStatus(club, status) {
 
 // A club the player has asked to join: {code, name, hostId, invite, status, hostSeq}.
 export function newMembership(inv) {
-  return {code: inv.code, hostId: inv.hostId, invite: inv.invite, name: '', status: 'new', hostSeq: 0};
+  // The link's name until the host's own arrives.
+  return {code: inv.code, hostId: inv.hostId, invite: inv.invite, name: inv.name || '', status: 'new', hostSeq: 0};
 }
 
 // The player handles one envelope from the host. Returns true if it updated
