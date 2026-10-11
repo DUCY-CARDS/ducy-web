@@ -4,7 +4,7 @@
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
-//        review
+//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -40,10 +40,11 @@ const snapshot = state => ({state, botToAct: table.botToAct()});
 
 // The GTO bot's files are big (a few MB), so they're kept in Cache Storage:
 // downloaded once, then read from disk on later visits. Each model lives in
-// its own folder, so a cached file never goes stale. Hold'em's and PLO's
-// models each have their own cache, so loading one doesn't drop the other.
+// its own folder, so a cached file never goes stale. Hold'em's, PLO4's and
+// PLO6's models each have their own cache, so loading one doesn't drop another.
 const GTO_CACHE = 'ducy-gto';
 const GTO_PLO_CACHE = 'ducy-gto-plo';
+const GTO_PLO6_CACHE = 'ducy-gto-plo6';
 const gtoLoaded = {};
 
 async function cachedBytes(cacheName, url) {
@@ -102,6 +103,10 @@ const ops = {
   // ducy-wasm doesn't have it. Its blueprint is for a depth of `bb` big blinds.
   gtoPloSupported: () => typeof wasm.loadGtoPlo === 'function',
   loadGtoPlo: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
+  // The PLO6 one ("gto-plo6" at a plo6 table) came later still: loadGtoPlo
+  // takes its six-card model only in a ducy-wasm that has gtoPlo6Loaded.
+  gtoPlo6Supported: () => typeof wasm.gtoPlo6Loaded === 'function',
+  loadGtoPlo6: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO6_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
   hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(now('host')); // deal once the players are in

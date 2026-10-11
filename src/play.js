@@ -12,8 +12,8 @@
 // host on request within the table's buy-in limits.
 // Heads-up against the GTO bot is training: both players start every hand
 // with 100 BB, and in Hold'em each finished hand's decisions are reviewed
-// against the bot's strategy (play-review.js) in the background. PLO4 has
-// its own GTO bot, without the review.
+// against the bot's strategy (play-review.js) in the background. PLO4 and
+// PLO6 have their own GTO bots, without the review.
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
@@ -92,13 +92,22 @@ const GTO_MANIFEST = new URL('gto/current.json', document.baseURI).href;
 const GTO = {id: 'gto', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
 let gtoAvailable = false;
 let gtoReady = false;
-// The PLO GTO bot, for heads-up PLO4 the same way: hosted at gto/ with its
-// own manifest, and offered when it's there and the engine can play it.
-const GTO_PLO_MANIFEST = new URL('gto/plo-current.json', document.baseURI).href;
-const GTO_PLO = {id: 'gto-plo', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'};
-let gtoPloAvailable = false;
-let gtoPloReady = false;
-const GTO_IDS = [GTO.id, GTO_PLO.id];
+// The PLO GTO bots, for heads-up PLO4 and PLO6 the same way, keyed by game:
+// each hosted at gto/ with its own manifest, loaded by its own worker op, and
+// offered when it's there and the engine can play it.
+const GTO_PLOS = {
+  plo4: {
+    bot: {id: 'gto-plo', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
+    label: 'PLO4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
+    supported: 'gtoPloSupported', load: 'loadGtoPlo', available: false, ready: false,
+  },
+  plo6: {
+    bot: {id: 'gto-plo6', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
+    label: 'PLO6', manifest: new URL('gto/plo6-current.json', document.baseURI).href,
+    supported: 'gtoPlo6Supported', load: 'loadGtoPlo6', available: false, ready: false,
+  },
+};
+const GTO_IDS = [GTO.id, ...Object.values(GTO_PLOS).map(p => p.bot.id)];
 let setupNote = '';
 let seated = false; // a table is in play
 let botToAct = false;
@@ -251,13 +260,13 @@ const nameOf = seat => (state ? state.seats[seat].name : '');
 
 // ---- setup ----
 
-// The GTO bots play heads-up only: one No-limit Hold'em, the other PLO4.
-// The one for the game picked, or null.
+// The GTO bots play heads-up only: one No-limit Hold'em, the others PLO4 and
+// PLO6. The one for the game picked, or null.
 function gtoBot() {
   if (setup.count !== 1) return null;
   if (setup.game === 'nlhe' && gtoAvailable) return GTO;
-  if (setup.game === 'plo4' && gtoPloAvailable) return GTO_PLO;
-  return null;
+  const plo = GTO_PLOS[setup.game];
+  return plo?.available ? plo.bot : null;
 }
 const botChoices = () => (gtoBot() ? [gtoBot(), ...personalities] : personalities);
 
@@ -337,8 +346,9 @@ function botsSetupHtml() {
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   if (setup.count > 1) h += picks;
   h += '</div></details>';
-  const gtoGames = [gtoAvailable && 'No-limit Hold’em', gtoPloAvailable && 'PLO4'].filter(Boolean);
-  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gtoGames.join(' or ')} (1 opponent) to face the GTO bot.</p>`;
+  const gtoGames = [gtoAvailable && 'No-limit Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
+  const gamesText = gtoGames.length > 1 ? `${gtoGames.slice(0, -1).join(', ')} or ${gtoGames.at(-1)}` : gtoGames[0];
+  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent) to face the GTO bot.</p>`;
   if (gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
@@ -480,14 +490,14 @@ function togglePrefold() {
 
 // Downloads (the first time) and loads the GTO bot's files in the worker.
 async function prepareGto() {
-  const plo = setup.bots.includes(GTO_PLO.id);
-  if (plo ? gtoPloReady : (gtoReady || !setup.bots.includes(GTO.id))) return true;
+  const plo = Object.values(GTO_PLOS).find(p => setup.bots.includes(p.bot.id));
+  if (plo ? plo.ready : (gtoReady || !setup.bots.includes(GTO.id))) return true;
   root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
   try { navigator.storage?.persist?.(); } catch {}
   try {
     if (plo) {
-      await call('loadGtoPlo', GTO_PLO_MANIFEST, GTO_BUY_IN_BB);
-      gtoPloReady = true;
+      await call(plo.load, plo.manifest, GTO_BUY_IN_BB);
+      plo.ready = true;
     } else {
       await call('loadGto', GTO_MANIFEST);
       gtoReady = true;
@@ -2015,7 +2025,9 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
     try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
-    try { gtoPloAvailable = await call('gtoPloSupported') && (await fetch(GTO_PLO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
+    for (const plo of Object.values(GTO_PLOS)) {
+      try { plo.available = await call(plo.supported) && (await fetch(plo.manifest, {cache: 'no-cache'})).ok; } catch {}
+    }
   }
   if (shortcut === 'gto' && !seated) {
     setup.game = 'nlhe';
