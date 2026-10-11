@@ -26,7 +26,7 @@ import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
-import { maxSeats } from './club-tables.js';
+import { defaultSeats, maxSeats } from './club-tables.js';
 
 let worker = null;
 let nextId = 0;
@@ -69,7 +69,7 @@ const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // included) and the buy-in limits in big blinds (min and max, in chips, are
 // minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
 // shows as 1/2.
-const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 6, minBB: 50, maxBB: 200};
+const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200};
 const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
@@ -1827,7 +1827,8 @@ function onClick(e) {
   const f = setup.friends;
   if (d.fgame || d.fblinds || d.fseats) {
     readFriendsStep();
-    if (d.fgame) f.game = d.fgame;
+    // Picking a game picks its usual size (Hold'em 9, PLO 8, PLO6 6).
+    if (d.fgame && d.fgame !== f.game) { f.game = d.fgame; f.seats = defaultSeats(f.game); }
     if (d.fseats) f.seats = +d.fseats;
     f.seats = Math.min(f.seats, maxSeats(f.game));
     // A preset keeps the buy-in in big blinds; Custom shows the two fields.

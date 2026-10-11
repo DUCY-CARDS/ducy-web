@@ -18,16 +18,18 @@ import { chipInput } from './chip-format.js';
 
 // `short` names tables by default ("NLH - 1/2"); `seats` is the most a game
 // can deal to: everyone's hole cards and the board come from 52 cards, so
-// PLO5 seats 9 (10 × 5 + 5 is 55) and PLO6 seats 6.
+// PLO5 seats 9 (10 × 5 + 5 is 55) and PLO6 seats 6. `defaultSeats` is a new
+// table's size unless the host picks another.
 export const GAMES = [
-  {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: 10},
-  {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: 10},
-  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 9},
-  {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6},
+  {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: 10, defaultSeats: 9},
+  {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: 10, defaultSeats: 8},
+  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 9, defaultSeats: 8},
+  {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6, defaultSeats: 6},
 ];
 export const MAX_TABLE_NAME = 30;
 export const MAX_SEATS = 10;
 export const maxSeats = game => GAMES.find(g => g.id === game)?.seats ?? MAX_SEATS;
+export const defaultSeats = game => GAMES.find(g => g.id === game)?.defaultSeats ?? 9;
 
 // A new table's name when the host doesn't give one: the game and blinds,
 // "NLH - 1/2", with " - #2", " - #3"… when an open table already has it.
@@ -50,7 +52,7 @@ function tableId() {
 }
 
 // Adds a table to the club from the host's choices; throws on bad input.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = maxSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
   ensureTables(club);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
   if (!whole(sb) || !whole(bb) || bb < sb) throw new Error('The big blind must be at least the small blind, both above 0.');

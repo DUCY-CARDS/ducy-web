@@ -29,7 +29,7 @@ import {
 } from './club.js';
 import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
-  cashOutEveryone, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
+  cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
 import { createOwner } from './club-owner.js';
@@ -185,16 +185,17 @@ function setWizard(step) {
 const TABLE_KEY = 'ducyTableChoice';
 // In hundredths (chip-format.js): 100/200 shows as 1/2.
 const BLINDS = [[100, 200], [200, 500], [500, 1000]];
-const SEATS = [2, 6, 9];
+const SEATS = [2, 6, 8, 9];
 const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
 
 function tableFormHtml(code = '', {wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
   const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
-  // No more seats than the game can deal to (PLO6: 6).
+  // The game's usual size (Hold'em 9, PLO 8, PLO6 6), or the last one picked
+  // for this game; never more than the game can deal to (PLO6: 6).
   const most = maxSeats(game);
-  const wanted = Math.min(last.seats || 9, most);
+  const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), most);
   const seats = SEATS.includes(wanted) ? String(wanted) : 'other';
   const radio = (name, value, label, on, off = false) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}${off ? ' disabled' : ''}>${label}</label>`;
   let h = `<form class="cl-tableform tf" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}${wizard ? ' data-wizard="1"' : ''}>`;
@@ -223,24 +224,25 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
 
 const formTableName = (code, game, sb, bb) => defaultTableName(!code && club ? club : {tables: []}, game, sb, bb);
 
-// Keeps the New table form in step with its game and blinds: seat counts
-// the game can't deal to are greyed out (a pick above them drops to the
-// most it allows), and the name's placeholder is the default name.
-function syncTableForm(f) {
+// Keeps the New table form in step with its game and blinds: picking a game
+// picks its usual size, seat counts it can't deal to are greyed out, and the
+// name's placeholder is the default name.
+function syncTableForm(f, gameChanged) {
   const v = name => f.elements[name].value;
   const game = v('game');
   const most = maxSeats(game);
-  for (const r of f.querySelectorAll('[name=seatsPick]')) {
-    if (r.value === 'other') continue;
-    r.disabled = Number(r.value) > most;
-    if (r.disabled && r.checked) {
-      const fits = SEATS.filter(n => n <= most);
-      const best = fits.includes(most) ? String(most) : 'other';
-      f.querySelector(`[name=seatsPick][value="${best}"]`).checked = true;
-    }
-  }
   const seats = f.elements.seats;
   seats.max = most;
+  for (const r of f.querySelectorAll('[name=seatsPick]')) {
+    if (r.value !== 'other') r.disabled = Number(r.value) > most;
+  }
+  const picked = f.querySelector('[name=seatsPick]:checked');
+  if (gameChanged || picked?.disabled) {
+    const n = defaultSeats(game);
+    const radio = f.querySelector(`[name=seatsPick][value="${n}"]`) || f.querySelector('[name=seatsPick][value=other]');
+    radio.checked = true;
+    seats.value = n;
+  }
   if (Number(seats.value) > most) seats.value = most;
   const blinds = v('blinds');
   const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
@@ -1707,7 +1709,7 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('change', onFilter);
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
-      if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f);
+      if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
     });
     // The blind structure editor's fields, and the starting stack it follows.
     root.addEventListener('change', e => {

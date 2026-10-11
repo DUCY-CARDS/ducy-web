@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
+  canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
   tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
 
@@ -59,7 +59,12 @@ test('seats: no more than the game can deal to', () => {
   assert.throws(() => newTable(club, {game: 'plo6', seats: 9}), /PLO 6-card table seats 2 to 6/);
   assert.throws(() => newTable(club, {game: 'plo5', seats: 10}), /2 to 9/);
   assert.equal(newTable(club, {game: 'plo6', seats: 6}).seats, 6);
-  assert.equal(newTable(club, {game: 'plo6'}).seats, 6); // the default fits the game
+  // Each game's usual size: Hold'em 9, PLO 8, PLO6 6.
+  assert.equal(newTable(club, {game: 'nlhe'}).seats, 9);
+  assert.equal(newTable(club, {game: 'plo4'}).seats, 8);
+  assert.equal(newTable(club, {game: 'plo5'}).seats, 8);
+  assert.equal(newTable(club, {game: 'plo6'}).seats, 6);
+  assert.equal(defaultSeats('plo6'), 6);
 });
 
 test('who can join: members only, open tables only, one table at a time', () => {
