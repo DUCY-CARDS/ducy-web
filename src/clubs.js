@@ -260,7 +260,11 @@ function submitTable(f) {
     sitOutMins: Number(v('sitOutMins')),
   };
   if (blinds === 'other' && !(Number.isSafeInteger(sb) && Number.isSafeInteger(bb) && sb >= 1 && sb <= bb)) {
-    alert('Blinds are amounts like 1 or 0.25: the small blind at least 0.01 and no more than the big blind.');
+    // Said in the form, so what was typed stays (#186).
+    let n = f.querySelector('.tf-note');
+    if (!n) { n = document.createElement('p'); n.className = 'pl-desc pl-neterr tf-note'; f.querySelector('.cl-formacts').before(n); }
+    n.textContent = 'Blinds are amounts like 1 or 0.25: the small blind at least 0.01 and no more than the big blind.';
+    f.elements.sb.focus();
     return;
   }
   save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
@@ -302,11 +306,8 @@ function watchTable(id) {
   location.hash = 'play';
 }
 
-function closeTable(id) {
-  const t = club.tables.find(x => x.id === id);
-  if (!t || !confirm(`Close ${t.name}? Everyone is cashed out at the end of the hand.`)) return;
-  hostAct('close_table', {table: id});
-}
+// Closing a table asks on its own row (#186): the table being asked about.
+let closingTable = null;
 
 function tablesHtml() {
   const tables = openTables(club);
@@ -316,17 +317,74 @@ function tablesHtml() {
     h += '<ul class="cl-list">';
     for (const t of tables) {
       h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
-      h += t.status === 'closing'
-        ? '<span class="cl-acts pl-meta">Closing after this hand…</span>'
-        : `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
+      if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
+      else if (closingTable === t.id) {
+        h += `<span class="cl-confirm">Close ${esc(t.name)}? Everyone at it is cashed out at the end of the hand, back to their balance.`;
+        h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close it</button><button class="btn-small" data-cl="close-table-no">Keep it open</button></span>`;
+      } else h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
       if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
       h += '</li>';
     }
     h += '</ul>';
-  } else if (tableForm !== true) h += '<p class="pl-meta">No tables yet.</p>';
+  } else if (tableForm !== true) h += '<p class="pl-meta">No tables yet: open one, then send players the invite link.</p>';
   h += tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
+  // Players need the link to get here (#186).
+  h += inviteRowHtml();
   return h;
+}
+
+// The invite link with Copy and Share, on the Tables and Players tabs.
+function inviteRowHtml() {
+  let h = '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
+  h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
+  h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button>`;
+  if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
+  h += '<button class="link-btn" data-cl="revoke" title="Make a new link; the old one stops working">New link</button>';
+  return h + '</div></div>';
+}
+
+// ---- a host's first night (#186) ----
+
+// What this browser remembers about the club it runs: whether the invite
+// link was shared, the checklist closed, the last backup.
+const hostNoteKey = () => `ducyClubHost:${myClubCode()}`;
+const hostNotes = () => load(hostNoteKey(), {});
+const setHostNote = (k, v) => save(hostNoteKey(), {...hostNotes(), [k]: v});
+
+// Chips to start a new player with: the biggest buy-in at the open tables.
+const startingChips = () => Math.max(0, ...openTables(club).map(t => t.maxBB * t.bb));
+
+// From a new club to a game: open a table, share the link, let players in,
+// give them chips. Ticked off as they happen; gone once all are, or closed.
+function checklistHtml() {
+  const notes = hostNotes();
+  if (notes.checklistHidden) return '';
+  const members = membersByStatus(club, 'member');
+  const steps = [
+    ['Open a table', openTables(club).length > 0, 'tables'],
+    ['Send players the invite link', !!notes.shared || members.length > 0, 'players'],
+    ['Let them in as they ask', members.length > 0, 'players'],
+    ['Give them chips to play with', (club.chips?.issued || 0) > 0, 'players'],
+  ];
+  if (steps.every(s => s[1])) return '';
+  const next = steps.findIndex(s => !s[1]);
+  let h = '<div class="cl-checklist"><b>Get your first game going</b><ol>';
+  steps.forEach(([text, done, tab], i) => {
+    h += `<li class="${done ? 'done' : ''}">${done ? '✓ ' : ''}${esc(text)}`;
+    if (i === next && dashTab !== tab) h += ` <button class="link-btn" data-cl="dash" data-tab="${tab}">Go</button>`;
+    h += '</li>';
+  });
+  return h + '</ol><button class="link-btn" data-cl="checklist-hide">Hide this</button></div>';
+}
+
+// Until the club is backed up: a reminder, since without a backup nobody
+// can run it again if this browser loses it.
+function backupNagHtml() {
+  if (!isRemote()) return '';
+  const notes = hostNotes();
+  if (notes.backedUp || notes.backupNagHidden) return '';
+  return '<p class="pl-desc pl-neterr cl-nag">No backup of this club has been made in this browser: if it loses the club, nobody can run it again. <button class="btn-small" data-cl="backup-now">Back it up</button> <button class="link-btn" data-cl="backup-nag-hide">I have one</button></p>';
 }
 
 
@@ -1054,6 +1112,7 @@ async function backupClub(password) {
   const code = myClubCode(), name = club?.name || owner?.record?.name || '';
   const locked = JSON.parse(await exportLockedIdentity(me, password));
   downloadFile(JSON.stringify({...locked, club: {code, name}}), `ducy-club-${code}.json`);
+  setHostNote('backedUp', Date.now());
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -1085,6 +1144,7 @@ function hostHtml() {
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
   h += `<p class="pl-meta">${remote ? '' : 'Runs in this tab · '}code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  h += backupNagHtml() + checklistHtml();
   // Four tabs (#152): Tables, Players (with what needs you, #143), Settings
   // and History.
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
@@ -1100,9 +1160,13 @@ function hostHtml() {
   else if (dashTab === 'players') {
     if (pending.length || asking.length) {
       h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
+      // Letting someone in and giving them chips is one click (#186).
+      const start = startingChips();
       for (const m of pending) {
         h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
-        h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Approve</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
+        h += '<span class="cl-acts">';
+        if (start && !m.agentOf) h += `<button class="btn-small primary" data-cl="approve-give" data-id="${esc(m.id)}" data-amount="${start}" title="Let them in and give them the biggest buy-in at your tables">Let in and give ${chips(start)}</button>`;
+        h += `<button class="btn-small${start && !m.agentOf ? '' : ' primary'}" data-cl="approve" data-id="${esc(m.id)}">${start && !m.agentOf ? 'Just let in' : 'Approve'}</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
       }
       for (const m of asking) {
         h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
@@ -1114,12 +1178,7 @@ function hostHtml() {
       }
       h += '</ul></div>';
     }
-    h += '<div class="pl-row"><span class="pl-label">Invite link</span><div class="pl-opts cl-link">';
-    h += `<input class="pl-text" readonly value="${esc(link())}" id="cl-link">`;
-    h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy'}</button>`;
-    if (navigator.share) h += '<button class="btn-small" data-cl="share">Share…</button>';
-    h += '<button class="link-btn" data-cl="revoke" title="Make a new link; the old one stops working">New link</button>';
-    h += '</div></div>';
+    h += inviteRowHtml();
     h += `<h3>Members (${members.length})</h3>`;
     if (!members.length) h += '<p class="pl-meta">No members yet. Send someone the invite link.</p>';
     else {
@@ -1205,6 +1264,8 @@ function settingsHtml() {
   h += '<h3>Backup</h3>';
   if (remote) {
     h += '<p class="pl-desc">A file, locked with a password, that lets you run the club again from any browser if this one loses it.</p>';
+    const last = hostNotes().backedUp;
+    h += `<p class="pl-meta">${last ? `Last backed up from this browser ${esc(new Date(last).toLocaleString())}.` : 'No backup made from this browser yet.'}</p>`;
     if (backupForm) {
       h += '<form class="pl-idform" data-clform="backup">';
       h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
@@ -1508,14 +1569,23 @@ async function onClick(e) {
   else if (act === 'wiz-skip') setWizard('skip');
   else if (act === 'wiz-back') setWizard('backup');
   else if (act === 'wiz-done') { setWizard(null); dashTab = 'tables'; location.hash = 'clubs'; }
-  else if (act === 'share') navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {});
+  else if (act === 'share') { setHostNote('shared', true); navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {}); render(); }
   else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
+  else if (act === 'approve-give') {
+    const id = b.dataset.id, amount = Number(b.dataset.amount);
+    hostAct('approve', {id}).then(ok => { if (ok) hostAct('give', {id, amount, note: 'Starting chips'}); });
+  } else if (act === 'checklist-hide') { setHostNote('checklistHidden', true); render(); }
+  else if (act === 'backup-nag-hide') { setHostNote('backupNagHidden', true); render(); }
+  else if (act === 'backup-now') { dashTab = 'settings'; backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
+  else if (act === 'close-table-yes') { closingTable = null; hostAct('close_table', {table: b.dataset.table}); render(); }
+  else if (act === 'close-table-no') { closingTable = null; render(); }
   else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
   else if (act === 'remove') { if (confirm('Remove this member from the club?')) hostAct('remove', {id: b.dataset.id}); }
   else if (act === 'revoke') { if (confirm('Make a new invite link? The current link stops working for anyone who hasn’t used it yet.')) hostAct('revoke_invite'); }
   else if (act === 'copy') {
     try { await navigator.clipboard.writeText(link()); } catch { root.querySelector('#cl-link')?.select(); }
     copied = true;
+    setHostNote('shared', true);
     render();
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub();
@@ -1576,7 +1646,7 @@ async function onClick(e) {
   else if (act === 'a-close-table') { if (confirm('Close this table? Everyone is cashed out at the end of the hand.')) adminCmd(b.dataset.code, {op: 'close_table', table: b.dataset.table}); }
   else if (act === 'a-hide-table') adminCmd(b.dataset.code, {op: 'hide_table', table: b.dataset.table});
   else if (act === 'a-new-table') { tableForm = b.dataset.code; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
-  else if (act === 'close-table') closeTable(b.dataset.table);
+  else if (act === 'close-table') { closingTable = b.dataset.table; render(); }
   else if (act === 'watch') watchTable(b.dataset.table);
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);

@@ -1211,6 +1211,13 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   background: var(--bg-raised); color: var(--fg); font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,0.25);
 }
 .pt-toast[hidden] { display: none; }
+/* A host's first night (#186): the checklist, the backup reminder, asking on the row */
+.cl-checklist { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 12px; padding: 10px 14px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); font-size: 13px; }
+.cl-checklist ol { margin: 0; padding-left: 20px; }
+.cl-checklist li.done { color: var(--fg-muted); }
+.cl-checklist > .link-btn { align-self: flex-start; }
+.cl-nag { margin: 6px 0; }
+.cl-confirm { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 /* A tournament calling you (#189): stays until you sit down or close it */
 .cl-callbar { border-color: var(--teal); }
 body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
