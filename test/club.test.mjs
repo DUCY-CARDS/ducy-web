@@ -27,7 +27,16 @@ test('invite links round-trip and carry the relay when given', async () => {
   const {club} = await setup();
   const link = inviteLink(club, 'https://ducy.example/?table=X#play');
   const inv = parseInvite(link);
-  assert.deepEqual(inv, {code: club.code, invite: club.invite, hostId: club.hostId});
+  assert.deepEqual(inv, {code: club.code, invite: club.invite, hostId: club.hostId, name: 'Friday Game'});
+  // Who sent it, when given (#185); the name shows until the host's arrives.
+  assert.equal(parseInvite(inviteLink(club, 'https://ducy.example/', '', 'Hal')).by, 'Hal');
+  assert.equal(newMembership(inv).name, 'Friday Game');
+  // Old links, without them, still work; overlong ones are cut.
+  const old = new URL(link);
+  old.searchParams.delete('name');
+  assert.deepEqual(parseInvite(old.href), {code: club.code, invite: club.invite, hostId: club.hostId});
+  old.searchParams.set('name', 'x'.repeat(80));
+  assert.equal(parseInvite(old.href).name.length, 50);
   assert.ok(link.endsWith('#join'), 'opens the Join tab');
   assert.equal(new URL(link).searchParams.get('table'), null);
   assert.equal(new URL(inviteLink(club, 'https://ducy.example/', 'ws://localhost:8787')).searchParams.get('relay'), 'ws://localhost:8787');

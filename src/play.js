@@ -26,6 +26,7 @@ import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
+import { defaultSeats, maxSeats } from './club-tables.js';
 
 let worker = null;
 let nextId = 0;
@@ -68,8 +69,8 @@ const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // included) and the buy-in limits in big blinds (min and max, in chips, are
 // minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
 // shows as 1/2.
-const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 6, minBB: 50, maxBB: 200};
-const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9, 10];
+const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200};
+const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9];
 const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
 const MAX_CHIPS = 1e11;
@@ -376,7 +377,8 @@ function friendsSetupHtml() {
     if (!setup.name) h += '<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see"></div>';
   } else if (fstep === 2) {
     h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
-    h += optsRow('Table size', TABLE_SIZES.map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
+    // No more seats than the game can deal to (PLO6: 6).
+    h += optsRow('Table size', TABLE_SIZES.filter(n => n <= maxSeats(f.game)).map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
     h += `<p class="pl-desc">${gameOf(f.game).name}, up to ${f.seats} players, you included.</p>`;
   } else {
     const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
@@ -747,7 +749,7 @@ async function hostTable() {
   // The host starts with 100 BB, kept within the table's limits.
   const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  request('friends', f.seats, setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
+  request('friends', Math.min(f.seats, maxSeats(f.game)), setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
     .then(snap => { if (snap) show(snap); });
   // The table shows on the Play tab.
   location.hash = 'play';
@@ -1825,8 +1827,10 @@ function onClick(e) {
   const f = setup.friends;
   if (d.fgame || d.fblinds || d.fseats) {
     readFriendsStep();
-    if (d.fgame) f.game = d.fgame;
+    // Picking a game picks its usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6).
+    if (d.fgame && d.fgame !== f.game) { f.game = d.fgame; f.seats = defaultSeats(f.game); }
     if (d.fseats) f.seats = +d.fseats;
+    f.seats = Math.min(f.seats, maxSeats(f.game));
     // A preset keeps the buy-in in big blinds; Custom shows the two fields.
     if (d.fblinds === 'custom') f.customBlinds = true;
     else if (d.fblinds) { [f.sb, f.bb] = d.fblinds.split('/').map(Number); f.customBlinds = false; }

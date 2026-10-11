@@ -799,6 +799,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pj-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
 .pj-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pj-code { width: 260px; font-family: var(--font-data); text-transform: none; }
+/* A club invite: what you're joining (#185) */
+.pj-invite { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); }
+.pj-club { font-size: 18px; }
+.pj-field[hidden] { display: none; }
 .pl-elsewhere { max-width: 640px; }
 .cl-wrap { max-width: 760px; }
 .cl-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -1214,6 +1218,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-checklist > .link-btn { align-self: flex-start; }
 .cl-nag { margin: 6px 0; }
 .cl-confirm { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+/* A tournament calling you (#189): stays until you sit down or close it */
+.cl-callbar { border-color: var(--teal); }
+body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
+/* A tournament's lobby, under its row (#189) */
+.cl-tdetails { flex-basis: 100%; font-size: 13px; }
+.cl-tdetails summary { cursor: pointer; color: var(--teal); }
+.cl-tlobby { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.cl-tlobby .cl-acct { min-width: 0; }
+.cl-tlive { flex-basis: 100%; }
 /* A fair deal's check (#136) */
 .cl-fair { font-size: 12px; color: var(--green); white-space: nowrap; }
 .cl-fair.bad { color: var(--red); white-space: normal; }

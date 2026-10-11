@@ -6,6 +6,7 @@ import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 import { closeSection, lastTab, openSection, sectionOpen, startBackground, TABS } from './play-section.js';
+import { setTitleSection } from './title.js';
 
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
@@ -1751,6 +1752,8 @@ function setMode(mode, shortcut) {
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === (section ? 'play' : mode)));
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
+  // The Play section titles its own tabs.
+  if (!section) setTitleSection(trainer ? 'Trainer' : 'Equity calculator');
   if (section) openSection(mode, shortcut);
   else closeSection();
 }

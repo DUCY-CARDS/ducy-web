@@ -21,7 +21,7 @@
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
-import { downloadFile, RESTORE_CLUB_KEY } from './player-settings.js';
+import { downloadFile, notifyOn, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -29,7 +29,7 @@ import {
 } from './club.js';
 import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
-  cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tableById, tablesBody,
+  cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
 import { createOwner } from './club-owner.js';
@@ -38,7 +38,7 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { joinTableVia, showFairCheck } from './play.js';
-import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm } from './club-tourneys-ui.js';
+import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -185,26 +185,33 @@ function setWizard(step) {
 const TABLE_KEY = 'ducyTableChoice';
 // In hundredths (chip-format.js): 100/200 shows as 1/2.
 const BLINDS = [[100, 200], [200, 500], [500, 1000]];
-const SEATS = [2, 6, 9];
+const SEATS = [2, 6, 8, 9];
 const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
 
 function tableFormHtml(code = '', {wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
   const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
-  const seats = SEATS.includes(last.seats) ? String(last.seats) : last.seats ? 'other' : '9';
-  const radio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
+  // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
+  // for this game; never more than the game can deal to (PLO6: 6).
+  const most = maxSeats(game);
+  const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), most);
+  const seats = SEATS.includes(wanted) ? String(wanted) : 'other';
+  const radio = (name, value, label, on, off = false) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}${off ? ' disabled' : ''}>${label}</label>`;
   let h = `<form class="cl-tableform tf" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}${wizard ? ' data-wizard="1"' : ''}>`;
   h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => radio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${chipText(s)}/${chipText(b)}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
   h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.sb || 100))}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.bb || 200))}"></label></div>`;
-  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n))).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
-  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${MAX_SEATS}" step="1" value="${esc(last.seats || MAX_SEATS)}"></label></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n), n > most)).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
+  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${most}" step="1" value="${esc(wanted)}"></label></div>`;
   // Sit-out limit (#70): this table's, starting from the club's default (an
   // assistant's browser doesn't have the club, so theirs starts at 10 minutes).
   const defOut = club?.sitOutMins ?? 10;
   h += '<details class="tf-more"><summary>More options</summary><div class="tf-fields">';
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${code ? 'Table name' : `Table ${(club?.tables?.length || 0) + 1}`}"></label>`;
+  // Left empty, the table gets the name shown ("NLH - 1/2", numbered if
+  // taken); an assistant's browser doesn't have the club's tables.
+  const [sb, bb] = blinds === 'other' ? [last.sb, last.bb] : blinds.split('/').map(Number);
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(code, game, sb, bb))}"></label>`;
   h += `<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="${esc(last.minBB || 40)}"></label>`;
   h += `<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="${esc(last.maxBB || 100)}"></label>`;
   h += `<label>Time to act<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === (last.turnSecs ?? 30) ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
@@ -213,6 +220,33 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
   h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-skip">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
   return h + '</div></form>';
+}
+
+const formTableName = (code, game, sb, bb) => defaultTableName(!code && club ? club : {tables: []}, game, sb, bb);
+
+// Keeps the New table form in step with its game and blinds: picking a game
+// picks its usual size, seat counts it can't deal to are greyed out, and the
+// name's placeholder is the default name.
+function syncTableForm(f, gameChanged) {
+  const v = name => f.elements[name].value;
+  const game = v('game');
+  const most = maxSeats(game);
+  const seats = f.elements.seats;
+  seats.max = most;
+  for (const r of f.querySelectorAll('[name=seatsPick]')) {
+    if (r.value !== 'other') r.disabled = Number(r.value) > most;
+  }
+  const picked = f.querySelector('[name=seatsPick]:checked');
+  if (gameChanged || picked?.disabled) {
+    const n = defaultSeats(game);
+    const radio = f.querySelector(`[name=seatsPick][value="${n}"]`) || f.querySelector('[name=seatsPick][value=other]');
+    radio.checked = true;
+    seats.value = n;
+  }
+  if (Number(seats.value) > most) seats.value = most;
+  const blinds = v('blinds');
+  const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
+  if (Number.isSafeInteger(sb) && Number.isSafeInteger(bb)) f.elements.name.placeholder = formTableName(f.dataset.code, game, sb, bb);
 }
 
 function submitTable(f) {
@@ -524,7 +558,7 @@ async function deleteAlwaysOn() {
 
 function link() {
   const relay = relayUrl();
-  return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '');
+  return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '', myName());
 }
 
 // ---- joining ----
@@ -571,7 +605,11 @@ function connectMembership(mem) {
     }
     const before = mem.status;
     if (await playerReceive(mem, msg)) {
-      if (before !== 'member' && mem.status === 'member') justJoined.add(mem.code);
+      if (before !== 'member' && mem.status === 'member') {
+        justJoined.add(mem.code);
+        // Approved: say so wherever you are (#185).
+        if (before) notice(`You’re in ${mem.name || mem.code}. Ask the host for chips to play.`);
+      }
       // The club moved to an always-on room (#98): greet it as the new host.
       if (msg.body?.type === 'host_moved') {
         entry.aes = null;
@@ -877,6 +915,7 @@ function clearInviteFromAddress() {
 
 function render() {
   for (const f of listeners) f();
+  updateCalls();
   if (!open || !root) return;
   const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
   // Nothing for this tab: the play.js part of it stands alone.
@@ -892,7 +931,10 @@ function render() {
   }));
   const typing = root.querySelector('form[data-chipform]');
   const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
+  // Sections opened by hand (details with data-keep) stay open.
+  const opened = new Set([...root.querySelectorAll('details[data-keep][open]')].map(d => d.dataset.keep));
   root.innerHTML = h;
+  for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
   for (const k of named) {
     const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
     if (!fm) continue;
@@ -961,10 +1003,47 @@ function requestsHtml() {
       h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
     }
     h += '</span>';
+    // What happens next (#185).
+    if (m.status === 'pending' || m.status === 'new') {
+      h += `<span class="pl-desc cl-next">Next: the host lets you in, then gives you chips (play money) to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
+    } else if (inNow) {
+      h += '<span class="pl-desc cl-next">Next: ask the host for chips on the Play tab, then sit at one of the club’s tables.</span>';
+    } else if (m.status === 'declined') {
+      h += '<span class="pl-desc cl-next">If that’s a mistake, ask the host: they can let you in from a new invite link.</span>';
+    }
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
     h += '</li>';
   }
   return h + '</ul></section>';
+}
+
+// A notice at the bottom of the page, whichever page is showing, and from
+// the system when notifications are on and the page isn't in front (#185).
+let noticeTimer = null;
+function notice(text, go = 'play') {
+  if (document.hidden && notifyOn()) {
+    try {
+      const n = new Notification('ducy', {body: text, tag: 'ducy-club-notice'});
+      n.onclick = () => { window.focus(); location.hash = go; n.close(); };
+    } catch {}
+  }
+  let t = document.getElementById('cl-notice');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'cl-notice';
+    t.className = 'pt-toast';
+    t.setAttribute('role', 'status');
+    t.addEventListener('click', e => {
+      if (e.target.closest('[data-notice=go]')) location.hash = t.dataset.go;
+      if (e.target.closest('button')) t.hidden = true;
+    });
+    document.body.append(t);
+  }
+  t.dataset.go = go;
+  t.innerHTML = `<span>${esc(text)}</span><button class="btn-small primary" data-notice="go">Open</button><button class="link-btn" aria-label="Dismiss">✕</button>`;
+  t.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { t.hidden = true; }, 12_000);
 }
 
 // The Host tab's club part (#152), once "Create a club" is picked: just a
@@ -1288,7 +1367,12 @@ function accountHtml(m, hostHere) {
     h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
     h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Cancel</button></div>`;
   } else {
-    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}">`;
+    // New and without chips: the first step, with the biggest buy-in at the
+    // club's tables to ask for (#185).
+    const fresh = !m.balance && !m.entries?.length;
+    const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
+    if (fresh) h += `<p class="pl-desc cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
+    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`;
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
   }
@@ -1350,6 +1434,9 @@ function agentLink(m) {
   u.searchParams.set('club', m.code);
   u.searchParams.set('invite', m.agentView.invite);
   u.searchParams.set('host', m.hostId);
+  // What the link opens on says which club, and that it's from you (#185).
+  if (m.name) u.searchParams.set('name', m.name);
+  if (myName()) u.searchParams.set('by', myName());
   const relay = relayUrl();
   if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
   u.hash = 'join';
@@ -1718,6 +1805,12 @@ export function startClubs() {
       render();
       return;
     }
+    // Tournament calls and countdowns move with the clock (#189).
+    setInterval(() => {
+      updateCalls();
+      const live = memberships.some(m => (m.tourneys || []).some(t => t.status === 'scheduled' || t.status === 'running'));
+      if (open && live) render();
+    }, 30_000);
     owner = createOwner({
       identity: me,
       onChange: () => { if (isRemote()) club = owner.club; render(); },
@@ -1743,6 +1836,17 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
+    root.addEventListener('change', e => {
+      const f = e.target.closest('form[data-tableform]');
+      if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      // The New tournament form: a game's usual table size, and no more than it deals to.
+      const tf = e.target.closest('form[data-tourneyform]');
+      if (tf && e.target.name === 'game') {
+        const size = tf.elements.tableSize;
+        size.max = maxSeats(e.target.value);
+        size.value = defaultSeats(e.target.value);
+      }
+    });
     // The blind structure editor's fields, and the starting stack it follows.
     root.addEventListener('change', e => {
       if (!tourneyForm || !tEditor) return;
@@ -1782,6 +1886,77 @@ export function showClubPlayers() {
 export function closeClubs() {
   open = false;
   if (root) root.hidden = true;
+}
+
+// ---- tournaments calling you (#189) ----
+//
+// A tournament you're in that has started while you aren't at its table
+// (you're being blinded off), or one you registered for that starts within
+// TOURNEY_SOON_MS, gets a bar at the bottom of every page with the way to
+// your seat, and a system notification (once) when notifications are on and
+// the page isn't in front.
+
+const TOURNEY_SOON_MS = 5 * 60_000;
+const callsNotified = new Set(); // calls a notification went out for
+const callsDismissed = new Set(); // calls closed with ✕
+
+function tourneyCalls(now = Date.now()) {
+  if (!me) return [];
+  return tourneyCallsFor(memberships, me.id, seatedAt, TOURNEY_SOON_MS, now).filter(c => !callsDismissed.has(c.key));
+}
+
+function callText(c, now = Date.now()) {
+  if (c.kind === 'started') return `${c.t.name} (${c.mem.name || c.mem.code}) has started: you’re being blinded until you sit down.`;
+  const mins = Math.max(1, Math.round((c.t.startsAt - now) / 60_000));
+  return `${c.t.name} (${c.mem.name || c.mem.code}) starts in ${mins} min.`;
+}
+
+function updateCalls() {
+  const calls = tourneyCalls();
+  for (const c of calls) {
+    if (callsNotified.has(c.key)) continue;
+    callsNotified.add(c.key);
+    if (!document.hidden || !notifyOn()) continue;
+    try {
+      const n = new Notification('ducy', {body: callText(c), tag: `ducy-tourney-${c.key}`});
+      n.onclick = () => { window.focus(); answerCall(c); n.close(); };
+    } catch {}
+  }
+  let bar = document.getElementById('cl-callbar');
+  if (!calls.length) {
+    if (bar) bar.hidden = true;
+    document.body.classList.remove('has-callbar');
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'cl-callbar';
+    bar.className = 'pt-toast cl-callbar';
+    bar.setAttribute('role', 'status');
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-call]');
+      if (!b) return;
+      const c = tourneyCalls().find(x => x.key === b.dataset.key);
+      if (!c) return;
+      if (b.dataset.call === 'dismiss') callsDismissed.add(c.key);
+      else answerCall(c);
+      updateCalls();
+    });
+    document.body.append(bar);
+  }
+  // One call at a time: a started one first.
+  const c = calls.find(x => x.kind === 'started') || calls[0];
+  const more = calls.length > 1 ? ` <span class="pl-meta">(+${calls.length - 1} more)</span>` : '';
+  const go = c.kind === 'started' ? 'Take your seat' : 'See it';
+  bar.innerHTML = `<span>${esc(callText(c))}${more}</span><button class="btn-small primary" data-call="go" data-key="${esc(c.key)}">${go}</button><button class="link-btn" data-call="dismiss" data-key="${esc(c.key)}" aria-label="Dismiss">✕</button>`;
+  bar.hidden = false;
+  document.body.classList.add('has-callbar');
+}
+
+// To your seat, or to the club's tournaments.
+function answerCall(c) {
+  if (c.kind === 'started' && !seatedAt) { sitAt(c.mem.code, `tourney:${c.t.id}`); return; }
+  location.hash = 'play';
 }
 
 // Called after anything changes, whichever tab is showing (the tab badges).
