@@ -1710,6 +1710,13 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
       if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      // The New tournament form: a game's usual table size, and no more than it deals to.
+      const tf = e.target.closest('form[data-tourneyform]');
+      if (tf && e.target.name === 'game') {
+        const size = tf.elements.tableSize;
+        size.max = maxSeats(e.target.value);
+        size.value = defaultSeats(e.target.value);
+      }
     });
     // The blind structure editor's fields, and the starting stack it follows.
     root.addEventListener('change', e => {
