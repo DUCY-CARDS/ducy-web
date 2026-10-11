@@ -21,7 +21,7 @@
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
-import { downloadFile, RESTORE_CLUB_KEY } from './player-settings.js';
+import { downloadFile, notifyOn, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -38,7 +38,7 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { joinTableVia, showFairCheck } from './play.js';
-import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm } from './club-tourneys-ui.js';
+import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -819,6 +819,7 @@ function clearInviteFromAddress() {
 
 function render() {
   for (const f of listeners) f();
+  updateCalls();
   if (!open || !root) return;
   const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
   // Nothing for this tab: the play.js part of it stands alone.
@@ -834,7 +835,10 @@ function render() {
   }));
   const typing = root.querySelector('form[data-chipform]');
   const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
+  // Sections opened by hand (details with data-keep) stay open.
+  const opened = new Set([...root.querySelectorAll('details[data-keep][open]')].map(d => d.dataset.keep));
   root.innerHTML = h;
+  for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
   for (const k of named) {
     const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
     if (!fm) continue;
@@ -1648,6 +1652,12 @@ export function startClubs() {
       render();
       return;
     }
+    // Tournament calls and countdowns move with the clock (#189).
+    setInterval(() => {
+      updateCalls();
+      const live = memberships.some(m => (m.tourneys || []).some(t => t.status === 'scheduled' || t.status === 'running'));
+      if (open && live) render();
+    }, 30_000);
     owner = createOwner({
       identity: me,
       onChange: () => { if (isRemote()) club = owner.club; render(); },
@@ -1712,6 +1722,77 @@ export function showClubPlayers() {
 export function closeClubs() {
   open = false;
   if (root) root.hidden = true;
+}
+
+// ---- tournaments calling you (#189) ----
+//
+// A tournament you're in that has started while you aren't at its table
+// (you're being blinded off), or one you registered for that starts within
+// TOURNEY_SOON_MS, gets a bar at the bottom of every page with the way to
+// your seat, and a system notification (once) when notifications are on and
+// the page isn't in front.
+
+const TOURNEY_SOON_MS = 5 * 60_000;
+const callsNotified = new Set(); // calls a notification went out for
+const callsDismissed = new Set(); // calls closed with ✕
+
+function tourneyCalls(now = Date.now()) {
+  if (!me) return [];
+  return tourneyCallsFor(memberships, me.id, seatedAt, TOURNEY_SOON_MS, now).filter(c => !callsDismissed.has(c.key));
+}
+
+function callText(c, now = Date.now()) {
+  if (c.kind === 'started') return `${c.t.name} (${c.mem.name || c.mem.code}) has started: you’re being blinded until you sit down.`;
+  const mins = Math.max(1, Math.round((c.t.startsAt - now) / 60_000));
+  return `${c.t.name} (${c.mem.name || c.mem.code}) starts in ${mins} min.`;
+}
+
+function updateCalls() {
+  const calls = tourneyCalls();
+  for (const c of calls) {
+    if (callsNotified.has(c.key)) continue;
+    callsNotified.add(c.key);
+    if (!document.hidden || !notifyOn()) continue;
+    try {
+      const n = new Notification('ducy', {body: callText(c), tag: `ducy-tourney-${c.key}`});
+      n.onclick = () => { window.focus(); answerCall(c); n.close(); };
+    } catch {}
+  }
+  let bar = document.getElementById('cl-callbar');
+  if (!calls.length) {
+    if (bar) bar.hidden = true;
+    document.body.classList.remove('has-callbar');
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'cl-callbar';
+    bar.className = 'pt-toast cl-callbar';
+    bar.setAttribute('role', 'status');
+    bar.addEventListener('click', e => {
+      const b = e.target.closest('[data-call]');
+      if (!b) return;
+      const c = tourneyCalls().find(x => x.key === b.dataset.key);
+      if (!c) return;
+      if (b.dataset.call === 'dismiss') callsDismissed.add(c.key);
+      else answerCall(c);
+      updateCalls();
+    });
+    document.body.append(bar);
+  }
+  // One call at a time: a started one first.
+  const c = calls.find(x => x.kind === 'started') || calls[0];
+  const more = calls.length > 1 ? ` <span class="pl-meta">(+${calls.length - 1} more)</span>` : '';
+  const go = c.kind === 'started' ? 'Take your seat' : 'See it';
+  bar.innerHTML = `<span>${esc(callText(c))}${more}</span><button class="btn-small primary" data-call="go" data-key="${esc(c.key)}">${go}</button><button class="link-btn" data-call="dismiss" data-key="${esc(c.key)}" aria-label="Dismiss">✕</button>`;
+  bar.hidden = false;
+  document.body.classList.add('has-callbar');
+}
+
+// To your seat, or to the club's tournaments.
+function answerCall(c) {
+  if (c.kind === 'started' && !seatedAt) { sitAt(c.mem.code, `tourney:${c.t.id}`); return; }
+  location.hash = 'play';
 }
 
 // Called after anything changes, whichever tab is showing (the tab badges).
