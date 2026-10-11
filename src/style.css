@@ -799,6 +799,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pj-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
 .pj-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pj-code { width: 260px; font-family: var(--font-data); text-transform: none; }
+/* A club invite: what you're joining (#185) */
+.pj-invite { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); }
+.pj-club { font-size: 18px; }
+.pj-field[hidden] { display: none; }
 .pl-elsewhere { max-width: 640px; }
 .cl-wrap { max-width: 760px; }
 .cl-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 16px; display: flex; flex-direction: column; gap: 10px; }

@@ -228,12 +228,19 @@ function renderJoin() {
     joinRoot.hidden = false;
     return;
   }
+  const club = link?.kind === 'club' ? link.inv : null;
   h += '<form class="pj-form" data-joinform>';
-  h += `<label class="pj-field"><span class="pl-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH, or a link" value="${esc(link?.text || '')}"></label>`;
-  if (link?.kind === 'club') h += `<p class="pl-desc">An invite to club <b>${esc(link.inv.code)}</b>. The host sees your name and approves you.</p>`;
+  // An invite says what you're joining, and who sent it (#185); joining is
+  // always your click.
+  if (club) {
+    h += `<div class="pj-invite"><span class="pl-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
+    h += `<span class="pl-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
+    h += '<p class="pl-desc">Ask to join: the host sees your name and lets you in, then gives you chips (play money) to play at the club’s tables.</p></div>';
+  }
+  h += `<label class="pj-field"${club ? ' hidden' : ''}><span class="pl-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH, or a link" value="${esc(link?.text || '')}"></label>`;
   h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="pl-label">Your name</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
-  h += '<div class="pl-actions"><button class="tr-start" type="submit">Join</button></div>';
-  if (name) h += `<p class="pl-meta">Joining as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
+  h += `<div class="pl-actions"><button class="tr-start" type="submit">${club ? 'Ask to join' : 'Join'}</button></div>`;
+  if (name) h += `<p class="pl-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
   h += '</form>';
   if (joinNote) h += `<p class="pl-desc pl-neterr">${esc(joinNote)}</p>`;
   h += '</div>';
@@ -246,10 +253,11 @@ function renderJoin() {
   });
   const input = joinRoot.querySelector('[name=code]');
   if (input && !input.value && !matchMedia('(pointer: coarse)').matches) input.focus();
-  // Opened from a link, with a name already known: join straight away.
-  if (link && name && !autoJoined.has(link.text)) {
+  // A friends table's link, with a name already known: join straight away.
+  // A club invite waits for Ask to join (#185).
+  if (link?.kind === 'table' && name && !autoJoined.has(link.text)) {
     autoJoined.add(link.text);
-    go(link.kind === 'club' ? {kind: 'club', inv: link.inv} : link, name);
+    go(link, name);
   }
 }
 const autoJoined = new Set();

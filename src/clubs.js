@@ -21,7 +21,7 @@
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
-import { downloadFile, RESTORE_CLUB_KEY } from './player-settings.js';
+import { downloadFile, notifyOn, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -466,7 +466,7 @@ async function deleteAlwaysOn() {
 
 function link() {
   const relay = relayUrl();
-  return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '');
+  return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '', myName());
 }
 
 // ---- joining ----
@@ -513,7 +513,11 @@ function connectMembership(mem) {
     }
     const before = mem.status;
     if (await playerReceive(mem, msg)) {
-      if (before !== 'member' && mem.status === 'member') justJoined.add(mem.code);
+      if (before !== 'member' && mem.status === 'member') {
+        justJoined.add(mem.code);
+        // Approved: say so wherever you are (#185).
+        if (before) notice(`You’re in ${mem.name || mem.code}. Ask the host for chips to play.`);
+      }
       // The club moved to an always-on room (#98): greet it as the new host.
       if (msg.body?.type === 'host_moved') {
         entry.aes = null;
@@ -903,10 +907,47 @@ function requestsHtml() {
       h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
     }
     h += '</span>';
+    // What happens next (#185).
+    if (m.status === 'pending' || m.status === 'new') {
+      h += `<span class="pl-desc cl-next">Next: the host lets you in, then gives you chips (play money) to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
+    } else if (inNow) {
+      h += '<span class="pl-desc cl-next">Next: ask the host for chips on the Play tab, then sit at one of the club’s tables.</span>';
+    } else if (m.status === 'declined') {
+      h += '<span class="pl-desc cl-next">If that’s a mistake, ask the host: they can let you in from a new invite link.</span>';
+    }
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
     h += '</li>';
   }
   return h + '</ul></section>';
+}
+
+// A notice at the bottom of the page, whichever page is showing, and from
+// the system when notifications are on and the page isn't in front (#185).
+let noticeTimer = null;
+function notice(text, go = 'play') {
+  if (document.hidden && notifyOn()) {
+    try {
+      const n = new Notification('ducy', {body: text, tag: 'ducy-club-notice'});
+      n.onclick = () => { window.focus(); location.hash = go; n.close(); };
+    } catch {}
+  }
+  let t = document.getElementById('cl-notice');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'cl-notice';
+    t.className = 'pt-toast';
+    t.setAttribute('role', 'status');
+    t.addEventListener('click', e => {
+      if (e.target.closest('[data-notice=go]')) location.hash = t.dataset.go;
+      if (e.target.closest('button')) t.hidden = true;
+    });
+    document.body.append(t);
+  }
+  t.dataset.go = go;
+  t.innerHTML = `<span>${esc(text)}</span><button class="btn-small primary" data-notice="go">Open</button><button class="link-btn" aria-label="Dismiss">✕</button>`;
+  t.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { t.hidden = true; }, 12_000);
 }
 
 // The Host tab's club part (#152), once "Create a club" is picked: just a
@@ -1227,7 +1268,12 @@ function accountHtml(m, hostHere) {
     h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
     h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Cancel</button></div>`;
   } else {
-    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}">`;
+    // New and without chips: the first step, with the biggest buy-in at the
+    // club's tables to ask for (#185).
+    const fresh = !m.balance && !m.entries?.length;
+    const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
+    if (fresh) h += `<p class="pl-desc cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
+    h += `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`;
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
   }
@@ -1289,6 +1335,9 @@ function agentLink(m) {
   u.searchParams.set('club', m.code);
   u.searchParams.set('invite', m.agentView.invite);
   u.searchParams.set('host', m.hostId);
+  // What the link opens on says which club, and that it's from you (#185).
+  if (m.name) u.searchParams.set('name', m.name);
+  if (myName()) u.searchParams.set('by', myName());
   const relay = relayUrl();
   if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
   u.hash = 'join';
