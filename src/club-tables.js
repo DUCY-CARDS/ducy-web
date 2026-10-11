@@ -14,15 +14,35 @@
 // follows each seated member's stack, so the club's totals add up.
 
 import { buyIn, cashOut, ensureChips, setStack, topUp } from './club-chips.js';
+import { chipInput } from './chip-format.js';
 
+// `short` names tables by default ("NLH - 1/2"); `seats` is the most a game
+// seats: 9 at most anywhere, and fewer where the deck runs out. Everyone's
+// hole cards and two boards (running it twice) come from 52 cards, leaving
+// 42 for hole cards, so PLO5 seats 8 (42 / 5) and PLO6 6 (42 / 6 would allow
+// 7; 6 is the limit we keep). `defaultSeats` is a new table's size unless the
+// host picks another.
+export const MAX_SEATS = 9;
 export const GAMES = [
-  {id: 'nlhe', label: 'No-limit Hold’em'},
-  {id: 'plo4', label: 'Pot-limit Omaha'},
-  {id: 'plo5', label: 'PLO 5-card'},
-  {id: 'plo6', label: 'PLO 6-card'},
+  {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: MAX_SEATS, defaultSeats: 9},
+  {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: MAX_SEATS, defaultSeats: 8},
+  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 8, defaultSeats: 6},
+  {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6, defaultSeats: 6},
 ];
 export const MAX_TABLE_NAME = 30;
-export const MAX_SEATS = 10;
+export const maxSeats = game => GAMES.find(g => g.id === game)?.seats ?? MAX_SEATS;
+export const defaultSeats = game => GAMES.find(g => g.id === game)?.defaultSeats ?? 9;
+
+// A new table's name when the host doesn't give one: the game and blinds,
+// "NLH - 1/2", with " - #2", " - #3"… when an open table already has it.
+// Plain numbers (chipInput), so it reads the same whatever the locale.
+export function defaultTableName(club, game, sb, bb) {
+  const short = GAMES.find(g => g.id === game)?.short || game;
+  const base = `${short} - ${chipInput(sb)}/${chipInput(bb)}`;
+  const taken = new Set(openTables(club).map(t => t.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base} - #${i}`)) return `${base} - #${i}`;
+}
 // How long someone may sit out before their seat is given up (#70): set per
 // table, defaulting to the club's setting, which starts at 10 minutes. 0: no limit.
 export const DEFAULT_SIT_OUT_MINS = 10;
@@ -34,17 +54,19 @@ function tableId() {
 }
 
 // Adds a table to the club from the host's choices; throws on bad input.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = MAX_SEATS, turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
   ensureTables(club);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
   if (!whole(sb) || !whole(bb) || bb < sb) throw new Error('The big blind must be at least the small blind, both above 0.');
   if (!whole(minBB) || !whole(maxBB) || maxBB < minBB) throw new Error('The maximum buy-in must be at least the minimum.');
-  if (!Number.isSafeInteger(seats) || seats < 2 || seats > MAX_SEATS) throw new Error(`A table seats 2 to ${MAX_SEATS}.`);
+  const most = maxSeats(game);
+  if (!Number.isSafeInteger(seats) || seats < 2 || seats > most) {
+    throw new Error(`A ${GAMES.find(g => g.id === game).label} table seats 2 to ${most}.`);
+  }
   if (!Number.isSafeInteger(turnSecs) || turnSecs < 0) throw new Error('Pick a turn time.');
   if (!Number.isSafeInteger(sitOutMins) || sitOutMins < 0) throw new Error('Pick a sit-out limit.');
-  const n = club.tables.length + 1;
   const t = {
-    id: tableId(), name: String(name).trim().slice(0, MAX_TABLE_NAME) || `Table ${n}`,
+    id: tableId(), name: String(name).trim().slice(0, MAX_TABLE_NAME) || defaultTableName(club, game, sb, bb),
     game, sb, bb, minBB, maxBB, seats, turnSecs, sitOutMins, status: 'open', createdAt: now,
   };
   club.tables.push(t);

@@ -29,7 +29,7 @@ import {
 } from './club.js';
 import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
-  cashOutEveryone, ensureTables, gameLabel, GAMES, MAX_SEATS, MAX_TABLE_NAME, newTable, openTables, tableById, tablesBody,
+  cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
 import { createOwner } from './club-owner.js';
@@ -185,26 +185,33 @@ function setWizard(step) {
 const TABLE_KEY = 'ducyTableChoice';
 // In hundredths (chip-format.js): 100/200 shows as 1/2.
 const BLINDS = [[100, 200], [200, 500], [500, 1000]];
-const SEATS = [2, 6, 9];
+const SEATS = [2, 6, 8, 9];
 const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
 
 function tableFormHtml(code = '', {wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
   const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
-  const seats = SEATS.includes(last.seats) ? String(last.seats) : last.seats ? 'other' : '9';
-  const radio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
+  // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
+  // for this game; never more than the game can deal to (PLO6: 6).
+  const most = maxSeats(game);
+  const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), most);
+  const seats = SEATS.includes(wanted) ? String(wanted) : 'other';
+  const radio = (name, value, label, on, off = false) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}${off ? ' disabled' : ''}>${label}</label>`;
   let h = `<form class="cl-tableform tf" data-tableform="1"${code ? ` data-code="${esc(code)}"` : ''}${wizard ? ' data-wizard="1"' : ''}>`;
   h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => radio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${chipText(s)}/${chipText(b)}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
   h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.sb || 100))}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.bb || 200))}"></label></div>`;
-  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n))).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
-  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${MAX_SEATS}" step="1" value="${esc(last.seats || MAX_SEATS)}"></label></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n), n > most)).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
+  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${most}" step="1" value="${esc(wanted)}"></label></div>`;
   // Sit-out limit (#70): this table's, starting from the club's default (an
   // assistant's browser doesn't have the club, so theirs starts at 10 minutes).
   const defOut = club?.sitOutMins ?? 10;
   h += '<details class="tf-more"><summary>More options</summary><div class="tf-fields">';
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${code ? 'Table name' : `Table ${(club?.tables?.length || 0) + 1}`}"></label>`;
+  // Left empty, the table gets the name shown ("NLH - 1/2", numbered if
+  // taken); an assistant's browser doesn't have the club's tables.
+  const [sb, bb] = blinds === 'other' ? [last.sb, last.bb] : blinds.split('/').map(Number);
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(code, game, sb, bb))}"></label>`;
   h += `<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="${esc(last.minBB || 40)}"></label>`;
   h += `<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="${esc(last.maxBB || 100)}"></label>`;
   h += `<label>Time to act<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === (last.turnSecs ?? 30) ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
@@ -213,6 +220,33 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
   h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-skip">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
   return h + '</div></form>';
+}
+
+const formTableName = (code, game, sb, bb) => defaultTableName(!code && club ? club : {tables: []}, game, sb, bb);
+
+// Keeps the New table form in step with its game and blinds: picking a game
+// picks its usual size, seat counts it can't deal to are greyed out, and the
+// name's placeholder is the default name.
+function syncTableForm(f, gameChanged) {
+  const v = name => f.elements[name].value;
+  const game = v('game');
+  const most = maxSeats(game);
+  const seats = f.elements.seats;
+  seats.max = most;
+  for (const r of f.querySelectorAll('[name=seatsPick]')) {
+    if (r.value !== 'other') r.disabled = Number(r.value) > most;
+  }
+  const picked = f.querySelector('[name=seatsPick]:checked');
+  if (gameChanged || picked?.disabled) {
+    const n = defaultSeats(game);
+    const radio = f.querySelector(`[name=seatsPick][value="${n}"]`) || f.querySelector('[name=seatsPick][value=other]');
+    radio.checked = true;
+    seats.value = n;
+  }
+  if (Number(seats.value) > most) seats.value = most;
+  const blinds = v('blinds');
+  const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
+  if (Number.isSafeInteger(sb) && Number.isSafeInteger(bb)) f.elements.name.placeholder = formTableName(f.dataset.code, game, sb, bb);
 }
 
 function submitTable(f) {
@@ -1673,6 +1707,17 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
+    root.addEventListener('change', e => {
+      const f = e.target.closest('form[data-tableform]');
+      if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      // The New tournament form: a game's usual table size, and no more than it deals to.
+      const tf = e.target.closest('form[data-tourneyform]');
+      if (tf && e.target.name === 'game') {
+        const size = tf.elements.tableSize;
+        size.max = maxSeats(e.target.value);
+        size.value = defaultSeats(e.target.value);
+      }
+    });
     // The blind structure editor's fields, and the starting stack it follows.
     root.addEventListener('change', e => {
       if (!tourneyForm || !tEditor) return;

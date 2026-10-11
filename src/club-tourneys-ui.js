@@ -8,7 +8,7 @@
 // tournament chips (stacks, blinds) are whole numbers.
 
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { GAMES } from './club-tables.js';
+import { defaultSeats, GAMES, maxSeats } from './club-tables.js';
 import { entryCount, playerCount, pool, prizes, payoutShares } from './club-tourneys.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
@@ -55,7 +55,9 @@ export function tourneyFormHtml(editor, last = {}, now = Date.now()) {
   h += field('Buy-in (club chips)', `<input class="pl-text" name="buyIn" type="number" min="0" step="${CHIP_STEP}" value="${esc(chipInput(last.buyIn ?? 0))}">`);
   h += field('Added to the prize pool', `<input class="pl-text" name="added" type="number" min="0" step="${CHIP_STEP}" value="${esc(chipInput(last.added ?? 0))}">`);
   h += field('Starting stack', num('stack', last.stack || 10000, 'min="20" data-tstack="1"'));
-  h += field('Table size', num('tableSize', last.tableSize || 9, 'min="2" max="10"'));
+  // Up to what the game can deal to (PLO6: 6); picking a game picks its usual size (clubs.js).
+  const game = last.game || 'nlhe';
+  h += field('Table size', num('tableSize', Math.min(last.tableSize || defaultSeats(game), maxSeats(game)), `min="2" max="${maxSeats(game)}"`));
   h += field('Minimum players', num('minPlayers', last.minPlayers || 2, 'min="2"'));
   h += field('Maximum players', num('maxPlayers', last.maxPlayers || 50, 'min="2" max="1000"'));
   h += field('Registration opens', `<input class="pl-text" name="opensAt" type="datetime-local" value="${localInput(opens)}">`);
