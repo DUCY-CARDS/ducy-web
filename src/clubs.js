@@ -29,7 +29,7 @@ import {
 } from './club.js';
 import { ensureChips, issue, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
-  cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
+  buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
 import { createOwner } from './club-owner.js';
@@ -952,7 +952,13 @@ function render() {
 
 // The current tab's part, or '' when it has nothing to show.
 function viewHtml() {
-  const msg = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
+  let msg = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
+  // Seated at a club table and looking elsewhere: the way back (#187).
+  if (seatedAt && view !== 'play') {
+    const mem = memberships.find(x => x.code === seatedAt.code);
+    const t = seatedAt.table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === seatedAt.table.slice(8)) : mem?.tables?.find(x => x.id === seatedAt.table);
+    msg += `<p class="cl-seated">You’re at ${esc(t?.name || 'a table')}${mem ? ` (${esc(mem.name || mem.code)})` : ''}. <a class="btn-small primary" href="#play">Back to the table</a></p>`;
+  }
   if (view === 'play') {
     const h = membershipsHtml('play');
     return h ? msg + h : '';
@@ -1376,14 +1382,29 @@ function accountHtml(m, hostHere) {
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
   }
+  // Your last table session, while it's recent (#187).
+  const last = tableSessions(m.entries || []).find(s => !s.open);
+  if (last && Date.now() - last.end < 24 * 3600e3) {
+    const where = (m.tables || []).find(t => t.id === last.table)?.name || 'a table';
+    const net = last.net > 0 ? `+${chips(last.net)}` : chips(last.net);
+    h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
+  }
   if (m.tables?.length) {
     h += '<ul class="cl-tables">';
     for (const t of m.tables) {
       const here = seatedAt?.code === m.code && seatedAt.table === t.id;
-      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${chips(t.min)}–${chips(t.max)} · ${t.taken}/${t.seats} seated</span>`;
-      h += here
-        ? '<button class="btn-small primary" data-cl="to-table">Back to the table</button>'
-        : `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${hostHere && !seatedAt && t.taken < t.seats ? '' : ' disabled'}>Sit</button>`;
+      // The buy-in you'd need here, the rathole rule included (#187).
+      const r = buyInRange(t, m.entries || [], m.rathole || 0);
+      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${chips(r.min)}–${chips(r.max)} · ${t.taken}/${t.seats} seated</span>`;
+      if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
+      // Why you can't sit, when you can't (#187).
+      const atOther = seatedAt && !here ? (seatedAt.code === m.code ? (m.tables.find(x => x.id === seatedAt.table)?.name || 'another table') : 'another club’s table') : '';
+      const why = !hostHere ? 'The host is away' : atOther ? `You’re at ${atOther}: leave it first` : t.taken >= t.seats ? `Full (${t.taken}/${t.seats})` : '';
+      if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
+      else {
+        h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit</button>`;
+        if (why) h += `<span class="pl-meta cl-why">${esc(why)}</span>`;
+      }
       h += '</li>';
     }
     h += '</ul>';

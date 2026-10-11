@@ -1211,6 +1211,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   background: var(--bg-raised); color: var(--fg); font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,0.25);
 }
 .pt-toast[hidden] { display: none; }
+/* A player's session (#187): why you can't sit, your last session, the way back to your table */
+.cl-why { flex-basis: 100%; }
+.cl-last { margin: 4px 0; }
+.cl-seated { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); font-size: 13px; }
 /* A host's first night (#186): the checklist, the backup reminder, asking on the row */
 .cl-checklist { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 12px; padding: 10px 14px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); font-size: 13px; }
 .cl-checklist ol { margin: 0; padding-left: 20px; }

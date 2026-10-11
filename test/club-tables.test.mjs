@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
+  buyInRange, canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
   tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
 
@@ -66,6 +66,30 @@ test('seats: no more than the game can deal to', () => {
   assert.equal(newTable(club, {game: 'plo5'}).seats, 6);
   assert.equal(newTable(club, {game: 'plo6'}).seats, 6);
   assert.equal(defaultSeats('plo6'), 6);
+});
+
+test('members see the rathole window, and the buy-in it means for them (#187)', () => {
+  const club = clubWith();
+  club.ratholeHours = 2;
+  const t = newTable(club, {game: 'nlhe', sb: 100, bb: 200, minBB: 40, maxBB: 100});
+  const body = tablesBody(club);
+  assert.equal(body.rathole, 2);
+  const seen = body.tables[0];
+  const H2 = 2 * 3600e3, now = 10 * H2;
+  // Never left it: the table's range.
+  assert.deepEqual(buyInRange(seen, [], 2, now), {min: 8000, max: 20000, rathole: 0});
+  // Left with 150 an hour ago: at least 150 now; another table's cash-out doesn't count.
+  const entries = [
+    {kind: 'buy_in', table: t.id, amount: 10000, at: now - H2},
+    {kind: 'cash_out', table: t.id, amount: 15000, at: now - H2 / 2},
+    {kind: 'cash_out', table: 'other', amount: 19000, at: now - 1000},
+  ];
+  assert.deepEqual(buyInRange(seen, entries, 2, now), {min: 15000, max: 20000, rathole: 15000});
+  // After the window, or with the rule off: back to the table's range.
+  assert.equal(buyInRange(seen, entries, 2, now + H2).min, 8000);
+  assert.equal(buyInRange(seen, entries, 0, now).min, 8000);
+  // Never above the table's maximum.
+  assert.equal(buyInRange(seen, [{kind: 'cash_out', table: t.id, amount: 50000, at: now}], 2, now).min, 20000);
 });
 
 test('who can join: members only, open tables only, one table at a time', () => {

@@ -256,6 +256,7 @@ export async function playerReceive(mem, env) {
   if (b.type === 'tables') {
     mem.hostSeq = env.seq;
     mem.tables = Array.isArray(b.tables) ? b.tables : [];
+    mem.rathole = Number(b.rathole) || 0;
     return true;
   }
   if (b.type === 'tourneys') {
