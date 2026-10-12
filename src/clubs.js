@@ -1523,9 +1523,10 @@ function requestLogHtml() {
 
 // A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
 // handled like any other data-cl click.
-function menuHtml(label, items, id = '', extra = '') {
+// `attrs`: more attributes for every item (an assistant's: the club's code).
+function menuHtml(label, items, id = '', extra = '', attrs = '') {
   let h = `<details class="cl-menu"><summary class="btn-small" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="cl-menu-items">`;
-  for (const [act, text, title = ''] of items) h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+  for (const [act, text, title = ''] of items) h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${attrs}${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
   return h + extra + '</div></details>';
 }
 
@@ -1902,47 +1903,82 @@ function adminFormHtml(code, x) {
   return h;
 }
 
+// An assistant's tools (#190): the host's dashboard, with the tabs and
+// actions an assistant has. Tables and Players, laid out as the host's;
+// Tournaments, Accounting, History and Settings stay the host's. The tab is
+// remembered per club, as the host's is.
+const ADMIN_TABS = ['tables', 'players'];
+function adminTab(code) {
+  let t = '';
+  try { t = localStorage.getItem(`ducyClubTab:${code}`) || ''; } catch {}
+  return ADMIN_TABS.includes(t) ? t : 'players';
+}
+function setAdminTab(code, t) {
+  if (!ADMIN_TABS.includes(t)) return;
+  try { localStorage.setItem(`ducyClubTab:${code}`, t); } catch {}
+}
+
 function adminHtml(m, hostHere) {
   const a = m.admin;
-  let h = '<div class="cl-account cl-admin"><b>Assistant tools</b>';
-  if (!hostHere) h += `<span class="pl-meta">${UNREACHABLE}</span>`;
-  if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
-  if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
+  let h = '<div class="cl-admin">';
+  if (!hostHere) h += `<p class="pl-meta">${UNREACHABLE}</p>`;
+  if (m.adminNote) h += `<p class="pl-desc pl-neterr">${esc(m.adminNote)}</p>`;
+  if (!a) return h + '<p class="pl-meta">Loading…</p></div>';
   const dis = hostHere ? '' : ' disabled';
-  const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
-  if (a.pending.length) {
-    h += `<span class="pl-meta">Requests to join (${a.pending.length})</span><ul class="cl-list">`;
-    for (const x of a.pending) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
-    h += '</ul>';
-  }
-  h += helpListHtml(a.help, m.code, dis);
-  const asking = a.members.filter(x => x.request);
-  if (asking.length) {
-    h += `<span class="pl-meta">Chip requests (${asking.length})</span><ul class="cl-list">`;
-    for (const x of asking) {
-      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">asks for ${chips(x.request.amount)}</span>`;
-      h += `<span class="cl-acts">${btn('a-grant', x, 'Give from mine', ' primary')}${btn('a-deny', x, 'Decline')}</span>${adminFormHtml(m.code, x)}</li>`;
-    }
-    h += '</ul>';
-  }
-  const others = a.members.filter(x => x.id !== me?.id);
-  h += `<span class="pl-meta">Members (${a.members.length})</span><ul class="cl-list">`;
-  for (const x of others) {
-    h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${chips(x.balance)} chips</span>${x.assistant ? '<span class="pl-meta">assistant</span>' : ''}`;
-    h += `<span class="cl-acts">${btn('a-give', x, 'Give')}${x.assistant ? '' : btn('a-remove', x, 'Remove')}</span>${!x.request ? adminFormHtml(m.code, x) : ''}</li>`;
-  }
-  h += '</ul>';
+  const code = esc(m.code);
+  const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${code}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
+  const asking = a.members.filter(x => x.request).sort((x, y) => (x.request.at || 0) - (y.request.at || 0));
+  const waiting = a.pending.length + asking.length + (a.help?.length || 0);
   const open = a.tables.filter(t => t.status !== 'closed');
   const closed = a.tables.filter(t => t.status === 'closed');
-  h += `<span class="pl-meta">Tables (${open.length})</span><ul class="cl-list">`;
-  for (const t of open) {
-    h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
-    if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
+  const tab = adminTab(m.code);
+  const sub = (id, label) => `<button class="pl-tab${tab === id ? ' on' : ''}" role="tab" aria-selected="${tab === id}" data-cl="atab" data-code="${code}" data-tab="${id}">${label}</button>`;
+  const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${open.length})`)}${sub('players', players)}</div>`;
+  if (tab === 'tables') {
+    h += `<h3>Tables${open.length ? ` (${open.length})` : ''}</h3>`;
+    if (open.length || closed.length) {
+      h += '<ul class="cl-list">';
+      for (const t of open) {
+        h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
+        if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
+        h += '</li>';
+      }
+      for (const t of closed) h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">closed</span><span class="cl-acts"><button class="btn-small" data-cl="a-hide-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Remove</button></span></li>`;
+      h += '</ul>';
+    } else h += '<p class="pl-meta cl-empty">No tables open.</p>';
+    h += tableForm === m.code ? tableFormHtml(m.code) : `<div class="pl-actions"><button class="btn-small primary" data-cl="a-new-table" data-code="${code}"${dis}>New table</button></div>`;
+    return h + '</div>';
+  }
+  h += helpListHtml(a.help, m.code, dis);
+  if (a.pending.length || asking.length) {
+    h += `<div class="cl-needs"><h3>Needs you (${a.pending.length + asking.length})</h3><ul class="cl-list">`;
+    for (const x of a.pending) {
+      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(x.id))}</code></span>`;
+      h += `<span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
+    }
+    for (const x of asking) {
+      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">asks for ${chips(x.request.amount)}</span>`;
+      if (x.request.note) h += `<span class="pl-meta">“${esc(x.request.note)}”</span>`;
+      h += `<span class="cl-acts">${btn('a-grant', x, 'Give from yours', ' primary')}${btn('a-deny', x, 'Decline')}</span>${adminFormHtml(m.code, x)}</li>`;
+    }
+    h += '</ul></div>';
+  }
+  h += `<h3>Members (${a.members.length})</h3><ul class="cl-list">`;
+  for (const x of a.members) {
+    h += `<li><span class="cl-name">${esc(x.name)}${x.id === me?.id ? ' (you)' : ''}</span><code>${esc(showId(x.id))}</code><span class="cl-chips" title="Club balance">${chips(x.balance)} chips</span>`;
+    if (x.seated) h += '<span class="pl-meta">at a table</span>';
+    if (x.assistant) h += '<span class="pl-meta">assistant</span>';
+    // As on the host's rows: Give in view, the rest in the row's menu.
+    if (x.id !== me?.id) {
+      h += `<span class="cl-acts">${btn('a-give', x, 'Give')}`;
+      if (!x.assistant && hostHere) h += menuHtml(`More for ${x.name}`, [['a-remove', 'Remove from the club']], x.id, '', ` data-code="${code}"`);
+      h += '</span>';
+    }
+    if (!x.request) h += adminFormHtml(m.code, x);
     h += '</li>';
   }
-  for (const t of closed) h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">closed</span><span class="cl-acts"><button class="btn-small" data-cl="a-hide-table" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${dis}>Remove</button></span></li>`;
   h += '</ul>';
-  h += tableForm === m.code ? tableFormHtml(m.code) : `<div class="pl-actions"><button class="btn-small" data-cl="a-new-table" data-code="${esc(m.code)}"${dis}>New table</button></div>`;
   return h + '</div>';
 }
 
@@ -1970,6 +2006,7 @@ async function onClick(e) {
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'dash') { setDash(b.dataset.tab); render(); }
+  else if (act === 'atab') { setAdminTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'pick') { pick = b.dataset.code; render(); }
   else if (act === 'backup') { backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
   else if (act === 'backup-cancel') { backupForm = false; render(); }
