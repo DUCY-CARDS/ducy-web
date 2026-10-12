@@ -27,11 +27,14 @@ export const BLINDS = [
 //   jonny_slow 25 ± 6, brad_owned 24 ± 9, andrew_favorable 24 ± 9,
 //   doug_poker 21 ± 11, tommy_sweeden 20 ± 13, michael_miserable 19 ± 10,
 //   danny_smallball 18 ± 12, the_mathematician 17 ± 13, phil_bigmouth 10 ± 12.
-// Neighbours in the upper half are often within each other's intervals.
+// Neighbours in the upper half are often within each other's intervals, so
+// the top six (all within 17–21 but Phil's 10) are in the order chosen for
+// the ladder rather than measured: the Mathematician, Tommy Sweeden, Phil
+// Bigmouth, Danny Smallball, Michael Miserable, then Doug Poker at the top.
 export const ORDER = [
   'rampart', 'nik_airbag', 'bungleman', 'milk_king', 'chris_moneybags', 'robin_jane_lewd', 'gus_bluffsen',
-  'tom_collins', 'mister_cheating', 'jen_silly', 'jonny_slow', 'brad_owned', 'andrew_favorable', 'doug_poker',
-  'tommy_sweeden', 'michael_miserable', 'danny_smallball', 'the_mathematician', 'phil_bigmouth',
+  'tom_collins', 'mister_cheating', 'jen_silly', 'jonny_slow', 'brad_owned', 'andrew_favorable',
+  'the_mathematician', 'tommy_sweeden', 'phil_bigmouth', 'danny_smallball', 'michael_miserable', 'doug_poker',
 ];
 export const CHAMPION = 'gto';
 
