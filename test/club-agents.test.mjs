@@ -7,7 +7,7 @@ import { approve, hostReceive, newClub, removeMember } from '../src/club.js';
 import { accountBody, checkOwnLedger, issue, totals } from '../src/club-chips.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import {
-  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, setCreditLimit, settle,
+  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, setCreditLimit, settle, tableResult,
 } from '../src/club-agents.js';
 
 function clubWith(...ids) {
@@ -69,6 +69,25 @@ test('#63 example B: losing, then settling', () => {
   settle(club, 'a', 300);
   assert.equal(accountOf(club, 'a').total, 0);
   assert.equal(accountOf(club, 'a').creditUsed, 0);
+});
+
+test('the agent view: players’ results at the tables and the settlements recorded (#190)', () => {
+  const {club, t} = setup();
+  runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});
+  chipsForTable(club, 'p', t, 800);
+  leftTable(club, 'p', 0);
+  settle(club, 'a', 300, 5, 'cash at the bar');
+  runAgent(club, 'a', {op: 'give', id: 'q', amount: 200});
+  chipsForTable(club, 'q', t, 200);
+  leftTable(club, 'q', 450);
+  // Seated again (with what they left with: the rathole rule): a session
+  // still running doesn't count.
+  chipsForTable(club, 'q', t, 450);
+  assert.equal(tableResult(club, 'p'), -800);
+  assert.equal(tableResult(club, 'q'), 250);
+  const v = agentBody(club, 'a');
+  assert.deepEqual(v.players.map(x => [x.id, x.result]), [['p', -800], ['q', 250], ['r', 0]]);
+  assert.deepEqual(v.settlements, [{at: 5, amount: 300, note: 'cash at the bar'}]);
 });
 
 test('#63 example C: winning pays credit back', () => {

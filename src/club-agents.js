@@ -107,7 +107,22 @@ export function settle(club, id, amount, now = Date.now(), why = '') {
   return e;
 }
 
-// What an agent sees: their account, recruits waiting, and their players.
+// A member's result at the tables (#190): what they won or lost over the
+// table sessions they've finished (buy-ins and top-ups out, cash-outs in;
+// a session still running isn't counted).
+export function tableResult(club, id) {
+  let total = 0, session = 0;
+  for (const e of club.chips.ledger) {
+    if (e.member !== id) continue;
+    if (e.kind === 'buy_in' || e.kind === 'top_up') session -= e.amount;
+    else if (e.kind === 'top_up_refund') session += e.amount;
+    else if (e.kind === 'cash_out') { total += session + e.amount; session = 0; }
+  }
+  return total;
+}
+
+// What an agent sees: their account, recruits waiting, their players (with
+// their results at the tables, #190), and the settlements recorded.
 export function agentBody(club, id) {
   const a = accountOf(club, id);
   return {
@@ -115,7 +130,8 @@ export function agentBody(club, id) {
     own: a.own, shares: a.shares, total: a.total, limit: a.limit, creditUsed: a.creditUsed, room: a.room,
     invite: club.members[id].agentInvite,
     recruits: recruitsOf(club, id).map(m => ({id: m.id, name: m.name, at: m.requestedAt})),
-    players: a.players.map(m => ({id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat})),
+    players: a.players.map(m => ({id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat, result: tableResult(club, m.id)})),
+    settlements: club.chips.ledger.filter(e => e.member === id && e.kind === 'settle').slice(-10).map(e => ({at: e.at, amount: e.amount, note: e.note || ''})),
   };
 }
 
