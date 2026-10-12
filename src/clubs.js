@@ -21,7 +21,7 @@
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { hostPick, onHostPick, setHostPick } from './host-choice.js';
-import { downloadFile, notifyOn, RESTORE_CLUB_KEY } from './player-settings.js';
+import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -207,7 +207,7 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
   // Sit-out limit (#70): this table's, starting from the club's default (an
   // assistant's browser doesn't have the club, so theirs starts at 10 minutes).
   const defOut = club?.sitOutMins ?? 10;
-  h += '<details class="tf-more"><summary>More options</summary><div class="tf-fields">';
+  h += '<details class="tf-more" data-keep="tf-more"><summary>More options</summary><div class="tf-fields">';
   // Left empty, the table gets the name shown ("NLH - 1/2", numbered if
   // taken); an assistant's browser doesn't have the club's tables.
   const [sb, bb] = blinds === 'other' ? [last.sb, last.bb] : blinds.split('/').map(Number);
@@ -385,6 +385,19 @@ function checklistHtml() {
 
 // Until the club is backed up: a reminder, since without a backup nobody
 // can run it again if this browser loses it.
+// Connection states, the same words everywhere (#191): connected; connected
+// but the club itself can't be reached; reconnecting; not connected (Try again).
+const CONN = {on: 'Connected', unreachable: 'Club unreachable', reconnecting: 'Reconnecting…', off: 'Not connected'};
+
+// A member's connection to a club (`n`, its playerNets entry), with what
+// still holds while it's down.
+function connText(n, meanwhile) {
+  if (n?.online && n.hostHere) return CONN.on;
+  if (n?.online) return `${CONN.unreachable}. ${meanwhile}`;
+  if (n) return `${CONN.reconnecting} ${meanwhile}`;
+  return `${CONN.off}.`;
+}
+
 function backupNagHtml() {
   if (!isRemote()) return '';
   const notes = hostNotes();
@@ -791,7 +804,7 @@ function resultsHtml(entries, names = null, tableNames = {}) {
   if (!sessions.length) return '';
   const totals = totalsByMember(sessions);
   const name = id => (names ? names[id] || id : 'You');
-  let h = '<details class="cl-history"><summary>Results by table session</summary>';
+  let h = `<details class="cl-history" data-keep="results:${names ? 'all' : 'mine'}"><summary>Results by table session</summary>`;
   if (names) {
     h += '<ul class="cl-results">' + Object.entries(totals).sort((a, b) => b[1] - a[1])
       .map(([id, n]) => `<li><span>${esc(name(id))}</span><span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span></li>`).join('') + '</ul>';
@@ -957,7 +970,10 @@ function render() {
   const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
   // Sections opened by hand (details with data-keep) stay open.
   const opened = new Set([...root.querySelectorAll('details[data-keep][open]')].map(d => d.dataset.keep));
+  // And the page stays where it was scrolled to (#191).
+  const y = window.scrollY;
   root.innerHTML = h;
+  if (window.scrollY !== y) window.scrollTo(0, y);
   for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
   for (const k of named) {
     const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
@@ -1022,10 +1038,10 @@ function requestsHtml() {
   let h = '<section class="cl-card"><h2>Your requests</h2><ul class="cl-list">';
   for (const m of list) {
     const n = playerNets.get(m.code);
-    const live = n?.online ? (n.hostHere ? 'Host online' : 'Host away: your request waits for them') : 'Offline';
+    const live = connText(n, 'Your request waits until it’s back.');
     const inNow = m.status === 'member';
     h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${inNow ? 'You’re in' : esc(STATUS_TEXT[m.status] || m.status)}</span>`;
-    if (!inNow) h += `<span class="pl-meta">${live}</span>`;
+    if (!inNow) h += `<span class="pl-meta cl-conn">${live}</span>`;
     h += '<span class="cl-acts">';
     if (inNow) h += '<a class="btn-small primary" href="#play">Play</a>';
     else {
@@ -1095,6 +1111,8 @@ function createHtml() {
   } else {
     h += '<div class="pl-actions"><button class="tr-start" data-cl="create">Create the club</button></div>';
   }
+  // Already have one (#191): its backup brings it back, here or on another device.
+  h += `<p class="pl-desc cl-restore">Already run a club? <label class="link-btn">Restore it from its backup file<input type="file" data-clrestore accept=".json,application/json" hidden></label>, on this device or a new one.</p>`;
   return h + '</section>';
 }
 
@@ -1165,8 +1183,8 @@ function hostHtml() {
   const on = remote ? owner.online : hostOnline;
   // An always-on club shows nothing while connected (every club is always
   // on); only reconnecting, or a Reconnect button once another tab has it.
-  const badge = remote ? (owner.online ? '' : owner.connected ? 'Reconnecting…' : 'Not connected')
-    : stalled ? 'No answer from the relay' : hostOnline ? 'Open' : hostNet ? 'Connecting…' : 'Offline';
+  const badge = remote ? (owner.online ? '' : owner.connected ? CONN.reconnecting : CONN.off)
+    : hostOnline && !stalled ? CONN.on : hostNet ? CONN.reconnecting : CONN.off;
   let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
   if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
   if (remote && !owner.connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
@@ -1347,6 +1365,8 @@ function settingsHtml() {
       h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save the backup</button><button class="btn-small" type="button" data-cl="backup-cancel">Cancel</button></div></form>';
     } else h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Back up the club</button></div>';
     if (backupNote) h += `<p class="pl-desc">${esc(backupNote)}</p>`;
+    // Moving devices (#191): the backup is the way.
+    h += '<p class="pl-desc"><b>Running it from another device too</b> (your phone, say): back it up here, then on that device open ducy, go to Host → Create a club and choose “Restore it from its backup file”. The backup also brings your player ID, so that device is you. One device at a time runs the club: the other shows Reconnect.</p>';
   } else h += '<p class="pl-desc">A club run in this tab is kept in this browser only. Move it to always on to back it up.</p>';
   h += `<h3>Delete</h3><div class="pl-actions">${remote ?'<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
   return h;
@@ -1402,10 +1422,10 @@ function membershipsHtml(mode, only = '') {
   h += '<ul class="cl-list">';
   for (const m of list) {
     const n = playerNets.get(m.code);
-    const live = n?.online ? (n.hostHere ? 'Host online' : 'Host away') : 'Offline';
+    const live = connText(n, mode === 'play' ? 'Your seat and chips are kept.' : 'Your tools work again once it’s back.');
     h += `<li><span class="cl-name">${esc(m.name || m.code)}</span>`;
     if (mode === 'clubs') h += `<span class="cl-status cl-member">${m.role === 'assistant' ? 'Game assistant' : 'Agent'}</span>`;
-    h += `<span class="pl-meta">${live}</span><span class="cl-acts">`;
+    h += `<span class="pl-meta cl-conn">${live}</span><span class="cl-acts">`;
     if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
     if (mode === 'play') h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
     h += '</span>';
@@ -1460,7 +1480,7 @@ function accountHtml(m, hostHere) {
     }
     const form = `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`
       + `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`
-      + `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="The host is away"'}>Ask for chips</button></div>`;
+      + `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>Ask for chips</button></div>`;
     // Open when it's the first step; otherwise behind a button (#188).
     h += fresh ? form : `<details class="cl-askd" data-keep="ask:${esc(m.code)}"><summary class="btn-small">Ask for chips</summary>${form}</details>`;
   }
@@ -1481,7 +1501,7 @@ function accountHtml(m, hostHere) {
       if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
       // Why you can't sit, when you can't (#187).
       const atOther = seatedAt && !here ? (seatedAt.code === m.code ? (m.tables.find(x => x.id === seatedAt.table)?.name || 'another table') : 'another club’s table') : '';
-      const why = !hostHere ? 'The host is away' : atOther ? `You’re at ${atOther}: leave it first` : t.taken >= t.seats ? `Full (${t.taken}/${t.seats})` : '';
+      const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : t.taken >= t.seats ? `Full (${t.taken}/${t.seats})` : '';
       if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
       else {
         h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit</button>`;
@@ -1496,7 +1516,7 @@ function accountHtml(m, hostHere) {
   const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
   h += resultsHtml(m.entries || [], null, tableNames);
   if (m.entries?.length) {
-    h += `<details class="cl-history"><summary>History (${m.entries.length})</summary><ul>`;
+    h += `<details class="cl-history" data-keep="hist:${esc(m.code)}"><summary>History (${m.entries.length})</summary><ul>`;
     for (const e of [...m.entries].reverse().slice(0, 50)) {
       const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin'].includes(e.kind) ? '−' : '+';
       h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
@@ -1991,6 +2011,11 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
+    // Restore a club from its backup file (#191).
+    root.addEventListener('change', e => {
+      const f = e.target.dataset?.clrestore != null && e.target.files?.[0];
+      if (f) { e.target.value = ''; restoreBackupFile(f); }
+    });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
       if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');

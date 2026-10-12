@@ -50,6 +50,13 @@ export async function openPlayerSettings() {
   el.querySelector('[data-ps=close]')?.focus();
 }
 
+// Restoring from a backup file chosen elsewhere (the Create a club card,
+// #191): opens Player settings, where a locked file asks for its password.
+export async function restoreBackupFile(file) {
+  await openPlayerSettings();
+  await chooseBackup(file);
+}
+
 function close() {
   el.hidden = true;
   el.innerHTML = '';
