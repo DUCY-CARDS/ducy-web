@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BLINDS, CHAMPION, HANDS_PER_LEVEL, ORDER, blindsAt, finishGame, forfeitUnfinished, loadProgress, newProgress,
+  BLINDS, CHAMPION, ORDER, finishGame, forfeitUnfinished, loadProgress, newProgress,
   opponentOf, rungsFor, saveProgress, startGame,
 } from '../src/ladder.js';
 
@@ -94,10 +94,6 @@ test('progress is kept, and bad saves start over', () => {
   saveProgress(p, broken);
 });
 
-test('the blinds go up every level, then stay', () => {
-  assert.deepEqual(blindsAt(0), BLINDS[0]);
-  assert.deepEqual(blindsAt(HANDS_PER_LEVEL - 1), BLINDS[0]);
-  assert.deepEqual(blindsAt(HANDS_PER_LEVEL), BLINDS[1]);
-  assert.deepEqual(blindsAt(10_000), BLINDS.at(-1));
-  for (let i = 1; i < BLINDS.length; i++) assert.ok(BLINDS[i][1] > BLINDS[i - 1][1] && BLINDS[i][0] * 2 === BLINDS[i][1]);
+test('every game plays at the same blinds, 1/2', () => {
+  assert.deepEqual(BLINDS, [100, 200]);
 });

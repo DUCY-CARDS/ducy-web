@@ -1,21 +1,16 @@
 // The heads-up ladder (#212), Train's Punch-Out: play the bots one at a time,
 // easiest first, up to the GTO bot at the top. Each rung is a best-of-3
 // series of heads-up freezeouts: everyone starts with START_BB big blinds, no
-// rebuys, and the blinds go up every HANDS_PER_LEVEL hands until someone has
-// all the chips. Win the series to move up a rung; lose it and drop one.
+// rebuys, and the blinds stay the same until someone has all the chips. Win the series to move up a rung; lose it and drop one.
 // Progress (your rung, the series under way, your best, your record against
 // each bot) is kept on this device. This file is the rules and the record;
 // play.js plays the games.
 
 export const LADDER_KEY = 'ducyLadder';
 export const START_BB = 100;
-export const HANDS_PER_LEVEL = 15;
 export const WINS_TO_TAKE = 2; // of 3
-// The blinds of each level, in chips (hundredths: 100/200 shows as 1/2).
-export const BLINDS = [
-  [100, 200], [150, 300], [200, 400], [300, 600], [400, 800], [500, 1000],
-  [750, 1500], [1000, 2000], [1500, 3000], [2000, 4000], [3000, 6000], [5000, 10000],
-];
+// The blinds of every hand, in chips (hundredths: 100/200 shows as 1/2).
+export const BLINDS = [100, 200];
 
 // The bots, easiest to hardest: by how much the GTO bot wins from each,
 // heads-up No-limit Hold'em at 100 BB, 40,000 duplicate hands each (ducy-gto's
@@ -37,11 +32,6 @@ export const ORDER = [
   'the_mathematician', 'tommy_sweeden', 'phil_bigmouth', 'danny_smallball', 'michael_miserable', 'doug_poker',
 ];
 export const CHAMPION = 'gto';
-
-// The blinds for the hand after `played` hands of a game.
-export function blindsAt(played) {
-  return BLINDS[Math.min(BLINDS.length - 1, Math.floor(Math.max(0, played) / HANDS_PER_LEVEL))];
-}
 
 // The rungs, bottom to top: the ranked bots this engine has, then any it has
 // that aren't ranked yet (at the top of the bots), then the GTO bot when it's

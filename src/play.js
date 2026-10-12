@@ -29,7 +29,7 @@ import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import {
-  BLINDS, HANDS_PER_LEVEL, START_BB, WINS_TO_TAKE, blindsAt, finishGame, forfeitUnfinished, loadProgress, newProgress,
+  BLINDS, START_BB, WINS_TO_TAKE, finishGame, forfeitUnfinished, loadProgress, newProgress,
   opponentOf, rungsFor, saveProgress, startGame,
 } from './ladder.js';
 
@@ -422,7 +422,7 @@ function ladderHtml() {
   h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${esc(info.name)}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${game === 1 ? 'Start the series' : `Play game ${game}`}</button></div>`;
-  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds start at ${blindsText(BLINDS[0])} and go up every ${HANDS_PER_LEVEL} hands. Leaving a game before it’s over loses it.</p>`;
+  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game. Leaving a game before it’s over loses it.</p>`;
   h += '</section>';
   // The ladder, top to bottom.
   h += '<ol class="ld-rungs" aria-label="The ladder, hardest first">';
@@ -450,7 +450,7 @@ async function startLadderGame() {
   ladderProgress = startGame(ladderProgress);
   saveProgress(ladderProgress);
   ladder = {opp, rung, over: null};
-  const [sb, bb] = blindsAt(0);
+  const [sb, bb] = BLINDS;
   await sitDown({bots: [opp], game: 'nlhe', buyIn: START_BB * bb, sb, bb, gto: false});
 }
 
@@ -486,10 +486,7 @@ function ladderBarHtml() {
   const s = state, played = num(s.hand_number);
   const p = ladderProgress, name = esc(botInfo(ladder.opp).name);
   const score = ladder.over ? '' : ` · game ${p.wins + p.losses + 1} of 3, you ${p.wins} – ${p.losses}`;
-  // Hand n plays at blindsAt(n - 1), so the next level starts at this one.
-  const nextLevel = (Math.floor((played - 1) / HANDS_PER_LEVEL) + 1) * HANDS_PER_LEVEL + 1;
-  const up = !ladder.over && blindsAt(played - 1)[1] !== BLINDS.at(-1)[1] ? ` · blinds up from hand ${nextLevel}` : '';
-  return `<span class="pl-meta">Ladder rung ${ladder.rung + 1}: ${name}${score} · hand ${played} · blinds ${c(s.small_blind)}/${c(s.big_blind)}${up}</span>`;
+  return `<span class="pl-meta">Ladder rung ${ladder.rung + 1}: ${name}${score} · hand ${played} · blinds ${c(s.small_blind)}/${c(s.big_blind)}</span>`;
 }
 
 // The game's result, where Next hand would be.
@@ -697,11 +694,6 @@ async function nextHand() {
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
-  // A ladder game's blinds go up every HANDS_PER_LEVEL hands.
-  if (ladder && state) {
-    const [sb, bb] = blindsAt(num(state.hand_number));
-    if (bb !== num(state.big_blind) && !await request('setBlinds', 'nlhe', sb, bb)) return;
-  }
   // GTO training starts every hand at 100 BB: no chips carry over.
   const snap = await request('newHand', ...(mode === 'solo' && gtoTable ? [true] : []));
   if (!snap) return;
