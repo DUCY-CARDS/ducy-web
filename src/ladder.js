@@ -1,7 +1,8 @@
 // The heads-up ladder (#212), Train's Punch-Out: play the bots one at a time,
 // easiest first, up to the GTO bot at the top. Each rung is a best-of-3
 // series of heads-up freezeouts: everyone starts with START_BB big blinds, no
-// rebuys, and the blinds stay the same until someone has all the chips. Win the series to move up a rung; lose it and drop one.
+// rebuys, and the blinds stay the same until someone has all the chips. Win
+// the series to move up a rung; lose it and drop one.
 // Progress (your rung, the series under way, your best, your record against
 // each bot) is kept on this device. This file is the rules and the record;
 // play.js plays the games.
