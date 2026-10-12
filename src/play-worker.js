@@ -1,7 +1,7 @@
 // Runs the bot table (ducy-wasm's BotTable) off the main thread, so the page
 // stays responsive while a bot thinks; Omaha decisions can take a second or
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
-//   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
+//   ops: personalities | create(bots, buyIn, sb, bb, seed, game, stacks) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
 //        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
@@ -83,8 +83,11 @@ async function loadGtoModel(manifestUrl, cacheName, load) {
 
 const ops = {
   personalities: () => botPersonalities(),
-  create: (bots, buyIn, sb, bb, seed, game) => {
+  // stacks, if given, are each seat's chips for the first hand (a ladder game
+  // resuming); an older ducy-wasm without setStack starts everyone at the buy-in.
+  create: (bots, buyIn, sb, bb, seed, game, stacks) => {
     table = new BotTable(bots, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game);
+    if (Array.isArray(stacks) && table.setStack) stacks.forEach((chips, seat) => table.setStack(seat, BigInt(chips)));
     return snapshot(table.newHand());
   },
   // resetStacks and reviewLastHand came with ducy's hand review; with an

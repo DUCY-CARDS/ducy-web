@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BLINDS, CHAMPION, ORDER, finishGame, forfeitUnfinished, loadProgress, newProgress,
+  BLINDS, CHAMPION, ORDER, TOTAL_CHIPS, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
 } from '../src/ladder.js';
 
@@ -66,11 +66,22 @@ test('beating the top bot makes you champion, and you stay up there', () => {
   assert.deepEqual([out, p.titles], ['champion', 2]);
 });
 
-test('a game left unfinished counts as lost', () => {
-  const p = newProgress();
-  assert.equal(forfeitUnfinished(p, RUNGS), null);
-  const r = forfeitUnfinished(startGame(p), RUNGS);
-  assert.deepEqual([r.outcome, r.progress.losses, r.progress.playing], ['game', 1, false]);
+test('a game left in the middle resumes with the same chips', () => {
+  let p = newProgress();
+  assert.equal(pausedGame(p), null);
+  p = startGame(p);
+  assert.deepEqual(p.game, {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0});
+  // Twelve hands in, you have 26,500 behind (mid-hand: your bet in the pot is theirs).
+  p = keepGame(p, 26500, 12);
+  assert.deepEqual(pausedGame(p), {stacks: [26500, TOTAL_CHIPS - 26500], hands: 12});
+  // Coming back keeps the game, not a fresh one.
+  assert.deepEqual(startGame(p).game, p.game);
+  assert.equal(p.losses, 0, 'leaving isn’t losing');
+  // Finishing the game clears it.
+  const r = finishGame(p, RUNGS, true);
+  assert.equal(r.progress.game, null);
+  assert.equal(pausedGame(r.progress), null);
+  assert.deepEqual(startGame(r.progress).game.stacks, [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2]);
 });
 
 test('a shorter ladder keeps you on it', () => {
