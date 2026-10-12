@@ -1256,3 +1256,9 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
   font: 600 12px/1.6 'Overpass Mono', monospace;
   background: var(--teal); color: #fff; opacity: 0.9; pointer-events: none;
 }
+
+/* What a role means, on its offer and for the host making it (#190) */
+.cl-role { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.cl-role ul { margin: 0 0 4px; padding-left: 20px; }
+.cl-offer-confirm { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px 12px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); }
+.cl-chipform .cl-role { flex-basis: 100%; }

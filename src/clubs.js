@@ -306,6 +306,11 @@ function watchTable(id) {
   location.hash = 'play';
 }
 
+// The member being offered the assistant role, while the host reads what it means (#190).
+let offering = null;
+// The History tab's activity log, filtered to one person ('' for everyone).
+let activityBy = '';
+
 // Closing a table asks on its own row (#186): the table being asked about.
 let closingTable = null;
 
@@ -416,6 +421,8 @@ function chipFormHtml(m) {
   if (!chipForm || chipForm.id !== m.id) return '';
   const t = FORM_TEXT[chipForm.kind](m);
   let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
+  // Making an agent: what that means, before the limit (#190).
+  if (chipForm.kind === 'agent') h += roleHtml('agent', null, m.name);
   h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
   if (!t.noAmount) {
     h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
@@ -1219,8 +1226,13 @@ function hostHtml() {
     // Hand history (#71): the host's hands show no hidden cards.
     h += handsHtml(club.code, 'host', 'Hands at your tables');
     if (club.log?.length) {
-      h += `<details class="cl-history"><summary>Assistant activity (${club.log.length})</summary><ul>`;
-      for (const l of [...club.log].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
+      // Filtered by who did it (#190).
+      const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || (id === club.hostId ? 'You' : id)]);
+      const shown = club.log.filter(l => !activityBy || l.by === activityBy);
+      h += `<details class="cl-history" data-keep="activity"><summary>Assistant and agent activity (${club.log.length})</summary>`;
+      if (who.length > 1) h += `<div class="pl-row"><select class="pl-text" data-activity="1"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div>`;
+      h += '<ul>';
+      for (const l of [...shown].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
       h += '</ul></details>';
     }
   }
@@ -1371,6 +1383,11 @@ function memberRowHtml(m, agents) {
     h += agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('') + '</select></label>';
   }
   if (chipForm && chipForm.kind !== 'grant' && chipForm.kind !== 'deny') h += chipFormHtml(m);
+  // Making an assistant: what they'll be able to do, then Offer (#190).
+  if (offering === m.id) {
+    h += `<div class="cl-offer-confirm">${roleHtml('assistant', null, m.name)}`;
+    h += `<span><button class="btn-small primary" data-cl="offer-role-yes" data-id="${esc(m.id)}">Offer it</button> <button class="btn-small" data-cl="offer-role-no">Cancel</button></span></div>`;
+  }
   return h + '</li>';
 }
 
@@ -1401,11 +1418,11 @@ function membershipsHtml(mode, only = '') {
     }
     h += accountHtml(m, !!n?.hostHere);
     if (m.role === 'offered') {
-      h += '<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>: approve players, give out chips from your own balance, and open and close tables.</span>';
+      h += `<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>.</span>${roleHtml('assistant')}`;
       h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
     if (m.agent === 'offered') {
-      h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>, with a credit limit of ${chips(m.creditLimit)}: recruit your own players, give them chips from your balance, and back them on credit.</span>`;
+      h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>.</span>${roleHtml('agent', m.creditLimit || 0)}`;
       h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
     if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are in <a href="#clubs">My clubs</a>.</p>`;
@@ -1532,12 +1549,19 @@ function agentLink(m) {
 function agentHtml(m, hostHere) {
   const a = m.agentView;
   let h = '<div class="cl-account cl-admin"><b>Agent tools</b>';
-  if (!hostHere) h += '<span class="pl-meta">The host is away: these work again when the host is back.</span>';
+  if (!hostHere) h += `<span class="pl-meta">${UNREACHABLE}</span>`;
   if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
   if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
   const dis = hostHere ? '' : ' disabled';
   h += `<span>Your account: <b class="cl-chips">${chips(a.total)}</b> <span class="pl-meta">(your balance ${chips(a.own)} + your players’ ${chips(a.shares)})</span></span>`;
   h += `<span class="${a.creditUsed ? 'cl-down' : 'pl-meta'}">Credit used ${chips(a.creditUsed)} of ${chips(a.limit)} · you can still give out ${chips(Math.max(0, a.room))}</span>`;
+  // Close to the limit: say so before a grant fails (#190).
+  if (a.limit && a.creditUsed >= 0.8 * a.limit) h += `<span class="pl-neterr">You’ve used ${Math.round((100 * a.creditUsed) / a.limit)}% of your credit: settle with the host, or take chips back from your players, to give out more.</span>`;
+  if (a.settlements?.length) {
+    h += `<details class="cl-history" data-keep="settle:${esc(m.code)}"><summary>Settlements recorded (${a.settlements.length})</summary><ul>`;
+    for (const s of [...a.settlements].reverse()) h += `<li><span class="pl-meta">${when(s.at)}</span> ${chips(s.amount)}${s.note && s.note !== 'Settlement' ? ` <span class="pl-meta">“${esc(s.note)}”</span>` : ''}</li>`;
+    h += '</ul></details>';
+  }
   h += `<div class="pl-row"><span class="pl-label">Your link</span><div class="pl-opts cl-link"><input class="pl-text" readonly value="${esc(agentLink(m))}" data-aglink="${esc(m.code)}"><button class="btn-small" data-cl="ag-copy" data-code="${esc(m.code)}">Copy</button></div></div>`;
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.recruits.length) {
@@ -1551,6 +1575,8 @@ function agentHtml(m, hostHere) {
     h += '<ul class="cl-list">';
     for (const x of a.players) {
       h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${chips(x.balance)} chips</span>${x.seated ? '<span class="pl-meta">at a table</span>' : ''}`;
+      // How they've done at the tables (#190).
+      if (x.result) h += `<span class="${x.result > 0 ? 'cl-up' : 'cl-down'}" title="Won or lost over finished table sessions">${x.result > 0 ? '+' : ''}${chips(x.result)} at the tables</span>`;
       if (x.request) h += `<span class="pl-meta">asks for ${chips(x.request.amount)}</span>`;
       h += '<span class="cl-acts">';
       h += x.request ? `${btn('ag-grant', x, 'Give', ' primary')}${btn('ag-deny', x, 'Decline')}` : btn('ag-give', x, 'Give');
@@ -1559,6 +1585,40 @@ function agentHtml(m, hostHere) {
     h += '</ul>';
   }
   return h + '</div>';
+}
+
+// The tools when the club can't be reached (#190): with always-on clubs,
+// that's the connection, not the host being away.
+const UNREACHABLE = 'Can’t reach the club right now: these work again once it’s back.';
+
+// What each role may and may not do (#190), for the offer and for the host
+// making it.
+const ROLE_TEXT = {
+  assistant: {
+    name: 'game assistant',
+    can: ['let players in or decline them', 'give chips from your own balance, and answer chip requests', 'open and close tables', 'remove members (not other assistants)'],
+    cannot: ['create chips: what you give comes out of your balance', 'change the club’s settings, backups or roles'],
+    note: 'The host sees everything you do in their activity log.',
+    hostNote: 'You’ll see everything they do in the History tab’s activity log.',
+  },
+  agent: {
+    name: 'agent',
+    can: ['bring in your own players with your own invite link', 'give your players chips from your balance, on credit up to your limit', 'take chips back from them and answer their requests'],
+    cannot: ['create chips, or act for members who aren’t your players'],
+    note: 'Credit you use is settled with the host outside ducy; they record each settlement.',
+    hostNote: 'They settle the credit they use with you outside ducy; you record each settlement.',
+  },
+};
+
+// The role explained to the member offered it, or, given their `name`, to
+// the host offering it (in the third person).
+function roleHtml(kind, limit = null, name = '') {
+  const r = ROLE_TEXT[kind];
+  const them = t => (name ? t.replace(/\byour\b/g, 'their').replace(/\byou\b/g, 'they') : t);
+  let h = `<div class="cl-role"><span>As ${kind === 'agent' ? 'an' : 'a'} <b>${r.name}</b>${limit != null ? ` (credit limit ${chips(limit)})` : ''}, ${name ? esc(name) : 'you'} can:</span><ul>`;
+  h += r.can.map(t => `<li>${esc(them(t))}</li>`).join('') + `</ul><span>${name ? 'They' : 'You'} can’t:</span><ul>`;
+  h += r.cannot.map(t => `<li>${esc(them(t))}</li>`).join('') + '</ul>';
+  return h + `<span class="pl-meta">${esc(name ? r.hostNote : r.note)}</span></div>`;
 }
 
 // ---- a game assistant's tools (#62) ----
@@ -1585,7 +1645,7 @@ function adminFormHtml(code, x) {
 function adminHtml(m, hostHere) {
   const a = m.admin;
   let h = '<div class="cl-account cl-admin"><b>Assistant tools</b>';
-  if (!hostHere) h += '<span class="pl-meta">The host is away: these work again when the host is back.</span>';
+  if (!hostHere) h += `<span class="pl-meta">${UNREACHABLE}</span>`;
   if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
   if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
   const dis = hostHere ? '' : ' disabled';
@@ -1716,7 +1776,10 @@ async function onClick(e) {
     try { await navigator.clipboard.writeText(v); } catch { root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.select(); }
   }
   // The host: assistants.
-  else if (act === 'offer-role') hostAct('offer_assistant', {id: b.dataset.id});
+  // Offering a role shows what it means first (#190).
+  else if (act === 'offer-role') { offering = offering === b.dataset.id ? null : b.dataset.id; render(); }
+  else if (act === 'offer-role-yes') { offering = null; hostAct('offer_assistant', {id: b.dataset.id}); }
+  else if (act === 'offer-role-no') { offering = null; render(); }
   else if (act === 'revoke-role') hostAct('revoke_role', {id: b.dataset.id});
   // A member: answering an offer.
   else if (act === 'role-yes' || act === 'role-no') sendToHost(b.dataset.code, {type: 'role_reply', club: b.dataset.code, accept: act === 'role-yes'});
@@ -1791,6 +1854,7 @@ function onDocKey(e) {
 }
 
 function onFilter(e) {
+  if (e.target.dataset?.activity) { activityBy = e.target.value; render(); return; }
   const pid = e.target.dataset?.assign;
   if (pid != null) {
     hostAct('assign_agent', {id: pid, agent: e.target.value || null});
