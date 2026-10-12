@@ -330,6 +330,8 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     mem.balance = Number(b.balance) || 0;
     mem.request = b.request || null;
+    // A cancel sent while the host was away has reached them (#188).
+    delete mem.cancelQueued;
     // How their last request was answered (#188).
     if (b.answer !== undefined) mem.answer = b.answer || null;
     const have = new Set((mem.entries || []).map(e => e.n));
