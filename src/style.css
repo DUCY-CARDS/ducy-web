@@ -1271,3 +1271,16 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 .cl-help-mine { font-size: 13px; }
 .cl-help-text { flex-basis: 100%; }
 .cl-helpreqs .cl-chipform { flex-basis: 100%; }
+
+/* Across the clubs pages (#193): member tabs, empty states, the agent picker in the menu, phones */
+.cl-member-tabs { margin: 8px 0 4px; }
+.cl-empty .btn-small { margin-left: 6px; }
+.cl-ledger { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.cl-ledger li { padding: 3px 0; }
+.cl-menu-items .cl-assign { display: flex; gap: 6px; align-items: center; padding: 6px 10px; font-size: 13px; }
+time[title] { cursor: help; }
+@media (max-width: 480px) {
+  .cl-list li { gap: 6px; }
+  .cl-list li .cl-acts { margin-left: 0; flex-basis: 100%; }
+  .cl-member-tabs .pl-tab { padding-left: 8px; padding-right: 8px; }
+}

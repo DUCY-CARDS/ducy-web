@@ -1681,7 +1681,7 @@ function syncHash() {
 
 function loadFromHash() {
   const h = location.hash.slice(1);
-  if (h === 'trainer' || h === 'codedoug' || TABS.includes(h)) return;
+  if (h === 'trainer' || h === 'codedoug' || TABS.includes(h.split('/')[0])) return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1777,7 +1777,8 @@ function openShortcut() {
 
 // The mode an address opens.
 function hashMode() {
-  const h = location.hash.slice(1);
+  // A tab, or a part of one (#clubs/players, #193).
+  const h = location.hash.slice(1).split('/')[0];
   return h === 'trainer' || TABS.includes(h) ? h : '';
 }
 
