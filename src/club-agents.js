@@ -103,7 +103,7 @@ export function accountOf(club, id) {
 export function settle(club, id, amount, now = Date.now(), why = '') {
   if (!isAgent(club, id)) throw new Error('Not an agent.');
   const e = issue(club, id, amount, now, why || 'Settlement', 'settle');
-  logAction(club, club.hostId, `Recorded a settlement of ${chipText(amount)} from ${club.members[id].name}`, now);
+  logAction(club, club.hostId, `Recorded a settlement of ${chipText(amount)} from ${club.members[id].name}`, now, Number(amount));
   return e;
 }
 
@@ -161,13 +161,13 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       // Inside the account: the agent's own balance may go negative, down to −limit.
       const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -(a.creditLimit || 0)});
       if (cmd.op === 'grant') answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
-      logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now);
+      logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now, amt);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'take': {
       const p = mine(club, by, cmd.id);
       const [out] = transfer(club, cmd.id, by, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} took back ${chipText(out.amount)} from ${p.name}`, now);
+      logAction(club, by, `${a.name} took back ${chipText(out.amount)} from ${p.name}`, now, out.amount);
       return {replies: [account(club, cmd.id, out.n - 1), account(club, by, out.n)]};
     }
     case 'deny': {

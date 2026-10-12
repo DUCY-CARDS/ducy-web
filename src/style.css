@@ -1289,3 +1289,8 @@ time[title] { cursor: help; }
 .mode-tab[data-dot="1"]::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--teal); vertical-align: middle; }
 .sub-tabs { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 .sub-tabs .pl-tab { text-decoration: none; }
+
+/* The activity log: big chip moves stand out, with filters above (#190). */
+.cl-activity-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.cl-big { color: var(--amber); font-weight: 600; }
+.cl-bigmove { background: var(--amber-faint); border-left: 3px solid var(--amber); padding-left: 6px; }
