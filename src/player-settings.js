@@ -72,7 +72,13 @@ function render() {
   const mine = tableAvatar();
   h += '<div class="pl-row ps-avrow"><span class="pl-label">Avatar</span><div class="ps-avatars" role="radiogroup" aria-label="Avatar">';
   h += `<button type="button" class="ps-av none${mine ? '' : ' on'}" role="radio" aria-checked="${!mine}" data-ps="avatar" data-id="" title="None">${esc([...myName().trim()][0]?.toUpperCase() || '?')}</button>`;
-  for (const a of PLAYER_AVATARS) h += `<button type="button" class="ps-av${a.id === mine ? ' on' : ''}" role="radio" aria-checked="${a.id === mine}" data-ps="avatar" data-id="${a.id}" title="${esc(a.label)}"><img src="${avatarUrl(a.id)}" alt="${esc(a.label)}"></button>`;
+  let set;
+  for (const a of PLAYER_AVATARS) {
+    // A heading where a named set (e.g. Bitcoin) starts.
+    if (a.set && a.set !== set) h += `<span class="ps-avset">${esc(a.set)}</span>`;
+    set = a.set;
+    h += `<button type="button" class="ps-av${a.id === mine ? ' on' : ''}" role="radio" aria-checked="${a.id === mine}" data-ps="avatar" data-id="${a.id}" title="${esc(a.label)}"><img src="${avatarUrl(a.id)}" alt="${esc(a.label)}"></button>`;
+  }
   h += '</div></div>';
   h += '<p class="pl-desc">Shown at your seat at the table.</p>';
   // The player ID, with backup and restore.

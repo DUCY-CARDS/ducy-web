@@ -1294,3 +1294,6 @@ time[title] { cursor: help; }
 .cl-activity-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .cl-big { color: var(--amber); font-weight: 600; }
 .cl-bigmove { background: var(--amber-faint); border-left: 3px solid var(--amber); padding-left: 6px; }
+
+/* Player settings: a heading where a named avatar set (e.g. Bitcoin) starts. */
+.ps-avset { flex-basis: 100%; margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
