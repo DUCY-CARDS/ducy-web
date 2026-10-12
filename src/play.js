@@ -29,7 +29,7 @@ import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import {
-  BLINDS, START_BB, WINS_TO_TAKE, finishGame, forfeitUnfinished, loadProgress, newProgress,
+  BLINDS, START_BB, WINS_TO_TAKE, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
 } from './ladder.js';
 
@@ -207,8 +207,23 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, runTwice: 'ask', friends: {...FRIENDS_DEFAULT}};
 }
+
+// Running it twice: ask each time, or always answer twice or once. Asking
+// waits RUN_SECS, then runs once. Ladder games always run once.
+const RUN_SECS = 5;
+const RUN_PREFS = ['ask', 'twice', 'once'];
+const RUN_LABELS = {ask: 'Run twice: ask', twice: 'Run twice: always', once: 'Run twice: never'};
+let runTimer = null;
+const runPref = () => (ladder ? 'once' : RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask');
+
+// An all-in with cards to come: the rest of the board is dealt slowly (the
+// flop at once, then the turn, then the river) before the result. Hole cards
+// are face up during it only in tournament-style games (the ladder, club
+// tournaments); otherwise they're shown at the end, as at showdown.
+const PEEL_MS = [1400, 1800, 2400];
+let peeling = false;
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
 // review is worth reading first; the choice at each is remembered.
@@ -380,31 +395,31 @@ const ladderAvatar = id => (BOT_AVATARS.has(id)
   ? `<span class="ld-av"><img src="${avatarUrl(id)}" alt=""></span>`
   : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
 const blindsText = ([sb, bb]) => `${chipText(sb)}/${chipText(bb)}`;
+const mysteryAvatar = '<span class="ld-av none" aria-hidden="true">?</span>';
+// A rung's bot stays hidden until you've played them: rungs below you,
+// bots you've had a series against, and the current one once its series is under way.
+const ladderRevealed = (p, rungs, i, level) =>
+  i < level || !!p.record[rungs[i]] || (i === level && (p.wins + p.losses > 0 || !!pausedGame(p)));
 
 // What a finished game or series means, in a sentence.
 function ladderOutcomeText(won, outcome, opp, next) {
   const who = esc(botInfo(opp).name);
   if (outcome === 'game') return won ? `You beat ${who} in this game.` : `${who} took this game.`;
-  if (outcome === 'up') return `You won the series against ${who}. Next up: ${esc(botInfo(next).name)}.`;
+  if (outcome === 'up') return `You won the series against ${who}. On to the next rung.`;
   if (outcome === 'champion') return `You beat ${who}, the champion. You’re at the top of the ladder!`;
   if (outcome === 'down') return `${who} won the series. You drop a rung, to ${esc(botInfo(next).name)}.`;
   return `${who} won the series. Win two games to climb.`;
 }
 
-// A game left unfinished, by a closed page, counts as lost (ladder.js).
-function settleUnfinished() {
-  if (seated) return;
-  const rungs = ladderRungs();
-  const opp = opponentOf(ladderProgress, rungs);
-  const r = forfeitUnfinished(ladderProgress, rungs);
-  if (!r) return;
-  ladderProgress = r.progress;
+// Keeps the game so far (ladder.js keepGame), after every action: a game left
+// in the middle, or a closed page, picks up with the same chips.
+function ladderKeep(s) {
+  if (!ladder || ladder.over || !s || !num(s.hand_number)) return;
+  ladderProgress = keepGame(ladderProgress, num(s.seats[0].stack), ladder.handsBefore + num(s.hand_number));
   saveProgress(ladderProgress);
-  ladderNote = `Your unfinished game against ${esc(botInfo(opp).name)} counted as a loss. ${ladderOutcomeText(false, r.outcome, opp, opponentOf(ladderProgress, rungs))}`;
 }
 
 function ladderHtml() {
-  settleUnfinished();
   const rungs = ladderRungs();
   const p = ladderProgress;
   const level = Math.min(p.level, rungs.length - 1);
@@ -415,14 +430,21 @@ function ladderHtml() {
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
   // The next fight.
   const record = p.record[opp];
+  const known = ladderRevealed(p, rungs, level, level);
   h += '<section class="cl-card ld-next">';
-  h += `<div class="ld-who">${ladderAvatar(opp)}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
-  h += `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`;
+  h += `<div class="ld-who">${known ? ladderAvatar(opp) : mysteryAvatar}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
+  h += known
+    ? `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`
+    : '<h2>A new opponent</h2><p class="pl-desc">You’ll find out who when you sit down.</p></div></div>';
   const game = p.wins + p.losses + 1;
-  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${esc(info.name)}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
+  const them = known ? esc(info.name) : 'them';
+  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${them}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
+  const paused = pausedGame(p);
+  if (paused) h += `<p class="pl-desc">Game ${game} is paused: you have ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}.</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
-  h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${game === 1 ? 'Start the series' : `Play game ${game}`}</button></div>`;
-  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game. Leaving a game before it’s over loses it.</p>`;
+  const play = paused ? `Resume game ${game}` : game === 1 ? 'Start the series' : `Play game ${game}`;
+  h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${play}</button></div>`;
+  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game, and all-ins run once. You can leave a game and pick it up later with the same chips; leaving during a hand folds it.</p>`;
   h += '</section>';
   // The ladder, top to bottom.
   h += '<ol class="ld-rungs" aria-label="The ladder, hardest first">';
@@ -430,7 +452,9 @@ function ladderHtml() {
     const id = rungs[i], r = p.record[id];
     const cls = i === level ? 'here' : i < level ? 'below' : i <= p.best ? 'reached' : 'ahead';
     const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : '';
-    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${ladderAvatar(id)}<span class="ld-name">${esc(botInfo(id).name)}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
+    const shown = ladderRevealed(p, rungs, i, level);
+    const name = shown ? esc(botInfo(id).name) : '???';
+    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${shown ? ladderAvatar(id) : mysteryAvatar}<span class="ld-name">${name}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
     h += `<span class="ld-tag">${tag}${r ? `<span class="pl-meta"> ${r.won}–${r.lost}</span>` : ''}</span></li>`;
   }
   h += '</ol>';
@@ -449,9 +473,19 @@ async function startLadderGame() {
   ladderNote = '';
   ladderProgress = startGame(ladderProgress);
   saveProgress(ladderProgress);
-  ladder = {opp, rung, over: null};
+  const {stacks, hands} = ladderProgress.game;
+  // Left with no chips behind (all-in when the page closed): that game is lost.
+  if (stacks[0] <= 0 || stacks[1] <= 0) {
+    const r = finishGame(ladderProgress, rungs, stacks[0] > 0);
+    ladderProgress = r.progress;
+    saveProgress(ladderProgress);
+    ladderNote = ladderOutcomeText(stacks[0] > 0, r.outcome, opp, opponentOf(ladderProgress, rungs));
+    render();
+    return;
+  }
+  ladder = {opp, rung, over: null, handsBefore: hands};
   const [sb, bb] = BLINDS;
-  await sitDown({bots: [opp], game: 'nlhe', buyIn: START_BB * bb, sb, bb, gto: false});
+  await sitDown({bots: [opp], game: 'nlhe', buyIn: START_BB * bb, sb, bb, gto: false, stacks});
 }
 
 // After each hand: a game is over once someone has all the chips.
@@ -466,15 +500,14 @@ function ladderCheck() {
   ladder.over = {won: mine > 0, outcome: r.outcome, next: opponentOf(ladderProgress, rungs)};
 }
 
-// Left before the game was over: it's lost.
+// Left before the game was over: it's paused with the chips as they stand (a
+// hand in progress is folded), to pick up later.
 function ladderLeave() {
   if (!ladder) return;
   if (!ladder.over) {
-    const rungs = ladderRungs();
-    const r = finishGame(ladderProgress, rungs, false);
-    ladderProgress = r.progress;
-    saveProgress(ladderProgress);
-    ladderNote = `You left, so ${esc(botInfo(ladder.opp).name)} took that game. ${r.outcome === 'game' ? '' : ladderOutcomeText(false, r.outcome, ladder.opp, opponentOf(ladderProgress, rungs))}`;
+    if (!peeling) ladderKeep(state);
+    const g = pausedGame(ladderProgress);
+    ladderNote = g ? `Game paused: you have ${c(g.stacks[0])}, ${esc(botInfo(ladder.opp).name)} ${c(g.stacks[1])}. Pick it up any time.` : '';
   } else if (ladder.over.outcome !== 'game') {
     ladderNote = ladderOutcomeText(ladder.over.won, ladder.over.outcome, ladder.opp, ladder.over.next);
   }
@@ -483,7 +516,8 @@ function ladderLeave() {
 
 // The table bar's line at a ladder game.
 function ladderBarHtml() {
-  const s = state, played = num(s.hand_number);
+  // The game's hands: a resumed game counts on from where it was left.
+  const s = state, played = (ladder.handsBefore || 0) + num(s.hand_number);
   const p = ladderProgress, name = esc(botInfo(ladder.opp).name);
   const score = ladder.over ? '' : ` · game ${p.wins + p.losses + 1} of 3, you ${p.wins} – ${p.losses}`;
   return `<span class="pl-meta">Ladder rung ${ladder.rung + 1}: ${name}${score} · hand ${played} · blinds ${c(s.small_blind)}/${c(s.big_blind)}</span>`;
@@ -587,7 +621,93 @@ async function request(op, ...args) {
   }
 }
 
+// The board as it stood, then a card at a time (the flop together), with the
+// result held back until the river is out.
+// The states to show: the board as it stood with everyone all-in, then the
+// flop (together), the turn and the river, without the result.
+function peelSteps(before, after) {
+  const from = before.board.length, to = after.board.length;
+  const counts = [from];
+  for (let k = from < 3 ? 3 : from + 1; k <= to; k += 1) counts.push(k);
+  const faceUp = !!ladder || wholeChips;
+  const known = before.events.length;
+  // Chips as they were before the pot was paid out.
+  const pot = after.seats.reduce((t, x) => t + num(x.won), 0);
+  const seats = after.seats.map((x, i) => ({
+    ...x, stack: num(x.stack) - num(x.won), won: 0, net: 0, street_bet: 0,
+    cards: faceUp || i === 0 || x.folded ? x.cards : before.seats[i]?.cards ?? null,
+  }));
+  return counts.map((k, step) => {
+    // The new events up to this card: the last actions and the boards dealt so far.
+    let boards = 0;
+    const events = after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
+      if (e.type === 'award') return false;
+      if (e.type === 'board') { boards += 1; return boards <= step; }
+      return true;
+    }));
+    return {...after, board: after.board.slice(0, k), events, seats, pot, complete: false, showdown: false, legal: null, to_act: null, run_choice: false};
+  });
+}
+
+let peelTimer = null;
+let peeled = null; // the snapshot a finished peel hands on, shown as is
+function peel(before, snap) {
+  const steps = peelSteps(before, snap.state);
+  const mine = session;
+  peeling = true;
+  // A ladder game keeps the result now, in case the page closes mid-reveal.
+  ladderKeep(snap.state);
+  let i = 0;
+  const next = () => {
+    if (mine !== session || !open) { peeling = false; return; }
+    if (i < steps.length) {
+      state = steps[i];
+      render();
+      peelTimer = setTimeout(next, PEEL_MS[Math.min(i, PEEL_MS.length - 1)]);
+      i += 1;
+    } else {
+      peeling = false;
+      peeled = snap;
+      show(snap);
+    }
+  };
+  clearTimeout(peelTimer);
+  next();
+}
+
+// Running it twice: answer by the player's setting, or ask and run once if
+// they haven't chosen within RUN_SECS. If the choice stays open anyway (it's
+// someone else's, or it didn't take), let the table move on.
+function armRunChoice() {
+  clearTimeout(runTimer);
+  runTimer = null;
+  const s = state;
+  if (!s?.run_choice || !seated) return false;
+  const hn = num(s.hand_number);
+  const me = s.seats[0];
+  const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
+  const answered = mode === 'guest' ? mySeat?.run_twice != null : myRunAnswer?.hand === hn;
+  if (asked && !answered && runPref() !== 'ask') { runChoice(runPref() === 'twice'); return true; }
+  const mine = session;
+  runTimer = setTimeout(() => {
+    if (mine !== session || !state?.run_choice || num(state.hand_number) !== hn) return;
+    const stillMine = mode === 'guest' ? mySeat?.run_twice == null : myRunAnswer?.hand !== hn;
+    if (asked && stillMine) runChoice(false);
+    else if (mode === 'solo') request('advance').then(snap => snap && show(snap));
+  }, RUN_SECS * 1000);
+  return false;
+}
+
 function show(snap) {
+  if (peeling) return;
+  // An all-in that ran out at a bot table: deal the rest slowly.
+  const before = state;
+  if (snap !== peeled && mode === 'solo' && before && snap.state && !before.complete && snap.state.complete && snap.state.showdown
+      && num(before.hand_number) === num(snap.state.hand_number) && !snap.state.second_board?.length
+      && snap.state.board.length > before.board.length && (snap.seq == null || snap.seq >= shownSeq)) {
+    peel(before, snap);
+    return;
+  }
   if (snap.seq != null) {
     // A newer state is already on screen (results can arrive out of order).
     if (snap.seq < shownSeq) { pace(); return; }
@@ -602,6 +722,8 @@ function show(snap) {
   recordStats();
   startReview();
   ladderCheck();
+  ladderKeep(state);
+  if (armRunChoice()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -666,7 +788,9 @@ async function startTable() {
 
 // Sits down at a new bot table and deals its first hand. `gto` is GTO
 // training (every hand at 100 BB, with the review in Hold'em).
-async function sitDown({bots, game, buyIn, sb, bb, gto}) {
+// `stacks`, when given, are each seat's chips for the first hand (a ladder
+// game resuming), instead of the buy-in.
+async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null}) {
   clearTimeout(timer);
   cancelDeal();
   lastSummary = null;
@@ -677,12 +801,15 @@ async function sitDown({bots, game, buyIn, sb, bb, gto}) {
   raiseTo = 0;
   holds.delete('user');
   foldQueued = false;
+  // A new table numbers its hands from 1 again: an answer about running it
+  // twice at the last table mustn't count here (a ladder game would stall).
+  myRunAnswer = null;
   sessionStats = {};
   recordedHand = 0;
   gtoTable = gto;
   review = null;
   sessionReview = emptyTotals();
-  const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game);
+  const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game, stacks);
   if (snap) show(snap);
 }
 
@@ -920,6 +1047,7 @@ function startHosting(code, game) {
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
   gtoTable = false;
   review = null;
+  myRunAnswer = null;
   sessionStats = {};
   recordedHand = 0;
   room = code;
@@ -1476,6 +1604,7 @@ function renderTable() {
   h += '<span class="pl-tools">';
   h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
   if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
+  if (!ladder && !watching) h += `<button class="cc-btn" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once">${RUN_LABELS[runPref()]}</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   if (mode !== 'solo' && !watching) h += `<button class="cc-btn${setup.sounds ? ' on' : ''}" data-act="sounds" aria-pressed="${!!setup.sounds}" title="A chime when it’s your turn, and an alert at 5 seconds left">Sound</button>`;
   if (reviewTable() && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
@@ -1554,7 +1683,9 @@ function controlsHtml() {
   const blank = '<span class="pl-slot" aria-hidden="true"></span>';
   let status = '', fold = blank, call = blank, raise = blank, sizes = blank, amount = blank;
   const L = s.legal;
-  if (s.complete) {
+  if (peeling) {
+    status = '<span class="pl-result">All-in: dealing the rest of the board…</span>';
+  } else if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
     // Before the first hand of a hosted table there's no result yet.
@@ -1587,7 +1718,7 @@ function controlsHtml() {
     const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
     const answer = mode === 'guest' ? mySeat?.run_twice : myRunAnswer?.hand === num(s.hand_number) ? myRunAnswer.yes : undefined;
     if (asked && answer == null) {
-      status = 'Everyone’s all-in. Run it twice?';
+      status = `Everyone’s all-in. Run it twice? <span class="pl-meta">Once if you don’t choose in ${RUN_SECS} seconds.</span>`;
       call = '<button class="tr-btn" data-act="runonce">Run it once</button>';
       raise = '<button class="tr-btn yes" data-act="runtwice">Run it twice</button>';
     } else {
@@ -2033,6 +2164,12 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'runpref') {
+    setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(runPref()) + 1) % RUN_PREFS.length];
+    saveSetup();
+    render();
+    if (armRunChoice()) return;
+  }
   else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
@@ -2062,7 +2199,7 @@ function onClick(e) {
   }
   else if (el.dataset.act === 'autodeal') { setAutoDeal(!autoDealOn()); saveSetup(); holds.delete('user'); render(); armDeal(); }
   else if (el.dataset.act === 'leave') {
-    if (ladder && !ladder.over && !confirm(`Leave this game? It counts as a loss against ${botInfo(ladder.opp).name}.`)) return;
+    if (ladder && !ladder.over && state && !state.complete && !confirm('Leave in the middle of a hand? It folds this hand; the game picks up later with the chips you have behind.')) return;
     if (mode === 'host') forgetSavedTable();
     leaveTable();
   }

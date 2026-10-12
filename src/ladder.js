@@ -3,8 +3,9 @@
 // series of heads-up freezeouts: everyone starts with START_BB big blinds, no
 // rebuys, and the blinds stay the same until someone has all the chips. Win
 // the series to move up a rung; lose it and drop one.
-// Progress (your rung, the series under way, your best, your record against
-// each bot) is kept on this device. This file is the rules and the record;
+// Progress (your rung, the series under way, the game under way with both
+// stacks, your best, your record against each bot) is kept on this device, so
+// a game left in the middle picks up where it was. This file is the rules and the record;
 // play.js plays the games.
 
 export const LADDER_KEY = 'ducyLadder';
@@ -45,9 +46,14 @@ export function rungsFor(ids, gto) {
   return rungs;
 }
 
+// `game` is the game under way, kept so it can be left and resumed:
+// {stacks: [yours, theirs], hands}, or null.
 export function newProgress() {
-  return {v: 1, level: 0, best: 0, wins: 0, losses: 0, playing: false, titles: 0, record: {}};
+  return {v: 1, level: 0, best: 0, wins: 0, losses: 0, playing: false, titles: 0, record: {}, game: null};
 }
+
+// The chips at the table: both players' starting stacks.
+export const TOTAL_CHIPS = 2 * START_BB * BLINDS[1];
 
 export function loadProgress(storage = globalThis.localStorage) {
   try {
@@ -65,10 +71,22 @@ export function saveProgress(p, storage = globalThis.localStorage) {
 export const levelOf = (p, rungs) => Math.max(0, Math.min(rungs.length - 1, p.level));
 export const opponentOf = (p, rungs) => rungs[levelOf(p, rungs)];
 
-// A game is starting. Until it's finished, leaving counts as losing it.
+// A game is starting, or resuming where it was left.
 export function startGame(p) {
-  return {...p, playing: true};
+  const fresh = {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0};
+  return {...p, playing: true, game: p.game || fresh};
 }
+
+// The game so far, after each action: your chips behind, and theirs (all the
+// rest). Leaving in the middle of a hand folds it: what you'd put in the pot
+// is theirs.
+export function keepGame(p, mine, hands) {
+  const m = Math.max(0, Math.min(TOTAL_CHIPS, Math.round(mine)));
+  return {...p, game: {stacks: [m, TOTAL_CHIPS - m], hands}};
+}
+
+// A game was left (or the page closed) and is waiting to be resumed.
+export const pausedGame = p => (p.playing && p.game ? p.game : null);
 
 // A game is over: `won` is whether you took all the chips. Returns the new
 // progress and what happened: 'game' (the series goes on), 'up' (series won,
@@ -77,7 +95,7 @@ export function startGame(p) {
 export function finishGame(p, rungs, won) {
   const level = levelOf(p, rungs);
   const opp = rungs[level];
-  const q = {...p, level, playing: false, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), record: {...p.record}};
+  const q = {...p, level, playing: false, game: null, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), record: {...p.record}};
   if (q.wins < WINS_TO_TAKE && q.losses < WINS_TO_TAKE) return {progress: q, outcome: 'game'};
   const r = {won: 0, lost: 0, ...q.record[opp]};
   const took = q.wins >= WINS_TO_TAKE;
@@ -97,10 +115,4 @@ export function finishGame(p, rungs, won) {
   if (level === 0) return {progress: q, outcome: 'stay'};
   q.level = level - 1;
   return {progress: q, outcome: 'down'};
-}
-
-// A game left unfinished (the page closed, or you left the table) is lost.
-// Returns {progress, outcome} as finishGame does, or null if none was.
-export function forfeitUnfinished(p, rungs) {
-  return p.playing ? finishGame(p, rungs, false) : null;
 }
