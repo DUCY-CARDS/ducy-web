@@ -36,6 +36,7 @@ import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import { accountOf, settle } from './club-agents.js';
+import { bigMove, isBigMove } from './club-roles.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
@@ -376,8 +377,10 @@ function noticeHelp() {
     notice(`${x.name} asks for help: “${x.text}”`, 'clubs');
   }
 }
-// The History tab's activity log, filtered to one person ('' for everyone).
+// The History tab's activity log, filtered to one person ('' for everyone),
+// and to big chip moves only (#190).
 let activityBy = '';
+let activityBig = false;
 
 // Closing a table asks on its own row (#186): the table being asked about.
 let closingTable = null;
@@ -1347,11 +1350,18 @@ function hostHtml() {
     if (club.log?.length) {
       // Filtered by who did it (#190).
       const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || (id === club.hostId ? 'You' : id)]);
-      const shown = club.log.filter(l => !activityBy || l.by === activityBy);
-      h += `<details class="cl-history" data-keep="activity"><summary>Assistant and agent activity (${club.log.length})</summary>`;
-      if (who.length > 1) h += `<div class="pl-row"><select class="pl-text" data-activity="1"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></div>`;
+      // Big chip moves stand out (#190): a full buy-in at the biggest open table or more.
+      const big = bigMove(club);
+      const bigCount = club.log.filter(l => isBigMove(l, big)).length;
+      const shown = club.log.filter(l => (!activityBy || l.by === activityBy) && (!activityBig || isBigMove(l, big)));
+      h += `<details class="cl-history" data-keep="activity"><summary>Assistant and agent activity (${club.log.length})${bigCount ? ` · <span class="cl-big">${bigCount} big</span>` : ''}</summary>`;
+      const filters = [];
+      if (who.length > 1) filters.push(`<select class="pl-text" data-activity="1" aria-label="Whose activity"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
+      if (big != null) filters.push(`<label class="pl-meta"><input type="checkbox" data-activitybig="1"${activityBig ? ' checked' : ''}> Only chip moves of ${chips(big)} or more</label>`);
+      if (filters.length) h += `<div class="pl-row cl-activity-filters">${filters.join('')}</div>`;
+      if (!shown.length) h += '<span class="pl-meta">Nothing matches these filters.</span>';
       h += '<ul>';
-      for (const l of [...shown].reverse().slice(0, 100)) h += `<li><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
+      for (const l of [...shown].reverse().slice(0, 100)) h += `<li${isBigMove(l, big) ? ' class="cl-bigmove"' : ''}><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
       h += '</ul></details>';
     }
   }
@@ -2031,6 +2041,7 @@ function onDocKey(e) {
 
 function onFilter(e) {
   if (e.target.dataset?.activity) { activityBy = e.target.value; render(); return; }
+  if (e.target.dataset?.activitybig) { activityBig = e.target.checked; render(); return; }
   const pid = e.target.dataset?.assign;
   if (pid != null) {
     hostAct('assign_agent', {id: pid, agent: e.target.value || null});

@@ -6,7 +6,7 @@ import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive } from '../src/club.js';
 import { checkOwnLedger, accountBody, issue, requestChips, totals, buyIn } from '../src/club-chips.js';
 import { newTable } from '../src/club-tables.js';
-import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from '../src/club-roles.js';
+import { adminBody, answerRole, bigMove, isAssistant, isBigMove, offerAssistant, revokeRole, runAdmin } from '../src/club-roles.js';
 
 function clubWith(...ids) {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
@@ -122,4 +122,22 @@ test('over the wire: the offer reaches the member, their acceptance and commands
   assert.equal(mem.admin.members.length, 1);
   const c = await hostReceive(club, verifier, await signMessage(ann, {type: 'admin_cmd', club: club.code, cmd: {op: 'new_table'}}));
   assert.equal(c.admin.body.cmd.op, 'new_table');
+});
+
+test('big chip moves: logged with their amount, measured against the biggest open table (#190)', () => {
+  const club = clubWith('ann', 'bob');
+  assistant(club, 'ann');
+  issue(club, 'ann', 100000);
+  assert.equal(bigMove(club), null, 'no open table to measure by');
+  newTable(club, {sb: 1, bb: 2, maxBB: 100});
+  const t = newTable(club, {sb: 5, bb: 10, maxBB: 200});
+  assert.equal(bigMove(club), 2000, 'a full buy-in at the biggest table');
+  runAdmin(club, 'ann', {op: 'give', id: 'bob', amount: 500});
+  runAdmin(club, 'ann', {op: 'give', id: 'bob', amount: 2500});
+  const gives = club.log.filter(l => l.amount != null);
+  assert.deepEqual(gives.map(l => l.amount), [500, 2500]);
+  assert.deepEqual(gives.map(l => isBigMove(l, bigMove(club))), [false, true]);
+  assert.equal(isBigMove(club.log[0], bigMove(club)), false, 'entries without chips never count');
+  t.status = 'closed';
+  assert.equal(bigMove(club), 200, 'closed tables don’t count');
 });

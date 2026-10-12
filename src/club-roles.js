@@ -22,11 +22,25 @@ export const MAX_LOG = 500;
 
 export const isAssistant = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.role === 'assistant';
 
-export function logAction(club, by, text, now = Date.now()) {
+// `amount`: the chips an action moved, so the host can spot big ones (#190).
+export function logAction(club, by, text, now = Date.now(), amount = null) {
   club.log ??= [];
-  club.log.push({at: now, by, text});
+  club.log.push(amount == null ? {at: now, by, text} : {at: now, by, text, amount});
   if (club.log.length > MAX_LOG) club.log.splice(0, club.log.length - MAX_LOG);
 }
+
+// The size from which a chip move counts as big (#190): a full buy-in at
+// the club's biggest open table (its maximum, in big blinds, times its big
+// blind), or null when no table is open to measure by.
+export function bigMove(club) {
+  const buyIns = (club.tables || [])
+    .filter(t => t.status !== 'closed' && t.bb > 0)
+    .map(t => t.bb * (t.maxBB || 100));
+  return buyIns.length ? Math.max(...buyIns) : null;
+}
+
+// Whether a log entry moved at least `threshold` chips.
+export const isBigMove = (entry, threshold) => threshold != null && entry.amount != null && entry.amount >= threshold;
 
 const roleBody = (club, id) => ({type: 'role', club: club.code, role: club.members[id]?.role || null});
 
@@ -105,7 +119,7 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
     }
     case 'give': {
       const [out] = transfer(club, by, cmd.id, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} gave ${who} ${chipText(out.amount)}`, now);
+      logAction(club, by, `${a.name} gave ${who} ${chipText(out.amount)}`, now, out.amount);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'grant': {
@@ -113,7 +127,7 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
       const amt = Number(cmd.amount ?? target.request.amount);
       const [out] = transfer(club, by, cmd.id, amt, now, target.request.note);
       answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
-      logAction(club, by, `${a.name} granted ${who} ${chipText(amt)}`, now);
+      logAction(club, by, `${a.name} granted ${who} ${chipText(amt)}`, now, amt);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'deny': {
