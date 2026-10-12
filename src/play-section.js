@@ -2,6 +2,7 @@
 // under the top bar, and the section that holds the playing tabs (#138):
 //   #play / #practice   Bots (Train): a game you can resume, or the bots;
 //                       and whichever table you're at
+//   #ladder Ladder (Train): heads-up against the bots, easiest first (#212)
 //   #join   Join (Play): a code or a pasted link, for a table or a club
 //   #host   Start a game (Play): a table for friends
 //   #clubs  Clubs: the club you run or help run, the clubs you're in, and
@@ -21,16 +22,16 @@ import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
 
-export const TABS = ['play', 'join', 'host', 'clubs'];
+export const TABS = ['play', 'ladder', 'join', 'host', 'clubs'];
 // The navigation's groups and their tabs (#209), by page: a tab above, or
 // main.js's 'trainer' and 'equity'; 'practice' is the Bots tab ('play').
 export const GROUPS = {
-  train: [['practice', 'Bots'], ['trainer', 'Drills'], ['equity', 'Equity']],
+  train: [['practice', 'Bots'], ['ladder', 'Ladder'], ['trainer', 'Drills'], ['equity', 'Equity']],
   play: [['host', 'Start a game'], ['join', 'Join']],
   clubs: [],
 };
 // Each tab's window title (#195): "Clubs · DUCY".
-const TITLES = {play: 'Bots', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
+const TITLES = {play: 'Bots', ladder: 'Ladder', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
 const NAV_KEY = 'ducyNav'; // the last page in each group, {train, play}
 
 let tab = null; // the tab showing, or null when the section is closed
@@ -45,7 +46,7 @@ const el = id => document.getElementById(id);
 // under Train, a friends table under Play, a club's under Clubs.
 export function groupOf(page) {
   if (page === 'play') return tableGroup() || 'train';
-  if (page === 'practice' || page === 'trainer' || page === 'equity') return 'train';
+  if (page === 'practice' || page === 'ladder' || page === 'trainer' || page === 'equity') return 'train';
   if (page === 'join' || page === 'host') return 'play';
   return 'clubs';
 }

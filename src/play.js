@@ -14,6 +14,8 @@
 // with 100 BB, and in Hold'em each finished hand's decisions are reviewed
 // against the bot's strategy (play-review.js) in the background. PLO4 and
 // PLO6 have their own GTO bots, without the review.
+// The Ladder tab (#212) plays heads-up freezeouts against one bot at a time,
+// easiest first, with the GTO bot at the top (ladder.js has the rules).
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
@@ -26,6 +28,10 @@ import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
+import {
+  BLINDS, START_BB, WINS_TO_TAKE, finishGame, forfeitUnfinished, loadProgress, newProgress,
+  opponentOf, rungsFor, saveProgress, startGame,
+} from './ladder.js';
 
 let worker = null;
 let nextId = 0;
@@ -130,6 +136,14 @@ let recordedHand = 0; // hand_number of the last hand added to the stats
 let statsOpen = false;
 // GTO training: the table is heads-up against a GTO bot.
 let gtoTable = false;
+// The bots at the table in play, one per seat after yours.
+let tableBots = [];
+// The ladder (#212): your progress, and the game in play, if it's a ladder
+// game: {opp, rung, over: null | {won, outcome}}. `ladderNote` says how the
+// last series went, on the Ladder tab.
+let ladderProgress = loadProgress();
+let ladder = null;
+let ladderNote = '';
 // Hand review works against the Hold'em GTO bot only.
 const reviewTable = () => gtoTable && tableGame.id === 'nlhe';
 // The last finished hand's review: {hand, data} once it's back, {hand,
@@ -289,6 +303,7 @@ function fillBots() {
 
 // This module's part of each Play tab (play-section.js, #138):
 //   'play'  the bots, and a friends table you can resume
+//   'ladder' the heads-up ladder (#212), and its games
 //   'host'  start a friends table (a temporary game)
 //   'join'  only why joining a table didn't work (the form is the section's)
 //   'clubs' nothing
@@ -299,6 +314,7 @@ function renderSetup() {
   let h = '';
   const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
   if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
+  else if (view === 'ladder') h = err + ladderHtml();
   // Start a game (Play, #209): a table for friends.
   else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
   else if (view === 'join') h = err;
@@ -354,6 +370,133 @@ function botsSetupHtml() {
   h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
   h += '</div>';
   return h;
+}
+
+// ---- the ladder (#212) ----
+
+const ladderRungs = () => rungsFor(personalities.map(p => p.id), gtoAvailable);
+const botInfo = id => (id === GTO.id ? GTO : personalities.find(p => p.id === id)) || {id, name: id, description: ''};
+const ladderAvatar = id => (BOT_AVATARS.has(id)
+  ? `<span class="ld-av"><img src="${avatarUrl(id)}" alt=""></span>`
+  : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
+const blindsText = ([sb, bb]) => `${chipText(sb)}/${chipText(bb)}`;
+
+// What a finished game or series means, in a sentence.
+function ladderOutcomeText(won, outcome, opp, next) {
+  const who = esc(botInfo(opp).name);
+  if (outcome === 'game') return won ? `You beat ${who} in this game.` : `${who} took this game.`;
+  if (outcome === 'up') return `You won the series against ${who}. Next up: ${esc(botInfo(next).name)}.`;
+  if (outcome === 'champion') return `You beat ${who}, the champion. You’re at the top of the ladder!`;
+  if (outcome === 'down') return `${who} won the series. You drop a rung, to ${esc(botInfo(next).name)}.`;
+  return `${who} won the series. Win two games to climb.`;
+}
+
+// A game left unfinished, by a closed page, counts as lost (ladder.js).
+function settleUnfinished() {
+  if (seated) return;
+  const rungs = ladderRungs();
+  const opp = opponentOf(ladderProgress, rungs);
+  const r = forfeitUnfinished(ladderProgress, rungs);
+  if (!r) return;
+  ladderProgress = r.progress;
+  saveProgress(ladderProgress);
+  ladderNote = `Your unfinished game against ${esc(botInfo(opp).name)} counted as a loss. ${ladderOutcomeText(false, r.outcome, opp, opponentOf(ladderProgress, rungs))}`;
+}
+
+function ladderHtml() {
+  settleUnfinished();
+  const rungs = ladderRungs();
+  const p = ladderProgress;
+  const level = Math.min(p.level, rungs.length - 1);
+  const opp = rungs[level];
+  const info = botInfo(opp);
+  let h = '<div class="pl-head"><h1>Heads-up ladder</h1>';
+  h += `<p>Climb from the easiest bot to the hardest, one heads-up series at a time. Win ${WINS_TO_TAKE} games of 3 to move up a rung; lose the series and you drop one.</p></div>`;
+  if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
+  // The next fight.
+  const record = p.record[opp];
+  h += '<section class="cl-card ld-next">';
+  h += `<div class="ld-who">${ladderAvatar(opp)}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
+  h += `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`;
+  const game = p.wins + p.losses + 1;
+  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${esc(info.name)}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
+  if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
+  h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${game === 1 ? 'Start the series' : `Play game ${game}`}</button></div>`;
+  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game. Leaving a game before it’s over loses it.</p>`;
+  h += '</section>';
+  // The ladder, top to bottom.
+  h += '<ol class="ld-rungs" aria-label="The ladder, hardest first">';
+  for (let i = rungs.length - 1; i >= 0; i--) {
+    const id = rungs[i], r = p.record[id];
+    const cls = i === level ? 'here' : i < level ? 'below' : i <= p.best ? 'reached' : 'ahead';
+    const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : '';
+    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${ladderAvatar(id)}<span class="ld-name">${esc(botInfo(id).name)}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
+    h += `<span class="ld-tag">${tag}${r ? `<span class="pl-meta"> ${r.won}–${r.lost}</span>` : ''}</span></li>`;
+  }
+  h += '</ol>';
+  if (p.titles) h += `<p class="pl-meta">Champion ${p.titles} time${p.titles === 1 ? '' : 's'}.</p>`;
+  h += '<div class="pl-actions"><button class="btn-small" data-act="ladder-reset">Start the ladder over</button></div>';
+  return h;
+}
+
+// Sits down for the next game of the series.
+async function startLadderGame() {
+  setupNote = '';
+  const rungs = ladderRungs();
+  const rung = Math.min(ladderProgress.level, rungs.length - 1);
+  const opp = rungs[rung];
+  if (!await prepareGto([opp])) { render(); return; }
+  ladderNote = '';
+  ladderProgress = startGame(ladderProgress);
+  saveProgress(ladderProgress);
+  ladder = {opp, rung, over: null};
+  const [sb, bb] = BLINDS;
+  await sitDown({bots: [opp], game: 'nlhe', buyIn: START_BB * bb, sb, bb, gto: false});
+}
+
+// After each hand: a game is over once someone has all the chips.
+function ladderCheck() {
+  if (!ladder || ladder.over || !state?.complete || !num(state.hand_number)) return;
+  const mine = num(state.seats[0].stack), theirs = num(state.seats[1].stack);
+  if (mine > 0 && theirs > 0) return;
+  const rungs = ladderRungs();
+  const r = finishGame(ladderProgress, rungs, mine > 0);
+  ladderProgress = r.progress;
+  saveProgress(ladderProgress);
+  ladder.over = {won: mine > 0, outcome: r.outcome, next: opponentOf(ladderProgress, rungs)};
+}
+
+// Left before the game was over: it's lost.
+function ladderLeave() {
+  if (!ladder) return;
+  if (!ladder.over) {
+    const rungs = ladderRungs();
+    const r = finishGame(ladderProgress, rungs, false);
+    ladderProgress = r.progress;
+    saveProgress(ladderProgress);
+    ladderNote = `You left, so ${esc(botInfo(ladder.opp).name)} took that game. ${r.outcome === 'game' ? '' : ladderOutcomeText(false, r.outcome, ladder.opp, opponentOf(ladderProgress, rungs))}`;
+  } else if (ladder.over.outcome !== 'game') {
+    ladderNote = ladderOutcomeText(ladder.over.won, ladder.over.outcome, ladder.opp, ladder.over.next);
+  }
+  ladder = null;
+}
+
+// The table bar's line at a ladder game.
+function ladderBarHtml() {
+  const s = state, played = num(s.hand_number);
+  const p = ladderProgress, name = esc(botInfo(ladder.opp).name);
+  const score = ladder.over ? '' : ` · game ${p.wins + p.losses + 1} of 3, you ${p.wins} – ${p.losses}`;
+  return `<span class="pl-meta">Ladder rung ${ladder.rung + 1}: ${name}${score} · hand ${played} · blinds ${c(s.small_blind)}/${c(s.big_blind)}</span>`;
+}
+
+// The game's result, where Next hand would be.
+function ladderOverHtml() {
+  const o = ladder.over;
+  const p = ladderProgress;
+  let text = ladderOutcomeText(o.won, o.outcome, ladder.opp, o.next);
+  if (o.outcome === 'game') text += ` Series: you ${p.wins} – ${p.losses}.`;
+  const label = o.outcome === 'game' ? `Play game ${p.wins + p.losses + 1}` : 'Back to the ladder';
+  return {status: `<span class="pl-result ld-over ${o.won ? 'won' : 'lost'}">${text}</span>`, button: `<button class="tr-start" data-act="ladder-next">${label}</button>`};
 }
 
 // A table for friends (#152), in three steps: 1 its name (and yours, the
@@ -458,6 +601,7 @@ function show(snap) {
   if (handHook && snap.state.complete && hn && hn !== hookedHand) { hookedHand = hn; handHook(snap.state); }
   recordStats();
   startReview();
+  ladderCheck();
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -489,9 +633,9 @@ function togglePrefold() {
 }
 
 // Downloads (the first time) and loads the GTO bot's files in the worker.
-async function prepareGto() {
-  const plo = Object.values(GTO_PLOS).find(p => setup.bots.includes(p.bot.id));
-  if (plo ? plo.ready : (gtoReady || !setup.bots.includes(GTO.id))) return true;
+async function prepareGto(bots = setup.bots) {
+  const plo = Object.values(GTO_PLOS).find(p => bots.includes(p.bot.id));
+  if (plo ? plo.ready : (gtoReady || !bots.includes(GTO.id))) return true;
   root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
   try { navigator.storage?.persist?.(); } catch {}
   try {
@@ -514,7 +658,20 @@ async function startTable() {
   setupNote = '';
   if (!await prepareGto()) { render(); return; }
   saveSetup();
-  tableGame = gameOf(setup.game);
+  ladder = null;
+  const gto = setup.bots.length === 1 && setup.bots[0] === gtoBot()?.id;
+  const buyIn = gto ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
+  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb: setup.sb, bb: setup.bb, gto});
+}
+
+// Sits down at a new bot table and deals its first hand. `gto` is GTO
+// training (every hand at 100 BB, with the review in Hold'em).
+async function sitDown({bots, game, buyIn, sb, bb, gto}) {
+  clearTimeout(timer);
+  cancelDeal();
+  lastSummary = null;
+  tableGame = gameOf(game);
+  tableBots = [...bots];
   mode = 'solo';
   seated = true;
   raiseTo = 0;
@@ -522,17 +679,18 @@ async function startTable() {
   foldQueued = false;
   sessionStats = {};
   recordedHand = 0;
-  gtoTable = setup.bots.length === 1 && setup.bots[0] === gtoBot()?.id;
+  gtoTable = gto;
   review = null;
   sessionReview = emptyTotals();
-  const buyIn = gtoTable ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
-  const snap = await request('create', setup.bots, buyIn, setup.sb, setup.bb, crypto.getRandomValues(new Uint32Array(1))[0], setup.game);
+  const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game);
   if (snap) show(snap);
 }
 
 async function nextHand() {
   if (mode === 'guest') return; // the host deals
   if (mode === 'host' && hostInfo.playersIn < 2) return; // no one to deal to
+  // A ladder game that's over deals no more (ladder-next goes on).
+  if (ladder?.over) return;
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
@@ -555,7 +713,7 @@ function cancelDeal() {
 function armDeal() {
   cancelDeal();
   // A hosted table waits for the host's first deal; guests never deal.
-  if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number)) { syncDeal(); return; }
+  if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number) || ladder?.over) { syncDeal(); return; }
   dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
   const mine = session;
   const tick = () => {
@@ -1101,6 +1259,7 @@ function clockText() {
 }
 
 function leaveTable(note = '') {
+  ladderLeave();
   wholeChips = false;
   lastSummary = null;
   clearTimeout(timer);
@@ -1312,7 +1471,7 @@ function renderTable() {
   const last = lastActions();
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  h += `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
+  h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
   if (mode !== 'solo') h += netBarHtml();
   h += '<span class="pl-tools">';
   h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
@@ -1400,7 +1559,11 @@ function controlsHtml() {
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
     // Before the first hand of a hosted table there's no result yet.
     status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
-    if (mode === 'guest') {
+    if (ladder?.over) {
+      const o = ladderOverHtml();
+      status += ' ' + o.status;
+      raise = o.button;
+    } else if (mode === 'guest') {
       status += ' <span class="pl-meta">· The host deals the next hand</span>';
     } else if (mode === 'host' && hostInfo.playersIn < 2) {
       status += ' <span class="pl-meta">· Dealing needs two players with chips</span>';
@@ -1591,10 +1754,11 @@ function render() {
   // The club list steps aside while a table is on the Play tab (style.css).
   document.body.classList.toggle('pl-seated', seated);
   if (!open) return;
-  if (seated && view !== 'play') {
+  // A ladder game shows on the Ladder tab as well as Bots.
+  if (seated && view !== 'play' && !(ladder && view === 'ladder')) {
     // At a table, the other tabs can't start another one.
     root.hidden = view === 'clubs';
-    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#play">Back to the table</a></div></section></div>`;
+    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#${ladder ? 'ladder' : 'play'}">Back to the table</a></div></section></div>`;
     return;
   }
   root.hidden = false;
@@ -1606,7 +1770,7 @@ function render() {
 // ---- stats ----
 
 // The stats id of a seat: "you", or the bot's personality id.
-const seatId = i => state.seats[i].id || (i === 0 ? 'you' : setup.bots[i - 1]);
+const seatId = i => state.seats[i].id || (i === 0 ? 'you' : tableBots[i - 1]);
 
 // Adds the hand to the stats once it's over (once per hand).
 function recordStats() {
@@ -1897,7 +2061,25 @@ function onClick(e) {
     armDeal();
   }
   else if (el.dataset.act === 'autodeal') { setAutoDeal(!autoDealOn()); saveSetup(); holds.delete('user'); render(); armDeal(); }
-  else if (el.dataset.act === 'leave') { if (mode === 'host') forgetSavedTable(); leaveTable(); }
+  else if (el.dataset.act === 'leave') {
+    if (ladder && !ladder.over && !confirm(`Leave this game? It counts as a loss against ${botInfo(ladder.opp).name}.`)) return;
+    if (mode === 'host') forgetSavedTable();
+    leaveTable();
+  }
+  else if (el.dataset.act === 'ladder-play') startLadderGame();
+  else if (el.dataset.act === 'ladder-next') {
+    // The series goes on: the next game. Otherwise back to the ladder, which
+    // says how the series went.
+    if (ladder?.over?.outcome === 'game') startLadderGame();
+    else { leaveTable(); if (view !== 'ladder') location.hash = 'ladder'; }
+  }
+  else if (el.dataset.act === 'ladder-reset') {
+    if (!confirm('Start the ladder over from the first rung? Your record against each bot is cleared too.')) return;
+    ladderProgress = newProgress();
+    saveProgress(ladderProgress);
+    ladderNote = '';
+    render();
+  }
   else if (el.dataset.act === 'resumehost') resumeHosting();
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();
