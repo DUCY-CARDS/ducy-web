@@ -800,6 +800,9 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null}) {
   raiseTo = 0;
   holds.delete('user');
   foldQueued = false;
+  // A new table numbers its hands from 1 again: an answer about running it
+  // twice at the last table mustn't count here (a ladder game would stall).
+  myRunAnswer = null;
   sessionStats = {};
   recordedHand = 0;
   gtoTable = gto;
@@ -1043,6 +1046,7 @@ function startHosting(code, game) {
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
   gtoTable = false;
   review = null;
+  myRunAnswer = null;
   sessionStats = {};
   recordedHand = 0;
   room = code;
