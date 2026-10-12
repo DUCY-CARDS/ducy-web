@@ -65,6 +65,7 @@ export const PLAYER_AVATARS = [
   {id: 'btc_shinobi', label: 'Shinobi', set: 'Bitcoin'},
   {id: 'btc_hodl', label: 'Mr Hodl', set: 'Bitcoin'},
   {id: 'btc_alpaca', label: 'Black Alpaca', set: 'Bitcoin'},
+  {id: 'btc_mallers', label: 'Jack Mallets', set: 'Bitcoin'},
 ];
 
 // The URL of an avatar's SVG, next to this module (so inside the release folder).
