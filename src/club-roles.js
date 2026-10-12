@@ -15,7 +15,7 @@
 
 import { approve, decline, removeMember, account } from './club.js';
 import { chipText } from './chip-format.js';
-import { cancelRequest, ensureChips, transfer } from './club-chips.js';
+import { answerRequest, declineRequest, ensureChips, transfer } from './club-chips.js';
 import { newTable, tableById } from './club-tables.js';
 
 export const MAX_LOG = 500;
@@ -112,12 +112,12 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
       if (!target?.request) throw new Error('There’s no request to grant.');
       const amt = Number(cmd.amount ?? target.request.amount);
       const [out] = transfer(club, by, cmd.id, amt, now, target.request.note);
-      cancelRequest(club, cmd.id);
+      answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
       logAction(club, by, `${a.name} granted ${who} ${chipText(amt)}`, now);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
     }
     case 'deny': {
-      if (!cancelRequest(club, cmd.id)) throw new Error('There’s no request to decline.');
+      if (!declineRequest(club, cmd.id, cmd.note, now, by)) throw new Error('There’s no request to decline.');
       logAction(club, by, `${a.name} declined ${who}’s chip request`, now);
       return {replies: [account(club, cmd.id, Infinity)]};
     }

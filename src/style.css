@@ -1215,6 +1215,12 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-why { flex-basis: 100%; }
 .cl-last { margin: 4px 0; }
 .cl-seated { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); font-size: 13px; }
+/* Chip requests and the ledger (#188) */
+.cl-askd > summary { display: inline-flex; list-style: none; cursor: pointer; }
+.cl-askd > summary::-webkit-details-marker { display: none; }
+.cl-askd[open] > summary { margin-bottom: 6px; }
+.cl-answer { margin: 2px 0; }
+.cl-ledger-filters { gap: 6px; margin: 6px 0; }
 /* A host's first night (#186): the checklist, the backup reminder, asking on the row */
 .cl-checklist { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 12px; padding: 10px 14px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); font-size: 13px; }
 .cl-checklist ol { margin: 0; padding-left: 20px; }
