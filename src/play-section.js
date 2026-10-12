@@ -246,7 +246,7 @@ function renderJoin() {
     h += '<p class="pl-desc">Ask to join: the host sees your name and lets you in, then gives you chips (play money) to play at the club’s tables.</p></div>';
   }
   h += `<label class="pj-field"${club ? ' hidden' : ''}><span class="pl-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH, or a link" value="${esc(link?.text || '')}"></label>`;
-  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="pl-label">Your name</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
+  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="pl-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
   h += `<div class="pl-actions"><button class="tr-start" type="submit">${club ? 'Ask to join' : 'Join'}</button></div>`;
   if (name) h += `<p class="pl-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
   h += '</form>';
