@@ -1284,3 +1284,8 @@ time[title] { cursor: help; }
   .cl-list li .cl-acts { margin-left: 0; flex-basis: 100%; }
   .cl-member-tabs .pl-tab { padding-left: 8px; padding-right: 8px; }
 }
+
+/* Train · Play · Clubs (#209): a table opened in a club, and each section's tabs under the top bar */
+.mode-tab[data-dot="1"]::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; background: var(--teal); vertical-align: middle; }
+.sub-tabs { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.sub-tabs .pl-tab { text-decoration: none; }

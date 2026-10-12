@@ -16,13 +16,15 @@
 <body>
   <div class="topbar">
     <div class="wordmark">DUCY</div>
-    <nav class="mode-tabs" aria-label="Mode">
-      <button class="mode-tab on" data-mode="equity">Equity</button>
-      <button class="mode-tab" data-mode="trainer">Trainer</button>
-      <button class="mode-tab" data-mode="play">Play</button>
+    <!-- Train · Play · Clubs (#209), each with its tabs underneath. -->
+    <nav class="mode-tabs" aria-label="Sections">
+      <button class="mode-tab on" data-nav="train">Train</button>
+      <button class="mode-tab" data-nav="play">Play</button>
+      <button class="mode-tab" data-nav="clubs">Clubs</button>
     </nav>
     <div id="wasm-status" class="wasm-status">Loading…</div>
   </div>
+  <nav class="pt-tabs pl-tabs sub-tabs" id="sub-tabs" role="tablist" aria-label="Pages"></nav>
 
   <!-- Shown on every page except the equity calculator (see style.css). -->
   <p class="beta-notice" role="note"><strong>Beta.</strong> This part of ducy is still in development and may change. Hand recommendations may not be accurate, and not every feature is fully tested. Don’t rely on it for anything significant.</p>
@@ -91,10 +93,9 @@
   </div>
 
   <main class="trainer" id="trainer"></main>
-  <!-- The Play section (play-section.js): its tabs, and each tab drawn by the
+  <!-- The playing tabs (play-section.js, #209): each drawn by the
        Join form, clubs.js and play.js (in an order per tab, style.css). -->
   <div class="psec" id="psec">
-    <nav class="pt-tabs pl-tabs" id="pt-tabs" role="tablist" aria-label="Play"></nav>
     <div class="pt-body">
       <section class="pt-join" id="pjoin" hidden></section>
       <main class="clubs" id="clubs"></main>

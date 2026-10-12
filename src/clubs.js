@@ -4,11 +4,12 @@
 // (play-section.js, #138) and carries signed messages over the relay
 // (play-net.js, in queue mode so join requests wait while the host is away).
 //
-// Views, one per Play tab:
-//   'play'   the clubs you belong to: balance, chips, tables to sit at
+// Views, one per tab (#209: Train · Play · Clubs):
+//   'play'   Bots (Train), and the table you're at: nothing from here
 //   'join'   your join requests and how they're going
-//   'host'   create a club
-//   'clubs'  My clubs: the club you run, and assistant and agent tools
+//   'host'   Start a game (Play): nothing from here
+//   'clubs'  Clubs: the club you run, assistant and agent tools, the clubs
+//            you belong to (balance, chips, tables to sit at), creating a club
 // The connections start with the page (startClubs), whichever tab is open,
 // so requests arrive live (#145); onClubsChange tells the tab bar.
 //
@@ -20,7 +21,6 @@
 
 import { exportLockedIdentity, loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { hostPick, onHostPick, setHostPick } from './host-choice.js';
 import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
@@ -988,7 +988,7 @@ function sitAt(code, table) {
   }, {
     label: `${mem.name} · ${t.name}`,
     whole: !!tourney,
-    onLeave: why => { seatedAt = null; note = why || ''; location.hash = 'play'; },
+    onLeave: why => { seatedAt = null; note = why || ''; location.hash = 'clubs'; },
     // Each hand you played goes in your hand history (#71), as you saw it,
     // kept here a moment for checking its deal (#136).
     onHand: view => {
@@ -1100,30 +1100,33 @@ function viewHtml() {
     const t = seatedAt.table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === seatedAt.table.slice(8)) : mem?.tables?.find(x => x.id === seatedAt.table);
     msg += `<p class="cl-seated">You’re at ${esc(t?.name || 'a table')}${mem ? ` (${esc(mem.name || mem.code)})` : ''}. <a class="btn-small primary" href="#play">Back to the table</a></p>`;
   }
-  if (view === 'play') {
-    const h = membershipsHtml('play');
-    return h ? msg + h : '';
-  }
+  // Bots and Start a game (Train and Play, #209) have nothing of the clubs.
+  if (view === 'play' || view === 'host') return '';
   if (view === 'join') {
     const h = requestsHtml();
     return h || msg ? msg + h : '';
   }
-  if (view === 'host') return msg + createHtml() + footHtml();
-  // My clubs: the club you run, and the clubs you help run, one at a time
-  // with a picker when there's more than one (#143).
+  // Clubs (#209): a club being created; else the club you run and those you
+  // help run, one at a time with a picker when there's more than one (#143);
+  // the clubs you play in; and creating a club, when you don't run one.
   const own = club || isRemote();
+  if (own && wizard?.code === myClubCode()) return msg + wizardHtml();
   const helped = memberships.filter(helps);
-  if (!own && !helped.length) return msg;
-  const choices = [...(own ? [['own', club?.name || owner.record.name]] : []), ...helped.map(m => [m.code, m.name || m.code])];
-  if (!choices.some(([k]) => k === pick)) pick = choices[0][0];
   let h = '';
-  if (choices.length > 1) {
-    h += `<div class="pl-row cl-picker"><span class="pl-label">Club</span><div class="pl-opts">${choices.map(([k, name]) => `<button class="cc-btn${k === pick ? ' on' : ''}" data-cl="pick" data-code="${esc(k)}">${esc(name)}</button>`).join('')}</div></div>`;
+  if (own || helped.length) {
+    const choices = [...(own ? [['own', club?.name || owner.record.name]] : []), ...helped.map(m => [m.code, m.name || m.code])];
+    if (!choices.some(([k]) => k === pick)) pick = choices[0][0];
+    if (choices.length > 1) {
+      h += `<div class="pl-row cl-picker"><span class="pl-label">Club</span><div class="pl-opts">${choices.map(([k, name]) => `<button class="cc-btn${k === pick ? ' on' : ''}" data-cl="pick" data-code="${esc(k)}">${esc(name)}</button>`).join('')}</div></div>`;
+    }
+    h += pick === 'own' ? hostHtml() : membershipsHtml('clubs', pick);
   }
-  h += pick === 'own' ? hostHtml() : membershipsHtml('clubs', pick);
+  h += membershipsHtml('play');
+  if (!own) h += createHtml();
+  if (!memberships.some(m => m.status === 'member')) h += '<p class="pl-meta cl-joinhint">Invited to a club? Open the invite link, or paste it in <a href="#join">Join</a>.</p>';
   return msg + h + footHtml();
 }
-let pick = 'own'; // My clubs' club: 'own' (the one you run), or a code you help run
+let pick = 'own'; // Clubs' club: 'own' (the one you run), or a code you help run
 
 // Under the club tabs: only a warning when a local page uses the live relay
 // (your player ID and the relay are in Player settings, #144).
@@ -1144,7 +1147,7 @@ function requestsHtml() {
     h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${inNow ? 'You’re in' : esc(STATUS_TEXT[m.status] || m.status)}</span>`;
     if (!inNow) h += `<span class="pl-meta cl-conn">${live}</span>`;
     h += '<span class="cl-acts">';
-    if (inNow) h += '<a class="btn-small primary" href="#play">Play</a>';
+    if (inNow) h += '<a class="btn-small primary" href="#clubs">Open the club</a>';
     else {
       if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
       h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
@@ -1154,7 +1157,7 @@ function requestsHtml() {
     if (m.status === 'pending' || m.status === 'new') {
       h += `<span class="pl-desc cl-next">Next: the host lets you in, then gives you chips (play money) to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
     } else if (inNow) {
-      h += '<span class="pl-desc cl-next">Next: ask the host for chips on the Play tab, then sit at one of the club’s tables.</span>';
+      h += '<span class="pl-desc cl-next">Next: ask the host for chips on <a href="#clubs">Clubs</a>, then sit at one of the club’s tables.</span>';
     } else if (m.status === 'declined') {
       h += '<span class="pl-desc cl-next">If that’s a mistake, ask the host: they can let you in from a new invite link.</span>';
     }
@@ -1193,16 +1196,10 @@ function notice(text, go = 'play') {
   noticeTimer = setTimeout(() => { t.hidden = true; }, 12_000);
 }
 
-// The Host tab's club part (#152), once "Create a club" is picked: just a
+// Clubs' Create a club card (#152, #209), when you don't run one: just a
 // name. The club is always on; there's nothing else to choose here.
 function createHtml() {
-  const mine = club || isRemote();
-  if (mine && wizard?.code === myClubCode()) return wizardHtml();
-  if (hostPick() !== 'club') return '';
-  if (mine) {
-    const name = club?.name || owner.record.name;
-    return `<section class="cl-card"><h2>Create a club</h2><p class="pl-desc">You run <b>${esc(name)}</b>: manage it in <a href="#clubs">My clubs</a>. A browser runs one club for now.</p></section>`;
-  }
+  if (club || isRemote()) return '';
   let h = '<section class="cl-card"><h2>Create a club</h2>';
   h += '<p class="pl-desc">Members join with your invite link, you give them chips (play money), and they play at your tables. It runs on ducy’s server, so they can play whenever, with this page closed.</p>';
   h += `<div class="pl-row"><span class="pl-label">Club name</span><input class="pl-text" id="cl-clubname" maxlength="${MAX_CLUB_NAME}" placeholder="Friday Night Game" value="${esc(alwaysFailed?.name || '')}"></div>`;
@@ -1538,8 +1535,8 @@ function memberRowHtml(m, agents) {
   return h + '</li>';
 }
 
-// The clubs you're in: on the Play tab ('play') your balance, chips and
-// tables; on My clubs ('clubs') the ones you help run, with those tools.
+// The clubs you're in: on Clubs ('play' here) your balance, chips and
+// tables; and, picked at the top of Clubs ('clubs'), the ones you help run.
 const helps = m => m.status === 'member' && (m.role === 'assistant' || m.agent === 'yes');
 
 function membershipsHtml(mode, only = '') {
@@ -1573,7 +1570,7 @@ function membershipsHtml(mode, only = '') {
       h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
     h += memberHelpHtml(m, !!n?.hostHere);
-    if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are in <a href="#clubs">My clubs</a>.</p>`;
+    if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are above.</p>`;
     h += '</li>';
   }
   h += '</ul></section>';
@@ -2198,16 +2195,12 @@ export async function openClubs(el, v = 'clubs') {
     document.addEventListener('click', e => {
       for (const d of document.querySelectorAll('details.cl-menu[open]')) if (!d.contains(e.target)) d.open = false;
     });
-    onHostPick(() => { alwaysFailed = null; if (open && view === 'host') render(); });
   }
   if (v !== 'join') justJoined.clear();
   view = v;
   open = true;
   render();
   await startClubs();
-  // A club created but not yet backed up (the page closed mid-way): Host
-  // goes back to its backup step.
-  if (view === 'host' && wizard && wizard.code === myClubCode()) setHostPick('club');
   render();
 }
 
@@ -2295,9 +2288,9 @@ function updateCalls() {
 // To your seat, or to the club's tournaments.
 function answerCall(c) {
   if (c.kind === 'started' && !seatedAt) { sitAt(c.mem.code, `tourney:${c.t.id}`); return; }
-  // The club's Tournaments tab (#193).
+  // The club's Tournaments tab (#193), on Clubs (#209).
   setMemberTab(c.mem.code, 'tourneys');
-  location.hash = 'play';
+  location.hash = 'clubs';
   render();
 }
 
