@@ -949,6 +949,28 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 /* The cards sit in front of the avatar, over its lower edge, which keeps the
    seat short enough not to run into its neighbours. */
 .pl-av + .pl-hole { margin-top: -20px; position: relative; }
+/* The heads-up ladder (#212): the next opponent, then the rungs, hardest
+   at the top, with yours marked. */
+.ld-av { width: 40px; height: 40px; flex: none; border-radius: 50%; overflow: hidden; background: var(--felt-border); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: #e9ecef; }
+.ld-av img { display: block; width: 100%; height: 100%; }
+.ld-next .ld-av { width: 72px; height: 72px; font-size: 28px; }
+.ld-who { display: flex; gap: 14px; align-items: center; }
+.ld-who h2 { margin: 2px 0 4px; font-size: 22px; color: var(--fg-strong); }
+.ld-who .pl-label { width: auto; color: var(--fg-muted); }
+.ld-score { margin: 0; font-family: var(--font-data); font-size: 14px; }
+.ld-note { border-left: 3px solid var(--teal); padding-left: 10px; color: var(--fg); }
+.ld-rungs { list-style: none; margin: 16px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ld-rung { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); min-width: 0; }
+.ld-rung .ld-num { width: 22px; text-align: right; font-family: var(--font-data); color: var(--fg-muted); }
+.ld-rung .ld-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); }
+.ld-rung .ld-tag { font-size: 13px; color: var(--fg-muted); white-space: nowrap; }
+.ld-rung.ahead { opacity: 0.6; }
+.ld-rung.below .ld-tag, .ld-rung.reached .ld-tag { color: var(--green); }
+.ld-rung.here { border-color: var(--teal); background: var(--teal-faint); box-shadow: inset 3px 0 0 var(--teal); }
+.ld-rung.here .ld-tag { color: var(--teal); font-weight: 600; }
+.ld-over { display: block; margin-top: 4px; font-weight: 600; }
+.ld-over.won { color: var(--green); }
+.ld-over.lost { color: var(--red); }
 .pl-hole { display: flex; gap: 3px; }
 .pl-hole .pl-card { width: 32px; height: 45px; font-size: 13px; }
 .pl-seat.hero .pl-hole .pl-card { width: 40px; height: 56px; font-size: 16px; }

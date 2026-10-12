@@ -1100,8 +1100,9 @@ function viewHtml() {
     const t = seatedAt.table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === seatedAt.table.slice(8)) : mem?.tables?.find(x => x.id === seatedAt.table);
     msg += `<p class="cl-seated">You’re at ${esc(t?.name || 'a table')}${mem ? ` (${esc(mem.name || mem.code)})` : ''}. <a class="btn-small primary" href="#play">Back to the table</a></p>`;
   }
-  // Bots and Start a game (Train and Play, #209) have nothing of the clubs.
-  if (view === 'play' || view === 'host') return '';
+  // Bots, Ladder and Start a game (Train and Play, #209) have nothing of the
+  // clubs.
+  if (view === 'play' || view === 'ladder' || view === 'host') return '';
   if (view === 'join') {
     const h = requestsHtml();
     return h || msg ? msg + h : '';

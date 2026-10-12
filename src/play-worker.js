@@ -3,6 +3,7 @@
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
+//        setBlinds(game, sb, bb) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
 //        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
@@ -94,6 +95,8 @@ const ops = {
     return snapshot(table.newHand());
   },
   review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
+  // The blinds from the next hand on (a ladder game's levels, #212).
+  setBlinds: (game, sb, bb) => snapshot(table.setRules(game, BigInt(sb), BigInt(bb))),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.
