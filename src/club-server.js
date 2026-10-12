@@ -26,6 +26,8 @@
 //                  them, so it can carry on after its object restarts
 //   extraOps       more host actions {op: fn(args)}, where only the club's
 //                  home can do them
+//   hostInTab      the club runs in its host's own tab, so the host is
+//                  around to answer help requests (#192) while it runs
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -42,6 +44,7 @@ import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmi
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
 } from './club-agents.js';
+import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
 import { handRecord } from './hand-replay.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
@@ -55,7 +58,7 @@ const SETTINGS = {
 
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, storeHand = () => {}, engine = {},
-  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {},
+  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false,
 }) {
   const online = new Set(); // members connected now
   let tableHost = null;
@@ -118,7 +121,7 @@ export function createClubServer({
     if (adminTimer) return;
     adminTimer = setTimeout(() => {
       adminTimer = null;
-      const body = adminBody(club, seatedCounts());
+      const body = adminView();
       for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
       for (const id of online) if (isAgent(club, id)) sendToPlayer({to: id, body: agentBody(club, id)});
       sendOwnerView();
@@ -157,6 +160,17 @@ export function createClubServer({
   }
 
   const seatedCounts = () => tableHost?.seatedCounts() || {};
+  // An assistant's view, with the open help requests (#192).
+  const adminView = () => ({...adminBody(club, seatedCounts()), help: openHelp(club)});
+
+  // Help requests (#192): member `id` gets who's around and their own
+  // requests; when the host or an assistant comes or goes, every member
+  // online hears about it.
+  const isStaff = id => id === club.ownerId || isAssistant(club, id);
+  const sendHelp = id => sendToPlayer({to: id, body: helpBody(club, id, staffOnline(club, online, hostInTab))});
+  function broadcastHelp() {
+    for (const id of online) if (club.members[id]?.status === 'member') sendHelp(id);
+  }
   const tourneyLive = () => tourneyHost?.live() || {};
 
   // The tournaments' lobby (#77) to every member online. Live standings
@@ -252,9 +266,17 @@ export function createClubServer({
     if (type === 'role_reply' || type === 'agent_reply') {
       const r = (type === 'role_reply' ? answerRole : answerAgent)(club, from, !!body.accept);
       if (r) sendToPlayer(r);
+      if (type === 'role_reply') broadcastHelp();
       return;
     }
     try {
+      // An assistant answering a help request (#192).
+      if (type === 'admin_cmd' && body.cmd?.op === 'help_answer') {
+        const h = answerHelp(club, from, String(body.cmd.id), {reply: body.cmd.reply, handled: body.cmd.handled !== false});
+        if (online.has(h.from)) sendHelp(h.from);
+        sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
+        return;
+      }
       const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd);
       for (const rep of r.replies) sendToPlayer(rep);
       if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, seatedCounts())});
@@ -270,9 +292,10 @@ export function createClubServer({
   // A message from the relay: a member connecting or leaving, or their signed message.
   async function message(msg) {
     if (!msg || !msg.from) return;
-    if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); return; }
+    if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); if (isStaff(msg.from)) broadcastHelp(); return; }
     if (msg.event === 'close') {
       online.delete(msg.from);
+      if (isStaff(msg.from)) broadcastHelp();
       if (msg.from === club.ownerId) unwatch();
       tableHost?.disconnected(msg.from);
       tableHost?.presence(msg.from);
@@ -300,6 +323,11 @@ export function createClubServer({
     if (r.tourney && r.tourney.from === msg.from) { await handleTourney(r.tourney); return; }
     if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); changed(); return; }
     if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner); return; }
+    if (r.help && r.help.from === msg.from) {
+      try { askHelp(club, msg.from, r.help.text, r.help.table); changed(); } catch (e) { console.warn('club: help request refused:', e.message); }
+      sendHelp(msg.from);
+      return;
+    }
     const m = club.members[msg.from];
     if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
@@ -308,7 +336,8 @@ export function createClubServer({
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
       if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
-      if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminBody(club, seatedCounts())});
+      if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminView()});
+      sendHelp(msg.from);
       if (m.agent) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: m.agent, creditLimit: m.creditLimit || 0}});
       if (isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
     }
@@ -352,7 +381,13 @@ export function createClubServer({
     revoke_agent: ({id}) => reply(revokeAgent(club, id)),
     assign_agent: ({id, agent}) => { assignToAgent(club, id, agent || null); changed(); },
     offer_assistant: ({id}) => reply(offerAssistant(club, id)),
-    revoke_role: ({id}) => reply(revokeRole(club, id)),
+    revoke_role: ({id}) => { reply(revokeRole(club, id)); broadcastHelp(); },
+    // Answering a help request (#192): a reply, and/or marking it handled.
+    help_answer: ({id, reply: text = '', handled = true}) => {
+      const h = answerHelp(club, club.ownerId || club.hostId, String(id), {reply: text, handled});
+      changed();
+      if (online.has(h.from)) sendHelp(h.from);
+    },
     settings: values => {
       for (const [k, v] of Object.entries(values)) {
         if (!SETTINGS[k]?.(v)) throw new Error(`Not a valid ${k}.`);

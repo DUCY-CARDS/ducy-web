@@ -1262,3 +1262,10 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 .cl-role ul { margin: 0 0 4px; padding-left: 20px; }
 .cl-offer-confirm { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px 12px; border: 1px solid var(--teal); border-radius: var(--radius); background: var(--teal-faint); }
 .cl-chipform .cl-role { flex-basis: 100%; }
+
+/* Help requests (#192) */
+.cl-help { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.cl-help .cl-chipform { align-self: stretch; }
+.cl-help-mine { font-size: 13px; }
+.cl-help-text { flex-basis: 100%; }
+.cl-helpreqs .cl-chipform { flex-basis: 100%; }
