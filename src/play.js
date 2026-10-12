@@ -516,7 +516,8 @@ function ladderLeave() {
 
 // The table bar's line at a ladder game.
 function ladderBarHtml() {
-  const s = state, played = num(s.hand_number);
+  // The game's hands: a resumed game counts on from where it was left.
+  const s = state, played = (ladder.handsBefore || 0) + num(s.hand_number);
   const p = ladderProgress, name = esc(botInfo(ladder.opp).name);
   const score = ladder.over ? '' : ` · game ${p.wins + p.losses + 1} of 3, you ${p.wins} – ${p.losses}`;
   return `<span class="pl-meta">Ladder rung ${ladder.rung + 1}: ${name}${score} · hand ${played} · blinds ${c(s.small_blind)}/${c(s.big_blind)}</span>`;
