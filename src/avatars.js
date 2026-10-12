@@ -51,7 +51,7 @@ export const PLAYER_AVATARS = [
   {id: 'btc_andreas', label: 'Andreas Antonopoker', set: 'Bitcoin'},
   {id: 'btc_roger', label: 'Roger Fork', set: 'Bitcoin'},
   {id: 'btc_jack', label: 'Jack Doorsie', set: 'Bitcoin'},
-  {id: 'btc_mark', label: 'Mark Goxxed', set: 'Bitcoin'},
+  {id: 'btc_stark', label: 'Elizabeth Spark', set: 'Bitcoin'},
   {id: 'btc_jameson', label: 'Jameson Lockdown', set: 'Bitcoin'},
   {id: 'btc_peter', label: 'Peter Toad', set: 'Bitcoin'},
   {id: 'btc_jimmy', label: 'Jimmy Strong', set: 'Bitcoin'},
