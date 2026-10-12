@@ -48,11 +48,10 @@ export const PLAYER_AVATARS = [
   {id: 'btc_hal', label: 'Hal Funny', set: 'Bitcoin'},
   {id: 'btc_sailor', label: 'Michael Sailor', set: 'Bitcoin'},
   {id: 'btc_adam', label: 'Adam Backspace', set: 'Bitcoin'},
-  {id: 'btc_nick', label: 'Nick Szabbot', set: 'Bitcoin'},
   {id: 'btc_andreas', label: 'Andreas Antonopoker', set: 'Bitcoin'},
-  {id: 'btc_roger', label: 'Roger Fork', set: 'Bitcoin'},
+  {id: 'btc_poelstra', label: 'Andrew Polestar', set: 'Bitcoin'},
   {id: 'btc_jack', label: 'Jack Doorsie', set: 'Bitcoin'},
-  {id: 'btc_mark', label: 'Mark Goxxed', set: 'Bitcoin'},
+  {id: 'btc_stark', label: 'Elizabeth Spark', set: 'Bitcoin'},
   {id: 'btc_jameson', label: 'Jameson Lockdown', set: 'Bitcoin'},
   {id: 'btc_peter', label: 'Peter Toad', set: 'Bitcoin'},
   {id: 'btc_jimmy', label: 'Jimmy Strong', set: 'Bitcoin'},
@@ -65,6 +64,7 @@ export const PLAYER_AVATARS = [
   {id: 'btc_alpaca', label: 'Black Alpaca', set: 'Bitcoin'},
   {id: 'btc_mallers', label: 'Jack Mallets', set: 'Bitcoin'},
   {id: 'btc_mechanic', label: 'Bitcoin Mechanic', set: 'Bitcoin'},
+  {id: 'btc_rob', label: 'CEO of Bitcoin', set: 'Bitcoin'},
 ];
 
 // The URL of an avatar's SVG, next to this module (so inside the release folder).
