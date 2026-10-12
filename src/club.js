@@ -22,6 +22,7 @@
 //                                        'enter' (late registration or re-entry, #80)
 //   {type: 'role_reply', club, accept}   answer to an assistant offer (#62)
 //   {type: 'admin_cmd', club, cmd}       an assistant's command (club-roles.js)
+//   {type: 'help_ask', club, text, table}   ask the host and assistants for help (#192)
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
@@ -33,6 +34,8 @@
 //   {type: 'admin', club, pending, members, tables}   an assistant's view
 //   {type: 'admin_result', club, error}  how an assistant's command went
 //   {type: 'host_key', club, key}        the host's session key for table updates
+//   {type: 'help', club, staff, mine}    who's around to help, and your latest
+//                                        help requests (club-help.js, #192)
 // Join and hello carry the player's session key ({key}). Table updates go
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
@@ -165,6 +168,13 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (typeof body.tourney !== 'string' || !['register', 'unregister', 'enter'].includes(body.op)) return {replies: [], changed: false, reason: 'bad tournament command'};
     return {replies: [], changed: false, tourney: {id: body.tourney, op: body.op, from: id}};
   }
+  // A help request (club-help.js, #192): the caller records it and tells
+  // whoever's around (club-server.js).
+  if (body.type === 'help_ask') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    if (typeof body.text !== 'string' || !body.text.trim()) return {replies: [], changed: false, reason: 'bad help request'};
+    return {replies: [], changed: false, help: {from: id, text: body.text, table: typeof body.table === 'string' ? body.table : ''}};
+  }
   if (body.type === 'chip_request' || body.type === 'cancel_request') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     try {
@@ -259,6 +269,12 @@ export async function playerReceive(mem, env) {
     mem.rathole = Number(b.rathole) || 0;
     return true;
   }
+  if (b.type === 'help') {
+    mem.hostSeq = env.seq;
+    mem.staff = Array.isArray(b.staff) ? b.staff : [];
+    mem.help = Array.isArray(b.mine) ? b.mine : [];
+    return true;
+  }
   if (b.type === 'tourneys') {
     mem.hostSeq = env.seq;
     mem.tourneys = Array.isArray(b.tourneys) ? b.tourneys : [];
@@ -277,7 +293,7 @@ export async function playerReceive(mem, env) {
   }
   if (b.type === 'admin') {
     mem.hostSeq = env.seq;
-    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || []};
+    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || [], help: b.help || []};
     return true;
   }
   // The host's key for this session's encrypted table updates (e2e.js),

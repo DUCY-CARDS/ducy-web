@@ -32,6 +32,7 @@ import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
+import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
 import { createOwner } from './club-owner.js';
 import { accountOf, settle } from './club-agents.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
@@ -109,6 +110,8 @@ function newServer() {
     identity: me, club, verifier,
     persist: saveClub,
     transport: {send: (to, data) => hostNet?.send({to, data}), ack: n => hostNet?.send({ack: n})},
+    // This tab runs the club, so its host is around for help requests (#192).
+    hostInTab: true,
     onChange: render,
     storeHand,
   });
@@ -308,6 +311,67 @@ function watchTable(id) {
 
 // The member being offered the assistant role, while the host reads what it means (#190).
 let offering = null;
+
+// ---- help requests (#192) ----
+
+// The club whose Ask for help form is open (a member's), and the help
+// requests already shown as a notice in this page.
+let helpForm = null;
+const helpNoticed = new Set();
+const clock = t => new Date(t).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+
+// A member's part: who's around, Ask for help, and their latest requests.
+function memberHelpHtml(m, hostHere) {
+  const staff = m.staff || [];
+  let h = '<div class="cl-help">';
+  h += staff.length
+    ? `<span class="pl-meta">Around now: ${staff.map(x => (x.role === 'host' ? 'the host' : `${esc(x.name)} (assistant)`)).join(' · ')}</span>`
+    : '<span class="pl-meta">No host or assistant is online right now: a help request waits for them.</span>';
+  if (helpForm === m.code) {
+    h += `<form class="cl-chipform" data-helpform="${esc(m.code)}"><input class="pl-text" name="text" maxlength="${MAX_HELP_TEXT}" required placeholder="What do you need? (e.g. Table 2 is stuck)">`;
+    h += '<button class="btn-small primary" type="submit">Send</button><button class="btn-small" type="button" data-cl="help-cancel">Cancel</button></form>';
+  } else h += `<button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for help</button>`;
+  for (const x of [...(m.help || [])].reverse()) {
+    h += `<span class="cl-help-mine"><span class="pl-meta">${clock(x.at)}</span> You: “${esc(x.text)}”`;
+    if (x.reply) h += ` <b>· ${esc(x.by || 'Reply')}: “${esc(x.reply)}”</b>`;
+    h += x.handled ? ' <span class="cl-up">handled</span>' : ' <span class="pl-meta">waiting</span>';
+    h += '</span>';
+  }
+  return h + '</div>';
+}
+
+// The open help requests, for the host (`code` null) or an assistant of
+// club `code`: who, when, from which table, with a reply and Mark handled.
+function helpListHtml(list, code = null, dis = '') {
+  if (!list?.length) return '';
+  const c = code ? ` data-code="${esc(code)}"` : '';
+  let h = `<div class="cl-needs cl-helpreqs"><h3>Help requests (${list.length})</h3><ul class="cl-list">`;
+  for (const x of list) {
+    h += `<li><span class="cl-name">${esc(x.name)}</span><span class="pl-meta">${clock(x.at)}${x.table ? ` · at ${esc(x.table)}` : ''}</span><span class="cl-help-text">“${esc(x.text)}”</span>`;
+    if (x.reply) h += `<span class="pl-meta">Replied: “${esc(x.reply)}”</span>`;
+    h += `<form class="cl-chipform" data-helpreply="${esc(x.id)}"${c}><input class="pl-text" name="reply" maxlength="${MAX_HELP_REPLY}" placeholder="Reply (optional)">`;
+    h += `<button class="btn-small" type="submit"${dis}>Reply</button><button class="btn-small primary" type="button" data-cl="help-done" data-id="${esc(x.id)}"${c}${dis}>Mark handled</button></form></li>`;
+  }
+  return h + '</ul></div>';
+}
+
+// Answers help request `id`: from the host's page, or as an assistant.
+function answerHelpReq(code, id, reply, handled) {
+  if (code) adminCmd(code, {op: 'help_answer', id, reply, handled});
+  else hostAct('help_answer', {id, reply, handled});
+}
+
+// New help requests for whoever runs a club here: a notice, once each.
+function noticeHelp() {
+  const lists = [];
+  if (club) lists.push(openHelp(club));
+  for (const m of memberships) if (m.role === 'assistant' && m.admin?.help) lists.push(m.admin.help);
+  for (const x of lists.flat()) {
+    if (helpNoticed.has(x.id)) continue;
+    helpNoticed.add(x.id);
+    notice(`${x.name} asks for help: “${x.text}”`, 'clubs');
+  }
+}
 // The History tab's activity log, filtered to one person ('' for everyone).
 let activityBy = '';
 
@@ -466,6 +530,19 @@ function openChipForm(kind, id) {
 }
 
 function onSubmit(e) {
+  // Asking for help, or replying to a request (#192).
+  const hf = e.target.closest('form[data-helpform]');
+  if (hf) {
+    e.preventDefault();
+    const code = hf.dataset.helpform;
+    const at = seatedAt?.code === code ? memberships.find(x => x.code === code)?.tables?.find(t => t.id === seatedAt.table)?.name || '' : '';
+    sendToHost(code, {type: 'help_ask', club: code, text: hf.elements.text.value, table: at});
+    helpForm = null;
+    render();
+    return;
+  }
+  const hr = e.target.closest('form[data-helpreply]');
+  if (hr) { e.preventDefault(); answerHelpReq(hr.dataset.code || null, hr.dataset.helpreply, hr.elements.reply.value, false); return; }
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
   // A new tournament (#77), or its payouts (#79).
@@ -953,6 +1030,7 @@ function clearInviteFromAddress() {
 function render() {
   for (const f of listeners) f();
   updateCalls();
+  if (me) noticeHelp();
   if (!open || !root) return;
   const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
   // Nothing for this tab: the play.js part of it stands alone.
@@ -966,6 +1044,9 @@ function render() {
     key: fm.dataset.tourneyform || fm.dataset.payoutform,
     values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.type === 'checkbox' ? el.checked : el.value])),
   }));
+  // And what's being typed for help, or as a reply to it (#192).
+  const helpKey = fm => (fm.dataset.helpform ? `ask:${fm.dataset.helpform}` : `reply:${fm.dataset.helpreply}`);
+  const helpTyped = [...root.querySelectorAll('form[data-helpform], form[data-helpreply]')].map(fm => [helpKey(fm), fm.elements[0].value, fm.contains(document.activeElement)]);
   const typing = root.querySelector('form[data-chipform]');
   const kept = typing && {key: typing.dataset.chipform + typing.dataset.id, values: [...typing.elements].map(el => el.value), focus: document.activeElement?.name};
   // Sections opened by hand (details with data-keep) stay open.
@@ -975,6 +1056,10 @@ function render() {
   root.innerHTML = h;
   if (window.scrollY !== y) window.scrollTo(0, y);
   for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
+  for (const [key, v, focused] of helpTyped) {
+    const fm = [...root.querySelectorAll('form[data-helpform], form[data-helpreply]')].find(f => helpKey(f) === key);
+    if (fm) { fm.elements[0].value = v; if (focused) fm.elements[0].focus(); }
+  }
   for (const k of named) {
     const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
     if (!fm) continue;
@@ -1196,7 +1281,8 @@ function hostHtml() {
   // Four tabs (#152): Tables, Players (with what needs you, #143), Settings
   // and History.
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
-  const waiting = pending.length + asking.length;
+  const helpReqs = openHelp(club);
+  const waiting = pending.length + asking.length + helpReqs.length;
   const tables = openTables(club);
   const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
   const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
@@ -1206,6 +1292,7 @@ function hostHtml() {
   else if (dashTab === 'tourneys') h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
   else if (dashTab === 'settings') h += settingsHtml();
   else if (dashTab === 'players') {
+    h += helpListHtml(helpReqs);
     if (pending.length || asking.length) {
       h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
       // Letting someone in and giving them chips is one click (#186).
@@ -1445,6 +1532,7 @@ function membershipsHtml(mode, only = '') {
       h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>.</span>${roleHtml('agent', m.creditLimit || 0)}`;
       h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
+    h += memberHelpHtml(m, !!n?.hostHere);
     if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are in <a href="#clubs">My clubs</a>.</p>`;
     h += '</li>';
   }
@@ -1675,6 +1763,7 @@ function adminHtml(m, hostHere) {
     for (const x of a.pending) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('a-approve', x, 'Approve', ' primary')}${btn('a-decline', x, 'Decline')}</span></li>`;
     h += '</ul>';
   }
+  h += helpListHtml(a.help, m.code, dis);
   const asking = a.members.filter(x => x.request);
   if (asking.length) {
     h += `<span class="pl-meta">Chip requests (${asking.length})</span><ul class="cl-list">`;
@@ -1797,6 +1886,10 @@ async function onClick(e) {
   }
   // The host: assistants.
   // Offering a role shows what it means first (#190).
+  // Help requests (#192).
+  else if (act === 'help-open') { helpForm = b.dataset.code; render(); root.querySelector(`form[data-helpform] [name=text]`)?.focus(); }
+  else if (act === 'help-cancel') { helpForm = null; render(); }
+  else if (act === 'help-done') answerHelpReq(b.dataset.code || null, b.dataset.id, b.closest('form')?.elements.reply?.value || '', true);
   else if (act === 'offer-role') { offering = offering === b.dataset.id ? null : b.dataset.id; render(); }
   else if (act === 'offer-role-yes') { offering = null; hostAct('offer_assistant', {id: b.dataset.id}); }
   else if (act === 'offer-role-no') { offering = null; render(); }
