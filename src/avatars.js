@@ -41,6 +41,30 @@ export const PLAYER_AVATARS = [
   {id: 'player-14', label: 'Old pro'},
   {id: 'player-15', label: 'Laughing'},
   {id: 'player-16', label: 'Beanie'},
+  // The Bitcoin set: cartoon nods to Bitcoin personalities. The names are
+  // placeholders; each lives only here, and each avatar is its own SVG and
+  // its own line, so renaming or dropping one is a one-line change.
+  {id: 'btc_satoshi', label: 'Satoshi Nakamaybe', set: 'Bitcoin'},
+  {id: 'btc_hal', label: 'Hal Funny', set: 'Bitcoin'},
+  {id: 'btc_sailor', label: 'Michael Sailor', set: 'Bitcoin'},
+  {id: 'btc_adam', label: 'Adam Backspace', set: 'Bitcoin'},
+  {id: 'btc_nick', label: 'Nick Szabbot', set: 'Bitcoin'},
+  {id: 'btc_andreas', label: 'Andreas Antonopoker', set: 'Bitcoin'},
+  {id: 'btc_roger', label: 'Roger Fork', set: 'Bitcoin'},
+  {id: 'btc_jack', label: 'Jack Doorsie', set: 'Bitcoin'},
+  {id: 'btc_mark', label: 'Mark Goxxed', set: 'Bitcoin'},
+  {id: 'btc_jameson', label: 'Jameson Lockdown', set: 'Bitcoin'},
+  {id: 'btc_peter', label: 'Peter Toad', set: 'Bitcoin'},
+  {id: 'btc_jimmy', label: 'Jimmy Strong', set: 'Bitcoin'},
+  {id: 'btc_pieter', label: 'Pieter Schnorr', set: 'Bitcoin'},
+  {id: 'btc_saifedean', label: 'Saifedean Ammo', set: 'Bitcoin'},
+  {id: 'btc_greg', label: 'Greg Maxblock', set: 'Bitcoin'},
+  {id: 'btc_luke', label: 'Luke Dash-Senior', set: 'Bitcoin'},
+  {id: 'btc_shinobi', label: 'Shinobi', set: 'Bitcoin'},
+  {id: 'btc_hodl', label: 'Mr Hodl', set: 'Bitcoin'},
+  {id: 'btc_alpaca', label: 'Black Alpaca', set: 'Bitcoin'},
+  {id: 'btc_mallers', label: 'Jack Mallets', set: 'Bitcoin'},
+  {id: 'btc_mechanic', label: 'Bitcoin Mechanic', set: 'Bitcoin'},
 ];
 
 // The URL of an avatar's SVG, next to this module (so inside the release folder).
