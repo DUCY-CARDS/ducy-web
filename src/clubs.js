@@ -111,6 +111,8 @@ function checkSeatWatch(mem) {
 // When something happened (#193): relative, with the full time on hover.
 const when = t => (t ? `<time datetime="${new Date(t).toISOString()}" title="${esc(new Date(t).toLocaleString())}">${ago(t)}</time>` : '');
 const myName = () => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } };
+// The name you go by in a club you joined (#185): its own, or this browser's.
+const nameIn = mem => mem?.myName || myName();
 
 const STATUS_TEXT = {
   new: 'Sending your request…',
@@ -569,6 +571,9 @@ function onSubmit(e) {
     render();
     return;
   }
+  // Your name in one club (#185).
+  const nf = e.target.closest('form[data-nameform]');
+  if (nf) { e.preventDefault(); nameForm = ''; setClubName(nf.dataset.nameform, nf.elements.name.value); return; }
   const hr = e.target.closest('form[data-helpreply]');
   if (hr) { e.preventDefault(); answerHelpReq(hr.dataset.code || null, hr.dataset.helpreply, hr.elements.reply.value, false); return; }
   const tf = e.target.closest('form[data-tableform]');
@@ -717,14 +722,14 @@ function connectMembership(mem) {
   playerNets.set(mem.code, entry);
   const greet = async () => {
     // Never ask to join without a name: the host would see a nameless player.
-    if (mem.status === 'new' && !myName()) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
+    if (mem.status === 'new' && !nameIn(mem)) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
     const key = (await entry.keys).pub;
     const body = mem.status === 'new'
-      ? {type: 'join', club: mem.code, invite: mem.invite, name: myName(), key}
-      : {type: 'hello', club: mem.code, name: myName(), since: lastEntry(mem), key};
+      ? {type: 'join', club: mem.code, invite: mem.invite, name: nameIn(mem), key}
+      : {type: 'hello', club: mem.code, name: nameIn(mem), since: lastEntry(mem), key};
     sendToHost(mem.code, body);
     // Back at a club table after the host (or this page) reconnected.
-    if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: myName()}});
+    if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: nameIn(mem)}});
   };
   const handle = async msg => {
     if (msg?.type === 'host_away' || msg?.type === 'host_gone') {
@@ -811,7 +816,9 @@ function joinFromInvite(name) {
   const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
   if (!n) { note = 'Enter the name the host will see.'; render(); return; }
   if (invite.hostId === me.id) { note = 'That’s an invite to your own club.'; invite = null; clearInviteFromAddress(); render(); return; }
-  try { localStorage.setItem(NAME_KEY, n); } catch {}
+  // The first name given is this browser's; another one is for this club
+  // only (#185).
+  if (!myName()) { try { localStorage.setItem(NAME_KEY, n); } catch {} }
   let mem = memberships.find(m => m.code === invite.code);
   if (mem) {
     mem.invite = invite.invite;
@@ -820,6 +827,7 @@ function joinFromInvite(name) {
     mem = newMembership(invite);
     memberships.push(mem);
   }
+  if (n !== myName()) mem.myName = n; else delete mem.myName;
   saveMemberships();
   invite = null;
   note = '';
@@ -836,13 +844,30 @@ async function setName(name) {
   const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
   if (!n) { alert('Enter a name.'); return; }
   try { localStorage.setItem(NAME_KEY, n); } catch {}
-  for (const m of memberships) {
-    m.error = '';
-    const body = m.status === 'new'
-      ? {type: 'join', club: m.code, invite: m.invite, name: n}
-      : {type: 'hello', club: m.code, name: n};
-    sendToHost(m.code, body);
-  }
+  // Clubs with a name of their own keep it (#185).
+  for (const m of memberships) if (!m.myName) sendName(m);
+  render();
+}
+
+// Tells a club's host the name you go by there: a pending request is sent
+// (or re-sent) with it, and a member's name is updated.
+function sendName(m) {
+  m.error = '';
+  const name = nameIn(m);
+  sendToHost(m.code, m.status === 'new'
+    ? {type: 'join', club: m.code, invite: m.invite, name}
+    : {type: 'hello', club: m.code, name});
+}
+
+// Your name in one club (#185): its own, or this browser's. Saving the
+// browser's name (or nothing) goes back to that.
+function setClubName(code, name) {
+  const m = memberships.find(x => x.code === code);
+  if (!m) return;
+  const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
+  if (n && n !== myName()) m.myName = n; else delete m.myName;
+  saveMemberships();
+  sendName(m);
   render();
 }
 
@@ -1094,8 +1119,13 @@ function render() {
   const opened = new Set([...root.querySelectorAll('details[data-keep][open]')].map(d => d.dataset.keep));
   // And the page stays where it was scrolled to (#191).
   const y = window.scrollY;
+  // A club name being typed (#185) survives the redraw.
+  const nameTyping = root.querySelector('form[data-nameform] input');
+  const nameKept = nameTyping && {v: nameTyping.value, focus: document.activeElement === nameTyping};
   root.innerHTML = h;
   if (window.scrollY !== y) window.scrollTo(0, y);
+  const nameInput = nameKept && root.querySelector('form[data-nameform] input');
+  if (nameInput) { nameInput.value = nameKept.v; if (nameKept.focus) nameInput.focus(); }
   for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
   for (const [key, v, focused] of helpTyped) {
     const fm = [...root.querySelectorAll('form[data-helpform], form[data-helpreply]')].find(f => helpKey(f) === key);
@@ -1572,6 +1602,21 @@ function memberRowHtml(m, agents) {
 // tables; and, picked at the top of Clubs ('clubs'), the ones you help run.
 const helps = m => m.status === 'member' && (m.role === 'assistant' || m.agent === 'yes');
 
+// The name you go by in a club (#185), with a way to change it for that
+// club only. `nameForm`: the club whose name is being edited.
+let nameForm = '';
+function clubNameHtml(m) {
+  const code = esc(m.code);
+  if (nameForm !== m.code) {
+    return `<p class="pl-meta cl-myname">You’re <b>${esc(nameIn(m))}</b> in this club${m.myName ? '' : ' (your name in Player settings)'}. <button class="link-btn" data-cl="myname" data-code="${code}">Change</button></p>`;
+  }
+  let h = `<form class="pl-row cl-myname" data-nameform="${code}"><label class="pl-label" for="cl-myname-${code}">Your name in ${esc(m.name || m.code)}</label>`;
+  h += `<input class="pl-text" id="cl-myname-${code}" name="name" maxlength="${MAX_PLAYER_NAME}" value="${esc(nameIn(m))}" placeholder="${esc(myName())}">`;
+  h += '<button class="btn-small primary" type="submit">Save</button><button class="btn-small" type="button" data-cl="myname-cancel">Cancel</button></form>';
+  if (m.myName) h += `<p class="pl-meta">Leave it as ${esc(myName() || 'empty')} to use your name in Player settings here too.</p>`;
+  return h;
+}
+
 function membershipsHtml(mode, only = '') {
   const list = memberships.filter(m => (mode === 'play' ? m.status === 'member' : helps(m) && (!only || m.code === only)));
   if (!list.length) return '';
@@ -1603,6 +1648,7 @@ function membershipsHtml(mode, only = '') {
       h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
     }
     h += memberHelpHtml(m, !!n?.hostHere);
+    h += clubNameHtml(m);
     if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are above.</p>`;
     h += '</li>';
   }
@@ -1753,7 +1799,7 @@ function agentLink(m) {
   u.searchParams.set('host', m.hostId);
   // What the link opens on says which club, and that it's from you (#185).
   if (m.name) u.searchParams.set('name', m.name);
-  if (myName()) u.searchParams.set('by', myName());
+  if (nameIn(m)) u.searchParams.set('by', nameIn(m));
   const relay = relayUrl();
   if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
   u.hash = 'join';
@@ -1996,6 +2042,8 @@ async function onClick(e) {
   // Help requests (#192).
   else if (act === 'help-open') { helpForm = b.dataset.code; render(); root.querySelector(`form[data-helpform] [name=text]`)?.focus(); }
   else if (act === 'help-cancel') { helpForm = null; render(); }
+  else if (act === 'myname') { nameForm = b.dataset.code; render(); root.querySelector('form[data-nameform] input')?.focus(); }
+  else if (act === 'myname-cancel') { nameForm = ''; render(); }
   else if (act === 'help-done') answerHelpReq(b.dataset.code || null, b.dataset.id, b.closest('form')?.elements.reply?.value || '', true);
   else if (act === 'offer-role') { offering = offering === b.dataset.id ? null : b.dataset.id; render(); }
   else if (act === 'offer-role-yes') { offering = null; hostAct('offer_assistant', {id: b.dataset.id}); }
