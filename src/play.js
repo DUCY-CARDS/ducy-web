@@ -380,12 +380,17 @@ const ladderAvatar = id => (BOT_AVATARS.has(id)
   ? `<span class="ld-av"><img src="${avatarUrl(id)}" alt=""></span>`
   : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
 const blindsText = ([sb, bb]) => `${chipText(sb)}/${chipText(bb)}`;
+const mysteryAvatar = '<span class="ld-av none" aria-hidden="true">?</span>';
+// A rung's bot stays hidden until you've played them: rungs below you,
+// bots you've had a series against, and the current one once its series is under way.
+const ladderRevealed = (p, rungs, i, level) =>
+  i < level || !!p.record[rungs[i]] || (i === level && p.wins + p.losses > 0);
 
 // What a finished game or series means, in a sentence.
 function ladderOutcomeText(won, outcome, opp, next) {
   const who = esc(botInfo(opp).name);
   if (outcome === 'game') return won ? `You beat ${who} in this game.` : `${who} took this game.`;
-  if (outcome === 'up') return `You won the series against ${who}. Next up: ${esc(botInfo(next).name)}.`;
+  if (outcome === 'up') return `You won the series against ${who}. On to the next rung.`;
   if (outcome === 'champion') return `You beat ${who}, the champion. You’re at the top of the ladder!`;
   if (outcome === 'down') return `${who} won the series. You drop a rung, to ${esc(botInfo(next).name)}.`;
   return `${who} won the series. Win two games to climb.`;
@@ -415,14 +420,18 @@ function ladderHtml() {
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
   // The next fight.
   const record = p.record[opp];
+  const known = ladderRevealed(p, rungs, level, level);
   h += '<section class="cl-card ld-next">';
-  h += `<div class="ld-who">${ladderAvatar(opp)}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
-  h += `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`;
+  h += `<div class="ld-who">${known ? ladderAvatar(opp) : mysteryAvatar}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
+  h += known
+    ? `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`
+    : '<h2>A new opponent</h2><p class="pl-desc">You’ll find out who when you sit down.</p></div></div>';
   const game = p.wins + p.losses + 1;
-  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${esc(info.name)}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
+  const them = known ? esc(info.name) : 'them';
+  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${them}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
   if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${game === 1 ? 'Start the series' : `Play game ${game}`}</button></div>`;
-  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game. Leaving a game before it’s over loses it.</p>`;
+  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game, and all-ins run once. Leaving a game before it’s over loses it.</p>`;
   h += '</section>';
   // The ladder, top to bottom.
   h += '<ol class="ld-rungs" aria-label="The ladder, hardest first">';
@@ -430,7 +439,9 @@ function ladderHtml() {
     const id = rungs[i], r = p.record[id];
     const cls = i === level ? 'here' : i < level ? 'below' : i <= p.best ? 'reached' : 'ahead';
     const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : '';
-    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${ladderAvatar(id)}<span class="ld-name">${esc(botInfo(id).name)}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
+    const shown = ladderRevealed(p, rungs, i, level);
+    const name = shown ? esc(botInfo(id).name) : '???';
+    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${shown ? ladderAvatar(id) : mysteryAvatar}<span class="ld-name">${name}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
     h += `<span class="ld-tag">${tag}${r ? `<span class="pl-meta"> ${r.won}–${r.lost}</span>` : ''}</span></li>`;
   }
   h += '</ol>';
@@ -602,6 +613,8 @@ function show(snap) {
   recordStats();
   startReview();
   ladderCheck();
+  // Ladder games always run it once: answer for the player, without asking.
+  if (ladder && state.run_choice && myRunAnswer?.hand !== hn) { runChoice(false); return; }
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
