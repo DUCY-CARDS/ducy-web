@@ -207,8 +207,23 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, runTwice: 'ask', friends: {...FRIENDS_DEFAULT}};
 }
+
+// Running it twice: ask each time, or always answer twice or once. Asking
+// waits RUN_SECS, then runs once. Ladder games always run once.
+const RUN_SECS = 5;
+const RUN_PREFS = ['ask', 'twice', 'once'];
+const RUN_LABELS = {ask: 'Run twice: ask', twice: 'Run twice: always', once: 'Run twice: never'};
+let runTimer = null;
+const runPref = () => (ladder ? 'once' : RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask');
+
+// An all-in with cards to come: the rest of the board is dealt slowly (the
+// flop at once, then the turn, then the river) before the result. Hole cards
+// are face up during it only in tournament-style games (the ladder, club
+// tournaments); otherwise they're shown at the end, as at showdown.
+const PEEL_MS = [1400, 1800, 2400];
+let peeling = false;
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
 // review is worth reading first; the choice at each is remembered.
@@ -598,7 +613,91 @@ async function request(op, ...args) {
   }
 }
 
+// The board as it stood, then a card at a time (the flop together), with the
+// result held back until the river is out.
+// The states to show: the board as it stood with everyone all-in, then the
+// flop (together), the turn and the river, without the result.
+function peelSteps(before, after) {
+  const from = before.board.length, to = after.board.length;
+  const counts = [from];
+  for (let k = from < 3 ? 3 : from + 1; k <= to; k += 1) counts.push(k);
+  const faceUp = !!ladder || wholeChips;
+  const known = before.events.length;
+  // Chips as they were before the pot was paid out.
+  const pot = after.seats.reduce((t, x) => t + num(x.won), 0);
+  const seats = after.seats.map((x, i) => ({
+    ...x, stack: num(x.stack) - num(x.won), won: 0, net: 0, street_bet: 0,
+    cards: faceUp || i === 0 || x.folded ? x.cards : before.seats[i]?.cards ?? null,
+  }));
+  return counts.map((k, step) => {
+    // The new events up to this card: the last actions and the boards dealt so far.
+    let boards = 0;
+    const events = after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
+      if (e.type === 'award') return false;
+      if (e.type === 'board') { boards += 1; return boards <= step; }
+      return true;
+    }));
+    return {...after, board: after.board.slice(0, k), events, seats, pot, complete: false, showdown: false, legal: null, to_act: null, run_choice: false};
+  });
+}
+
+let peelTimer = null;
+let peeled = null; // the snapshot a finished peel hands on, shown as is
+function peel(before, snap) {
+  const steps = peelSteps(before, snap.state);
+  const mine = session;
+  peeling = true;
+  let i = 0;
+  const next = () => {
+    if (mine !== session || !open) { peeling = false; return; }
+    if (i < steps.length) {
+      state = steps[i];
+      render();
+      peelTimer = setTimeout(next, PEEL_MS[Math.min(i, PEEL_MS.length - 1)]);
+      i += 1;
+    } else {
+      peeling = false;
+      peeled = snap;
+      show(snap);
+    }
+  };
+  clearTimeout(peelTimer);
+  next();
+}
+
+// Running it twice: answer by the player's setting, or ask and run once if
+// they haven't chosen within RUN_SECS. If the choice stays open anyway (it's
+// someone else's, or it didn't take), let the table move on.
+function armRunChoice() {
+  clearTimeout(runTimer);
+  runTimer = null;
+  const s = state;
+  if (!s?.run_choice || !seated) return false;
+  const hn = num(s.hand_number);
+  const me = s.seats[0];
+  const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
+  const answered = mode === 'guest' ? mySeat?.run_twice != null : myRunAnswer?.hand === hn;
+  if (asked && !answered && runPref() !== 'ask') { runChoice(runPref() === 'twice'); return true; }
+  const mine = session;
+  runTimer = setTimeout(() => {
+    if (mine !== session || !state?.run_choice || num(state.hand_number) !== hn) return;
+    const stillMine = mode === 'guest' ? mySeat?.run_twice == null : myRunAnswer?.hand !== hn;
+    if (asked && stillMine) runChoice(false);
+    else if (mode === 'solo') request('advance').then(snap => snap && show(snap));
+  }, RUN_SECS * 1000);
+  return false;
+}
+
 function show(snap) {
+  if (peeling) return;
+  // An all-in that ran out at a bot table: deal the rest slowly.
+  const before = state;
+  if (snap !== peeled && mode === 'solo' && before && snap.state && !before.complete && snap.state.complete && snap.state.showdown
+      && num(before.hand_number) === num(snap.state.hand_number) && !snap.state.second_board?.length
+      && snap.state.board.length > before.board.length && (snap.seq == null || snap.seq >= shownSeq)) {
+    peel(before, snap);
+    return;
+  }
   if (snap.seq != null) {
     // A newer state is already on screen (results can arrive out of order).
     if (snap.seq < shownSeq) { pace(); return; }
@@ -613,8 +712,7 @@ function show(snap) {
   recordStats();
   startReview();
   ladderCheck();
-  // Ladder games always run it once: answer for the player, without asking.
-  if (ladder && state.run_choice && myRunAnswer?.hand !== hn) { runChoice(false); return; }
+  if (armRunChoice()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -1489,6 +1587,7 @@ function renderTable() {
   h += '<span class="pl-tools">';
   h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
   if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
+  if (!ladder && !watching) h += `<button class="cc-btn" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once">${RUN_LABELS[runPref()]}</button>`;
   h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
   if (mode !== 'solo' && !watching) h += `<button class="cc-btn${setup.sounds ? ' on' : ''}" data-act="sounds" aria-pressed="${!!setup.sounds}" title="A chime when it’s your turn, and an alert at 5 seconds left">Sound</button>`;
   if (reviewTable() && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
@@ -1567,7 +1666,9 @@ function controlsHtml() {
   const blank = '<span class="pl-slot" aria-hidden="true"></span>';
   let status = '', fold = blank, call = blank, raise = blank, sizes = blank, amount = blank;
   const L = s.legal;
-  if (s.complete) {
+  if (peeling) {
+    status = '<span class="pl-result">All-in: dealing the rest of the board…</span>';
+  } else if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
     // Before the first hand of a hosted table there's no result yet.
@@ -1600,7 +1701,7 @@ function controlsHtml() {
     const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
     const answer = mode === 'guest' ? mySeat?.run_twice : myRunAnswer?.hand === num(s.hand_number) ? myRunAnswer.yes : undefined;
     if (asked && answer == null) {
-      status = 'Everyone’s all-in. Run it twice?';
+      status = `Everyone’s all-in. Run it twice? <span class="pl-meta">Once if you don’t choose in ${RUN_SECS} seconds.</span>`;
       call = '<button class="tr-btn" data-act="runonce">Run it once</button>';
       raise = '<button class="tr-btn yes" data-act="runtwice">Run it twice</button>';
     } else {
@@ -2046,6 +2147,12 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'runpref') {
+    setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(runPref()) + 1) % RUN_PREFS.length];
+    saveSetup();
+    render();
+    if (armRunChoice()) return;
+  }
   else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
