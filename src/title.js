@@ -1,5 +1,5 @@
-// The window title (#195): the section that's open, "Trainer · DUCY", with
-// the count of what's waiting for you in your clubs first, "(2) My clubs ·
+// The window title (#195): the section that's open, "Drills · DUCY", with
+// the count of what's waiting for you in your clubs first, "(2) Clubs ·
 // DUCY". With no section yet it's the site's name, as in index.html. A dev
 // profile's "[name] " prefix (profile.js) is kept.
 

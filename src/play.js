@@ -21,7 +21,6 @@ import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
-import { hostPick, onHostPick } from './host-choice.js';
 import { hurrySound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
@@ -300,9 +299,8 @@ function renderSetup() {
   let h = '';
   const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
   if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
-  // Host (#152): a game for friends once that's picked (play-section.js
-  // draws the choices).
-  else if (view === 'host') h = err + resumeHtml() + (hostPick() !== 'game' ? '' : relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
+  // Start a game (Play, #209): a table for friends.
+  else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
   else if (view === 'join') h = err;
   root.hidden = !h;
   root.innerHTML = h ? `<div class="pl-wrap">${h}</div>` : '';
@@ -910,6 +908,11 @@ export function joinTable({code, name, hostId = ''}) {
   else render();
 }
 let joinedByCode = false; // at a table joined with its code (joinTable)
+
+// Where the table you're at belongs in the navigation (#209): bots under
+// Train, a friends table under Play, a club's table under Clubs; null when
+// you're not at one.
+export const tableGroup = () => (!seated ? null : mode === 'solo' ? 'train' : mode === 'host' || joinedByCode ? 'play' : 'clubs');
 
 // The name this browser plays friends tables as (Player settings, #144).
 export const tableName = () => setup.name;
@@ -2013,9 +2016,9 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVisibility);
-    // Picking "Start a game" on the Host tab starts at its first step.
-    onHostPick(() => { fstep = 1; fnote = ''; if (open && view === 'host') render(); });
   }
+  // Coming to Start a game starts at its first step.
+  if (v === 'host' && (view !== 'host' || !open)) { fstep = 1; fnote = ''; }
   open = true;
   // A message about leaving a table stays on the tab it was for.
   if (v !== view && errView && v !== errView) { netNote = ''; errView = null; }

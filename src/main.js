@@ -5,7 +5,7 @@ import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
-import { closeSection, lastTab, openSection, sectionOpen, startBackground, TABS } from './play-section.js';
+import { closeSection, lastIn, openSection, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
 
 const ST = [
@@ -1681,7 +1681,7 @@ function syncHash() {
 
 function loadFromHash() {
   const h = location.hash.slice(1);
-  if (h === 'trainer' || h === 'codedoug' || TABS.includes(h.split('/')[0])) return;
+  if (['trainer', 'codedoug', 'equity', 'practice'].includes(h) || TABS.includes(h.split('/')[0])) return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1740,31 +1740,33 @@ function loadFromHash() {
   dirty();
 }
 
-// Modes: the equity calculator, the range trainer at #trainer, and the Play
-// section (play-section.js, #138), whose tabs are #play, #join, #host and
-// #clubs. The trainer doesn't need the engine, so it's set up before the
-// WASM load below. `shortcut` opens the bot table straight into a preset
-// game (see openPlay).
+// Modes: the equity calculator (#equity, or its hand in the address), the
+// range trainer at #trainer, and the playing section (play-section.js, #138),
+// whose tabs are #play (or #practice), #join, #host and #clubs. The
+// navigation groups them by why you came (#209): Train (Bots, Drills,
+// Equity), Play (Start a game, Join) and Clubs. The trainer doesn't need the
+// engine, so it's set up before the WASM load below. `shortcut` opens the bot
+// table straight into a preset game (see openPlay).
 function setMode(mode, shortcut) {
   const trainer = mode === 'trainer', section = TABS.includes(mode);
   document.body.classList.toggle('mode-trainer', trainer);
   document.body.classList.toggle('mode-play', section);
-  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === (section ? 'play' : mode)));
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
-  // The Play section titles its own tabs.
-  if (!section) setTitleSection(trainer ? 'Trainer' : 'Equity calculator');
+  // The playing section titles and shows its own tabs.
+  if (!section) { setTitleSection(trainer ? 'Drills' : 'Equity'); showNav(mode); }
   if (section) openSection(mode, shortcut);
   else closeSection();
 }
 
+// Train, Play and Clubs (#209) open the page last used in each. Changing the
+// hash adds a history entry, so Back returns to where you were.
 document.querySelector('.mode-tabs').addEventListener('click', e => {
-  const b = e.target.closest('[data-mode]');
+  const b = e.target.closest('[data-nav]');
   if (!b || b.classList.contains('on')) return;
-  // Changing the hash adds a history entry, so Back returns to the other mode.
-  if (b.dataset.mode === 'trainer') location.hash = 'trainer';
-  else if (b.dataset.mode === 'play') location.hash = lastTab();
-  else { closeTrainer(); location.hash = stateToHash() || 'g=' + curG; }
+  const p = lastIn(b.dataset.nav);
+  if (p === 'equity') { closeTrainer(); location.hash = stateToHash() || 'g=' + curG; }
+  else location.hash = p;
 });
 
 // #codedoug: straight to heads-up No-limit Hold'em against the GTO bot at
@@ -1777,15 +1779,17 @@ function openShortcut() {
 
 // The mode an address opens.
 function hashMode() {
-  // A tab, or a part of one (#clubs/players, #193).
+  // A tab, or a part of one (#clubs/players, #193). #practice is Bots (the
+  // section's 'play' tab), #equity the calculator (#209).
   const h = location.hash.slice(1).split('/')[0];
-  return h === 'trainer' || TABS.includes(h) ? h : '';
+  if (h === 'practice') return 'play';
+  return h === 'trainer' || h === 'equity' || TABS.includes(h) ? h : '';
 }
 
 window.addEventListener('hashchange', () => {
   if (location.hash === '#codedoug') { openShortcut(); return; }
   const m = hashMode();
-  if (m) { setMode(m); return; }
+  if (m && m !== 'equity') { setMode(m); return; }
   setMode('equity');
   loadFromHash(); render(); updateGameUI();
 });
@@ -1837,7 +1841,8 @@ for (const n of document.querySelectorAll('.beta-notice')) {
 }
 
 if (location.hash === '#codedoug') openShortcut();
-else if (hashMode()) setMode(hashMode());
+else if (hashMode() && hashMode() !== 'equity') setMode(hashMode());
+else showNav('equity');
 
 loadFromHash();
 render();

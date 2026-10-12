@@ -1,74 +1,97 @@
-// The Play section (#138): one place for playing, joining and running clubs,
-// in tabs, each with its own address:
-//   #play   Play: your clubs' tables, a game you can resume, or the bots
-//   #join   Join: a code or a pasted link
-//   #host   Host: start a game now, or create a club
-//   #clubs  My clubs: the club you run or help run (only then)
+// The site's navigation (#209): Train · Play · Clubs, each with its tabs
+// under the top bar, and the section that holds the playing tabs (#138):
+//   #play / #practice   Bots (Train): a game you can resume, or the bots;
+//                       and whichever table you're at
+//   #join   Join (Play): a code or a pasted link, for a table or a club
+//   #host   Start a game (Play): a table for friends
+//   #clubs  Clubs: the club you run or help run, the clubs you're in, and
+//           creating a club
+// Train's other tabs are main.js's: Drills (#trainer) and Equity.
 // play.js and clubs.js each draw their part of every tab (their `view`);
-// this file draws the tab bar, the Join form, and the badges (#145): the
-// count of things waiting for you on My clubs, a dot on Play when a table
-// you can sit at opens, and the count in the window title.
+// this file draws the tabs, the Join form, and the badges (#145): the count
+// of things waiting for you on Clubs, a dot on it when a table you can sit
+// at opens, and the count in the window title.
 
-import { openPlay, closePlay, joinTable, tableName } from './play.js';
+import { openPlay, closePlay, joinTable, tableGroup, tableName } from './play.js';
 import {
-  anyClubs, closeClubs, joinClub, managesClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
+  anyClubs, closeClubs, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
 import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
-import { hostPick, onHostPick, setHostPick } from './host-choice.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
 
 export const TABS = ['play', 'join', 'host', 'clubs'];
-const LABELS = {play: 'Play', join: 'Join', host: 'Host', clubs: 'My clubs'};
-// Each tab's window title (#195): "My clubs · DUCY".
-const TITLES = {play: 'Play', join: 'Join a game', host: 'Host a game', clubs: 'My clubs'};
-const TAB_KEY = 'ducyPlayTab';
+// The navigation's groups and their tabs (#209), by page: a tab above, or
+// main.js's 'trainer' and 'equity'; 'practice' is the Bots tab ('play').
+export const GROUPS = {
+  train: [['practice', 'Bots'], ['trainer', 'Drills'], ['equity', 'Equity']],
+  play: [['host', 'Start a game'], ['join', 'Join']],
+  clubs: [],
+};
+// Each tab's window title (#195): "Clubs · DUCY".
+const TITLES = {play: 'Bots', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
+const NAV_KEY = 'ducyNav'; // the last page in each group, {train, play}
 
 let tab = null; // the tab showing, or null when the section is closed
-let seenSeats = 0; // open seats the last time the Play tab was looked at
+let seenSeats = 0; // open seats the last time Clubs was looked at
 let joinNote = '';
 let joinRoot = null;
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const el = id => document.getElementById(id);
 
-// The tab to go back to when Play is clicked in the top navigation.
-export function lastTab() {
-  try { const t = localStorage.getItem(TAB_KEY); return TABS.includes(t) && (t !== 'clubs' || managesClub()) ? t : 'play'; } catch { return 'play'; }
+// The group a page is in. The table you're at goes where it belongs: bots
+// under Train, a friends table under Play, a club's under Clubs.
+export function groupOf(page) {
+  if (page === 'play') return tableGroup() || 'train';
+  if (page === 'practice' || page === 'trainer' || page === 'equity') return 'train';
+  if (page === 'join' || page === 'host') return 'play';
+  return 'clubs';
+}
+
+function navMemory() {
+  try { return JSON.parse(localStorage.getItem(NAV_KEY)) || {}; } catch { return {}; }
+}
+
+// The page to open when group `g` is clicked in the top navigation: the last
+// one used there, or its first.
+export function lastIn(g) {
+  const p = navMemory()[g];
+  return GROUPS[g]?.some(([id]) => id === p) ? p : GROUPS[g]?.[0]?.[0] || g;
+}
+
+// The page showing (a tab, 'trainer' or 'equity'), for the navigation.
+let page = null;
+
+// Shows `p` in the navigation: its group on in the top bar, and the group's
+// tabs underneath; and remembers it as the group's last page.
+export function showNav(p) {
+  page = p === 'play' && !tableGroup() ? 'practice' : p;
+  const g = groupOf(p);
+  if (GROUPS[g].some(([id]) => id === page)) {
+    const mem = navMemory();
+    mem[g] = page;
+    try { localStorage.setItem(NAV_KEY, JSON.stringify(mem)); } catch {}
+  }
+  for (const b of document.querySelectorAll('.mode-tab[data-nav]')) b.classList.toggle('on', b.dataset.nav === g);
+  renderTabs();
 }
 
 export const sectionOpen = () => !!tab;
 
 // Opens tab `t` (one of TABS); `shortcut` goes to play.js (#codedoug).
 export function openSection(t, shortcut) {
-  // My clubs is for a club you run or help run; anyone else gets Play,
-  // which lists the clubs they're in. The clubs may still be loading (an
-  // always-on club's record can be in IndexedDB only), so it waits for them.
-  if (t === 'clubs' && !managesClub()) {
-    startClubs().then(() => {
-      if (tab !== 'clubs') return;
-      if (managesClub()) { renderTabs(); return; }
-      history.replaceState(null, '', location.pathname + location.search + '#play');
-      openSection('play');
-    });
-  }
-  // Coming to Host from another tab starts at its two choices (a club being
-  // created picks itself again, clubs.js).
-  if (t === 'host' && tab !== 'host') setHostPick(null);
   tab = t;
   setTitleSection(TITLES[t]);
-  try { localStorage.setItem(TAB_KEY, t); } catch {}
-  if (t === 'play') seenSeats = openSeats();
+  if (t === 'clubs') seenSeats = openSeats();
   const sec = el('psec');
   sec.dataset.tab = t;
   for (const x of TABS) document.body.classList.toggle('tab-' + x, x === t);
-  renderTabs();
+  showNav(t);
   if (!joinRoot) {
     joinRoot = el('pjoin');
     joinRoot.addEventListener('submit', onJoin);
-    joinRoot.addEventListener('click', onHostClick);
-    onHostPick(() => { if (tab === 'host') renderHost(); });
   }
   if (t === 'join') renderJoin();
   else if (t === 'host') renderHost();
@@ -94,19 +117,14 @@ export function startBackground() {
 
 // ---- tabs and badges ----
 
+// The tabs of the group showing, under the top bar, with Player settings.
 function renderTabs() {
-  const nav = el('pt-tabs');
+  const nav = el('sub-tabs');
   if (!nav) return;
-  const n = needsYou();
-  const dot = tab !== 'play' && openSeats() > seenSeats;
   let h = '';
-  for (const t of TABS) {
-    if (t === 'clubs' && !managesClub() && tab !== 'clubs') continue;
-    const on = t === tab;
-    let badge = '';
-    if (t === 'clubs' && n) badge = `<span class="pt-badge" aria-label="${n} waiting for you">${n}</span>`;
-    if (t === 'play' && dot) badge = '<span class="pt-dot" aria-label="A table opened"></span>';
-    h += `<a class="pl-tab${on ? ' on' : ''}" role="tab" aria-selected="${on}" href="#${t}">${LABELS[t]}${badge}</a>`;
+  for (const [id, label] of GROUPS[groupOf(page || 'equity')] || []) {
+    const on = id === page;
+    h += `<a class="pl-tab${on ? ' on' : ''}" role="tab" aria-selected="${on}" href="#${id}">${label}</a>`;
   }
   // You: name, player ID, backups and the rest, in a dialog (#144).
   h += `<button class="pt-me" type="button" data-pt="player" title="Player settings" aria-label="Player settings"><span class="pt-me-name">${esc(myName() || 'You')} </span><span aria-hidden="true">⚙</span></button>`;
@@ -124,9 +142,13 @@ let lastNeeds = 0;
 function changed() {
   const n = needsYou();
   setTitleWaiting(n);
-  const top = document.querySelector('.mode-tab[data-mode="play"]');
-  if (top) top.dataset.badge = n ? String(n) : '';
-  if (tab) renderTabs();
+  // Clubs in the top bar: what's waiting for you, or a dot when a table
+  // you can sit at opened (#209).
+  const top = document.querySelector('.mode-tab[data-nav="clubs"]');
+  if (top) {
+    top.dataset.badge = n ? String(n) : '';
+    top.dataset.dot = !n && tab !== 'clubs' && openSeats() > seenSeats ? '1' : '';
+  }
   if (n > lastNeeds) {
     const text = n === 1 ? 'Someone is waiting for you in your club.' : `${n} requests are waiting for you in your clubs.`;
     // On the page, whichever tab is showing (#152); and with notifications on
@@ -163,31 +185,14 @@ function toast(text) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 10_000);
 }
 
-// ---- the Host tab's choices (#152) ----
+// ---- Start a game (#152, #209) ----
 
-// Two choices, each with what it is; once one is picked, play.js (a game) or
-// clubs.js (a club) shows its steps, with a way back here.
+// What it is; play.js draws its steps. A club that lasts is on Clubs.
 function renderHost() {
-  const p = hostPick();
-  let h = '<div class="pl-wrap">';
-  if (!p) {
-    h += '<div class="pl-head"><h1>Host</h1><p>Start a game for tonight, or a club that lasts.</p></div>';
-    h += '<div class="ph-choices">';
-    h += '<button class="ph-choice" data-ph="game"><b>Start a game to invite friends</b><span>A table for now: share a code, play, and nothing is kept once everyone has left.</span></button>';
-    h += '<button class="ph-choice" data-ph="club"><b>Create a club</b><span>A lasting club with members, chips and history. It runs on ducy’s server, so people can play whenever.</span></button>';
-    h += '</div>';
-  } else {
-    h += '<p class="ph-back"><button class="link-btn" data-ph="back">← Host</button></p>';
-  }
+  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Start a game</h1>';
+  h += '<p>A table for tonight: share a code with friends, play, and nothing is kept once everyone has left. For a club that lasts, with members, chips and history, see <a href="#clubs">Clubs</a>.</p></div>';
   joinRoot.innerHTML = h + '</div>';
   joinRoot.hidden = false;
-}
-
-function onHostClick(e) {
-  const b = e.target.closest('[data-ph]');
-  if (!b || tab !== 'host') return;
-  setHostPick(b.dataset.ph === 'back' ? null : b.dataset.ph);
-  scrollTo({top: 0});
 }
 
 // ---- the Join tab (#141) ----
