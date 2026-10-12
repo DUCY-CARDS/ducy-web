@@ -249,7 +249,7 @@ export function memberTourneysHtml(mem, me, {hostHere, playing}, now = Date.now(
   for (const t of list) {
     const mine = t.players.some(p => p.id === me), inNow = t.in.includes(me);
     const place = t.places.filter(p => p.id === me).map(p => p.place).sort((a, b) => a - b)[0];
-    const btn = (act, label, primary = false) => `<button class="btn-small${primary ? ' primary' : ''}" data-cl="${act}" data-code="${code}" data-tourney="${esc(t.id)}"${hostHere ? '' : ' disabled title="The host is away"'}>${label}</button>`;
+    const btn = (act, label, primary = false) => `<button class="btn-small${primary ? ' primary' : ''}" data-cl="${act}" data-code="${code}" data-tourney="${esc(t.id)}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>${label}</button>`;
     h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameName(t.game))} · buy-in ${club$(t.buyIn)} · ${t.players.length}/${t.maxPlayers} players · pool ${club$(t.pool)}`;
     if (t.status === 'scheduled') h += ` · starts ${until(t.startsAt, now)}`;
     if (t.status === 'running' && !t.live) h += ' · running';
