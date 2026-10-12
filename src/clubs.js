@@ -1571,7 +1571,7 @@ function membershipsHtml(mode, only = '') {
       h += '</li>';
       continue;
     }
-    h += accountHtml(m, !!n?.hostHere);
+    h += accountHtml(m, !!n?.hostHere, !!n?.online);
     if (m.role === 'offered') {
       h += `<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>.</span>${roleHtml('assistant')}`;
       h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
@@ -1605,7 +1605,9 @@ function setMemberTab(code, t) {
   try { localStorage.setItem(`ducyMemberTab:${code}`, t); } catch {}
 }
 
-function accountHtml(m, hostHere) {
+// `online`: connected to the relay, which holds messages for the host while
+// they're away (so a request can be cancelled then, #188).
+function accountHtml(m, hostHere, online = hostHere) {
   let h = '<div class="cl-account">';
   h += `<div class="cl-balance"><span class="cl-chips">${chips(m.balance)} chips</span>`;
   if (m.entries?.length) h += m.ledgerOk === false
@@ -1623,7 +1625,9 @@ function accountHtml(m, hostHere) {
   // A request waiting shows whichever tab is open.
   if (m.request) {
     h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
-    h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Cancel</button></div>`;
+    h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${online ? '' : ' disabled title="Can’t reach the club right now"'}>Cancel</button></div>`;
+  } else if (m.cancelQueued) {
+    h += '<p class="pl-meta">You cancelled your request. The host will see that when they’re back.</p>';
   }
   const tab = memberTab(m.code);
   const live = (m.tourneys || []).filter(t => t.status === 'scheduled' || t.status === 'running').length;
@@ -2028,7 +2032,20 @@ async function onClick(e) {
     const why = root.querySelector(`[data-ask-note="${code}"]`)?.value || '';
     if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter an amount above 0, like 50 or 12.50.'); return; }
     sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
-  } else if (act === 'cancel-ask') sendToHost(b.dataset.code, {type: 'cancel_request', club: b.dataset.code});
+  } else if (act === 'cancel-ask') {
+    const code = b.dataset.code;
+    sendToHost(code, {type: 'cancel_request', club: code});
+    // The host is away: the relay holds the cancel for them (#188), so the
+    // request is gone from here now, and comes back only if they still
+    // have it.
+    const mem = memberships.find(x => x.code === code);
+    if (mem && !playerNets.get(code)?.hostHere) {
+      mem.request = null;
+      mem.cancelQueued = true;
+      saveMemberships();
+      render();
+    }
+  }
 }
 
 // The replayer's keys: ← → step, Space plays, Esc closes.

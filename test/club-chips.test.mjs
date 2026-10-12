@@ -216,3 +216,25 @@ test('over the wire: request chips, host grants, player keeps a signed copy that
   const no = await hostReceive(club, verifier, await signMessage(eve, {type: 'chip_request', club: club.code, amount: 5}));
   assert.equal(no.reason, 'not a member');
 });
+
+test('a request cancelled while the host is away goes when they read it (#188)', async () => {
+  const host = await createIdentity(), ann = await createIdentity();
+  const club = newClub('Friday Game', 'ABCD-EFGH', host.id, 0);
+  const verifier = new Verifier();
+  const mem = newMembership({code: club.code, invite: club.invite, hostId: host.id});
+  const deliver = async replies => { for (const r of replies) assert.ok(await playerReceive(mem, await signMessage(host, r.body))); };
+  await deliver((await hostReceive(club, verifier, await signMessage(ann, {type: 'join', club: club.code, invite: club.invite, name: 'Ann'}))).replies);
+  await deliver([approve(club, ann.id)]);
+  await deliver((await hostReceive(club, verifier, await signMessage(ann, {type: 'chip_request', club: club.code, amount: 300}))).replies);
+  // The host goes away; Ann cancels (the page clears it and notes it), and
+  // the relay holds the message until the host is back.
+  const held = await signMessage(ann, {type: 'cancel_request', club: club.code});
+  mem.request = null;
+  mem.cancelQueued = true;
+  const r = await hostReceive(club, verifier, held);
+  assert.ok(r.changed);
+  assert.equal(club.members[ann.id].request, null);
+  await deliver(r.replies);
+  assert.equal(mem.request, null);
+  assert.equal(mem.cancelQueued, undefined, 'the note goes once the host has it');
+});
