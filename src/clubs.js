@@ -87,6 +87,27 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 // Ledger entries that are chips given to you (a notice, #193).
 const GIVEN = ['issue', 'grant', 'transfer_in'];
+// Full tables you asked to hear about (#187): "code|table" keys, kept on
+// this device. A notice comes when one of them has a free seat.
+const SEAT_WATCH_KEY = 'ducySeatWatch';
+const seatWatch = new Set(load(SEAT_WATCH_KEY, []));
+const watchKey = (code, table) => `${code}|${table}`;
+function setSeatWatch(code, table, on) {
+  if (on) seatWatch.add(watchKey(code, table)); else seatWatch.delete(watchKey(code, table));
+  save(SEAT_WATCH_KEY, [...seatWatch]);
+}
+// After a tables update: tell the member about watched tables with a seat
+// free now, and forget those and any that closed.
+function checkSeatWatch(mem) {
+  for (const key of [...seatWatch]) {
+    const [code, id] = key.split('|');
+    if (code !== mem.code) continue;
+    const t = (mem.tables || []).find(x => x.id === id);
+    if (t && t.taken >= t.seats) continue;
+    setSeatWatch(code, id, false);
+    if (t) notice(`${mem.name || mem.code}: a seat is free at ${t.name}.`, 'clubs');
+  }
+}
 // When something happened (#193): relative, with the full time on hover.
 const when = t => (t ? `<time datetime="${new Date(t).toISOString()}" title="${esc(new Date(t).toLocaleString())}">${ago(t)}</time>` : '');
 const myName = () => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } };
@@ -743,6 +764,7 @@ function connectMembership(mem) {
         const opened = (mem.tables || []).filter(t => !hadTables.has(t.id));
         if (opened.length) notice(`${cname} opened ${opened.map(t => t.name).join(', ')}.`);
       }
+      if (msg.body?.type === 'tables') checkSeatWatch(mem);
       // The club moved to an always-on room (#98): greet it as the new host.
       if (msg.body?.type === 'host_moved') {
         entry.aes = null;
@@ -1685,6 +1707,13 @@ function memberTablesHtml(m, hostHere) {
     else {
       h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit</button>`;
       if (why) h += `<span class="pl-meta cl-why">${esc(why)}</span>`;
+      // Full: no need to keep checking (#187).
+      if (t.taken >= t.seats) {
+        const k = `data-code="${esc(m.code)}" data-table="${esc(t.id)}"`;
+        h += seatWatch.has(watchKey(m.code, t.id))
+          ? `<span class="pl-meta cl-why">This page tells you when a seat is free${notifyOn() ? '' : ' (to hear about it while you’re in another tab, turn on notifications in Player settings)'}. <button class="link-btn" data-cl="seat-unwatch" ${k}>Stop</button></span>`
+          : `<button class="btn-small" data-cl="seat-watch" ${k}>Tell me when a seat is free</button>`;
+      }
     }
     h += '</li>';
   }
@@ -2026,6 +2055,10 @@ async function onClick(e) {
     sendToHost(b.dataset.code, {type: 'tourney', club: b.dataset.code, tourney: b.dataset.tourney, op: act.slice(2)});
   } else if (act === 't-play') sitAt(b.dataset.code, `tourney:${b.dataset.tourney}`);
   else if (act === 'to-table') location.hash = 'play';
+  else if (act === 'seat-watch' || act === 'seat-unwatch') {
+    setSeatWatch(b.dataset.code, b.dataset.table, act === 'seat-watch');
+    render();
+  }
   else if (act === 'ask') {
     const code = b.dataset.code;
     const amount = parseChips(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
