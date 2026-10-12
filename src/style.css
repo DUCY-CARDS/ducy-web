@@ -1301,10 +1301,15 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 .cl-ledger li { padding: 3px 0; }
 .cl-menu-items .cl-assign { display: flex; gap: 6px; align-items: center; padding: 6px 10px; font-size: 13px; }
 time[title] { cursor: help; }
+/* A club's tabs stay on one line: on a phone the host's six scroll sideways
+   within the card rather than running past it. */
+.cl-dash-tabs { overflow-x: auto; scrollbar-width: none; }
+.cl-dash-tabs::-webkit-scrollbar { display: none; }
+.cl-dash-tabs .pl-tab { white-space: nowrap; flex: none; }
 @media (max-width: 480px) {
   .cl-list li { gap: 6px; }
   .cl-list li .cl-acts { margin-left: 0; flex-basis: 100%; }
-  .cl-member-tabs .pl-tab { padding-left: 8px; padding-right: 8px; }
+  .cl-member-tabs .pl-tab, .cl-dash-tabs .pl-tab { padding-left: 8px; padding-right: 8px; }
 }
 
 /* Train · Play · Clubs (#209): a table opened in a club, and each section's tabs under the top bar */
