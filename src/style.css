@@ -56,7 +56,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
 /* The clubs' testing note: on Join, Host and My clubs, and at a club table. */
-body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice { display: block; }
+body.mode-play:is(.tab-join, .tab-clubs, .club-table) .clubs-notice { display: block; }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 
@@ -759,6 +759,19 @@ body.mode-play :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 /* Start a game (V3, #225): one page, its form and invite panel side by side. */
 .psec[data-tab="host"] .pl-wrap { max-width: 1040px; }
+/* Play the Regulars (V3, #225): the same cream form, with choosing opponents
+   folded away inside it. */
+.sg-form.rg-form { flex: none; max-width: 640px; }
+.cl-clubs:empty { display: none; }
+.rg-form .tf-more > summary { color: #5d6b55; font-weight: 600; cursor: pointer; }
+.rg-form .pl-label { color: #1d3a2c; font-weight: 600; }
+.rg-form .pl-desc, .rg-form .pl-seatno { color: #5d6b55; }
+.rg-form .cc-btn { border: 1px solid #c9b98f; background: #fffaf0; color: #1d3a2c; border-radius: 999px; padding: 6px 12px; }
+.rg-form .cc-btn.on { background: #1d3a2c; border-color: #1d3a2c; color: #f3e7c9; }
+.rg-form select, .rg-form .pl-bot select { background: #fffaf0; color: #1d3a2c; border: 1px solid #c9b98f; border-radius: 8px; padding: 6px 8px; }
+.rg-form .btn-small { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.rg-form .cl-more { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+
 /* Join a game (V3, #225): Start a game's cream form (.sg-form). */
 .sg-form.pj-form { flex: none; max-width: 480px; }
 .pj-field { display: flex; flex-direction: column; gap: 8px; }
