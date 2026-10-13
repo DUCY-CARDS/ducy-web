@@ -21,18 +21,11 @@ import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
+import { crumbFor } from './home.js';
 
 export const TABS = ['play', 'ladder', 'join', 'host', 'clubs'];
-// The navigation's groups and their tabs (#209), by page: a tab above, or
-// main.js's 'trainer' and 'equity'; 'practice' is the Bots tab ('play').
-export const GROUPS = {
-  train: [['practice', 'Bots'], ['ladder', 'Ladder'], ['trainer', 'Drills'], ['equity', 'Equity']],
-  play: [['host', 'Start a game'], ['join', 'Join']],
-  clubs: [],
-};
-// Each tab's window title (#195): "Clubs · DUCY".
-const TITLES = {play: 'Bots', ladder: 'Ladder', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
-const NAV_KEY = 'ducyNav'; // the last page in each group, {train, play}
+// Each tab's window title (#195): "Private clubs · DUCY".
+const TITLES = {play: 'Play the Regulars', ladder: 'Climb the ladder', join: 'Join a game', host: 'Start a game', clubs: 'Private clubs'};
 
 let tab = null; // the tab showing, or null when the section is closed
 let seenSeats = 0; // open seats the last time Clubs was looked at
@@ -42,40 +35,12 @@ let joinRoot = null;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const el = id => document.getElementById(id);
 
-// The group a page is in. The table you're at goes where it belongs: bots
-// under Train, a friends table under Play, a club's under Clubs.
-export function groupOf(page) {
-  if (page === 'play') return tableGroup() || 'train';
-  if (page === 'practice' || page === 'ladder' || page === 'trainer' || page === 'equity') return 'train';
-  if (page === 'join' || page === 'host') return 'play';
-  return 'clubs';
-}
-
-function navMemory() {
-  try { return JSON.parse(localStorage.getItem(NAV_KEY)) || {}; } catch { return {}; }
-}
-
-// The page to open when group `g` is clicked in the top navigation: the last
-// one used there, or its first.
-export function lastIn(g) {
-  const p = navMemory()[g];
-  return GROUPS[g]?.some(([id]) => id === p) ? p : GROUPS[g]?.[0]?.[0] || g;
-}
-
-// The page showing (a tab, 'trainer' or 'equity'), for the navigation.
+// The page showing (a tab, 'trainer' or 'equity'), for the breadcrumb.
 let page = null;
 
-// Shows `p` in the navigation: its group on in the top bar, and the group's
-// tabs underneath; and remembers it as the group's last page.
+// Shows where `p` is (#225): a breadcrumb back to Study or Play.
 export function showNav(p) {
-  page = p === 'play' && !tableGroup() ? 'practice' : p;
-  const g = groupOf(p);
-  if (GROUPS[g].some(([id]) => id === page)) {
-    const mem = navMemory();
-    mem[g] = page;
-    try { localStorage.setItem(NAV_KEY, JSON.stringify(mem)); } catch {}
-  }
-  for (const b of document.querySelectorAll('.mode-tab[data-nav]')) b.classList.toggle('on', b.dataset.nav === g);
+  page = p;
   renderTabs();
 }
 
@@ -118,15 +83,16 @@ export function startBackground() {
 
 // ---- tabs and badges ----
 
-// The tabs of the group showing, under the top bar, with Player settings.
+// Where you are, under the top bar, with Player settings.
 function renderTabs() {
   const nav = el('sub-tabs');
   if (!nav) return;
-  let h = '';
-  for (const [id, label] of GROUPS[groupOf(page || 'equity')] || []) {
-    const on = id === page;
-    h += `<a class="pl-tab${on ? ' on' : ''}" role="tab" aria-selected="${on}" href="#${id}">${label}</a>`;
-  }
+  let h = '<span class="v3-crumbs">';
+  crumbFor(page || 'equity', page === 'play' ? tableGroup() : null).forEach((c, i) => {
+    if (i) h += '<span class="v3-crumb-sep" aria-hidden="true">›</span>';
+    h += c.href ? `<a href="${c.href}">${esc(c.label)}</a>` : `<span aria-current="page">${esc(c.label)}</span>`;
+  });
+  h += '</span>';
   // You: name, player ID, backups and the rest, in a dialog (#144).
   h += `<button class="pt-me" type="button" data-pt="player" title="Player settings" aria-label="Player settings"><span class="pt-me-name">${esc(myName() || 'You')} </span><span aria-hidden="true">⚙</span></button>`;
   nav.innerHTML = h;
@@ -143,9 +109,9 @@ let lastNeeds = 0;
 function changed() {
   const n = needsYou();
   setTitleWaiting(n);
-  // Clubs in the top bar: what's waiting for you, or a dot when a table
-  // you can sit at opened (#209).
-  const top = document.querySelector('.mode-tab[data-nav="clubs"]');
+  // The home spade in the top bar: what's waiting for you in your clubs, or
+  // a dot when a table you can sit at opened (#209, #225).
+  const top = document.querySelector('.wordmark');
   if (top) {
     top.dataset.badge = n ? String(n) : '';
     top.dataset.dot = !n && tab !== 'clubs' && openSeats() > seenSeats ? '1' : '';

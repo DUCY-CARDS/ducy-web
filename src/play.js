@@ -2518,9 +2518,10 @@ function onKey(e) {
 // Bets or raises raiseTo through the Bet/Raise button, so all-in is decided there.
 const clickBet = () => root.querySelector('[data-act="raise"],[data-act="bet"]')?.click();
 
-// Draws tab `v` of the Play section (see `view`) into `el`. `shortcut` 'gto'
-// sits straight down heads-up No-limit Hold'em against the GTO bot with a
-// 100 big blind buy-in (from #codedoug), unless a table is already in play.
+// Draws tab `v` of the Play section (see `view`) into `el`. `shortcut` sits
+// straight down heads-up against the GTO bot with a 100 big blind buy-in,
+// unless a table is already in play: 'gto' for No-limit Hold'em (from
+// #codedoug), 'gto-plo4' and 'gto-plo6' for Omaha (#225).
 export async function openPlay(el, shortcut, v = 'play') {
   if (!root) {
     root = el;
@@ -2554,12 +2555,12 @@ export async function openPlay(el, shortcut, v = 'play') {
       try { plo.available = await call(plo.supported) && (await fetch(plo.manifest, {cache: 'no-cache'})).ok; } catch {}
     }
   }
-  if (shortcut === 'gto' && !seated) {
-    setup.game = 'nlhe';
+  if (shortcut?.startsWith('gto') && !seated) {
+    setup.game = shortcut === 'gto' ? 'nlhe' : shortcut.slice(4);
     setup.count = 1;
-    setup.bots = ['gto'];
     setup.buyIn = 100 * setup.bb;
-    if (gtoAvailable) { startTable(); return; }
+    const bot = gtoBot();
+    if (bot) { setup.bots = [bot.id]; startTable(); return; }
     setupNote = 'The GTO bot isn’t available right now.';
   }
   render();
