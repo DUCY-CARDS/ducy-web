@@ -1219,7 +1219,7 @@ function clubListHtml() {
     if (c.waiting) h += `<span class="cl-pill hot">${c.waiting} need${c.waiting === 1 ? 's' : ''} you</span>`;
     return h + `<span class="cl-club-go">${c.chips != null ? `Your chips ${chips(c.chips)}` : c.go || 'Open'} →</span></a>`;
   };
-  let h = '<div class="cl-clubs">';
+  let h = '<div class="pl-head"><h1>Private clubs</h1></div><div class="cl-clubs">';
   if (own) {
     const members = club ? membersByStatus(club, 'member').length : 0;
     h += card({href: 'clubs/own', cream: true, name: club?.name || owner.record.name, who: `You run this club${club ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}`, tables: club ? openTables(club).length : 0, waiting: hostWaiting(), quiet: !!club});

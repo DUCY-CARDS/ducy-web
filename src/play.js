@@ -68,9 +68,9 @@ const GTO_BUY_IN_BB = 100; // the depth the GTO bot is trained for
 // Games the engine's BotTable plays: id, labels, hole cards, pot-limit.
 const GAMES = [
   {id: 'nlhe', label: 'Hold’em', name: 'No-limit Hold’em', cards: 2, pl: false},
-  {id: 'plo4', label: 'PLO4', name: 'Pot-limit Omaha', cards: 4, pl: true},
-  {id: 'plo5', label: 'PLO5', name: 'Pot-limit Omaha 5', cards: 5, pl: true},
-  {id: 'plo6', label: 'PLO6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
+  {id: 'plo4', label: 'Omaha 4', name: 'Pot-limit Omaha', cards: 4, pl: true},
+  {id: 'plo5', label: 'Omaha 5', name: 'Pot-limit Omaha 5', cards: 5, pl: true},
+  {id: 'plo6', label: 'Omaha 6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
 ];
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // A friends table: its name, game, blinds, seats in all (the host's
@@ -107,12 +107,12 @@ let gtoReady = false;
 const GTO_PLOS = {
   plo4: {
     bot: {id: 'gto-plo', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
-    label: 'PLO4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
+    label: 'Omaha 4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
     supported: 'gtoPloSupported', load: 'loadGtoPlo', available: false, ready: false,
   },
   plo6: {
     bot: {id: 'gto-plo6', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
-    label: 'PLO6', manifest: new URL('gto/plo6-current.json', document.baseURI).href,
+    label: 'Omaha 6', manifest: new URL('gto/plo6-current.json', document.baseURI).href,
     supported: 'gtoPlo6Supported', load: 'loadGtoPlo6', available: false, ready: false,
   },
 };
@@ -371,11 +371,13 @@ const optBtn = (on, attr, value, text) => `<button class="cc-btn${on ? ' on' : '
 // Regulars. Choosing your own opponents (and the GTO bot) is under More.
 function botsSetupHtml() {
   fillBots();
+  // V3 (#225): Start a game's cream form, with the game and Sit down up
+  // front and choosing opponents folded away.
   let h = '<div class="pl-head"><h1>Play the Regulars</h1>';
   h += '<p>Play immediately against the Regulars.</p></div>';
-  h += '<div class="pl-setup">';
-  h += optsRow('Game', GAMES.map(g => optBtn(setup.game === g.id, 'data-pgame', g.id, g.label)));
-  h += '<div class="pl-actions"><button class="tr-start" data-act="sitregulars">Sit down</button></div>';
+  h += '<div class="pl-setup sg-form rg-form">';
+  h += `<div class="sg-field"><span class="sg-label">Game</span><div class="sg-chips">${GAMES.map(g => `<button type="button" class="sg-chip${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}" aria-pressed="${setup.game === g.id}">${g.label}</button>`).join('')}</div></div>`;
+  h += '<button class="tr-start sg-open" data-act="sitregulars">Sit down</button>';
   h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Choose your opponents</summary><div class="cl-more">`;
   h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
   // Who sits where: heads-up, the one opponent stays in view (that's where
@@ -392,7 +394,7 @@ function botsSetupHtml() {
   h += picks;
   h += optsRow('Blinds', BOT_BLINDS.map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)));
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
-  const gtoGames = [gtoAvailable && 'No-limit Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
+  const gtoGames = [gtoAvailable && 'Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
   const gamesText = gtoGames.length > 1 ? `${gtoGames.slice(0, -1).join(', ')} or ${gtoGames.at(-1)}` : gtoGames[0];
   if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent) to face the GTO bot.</p>`;
   if (gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
