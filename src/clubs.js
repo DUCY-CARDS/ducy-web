@@ -413,25 +413,26 @@ let closingTable = null;
 function tablesHtml() {
   const tables = openTables(club);
   const counts = seatedCounts();
-  let h = `<h3>Tables${tables.length ? ` (${tables.length})` : ''}</h3>`;
+  let h = '<h2>Tables</h2>';
   if (tables.length) {
-    h += '<ul class="cl-list">';
+    // A card per table (#225), cream while anyone's playing at it.
+    h += '<ul class="cl-tables cl-tcards">';
     for (const t of tables) {
-      h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${counts[t.id] || 0}/${t.seats} seated</span>`;
+      const n = counts[t.id] || 0;
+      h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span><span class="cl-tcard-meta">Buy-in ${t.minBB}–${t.maxBB} big blinds</span></span>`;
       if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
       else if (closingTable === t.id) {
         h += `<span class="cl-confirm">Close ${esc(t.name)}? Everyone at it is cashed out at the end of the hand, back to their balance.`;
         h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close it</button><button class="btn-small" data-cl="close-table-no">Keep it open</button></span>`;
       } else h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
-      if (seated.length) h += `<span class="pl-desc cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
+      if (seated.length) h += `<span class="cl-tcard-meta cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
       h += '</li>';
     }
     h += '</ul>';
   } else if (tableForm !== true) h += '<p class="pl-meta">No tables yet: open one, then send players the invite link.</p>';
   h += tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
-  // Players need the link to get here (#186).
-  h += inviteRowHtml();
+  // The invite link is in Manage beside it (#225), and on Members.
   return h;
 }
 
@@ -1427,28 +1428,27 @@ function hostHtml() {
   // on); only reconnecting, or a Reconnect button once another tab has it.
   const badge = remote ? (owner.online ? '' : owner.connected ? CONN.reconnecting : CONN.off)
     : hostOnline && !stalled ? CONN.on : hostNet ? CONN.reconnecting : CONN.off;
-  let h = `<section class="cl-card"><div class="cl-title"><h2>${esc(club.name)}</h2>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
+  // The club you run (V3 Club home, #225): its name on top; the tables and
+  // tournaments, or the part of Manage picked; and beside them, Manage:
+  // what needs you, then members, chips, history, settings and the link.
+  let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(club.name)}</h1>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
   if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
   if (remote && !owner.connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
-  h += '</div>';
+  h += `<span class="cl-home-chips">${members.length} member${members.length === 1 ? '' : 's'}</span></div>`;
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  h += `<p class="pl-meta">${remote ? '' : 'Runs in this tab · '}code ${esc(club.code)} · ${members.length} member${members.length === 1 ? '' : 's'}</p>`;
+  if (!remote) h += `<p class="pl-meta">Runs in this tab · code ${esc(club.code)}</p>`;
   h += backupNagHtml() + checklistHtml();
-  // Four tabs (#152): Tables, Players (with what needs you, #143), Settings
-  // and History.
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
   const helpReqs = openHelp(club);
-  const waiting = pending.length + asking.length + helpReqs.length;
-  const tables = openTables(club);
   syncDash();
-  const sub = (id, label) => `<button class="pl-tab${dashTab === id ? ' on' : ''}" role="tab" aria-selected="${dashTab === id}" data-cl="dash" data-tab="${id}">${label}</button>`;
-  const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
-  const tourneys = (club.tourneys || []).filter(t => t.status === 'scheduled' || t.status === 'running').length;
-  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${tables.length})`)}${sub('tourneys', `Tournaments${tourneys ? ` (${tourneys})` : ''}`)}${sub('players', players)}${sub('accounting', 'Accounting')}${sub('history', 'History')}${sub('settings', 'Settings')}</div>`;
-  if (dashTab === 'tables') h += tablesHtml();
-  else if (dashTab === 'tourneys') h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
-  else if (dashTab === 'settings') h += settingsHtml();
+  h += '<div class="cl-home"><section class="cl-home-main">';
+  const PARTS = {players: 'Members', accounting: 'Chips and ledger', history: 'History', settings: 'Settings'};
+  if (PARTS[dashTab]) h += `<div class="cl-home-title"><h2>${PARTS[dashTab]}</h2><button class="link-btn" data-cl="dash" data-tab="tables">‹ Tables</button></div>`;
+  if (dashTab === 'tables' || dashTab === 'tourneys') {
+    h += tablesHtml();
+    h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
+  } else if (dashTab === 'settings') h += settingsHtml();
   else if (dashTab === 'players') {
     h += helpListHtml(helpReqs);
     if (pending.length || asking.length) {
@@ -1506,7 +1506,35 @@ function hostHtml() {
       h += '</ul></details>';
     }
   }
-  return h + '</section>';
+  h += '</section>';
+  return h + manageSideHtml(pending, asking, helpReqs, members) + '</div>';
+}
+
+// Manage, beside the club you run's tables (#225): who's asking to join or
+// for chips, answered right there (a reason to decline opens Members); help
+// requests; then each part of running the club, and the invite link.
+function manageSideHtml(pending, asking, helpReqs, members) {
+  const start = startingChips();
+  let h = '<aside class="cl-home-side"><h2>Manage</h2><div class="cl-side-card">';
+  for (const m of pending) {
+    const give = start && !m.agentOf;
+    h += `<div class="cl-side-ask"><span><b>${esc(m.name)}</b> asks to join</span><span class="cl-side-btns">`;
+    h += give ? `<button class="btn-small primary" data-cl="approve-give" data-id="${esc(m.id)}" data-amount="${start}" title="Let them in and give them ${chips(start)}, the biggest buy-in at your tables">Let in</button>`
+      : `<button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button>`;
+    h += `<button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></div>`;
+  }
+  for (const m of asking) {
+    h += `<div class="cl-side-ask"><span><b>${esc(m.name)}</b> asks for ${chips(m.request.amount)}</span><span class="cl-side-btns">`;
+    h += `<button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give</button><button class="btn-small" data-cl="deny-there" data-id="${esc(m.id)}">No</button></span></div>`;
+  }
+  const row = (t, label, value) => `<button type="button" class="cl-side-row${dashTab === t ? ' on' : ''}" data-cl="dash" data-tab="${dashTab === t ? 'tables' : t}"><span>${label}</span><b>${value} ›</b></button>`;
+  if (helpReqs.length) h += row('players', 'Help requests', helpReqs.length);
+  h += row('players', 'Members', members.length);
+  h += row('accounting', 'Chips and ledger', '');
+  h += row('history', 'History', '');
+  h += row('settings', 'Settings', '');
+  h += `<button type="button" class="cl-side-row" data-cl="copy"><span>Invite link</span><b>${copied ? 'Copied' : 'Copy'}</b></button>`;
+  return h + '</div><span class="pl-meta">Only you and your game assistants see Manage.</span></aside>';
 }
 
 // The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
@@ -2129,6 +2157,8 @@ async function onClick(e) {
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
   else if (act === 'deny') openChipForm('deny', b.dataset.id);
+  // From Manage (#225): declining, with an optional reason, is on Members.
+  else if (act === 'deny-there') { setDash('players'); openChipForm('deny', b.dataset.id); }
   else if (act === 'ledger-csv') exportLedger();
   else if (act === 'quick') { const f = b.closest('form'); if (f?.elements.amount) f.elements.amount.value = b.dataset.v; }
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
