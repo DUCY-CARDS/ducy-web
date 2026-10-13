@@ -1088,6 +1088,31 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-stats-table td small { color: var(--fg-muted); }
 .pl-stats-table tr.hero th { color: var(--teal); }
 .pl-log { max-height: 140px; overflow-y: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); border-top: 1px solid var(--border); padding-top: 8px; }
+/* Chat at a friends table (play.js): after the table on a phone, floating at
+   the bottom right on a wide screen. */
+.pl-chat { max-width: 980px; margin: 0 auto 20px; padding: 0 20px; box-sizing: border-box; }
+.pl-chat[hidden] { display: none; }
+.pl-chat-head { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; padding: 8px 12px; font-size: 13px; font-weight: 600; color: var(--fg-strong); background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; }
+.pl-chat-head::after { content: ' ▾'; color: var(--fg-muted); }
+.pl-chat.shut .pl-chat-head { border-radius: var(--radius); }
+.pl-chat.shut .pl-chat-head::after { content: ' ▴'; }
+.pl-chat-head.unread { border-color: var(--teal); color: var(--teal); }
+.pl-chat-head:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.pl-chat-body { border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); background: var(--bg-raised); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.pl-chat.shut .pl-chat-body { display: none; }
+.pl-chat-log { height: 140px; overflow-y: auto; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 2px; }
+.pl-chat-log b { color: var(--fg-strong); font-weight: 600; }
+.pl-chat-empty { color: var(--fg-muted); }
+.pl-chat-send { display: flex; gap: 6px; }
+.pl-chat-send input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg); }
+.pl-chat-note { margin: 0; font-size: 12px; color: var(--amber); }
+@media (min-width: 1100px) {
+  .pl-chat { position: fixed; right: 16px; bottom: 16px; z-index: 30; width: 300px; margin: 0; padding: 0; box-shadow: 0 6px 24px rgba(0,0,0,0.2); }
+  .pl-chat-send input { font-size: 13px; }
+  /* Room to scroll the table's last controls clear of the panel. */
+  body.pl-chat-on .pl-play { padding-bottom: 280px; }
+  body.pl-chat-on.pl-chat-shut .pl-play { padding-bottom: 64px; }
+}
 .pl-multi { border-top: 1px solid var(--border); padding-top: 14px; }
 .pl-multi h2 { font-size: 16px; color: var(--fg-strong); margin: 0; }
 .pl-text { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg); width: 180px; max-width: 100%; }
