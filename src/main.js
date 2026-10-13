@@ -662,6 +662,31 @@ function render() {
   }
   renderBoard();
   updateRandomPlayersUI();
+  renderSide();
+}
+
+// Who's ahead (V3 Equity, #225): beside the table, each seat's hand and
+// equity as a bar, the leader's in red.
+function renderSide() {
+  const side = document.getElementById('eq-side');
+  if (!side) return;
+  const be = bestEq();
+  const hand = s => (s.mode === 'cards' ? s.cards.filter(Boolean).map(c => { const d = cd(c); return `<span class="eq-c ${d.cl}">${d.t}</span>`; }).join(' ') || 'No cards yet'
+    : s.mode === 'random' ? 'Random' : 'Range');
+  let h = '<span class="eq-side-title">Who’s ahead</span>';
+  const rows = seats.map((s, i) => [s, i]).filter(([s]) => s);
+  if (rows.length < 2) h += '<p class="eq-side-empty">Add two hands, or ranges, to see who’s ahead.</p>';
+  else {
+    h += '<div class="eq-bars">';
+    for (const [s, i] of rows) {
+      const eq = calced && eqs[i] != null ? eqs[i] : null;
+      h += `<div class="eq-row"><b>Seat ${i + 1} · ${hand(s)}</b><span>${eq == null ? '–' : (eq * 100).toFixed(settings.decimals) + '%'}</span></div>`;
+      h += `<div class="eq-bar"><div class="${eq != null && eq >= be - 0.001 ? 'lead' : ''}" style="width:${eq == null ? 0 : (eq * 100).toFixed(2)}%"></div></div>`;
+    }
+    h += '</div>';
+  }
+  h += `<p class="eq-side-hint">Tap a seat to add a hand or a range. Up to ${g().max} players.</p>`;
+  side.innerHTML = h;
 }
 
 function renderBoard() {

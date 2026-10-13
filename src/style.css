@@ -75,7 +75,7 @@ body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice {
 }
 .trainer { display: none; }
 body.mode-trainer .trainer { display: block; }
-body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
+body.mode-trainer :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 
 /* Range trainer */
 .tr-wrap { max-width: 880px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
@@ -721,7 +721,7 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 /* The Play section (#138): tabs, then each tab's parts (play-section.js). */
 .psec { display: none; }
 body.mode-play .psec { display: block; }
-body.mode-play :is(.toolbar, .table-wrap) { display: none; }
+body.mode-play :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .psec [hidden] { display: none !important; }
 .pt-tabs { max-width: 980px; margin: 0 auto; padding: 8px 20px 0; }
 .pt-tabs .pl-tab { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
@@ -1386,7 +1386,7 @@ time[title] { cursor: help; }
   color-scheme: dark;
 }
 body.mode-v3 { background: #1d3a2c; }
-body.mode-v3 :is(.topbar, .sub-tabs, .toolbar, .table-wrap, .trainer, .psec, .beta-notice) { display: none !important; }
+body.mode-v3 :is(.topbar, .sub-tabs, .toolbar, .table-wrap, .eq-layout, .trainer, .psec, .beta-notice) { display: none !important; }
 .v3 {
   min-height: 100vh; background: radial-gradient(ellipse at 50% 0%, var(--v3-felt-hi) 0%, var(--v3-felt) 65%);
   color: var(--v3-cream); font-family: var(--v3-text); padding: 28px 20px 64px;
@@ -1624,6 +1624,29 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-tcard .cl-acts { margin-left: auto; display: flex; gap: 6px; }
 .cl-home-head .cl-badge { align-self: center; }
 @media (max-width: 640px) { .cl-home-name { font-size: 30px; } .cl-home-chips { margin-left: 0; } }
+
+/* Equity (main.js, V3 #225): round game buttons, cream when picked, and Who's
+   ahead beside the table (under it on a phone). */
+.toolbar { max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
+.game-btn { border-radius: 999px; border: 0; background: #2c5a43; color: #f3e7c9; padding: 9px 16px; font-size: 14px; }
+.game-btn:hover { color: #fff; filter: brightness(1.1); }
+.game-btn.on { background: #f3e7c9; color: #1d3a2c; }
+.game-group .card-count { margin-top: 2px; }
+.eq-layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; justify-content: center; max-width: 1180px; margin: 0 auto; padding: 0 16px 24px; box-sizing: border-box; }
+.eq-layout .table-wrap { flex: 999 1 560px; min-width: 0; margin: 4px 0 0; }
+.eq-side { flex: 1 1 260px; max-width: 360px; background: #f3e7c9; color: #1d3a2c; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 8px 0 #0f2219; margin-top: 24px; }
+.eq-side-title { font: 400 24px var(--font-display); }
+.eq-side-empty, .eq-side-hint { margin: 0; font-size: 14px; color: #5d6b55; }
+.eq-bars { display: flex; flex-direction: column; gap: 8px; }
+.eq-row { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; }
+.eq-row span { font-family: var(--font-data); font-weight: 600; }
+.eq-c { font-weight: 700; }
+.eq-c.s-s { color: #12261c; } .eq-c.s-h { color: #c8403a; } .eq-c.s-d { color: #2463c9; } .eq-c.s-c { color: #1f8a40; }
+html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.s-c { color: #12261c; }
+.eq-bar { height: 12px; background: #ddd0ac; border-radius: 99px; overflow: hidden; margin-bottom: 4px; }
+.eq-bar > div { height: 100%; background: #1d3a2c; transition: width 0.3s; }
+.eq-bar > div.lead { background: #c9472f; }
+@media (max-width: 640px) { .eq-layout { padding: 0 12px 20px; } .eq-side { max-width: none; margin-top: 0; } .game-btn { padding: 8px 13px; font-size: 13px; } }
 
 /* Start a game (play.js, V3 #225): one cream form, the invite panel beside it. */
 .sg-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
