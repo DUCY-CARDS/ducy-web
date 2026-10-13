@@ -23,7 +23,7 @@
 // tournament (`held`); a refund moves them back; prizes pay out what's held
 // plus the added chips, which are issued then.
 
-import { GAMES, defaultSeats, maxSeats } from './club-tables.js';
+import { GAMES, aGame, defaultSeats, maxSeats } from './club-tables.js';
 import { chipText } from './chip-format.js';
 
 export const MAX_TOURNEY_NAME = 40;
@@ -74,7 +74,7 @@ export function newTourney(club, s = {}, now = Date.now()) {
   if (!whole(minPlayers) || minPlayers < 2 || !whole(maxPlayers) || maxPlayers < minPlayers || maxPlayers > MAX_ENTRIES) throw new Error('At least 2 players, and a maximum no smaller than the minimum.');
   const most = maxSeats(game);
   const tableSize = s.tableSize ?? defaultSeats(game);
-  if (!whole(tableSize) || tableSize < 2 || tableSize > most) throw new Error(`A ${GAMES.find(g => g.id === game).label} table seats 2 to ${most}.`);
+  if (!whole(tableSize) || tableSize < 2 || tableSize > most) throw new Error(`${aGame(game)} table seats 2 to ${most}.`);
   const lateLevel = s.lateLevel ?? 0, maxReentries = s.maxReentries ?? 0;
   if (!whole(lateLevel) || lateLevel < 0 || !whole(maxReentries) || maxReentries < 0) throw new Error('Late registration is up to a level, from 0.');
   const t = {

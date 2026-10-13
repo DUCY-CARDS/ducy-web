@@ -24,10 +24,10 @@ import { chipInput } from './chip-format.js';
 // host picks another.
 export const MAX_SEATS = 9;
 export const GAMES = [
-  {id: 'nlhe', label: 'No-limit Hold’em', short: 'NLH', seats: MAX_SEATS, defaultSeats: 9},
-  {id: 'plo4', label: 'Pot-limit Omaha', short: 'PLO', seats: MAX_SEATS, defaultSeats: 8},
-  {id: 'plo5', label: 'PLO 5-card', short: 'PLO5', seats: 8, defaultSeats: 6},
-  {id: 'plo6', label: 'PLO 6-card', short: 'PLO6', seats: 6, defaultSeats: 6},
+  {id: 'nlhe', label: 'Hold’em', short: 'NLH', seats: MAX_SEATS, defaultSeats: 9},
+  {id: 'plo4', label: 'Omaha 4', short: 'PLO', seats: MAX_SEATS, defaultSeats: 8},
+  {id: 'plo5', label: 'Omaha 5', short: 'PLO5', seats: 8, defaultSeats: 6},
+  {id: 'plo6', label: 'Omaha 6', short: 'PLO6', seats: 6, defaultSeats: 6},
 ];
 export const MAX_TABLE_NAME = 30;
 export const maxSeats = game => GAMES.find(g => g.id === game)?.seats ?? MAX_SEATS;
@@ -61,7 +61,7 @@ export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB 
   if (!whole(minBB) || !whole(maxBB) || maxBB < minBB) throw new Error('The maximum buy-in must be at least the minimum.');
   const most = maxSeats(game);
   if (!Number.isSafeInteger(seats) || seats < 2 || seats > most) {
-    throw new Error(`A ${GAMES.find(g => g.id === game).label} table seats 2 to ${most}.`);
+    throw new Error(`${aGame(game)} table seats 2 to ${most}.`);
   }
   if (!Number.isSafeInteger(turnSecs) || turnSecs < 0) throw new Error('Pick a turn time.');
   if (!Number.isSafeInteger(sitOutMins) || sitOutMins < 0) throw new Error('Pick a sit-out limit.');
@@ -83,6 +83,8 @@ export const tableById = (club, id) => (club.tables || []).find(t => t.id === id
 export const openTables = club => (club.tables || []).filter(t => t.status !== 'closed');
 export const limits = t => ({min: t.minBB * t.bb, max: t.maxBB * t.bb});
 export const gameLabel = id => GAMES.find(g => g.id === id)?.label || id;
+// "A Hold’em", "An Omaha 6": the game with its article, to start a sentence.
+export const aGame = id => `${/^[AEIOU]/i.test(gameLabel(id)) ? 'An' : 'A'} ${gameLabel(id)}`;
 
 // What members are told about the tables (no one's chips).
 export function tablesBody(club, seatedCounts = {}) {

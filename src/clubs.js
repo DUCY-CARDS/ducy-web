@@ -1181,7 +1181,7 @@ function viewHtml() {
   const at = shownClub();
   if (at === 'own' && own) return msg + hostHtml() + footHtml();
   const mem = at && memberships.find(m => m.code === at && m.status === 'member');
-  if (mem) return msg + (helps(mem) ? membershipsHtml('clubs', mem.code) : '') + membershipsHtml('play', mem.code) + footHtml();
+  if (mem) return msg + memberHomeHtml(mem, helps(mem) ? manageHtml(mem) : '') + footHtml();
   return msg + clubListHtml() + footHtml();
 }
 
@@ -1706,56 +1706,97 @@ function clubNameHtml(m) {
   return h;
 }
 
-function membershipsHtml(mode, only = '') {
-  const list = memberships.filter(m => (mode === 'play' ? m.status === 'member' : helps(m)) && (!only || m.code === only));
-  if (!list.length) return '';
-  // One club's page (#225) is titled with its name; under the tools of one
-  // you help run, your own chips and tables are "You here".
-  const title = mode === 'play' ? (only && helps(list[0]) ? 'You here' : only ? list[0].name || list[0].code : 'Your clubs')
-    : list.length === 1 ? list[0].name || list[0].code : 'Clubs you help run';
-  let h = `<section class="cl-card"><h2>${esc(title)}</h2>`;
-  h += '<ul class="cl-list">';
-  for (const m of list) {
-    const n = playerNets.get(m.code);
-    const live = connText(n, mode === 'play' ? 'Your seat and chips are kept.' : 'Your tools work again once it’s back.');
-    h += `<li><span class="cl-name">${esc(m.name || m.code)}</span>`;
-    if (mode === 'clubs') h += `<span class="cl-status cl-member">${m.role === 'assistant' ? 'Game assistant' : 'Agent'}</span>`;
-    h += `<span class="pl-meta cl-conn">${live}</span><span class="cl-acts">`;
-    if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
-    if (mode === 'play') h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
-    h += '</span>';
-    if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
-    if (mode === 'clubs') {
-      if (m.role === 'assistant') h += adminHtml(m, !!n?.hostHere);
-      if (m.agent === 'yes') h += agentHtml(m, !!n?.hostHere);
-      h += '</li>';
-      continue;
-    }
-    h += accountHtml(m, !!n?.hostHere, !!n?.online);
-    if (m.role === 'offered') {
-      h += `<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>.</span>${roleHtml('assistant')}`;
-      h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
-    }
-    if (m.agent === 'offered') {
-      h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>.</span>${roleHtml('agent', m.creditLimit || 0)}`;
-      h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${esc(m.code)}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${esc(m.code)}">No thanks</button></span></div>`;
-    }
-    h += memberHelpHtml(m, !!n?.hostHere);
-    h += clubNameHtml(m);
-    if (helps(m)) h += `<p class="pl-meta">You help run this club: its tools are above.</p>`;
-    h += '</li>';
+// A club you help run: Manage, with the game assistant's or agent's tools.
+function manageHtml(m) {
+  const hostHere = !!playerNets.get(m.code)?.hostHere;
+  let h = `<section class="cl-card cl-manage"><div class="cl-title"><h2>Manage</h2><span class="cl-status cl-member">${m.role === 'assistant' ? 'Game assistant' : 'Agent'}</span></div>`;
+  if (m.role === 'assistant') h += adminHtml(m, hostHere);
+  if (m.agent === 'yes') h += agentHtml(m, hostHere);
+  return h + '</section>';
+}
+
+// A club's page for its member (V3 Club home, #225): the club's name and
+// your chips on top (then Manage, `manage`, for one you help run); its
+// tables and tournaments, or your chips or hands when picked; and beside
+// them, You here: asking for chips, your history, help and your name.
+function memberHomeHtml(m, manage = '') {
+  const n = playerNets.get(m.code);
+  const hostHere = !!n?.hostHere, online = !!n?.online;
+  const code = esc(m.code);
+  const mismatch = m.entries?.length && m.ledgerOk === false;
+  let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(m.name || m.code)}</h1>`;
+  h += `<span class="cl-home-chips"${m.entries?.length && !mismatch ? ' title="Your copy of the ledger adds up to this balance"' : ''}>Your chips ${chips(m.balance)}</span></div>`;
+  if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
+  if (m.error) h += `<p class="pl-desc pl-neterr cl-err">${esc(m.error)}</p>`;
+  if (mismatch) h += '<p class="pl-desc pl-neterr">Your copy of the ledger doesn’t add up to the balance the host reports.</p>';
+  if (m.role === 'offered') {
+    h += `<div class="cl-account cl-offer"><span>The host asked you to be a <b>game assistant</b>.</span>${roleHtml('assistant')}`;
+    h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${code}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${code}">No thanks</button></span></div>`;
   }
-  h += '</ul></section>';
-  return h;
+  if (m.agent === 'offered') {
+    h += `<div class="cl-account cl-offer"><span>The host asked you to be an <b>agent</b>.</span>${roleHtml('agent', m.creditLimit || 0)}`;
+    h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${code}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${code}">No thanks</button></span></div>`;
+  }
+  h += manage;
+  const tab = memberTab(m.code);
+  h += '<div class="cl-home"><section class="cl-home-main">';
+  if (tab === 'chips' || tab === 'history') {
+    h += `<div class="cl-home-title"><h2>${tab === 'chips' ? 'Your chips' : 'Your hands'}</h2><button class="link-btn" data-cl="mtab" data-code="${code}" data-tab="tables">‹ Tables</button></div>`;
+    if (tab === 'chips') {
+      if (m.entries?.length) {
+        h += '<ul class="cl-ledger">';
+        for (const e of [...m.entries].reverse().slice(0, 50)) {
+          const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin'].includes(e.kind) ? '−' : '+';
+          h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+        }
+        h += '</ul>';
+      } else h += '<p class="pl-meta">No chips in or out yet.</p>';
+    } else {
+      h += handsHtml(m.code, me.id, 'Your hands');
+      const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
+      h += resultsHtml(m.entries || [], null, tableNames);
+    }
+  } else {
+    h += '<h2>Tables</h2>' + memberTablesHtml(m, hostHere);
+    const tours = memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null});
+    if (tours) h += '<h2>Tournaments</h2>' + tours;
+  }
+  h += '</section><aside class="cl-home-side"><h2>You here</h2><div class="cl-side-card">';
+  // New and without chips: the first step, with the biggest buy-in at the
+  // club's tables to ask for (#185).
+  const fresh = !m.request && !m.balance && !m.entries?.length;
+  const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
+  if (fresh) h += `<p class="cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
+  if (m.request) {
+    h += `<p class="cl-side-note">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host. `;
+    h += `<button class="btn-small" data-cl="cancel-ask" data-code="${code}"${online ? '' : ' disabled title="Can’t reach the club right now"'}>Cancel</button></p>`;
+  } else {
+    if (m.cancelQueued) h += '<p class="cl-side-note">You cancelled your request. The host will see that when they’re back.</p>';
+    // How your last request went, for a week (#188).
+    const a = m.answer;
+    if (a && Date.now() - a.at < 7 * 24 * 3600e3) {
+      h += a.outcome === 'granted'
+        ? `<p class="cl-side-note cl-answer">You asked for ${chips(a.asked)} and were given ${chips(a.given)} (${when(a.at)}).</p>`
+        : `<p class="cl-side-note cl-answer">Your request for ${chips(a.asked)} was declined${a.note ? `: “${esc(a.note)}”` : ''} (${when(a.at)}).</p>`;
+    }
+    h += `<div class="cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" aria-label="Chips to ask for" data-ask-amt="${code}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`;
+    h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" aria-label="Note" data-ask-note="${code}">`;
+    h += `<button class="btn-small primary" data-cl="ask" data-code="${code}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>Ask for chips</button></div>`;
+  }
+  const row = (t, label, value) => `<button type="button" class="cl-side-row${tab === t ? ' on' : ''}" data-cl="mtab" data-code="${code}" data-tab="${tab === t ? 'tables' : t}"><span>${label}</span><b>${value} ›</b></button>`;
+  h += row('chips', 'Chips history', m.entries?.length || 0);
+  h += row('history', 'Your hands', '');
+  h += '</div>';
+  h += memberHelpHtml(m, hostHere) + clubNameHtml(m);
+  h += `<button class="link-btn cl-forget" data-cl="forget" data-code="${code}">Forget this club</button>`;
+  return h + '</aside></div>';
 }
 
 const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize'};
 
-// A member's chips in a club: balance, a request, and their own ledger copy.
-// A member's club card (#193): the balance and anything that needs them
-// on top, then tabs like the host's: Tables · Tournaments · Chips · History.
-// The tab is remembered per club.
-const MEMBER_TABS = ['tables', 'tourneys', 'chips', 'history'];
+// What a member's club page shows in its main column (#193, #225): the
+// tables and tournaments, or your chips history or hands. Remembered per club.
+const MEMBER_TABS = ['tables', 'chips', 'history'];
 function memberTab(code) {
   let t = '';
   try { t = localStorage.getItem(`ducyMemberTab:${code}`) || ''; } catch {}
@@ -1764,61 +1805,6 @@ function memberTab(code) {
 function setMemberTab(code, t) {
   if (!MEMBER_TABS.includes(t)) return;
   try { localStorage.setItem(`ducyMemberTab:${code}`, t); } catch {}
-}
-
-// `online`: connected to the relay, which holds messages for the host while
-// they're away (so a request can be cancelled then, #188).
-function accountHtml(m, hostHere, online = hostHere) {
-  let h = '<div class="cl-account">';
-  h += `<div class="cl-balance"><span class="cl-chips">${chips(m.balance)} chips</span>`;
-  if (m.entries?.length) h += m.ledgerOk === false
-    ? '<span class="pl-neterr" title="Your copy of the ledger doesn’t add up to the balance the host reports">✗ doesn’t match your records</span>'
-    : '<span class="pl-meta" title="Your copy of the ledger adds up to this balance">✓ matches your records</span>';
-  h += '</div>';
-  // New and without chips: the first step, with the biggest buy-in at the
-  // club's tables to ask for (#185), above the tabs.
-  const fresh = !m.request && !m.balance && !m.entries?.length;
-  const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
-  const askForm = `<div class="pl-row cl-ask"><input class="pl-text" type="number" min="0.01" step="${CHIP_STEP}" placeholder="Chips" data-ask-amt="${esc(m.code)}"${suggest ? ` value="${esc(chipInput(suggest))}"` : ''}>`
-    + `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" data-ask-note="${esc(m.code)}">`
-    + `<button class="btn-small primary" data-cl="ask" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>Ask for chips</button></div>`;
-  if (fresh) h += `<p class="pl-desc cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>${askForm}`;
-  // A request waiting shows whichever tab is open.
-  if (m.request) {
-    h += `<div class="pl-row"><span class="pl-meta">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the host.</span>`;
-    h += `<button class="btn-small" data-cl="cancel-ask" data-code="${esc(m.code)}"${online ? '' : ' disabled title="Can’t reach the club right now"'}>Cancel</button></div>`;
-  } else if (m.cancelQueued) {
-    h += '<p class="pl-meta">You cancelled your request. The host will see that when they’re back.</p>';
-  }
-  const tab = memberTab(m.code);
-  const live = (m.tourneys || []).filter(t => t.status === 'scheduled' || t.status === 'running').length;
-  const sub = (id, label) => `<button class="pl-tab${tab === id ? ' on' : ''}" role="tab" aria-selected="${tab === id}" data-cl="mtab" data-code="${esc(m.code)}" data-tab="${id}">${label}</button>`;
-  h += `<div class="pl-tabs cl-dash-tabs cl-member-tabs" role="tablist">${sub('tables', `Tables${m.tables?.length ? ` (${m.tables.length})` : ''}`)}${sub('tourneys', `Tournaments${live ? ` (${live})` : ''}`)}${sub('chips', 'Chips')}${sub('history', 'History')}</div>`;
-  if (tab === 'tables') h += memberTablesHtml(m, hostHere);
-  else if (tab === 'tourneys') h += memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null}) || '<p class="pl-meta cl-empty">No tournaments yet: when the host schedules one, you register for it here.</p>';
-  else if (tab === 'chips') {
-    // How your last request went, for a week (#188).
-    const a = m.answer;
-    if (a && Date.now() - a.at < 7 * 24 * 3600e3) {
-      h += a.outcome === 'granted'
-        ? `<p class="pl-meta cl-answer">You asked for ${chips(a.asked)} and were given ${chips(a.given)} (${when(a.at)}).</p>`
-        : `<p class="pl-meta cl-answer">Your request for ${chips(a.asked)} was declined${a.note ? `: “${esc(a.note)}”` : ''} (${when(a.at)}).</p>`;
-    }
-    if (!m.request && !fresh) h += askForm;
-    if (m.entries?.length) {
-      h += `<h3>History (${m.entries.length})</h3><ul class="cl-ledger">`;
-      for (const e of [...m.entries].reverse().slice(0, 50)) {
-        const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin'].includes(e.kind) ? '−' : '+';
-        h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
-      }
-      h += '</ul>';
-    } else h += '<p class="pl-meta">No chips in or out yet.</p>';
-  } else {
-    h += handsHtml(m.code, me.id, 'Your hands');
-    const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
-    h += resultsHtml(m.entries || [], null, tableNames);
-  }
-  return h + '</div>';
 }
 
 // A member's Tables tab: their last session while it's recent (#187), and
@@ -1832,20 +1818,24 @@ function memberTablesHtml(m, hostHere) {
     h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
   }
   if (!m.tables?.length) return h + `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`;
-  h += '<ul class="cl-tables">';
+  // A card per table (V3 Club home, #225): cream when there's a seat for you.
+  h += '<ul class="cl-tables cl-tcards">';
   for (const t of m.tables) {
     const here = seatedAt?.code === m.code && seatedAt.table === t.id;
     // The buy-in you'd need here, the rathole rule included (#187).
     const r = buyInRange(t, m.entries || [], m.rathole || 0);
-    h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${chips(r.min)}–${chips(r.max)} · ${t.taken}/${t.seats} seated</span>`;
-    if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
+    const free = t.seats - t.taken;
     // Why you can't sit, when you can't (#187).
     const atOther = seatedAt && !here ? (seatedAt.code === m.code ? (m.tables.find(x => x.id === seatedAt.table)?.name || 'another table') : 'another club’s table') : '';
-    const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : t.taken >= t.seats ? `Full (${t.taken}/${t.seats})` : '';
+    const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : free <= 0 ? 'Full' : '';
+    h += `<li class="cl-tcard${here || !why ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
+    h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+    h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
+    if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
     if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
     else {
-      h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit</button>`;
-      if (why) h += `<span class="pl-meta cl-why">${esc(why)}</span>`;
+      if (free > 0 || why !== 'Full') h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit down</button>`;
+      if (why && why !== 'Full') h += `<span class="pl-meta cl-why">${esc(why)}</span>`;
       // Full: no need to keep checking (#187).
       if (t.taken >= t.seats) {
         const k = `data-code="${esc(m.code)}" data-table="${esc(t.id)}"`;
@@ -2529,7 +2519,7 @@ function updateCalls() {
 function answerCall(c) {
   if (c.kind === 'started' && !seatedAt) { sitAt(c.mem.code, `tourney:${c.t.id}`); return; }
   // The club's Tournaments tab (#193), on Clubs (#209).
-  setMemberTab(c.mem.code, 'tourneys');
+  setMemberTab(c.mem.code, 'tables');
   location.hash = clubHash(c.mem.code);
   render();
 }
