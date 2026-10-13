@@ -34,6 +34,7 @@ import {
   BLINDS, START_BB, WINS_TO_TAKE, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
 } from './ladder.js';
+import { SPADE_PATH } from './home.js';
 
 let worker = null;
 let nextId = 0;
@@ -435,47 +436,52 @@ function ladderKeep(s) {
   saveProgress(ladderProgress);
 }
 
+// Climb the ladder (V3, #225): the next series on a cream card, then every
+// rung as a tile with a spade, filled for the ones beaten.
 function ladderHtml() {
   const rungs = ladderRungs();
   const p = ladderProgress;
   const level = Math.min(p.level, rungs.length - 1);
   const opp = rungs[level];
   const info = botInfo(opp);
-  let h = '<div class="pl-head"><h1>Heads-up ladder</h1>';
-  h += `<p>Climb from the easiest bot to the hardest, one heads-up series at a time. Win ${WINS_TO_TAKE} games of 3 to move up a rung; lose the series and you drop one.</p></div>`;
+  let h = `<div class="pl-head"><h1>Climb the ladder</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, lose to drop.</p></div>`;
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
-  // The next fight.
+  // The next series.
   const record = p.record[opp];
   const known = ladderRevealed(p, rungs, level, level);
-  h += '<section class="cl-card ld-next">';
-  h += `<div class="ld-who">${known ? ladderAvatar(opp) : mysteryAvatar}<div><span class="pl-label">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
-  h += known
-    ? `<h2>${esc(info.name)}</h2><p class="pl-desc">${esc(info.description)}</p></div></div>`
-    : '<h2>A new opponent</h2><p class="pl-desc">You’ll find out who when you sit down.</p></div></div>';
   const game = p.wins + p.losses + 1;
-  const them = known ? esc(info.name) : 'them';
-  h += `<p class="ld-score"><b>Game ${game} of 3</b> · you ${p.wins} – ${p.losses} ${them}${record ? ` · earlier series against ${esc(info.name)}: ${record.won} won, ${record.lost} lost` : ''}</p>`;
+  const them = known ? esc(info.name) : 'Them';
+  h += '<section class="ld-next">';
+  h += `<div class="ld-who">${known ? ladderAvatar(opp) : mysteryAvatar}<div><span class="ld-rungno">Rung ${level + 1} of ${rungs.length}${level === rungs.length - 1 ? ' · the champion' : ''}</span>`;
+  h += known
+    ? `<h2>${esc(info.name)}</h2><p class="ld-desc">${esc(info.description)}</p></div></div>`
+    : '<h2>A new opponent</h2><p class="ld-desc">You’ll see who when you sit down.</p></div></div>';
+  h += `<div class="ld-series"><span class="ld-game">Game ${game} of 3</span><span class="ld-tally"><b>${p.wins}</b> – <b>${p.losses}</b></span><span class="ld-sides">You · ${them}</span>`;
+  if (record) h += `<span class="ld-before">Before: ${record.won} won, ${record.lost} lost</span>`;
+  h += '</div>';
   const paused = pausedGame(p);
-  if (paused) h += `<p class="pl-desc">Game ${game} is paused: you have ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}.</p>`;
-  if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
+  if (paused) h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}.</p>`;
+  if (setupNote) h += `<p class="ld-desc">${esc(setupNote)}</p>`;
   const play = paused ? `Resume game ${game}` : game === 1 ? 'Start the series' : `Play game ${game}`;
-  h += `<div class="pl-actions"><button class="tr-start" data-act="ladder-play">${play}</button></div>`;
-  h += `<p class="pl-meta">No-limit Hold’em freezeout: you each start with ${START_BB} BB and no rebuys; the blinds stay at ${blindsText(BLINDS)} the whole game, and all-ins run once. You can leave a game and pick it up later with the same chips; leaving during a hand folds it.</p>`;
+  h += `<div class="ld-go"><button class="tr-start" data-act="ladder-play">${play}</button>`;
+  h += `<span class="ld-rules">Hold’em, ${START_BB} big blinds each, blinds ${blindsText(BLINDS)}, no rebuys.</span></div>`;
   h += '</section>';
-  // The ladder, top to bottom.
-  h += '<ol class="ld-rungs" aria-label="The ladder, hardest first">';
-  for (let i = rungs.length - 1; i >= 0; i--) {
+  // Every rung, easiest first: a filled spade for each one beaten.
+  h += '<ol class="ld-rungs" aria-label="The ladder, easiest first">';
+  for (let i = 0; i < rungs.length; i++) {
     const id = rungs[i], r = p.record[id];
     const cls = i === level ? 'here' : i < level ? 'below' : i <= p.best ? 'reached' : 'ahead';
-    const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : '';
+    const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : 'Ahead';
     const shown = ladderRevealed(p, rungs, i, level);
     const name = shown ? esc(botInfo(id).name) : '???';
-    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''}><span class="ld-num">${i + 1}</span>${shown ? ladderAvatar(id) : mysteryAvatar}<span class="ld-name">${name}${id === GTO.id ? ' <span class="pl-meta">champion</span>' : ''}</span>`;
-    h += `<span class="ld-tag">${tag}${r ? `<span class="pl-meta"> ${r.won}–${r.lost}</span>` : ''}</span></li>`;
+    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''} title="${name}: ${tag}${r ? ` (${r.won}–${r.lost})` : ''}">`;
+    h += `<svg class="ld-spade" viewBox="0 0 32 32" width="18" height="18" aria-hidden="true"><path d="${SPADE_PATH}"/></svg>`;
+    h += `${shown ? ladderAvatar(id) : mysteryAvatar}<span class="ld-num">${i + 1}</span><span class="ld-name">${name}</span></li>`;
   }
   h += '</ol>';
-  if (p.titles) h += `<p class="pl-meta">Champion ${p.titles} time${p.titles === 1 ? '' : 's'}.</p>`;
-  h += '<div class="pl-actions"><button class="btn-small" data-act="ladder-reset">Start the ladder over</button></div>';
+  h += '<div class="ld-foot">';
+  if (p.titles) h += `<span class="pl-meta">Champion ${p.titles} time${p.titles === 1 ? '' : 's'}.</span>`;
+  h += '<button class="link-btn" data-act="ladder-reset">Start the ladder over</button></div>';
   return h;
 }
 

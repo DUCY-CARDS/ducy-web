@@ -206,28 +206,29 @@ const knownName = () => tableName() || memberName();
 function renderJoin() {
   const link = linked();
   const name = knownName();
+  // V3 (#225): a cream form like Start a game's.
   let h = '<div class="pl-wrap"><div class="pl-head"><h1>Join a game</h1>';
-  h += '<p>Type the code someone gave you, or paste their link.</p></div>';
+  h += '<p>A code or a link from a friend.</p></div>';
   if (!relayUrl()) {
     joinRoot.innerHTML = h + '<p class="pl-meta">Games with other people need ducy’s relay, which isn’t set up here.</p></div>';
     joinRoot.hidden = false;
     return;
   }
   const club = link?.kind === 'club' ? link.inv : null;
-  h += '<form class="pj-form" data-joinform>';
+  h += '<form class="pj-form sg-form" data-joinform>';
   // An invite says what you're joining, and who sent it (#185); joining is
   // always your click.
   if (club) {
-    h += `<div class="pj-invite"><span class="pl-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
-    h += `<span class="pl-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
-    h += '<p class="pl-desc">Ask to join: the host sees your name and lets you in, then gives you chips (play money) to play at the club’s tables.</p></div>';
+    h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
+    h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
+    h += '<p class="pj-meta">The host sees your name, lets you in, and gives you chips (play money) for the club’s tables.</p></div>';
   }
-  h += `<label class="pj-field"${club ? ' hidden' : ''}><span class="pl-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH, or a link" value="${esc(link?.text || '')}"></label>`;
-  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="pl-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
-  h += `<div class="pl-actions"><button class="tr-start" type="submit">${club ? 'Ask to join' : 'Join'}</button></div>`;
-  if (name) h += `<p class="pl-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
+  h += `<label class="pj-field"${club ? ' hidden' : ''}><span class="sg-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" value="${esc(link?.text || '')}"></label>`;
+  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
+  if (joinNote) h += `<p class="pl-neterr">${esc(joinNote)}</p>`;
+  h += `<button class="tr-start sg-open" type="submit">${club ? 'Ask to join' : 'Join'}</button>`;
+  if (name) h += `<p class="pj-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
   h += '</form>';
-  if (joinNote) h += `<p class="pl-desc pl-neterr">${esc(joinNote)}</p>`;
   h += '</div>';
   joinRoot.innerHTML = h;
   joinRoot.hidden = false;
