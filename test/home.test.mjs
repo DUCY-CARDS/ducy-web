@@ -1,0 +1,62 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { HUBS, crumbFor, hubData, hubHtml } from '../src/home.js';
+import { ORDER } from '../src/ladder.js';
+
+const store = (items = {}) => ({ getItem: k => (k in items ? items[k] : null), setItem() {} });
+
+test('every older page has a breadcrumb back to Study or Play', () => {
+  assert.deepEqual(crumbFor('equity'), [{href: '#study', label: 'Study'}, {href: null, label: 'Equity'}]);
+  assert.deepEqual(crumbFor('trainer').map(c => c.label), ['Study', 'Pre-flop ranges']);
+  assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Study', 'Challenge the Regulars', 'Climb the ladder']);
+  assert.deepEqual(crumbFor('ladder')[1].href, '#challenge');
+  for (const p of ['host', 'join', 'clubs', 'practice']) assert.equal(crumbFor(p)[0].href, '#lobby', p);
+  assert.deepEqual(crumbFor('nowhere'), []);
+});
+
+test('at a table, the breadcrumb says Table under Play', () => {
+  assert.deepEqual(crumbFor('play', 'train').map(c => c.label), ['Play', 'Table']);
+  assert.deepEqual(crumbFor('play', 'clubs').map(c => c.label), ['Play', 'Table']);
+  // Not seated: the Regulars' setup.
+  assert.deepEqual(crumbFor('play', null).map(c => c.label), ['Play', 'Play the Regulars']);
+});
+
+test('hub data starts at nothing mastered and the bottom rung', () => {
+  const d = hubData(store());
+  assert.equal(d.mastered, 0);
+  assert.equal(d.skills, 4 * 7);
+  assert.equal(d.rung, 1);
+  assert.equal(d.rungs, ORDER.length + 1);
+});
+
+test('hub data counts mastered skills and the ladder rung', () => {
+  const d = hubData(store({
+    ducyTrainerProgress: JSON.stringify({'holdem:20': {score: 100, best: 100, answered: 60}, 'omaha:4:10': {score: 40, answered: 12}}),
+    ducyLadder: JSON.stringify({v: 1, level: 6, record: {}}),
+  }));
+  assert.equal(d.mastered, 1);
+  assert.equal(d.rung, 7);
+});
+
+test('the landing page has only Study and Play', () => {
+  const h = hubHtml('home', hubData(store()));
+  assert.match(h, /Pull up a chair\./);
+  const links = [...h.matchAll(/href="(#[a-z]+)"/g)].map(m => m[1]);
+  assert.deepEqual(links, ['#study', '#lobby']);
+});
+
+test('each hub links where it should', () => {
+  const d = hubData(store());
+  const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
+  assert.deepEqual(links('study'), ['#', '#equity', '#trainer', '#challenge']);
+  assert.deepEqual(links('challenge'), ['#', '#study', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo6']);
+  assert.deepEqual(links('lobby'), ['#', '#host', '#clubs', '#practice']);
+  assert.equal(HUBS.length, 4);
+});
+
+test('the Study page shows progress', () => {
+  const h = hubHtml('study', {mastered: 3, skills: 28, rung: 5, rungs: 20});
+  assert.match(h, /3 of 28 skills mastered/);
+  assert.match(h, /Rung 5 of 20/);
+  assert.match(h, /--pct:11%/);
+});

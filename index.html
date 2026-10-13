@@ -10,21 +10,18 @@
   <meta property="og:image" content="apple-touch-icon.png">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&family=Alfa+Slab+One&family=Work+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
+  <!-- V3 (#225): no menu. The spade goes home (the landing page), and a
+       breadcrumb under it leads back to Study or Play. -->
   <div class="topbar">
-    <div class="wordmark">DUCY</div>
-    <!-- Train · Play · Clubs (#209), each with its tabs underneath. -->
-    <nav class="mode-tabs" aria-label="Sections">
-      <button class="mode-tab on" data-nav="train">Train</button>
-      <button class="mode-tab" data-nav="play">Play</button>
-      <button class="mode-tab" data-nav="clubs">Clubs</button>
-    </nav>
+    <a class="wordmark" href="#" aria-label="DUCY home"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-2-.3 2.6-1.2 4.4-2.8 5.8h8c-1.6-1.4-2.5-3.2-2.8-5.8.8 1.2 2.2 2 3.9 2 2.6 0 4.9-2 4.9-5 0-5.1-6.8-9-10-13.2z"/></svg>DUCY</a>
     <div id="wasm-status" class="wasm-status">Loading…</div>
   </div>
-  <nav class="pt-tabs pl-tabs sub-tabs" id="sub-tabs" role="tablist" aria-label="Pages"></nav>
+  <nav class="pt-tabs pl-tabs sub-tabs" id="sub-tabs" aria-label="Where you are"></nav>
+  <main class="v3" id="v3" hidden></main>
 
   <!-- Shown on every page except the equity calculator (see style.css). -->
   <p class="beta-notice" role="note"><strong>Beta.</strong> This part of ducy is still in development and may change. Hand recommendations may not be accurate, and not every feature is fully tested. Don’t rely on it for anything significant.</p>
