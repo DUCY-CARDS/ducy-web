@@ -64,3 +64,19 @@ export function skillTable(progress, games, targets) {
   }));
   return {rows, mastered, started, total};
 }
+
+/**
+ * The skill to move on to after mastering `pct` in the game with `cards`
+ * hole cards (#225): the next standard target of that game not mastered yet
+ * (going up, then from the start), then the other games' in order.
+ * Returns {cards, pct}, or null once every one is mastered.
+ */
+export function nextSkillAfter(progress, games, targets, cards, pct) {
+  const done = (c, p) => skillState(progress && progress[skillKey(c, p)]).status === 'mastered';
+  for (const c of [cards, ...games.filter(x => x !== cards)]) {
+    const order = c === cards ? [...targets.filter(p => p > pct), ...targets.filter(p => p < pct)] : targets;
+    const p = order.find(t => !done(c, t));
+    if (p != null) return {cards: c, pct: p};
+  }
+  return null;
+}

@@ -8,7 +8,7 @@ import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './rang
 import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
-import { MASTERY, gainFor, skillKey, skillState, skillTable } from './trainer-skills.js';
+import { MASTERY, gainFor, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
 import { overviewHtml } from './ranges-overview.js';
 
 const SUITS = [
@@ -705,6 +705,9 @@ function answerPractice(yes) {
   }
 }
 
+// The skill to move on to after mastering one (trainer-skills.js).
+const nextSkill = (cards, pct) => nextSkillAfter(loadProgress(), OMAHA_CARDS, OMAHA_TARGETS, cards, pct);
+
 // Practice (V3, #225): the skill's score on a bar marked at 90, its spade,
 // the hand, Fold or Play, and a line on the last hand.
 const SPADE_D = 'M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-2-.3 2.6-1.2 4.4-2.8 5.8h8c-1.6-1.4-2.5-3.2-2.8-5.8.8 1.2 2.2 2 3.9 2 2.6 0 4.9-2 4.9-5 0-5.1-6.8-9-10-13.2z';
@@ -722,12 +725,19 @@ function renderPractice() {
   h += `<svg class="tr-v3-spade${won ? ' won' : ''}" viewBox="0 0 32 32" width="30" height="30" role="img" aria-label="${won ? 'Spade earned' : 'Spade not earned yet'}"><path d="${SPADE_D}"/></svg>`;
   h += '</div>';
 
+  // Mastered (#225): keep going toward 100 here, or move on to the next
+  // skill not mastered yet.
   if (pr.mastered) {
+    const next = nextSkill(pr.cards, pr.pct);
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached ${MASTERY} on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands, and earned its spade. It stays mastered. Keep practicing toward 100, or try another skill.</p>`;
-    h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
-    h += '<button class="tr-btn" data-act="restart-practice">Start over from 0</button>';
-    h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
+    h += `<p>${MASTERY} on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands: its spade is yours, and it stays mastered. Keep going toward 100, or move on.</p>`;
+    h += '<div class="tr-actions"><button class="tr-btn yes" data-act="keep-practicing">Keep going<kbd>Space</kbd></button>';
+    h += next
+      ? `<button class="tr-btn next" data-act="next-skill" data-next="${next.cards}:${next.pct}">Next: ${gameName(next.cards)} · top ${next.pct}%</button>`
+      : '<button class="tr-btn next" data-act="overview">All skills</button>';
+    h += '</div></div>';
+    h += `<div class="tr-v3-foot"><span>${next ? '<button type="button" class="link-btn" data-act="overview">All skills</button>' : 'Every skill is mastered.'}</span>`;
+    h += '<span><button type="button" class="link-btn" data-act="end-practice">Session summary</button> · <button type="button" class="link-btn" data-act="restart-practice">Start over from 0</button></span></div>';
     h += '</div>';
     root.innerHTML = h;
     return;
@@ -1185,6 +1195,11 @@ function onClick(e) {
   else if (el.dataset.act === 'practice') startPractice();
   else if (el.dataset.act === 'continue-practice') nextPractice();
   else if (el.dataset.act === 'keep-practicing') { st.practice.mastered = false; nextPractice(); }
+  else if (el.dataset.act === 'next-skill') {
+    const [cards, pct] = el.dataset.next.split(':').map(Number);
+    st.omaha.cards = cards; st.omaha.pct = pct; st.drill = null;
+    startPractice();
+  }
   else if (el.dataset.act === 'restart-practice') { resetProgress(st.practice.key); startPractice(); }
   else if (el.dataset.act === 'reset-progress') {
     // Two clicks: the first asks for confirmation.
@@ -1210,6 +1225,7 @@ function onKey(e) {
   if (st.screen === 'practice') {
     const pr = st.practice;
     if (pr.feedback && (k === ' ' || k === 'enter')) { e.preventDefault(); nextPractice(); }
+    else if (pr.mastered && k === ' ') { e.preventDefault(); pr.mastered = false; nextPractice(); }
     else if (!pr.feedback && !pr.mastered && (k === 'r' || k === 'y')) { e.preventDefault(); answerPractice(true); }
     else if (!pr.feedback && !pr.mastered && (k === 'f' || k === 'n')) { e.preventDefault(); answerPractice(false); }
     return;

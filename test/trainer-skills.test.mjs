@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MASTERY, gainFor, answersToMaster, skillKey, parseSkillKey, skillState, skillTable } from '../src/trainer-skills.js';
+import { MASTERY, gainFor, answersToMaster, nextSkillAfter, skillKey, parseSkillKey, skillState, skillTable } from '../src/trainer-skills.js';
+
+test('after mastering a skill, the next one is the next target of the game, then the other games', () => {
+  const games = [2, 4], targets = [10, 20, 30];
+  const done = {best: MASTERY, score: MASTERY, answered: 40};
+  // Hold'em top 20% just mastered: Hold'em top 30% is next.
+  let p = {[skillKey(2, 20)]: done};
+  assert.deepEqual(nextSkillAfter(p, games, targets, 2, 20), {cards: 2, pct: 30});
+  // With 30% mastered too, it wraps round to 10%.
+  p = {...p, [skillKey(2, 30)]: done};
+  assert.deepEqual(nextSkillAfter(p, games, targets, 2, 20), {cards: 2, pct: 10});
+  // With all of Hold'em mastered, Omaha 4's first target.
+  p = {...p, [skillKey(2, 10)]: done};
+  assert.deepEqual(nextSkillAfter(p, games, targets, 2, 20), {cards: 4, pct: 10});
+  // A skill started but not mastered still counts as next.
+  p = {...p, [skillKey(4, 10)]: {best: 50, score: 50, answered: 20}};
+  assert.deepEqual(nextSkillAfter(p, games, targets, 2, 20), {cards: 4, pct: 10});
+  // Everything mastered: nothing left.
+  for (const t of targets) p[skillKey(4, t)] = done;
+  assert.equal(nextSkillAfter(p, games, targets, 2, 20), null);
+});
 
 test('90 masters a skill: about 36 right answers, the last 10 points one at a time', () => {
   assert.equal(MASTERY, 90);
