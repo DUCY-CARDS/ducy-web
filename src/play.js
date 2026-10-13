@@ -28,6 +28,7 @@ import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
+import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import {
   BLINDS, START_BB, WINS_TO_TAKE, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
@@ -205,9 +206,17 @@ let lastView = null; // a guest's last view from the host
 let errView = null; // the tab netNote is about, after leaving a table
 // This browser's player identity for clubs (identity.js), loaded on open.
 let me = null;
+// Chat at a friends table (table-chat.js): the messages on screen, how many
+// came in while the chat was hidden, and flood control (the host's for
+// everyone, and your own).
+let chat = [];
+let chatUnread = 0;
+let chatLimit = chatLimiter();
+let myChatLimit = chatLimiter();
+let chatNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, runTwice: 'ask', friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -940,8 +949,121 @@ function hostIncoming(client, data) {
       if (hostTitle) sendToGuest(client, {type: 'table', name: hostTitle});
       return;
     }
+    // Chat never reaches the table engine (table-chat.js).
+    if (data?.type === 'chat') { await hostChat(client, g, data); return; }
+    // The name a guest joined with is the one on their chat lines.
+    if (data?.type === 'join') g.name = chatName(data.name);
     hostEvent('hostHandle', client, data);
   }).catch(e => console.warn(e));
+}
+
+// A guest's chat message: opened with their key, checked, and sent on to
+// everyone with their name on it. Only someone who has joined can chat, and
+// only a few messages at a time.
+async function hostChat(client, g, data) {
+  if (!g.key || !g.name || !data.enc) return;
+  let body;
+  try { body = await openBox(g.key, data.enc); } catch { return; }
+  const text = cleanChat(body?.text);
+  if (!text || !chatLimit.allow(client)) return;
+  postChat({from: g.name, text, at: Date.now()});
+}
+
+// The host posts a chat line: on its own screen, and to every guest.
+function postChat(msg) {
+  addChatLine(msg);
+  for (const [to, g] of e2eHost?.guests || []) if (g.key) sendToGuest(to, {type: 'chat', ...msg});
+}
+
+function addChatLine(msg) {
+  chat = addChat(chat, msg);
+  if (setup.chat === false) chatUnread++;
+  syncChat();
+}
+
+// Sends what's typed in the chat box.
+async function sendChat() {
+  const box = chatEl?.querySelector('input');
+  const text = cleanChat(box?.value);
+  if (!text) return;
+  if (!myChatLimit.allow('me')) { chatNote = 'Slow down a little: a few messages at a time.'; syncChat(); return; }
+  chatNote = '';
+  if (mode === 'host') {
+    box.value = '';
+    postChat({from: chatName(setup.name), text, at: Date.now()});
+    return;
+  }
+  // A guest's goes to the host, which sends it back to everyone, us too.
+  if (!e2eGuest?.aes) { chatNote = 'Not connected to the table yet.'; syncChat(); return; }
+  box.value = '';
+  net?.send({type: 'chat', enc: await seal(e2eGuest.aes, {text})});
+  syncChat();
+}
+
+// Chat is for friends tables: the host and players who joined with the code.
+const chatTable = () => mode === 'host' || (mode === 'guest' && joinedByCode && !watching);
+
+function resetChat() {
+  chat = [];
+  chatUnread = 0;
+  chatNote = '';
+  chatLimit = chatLimiter();
+  myChatLimit = chatLimiter();
+  const box = chatEl?.querySelector('input');
+  if (box) box.value = '';
+}
+
+// The chat panel sits next to the table rather than in it: the table is
+// redrawn on every update, which would take the typing box away from
+// whoever is typing. On a wide screen it floats at the bottom right; on a
+// phone it comes after the table. Its header hides and shows it.
+let chatEl = null;
+let chatShown = null; // the messages the panel shows
+
+function syncChat() {
+  const on = open && seated && !!state && view === 'play' && chatTable();
+  document.body.classList.toggle('pl-chat-on', on);
+  document.body.classList.toggle('pl-chat-shut', setup.chat === false);
+  if (!on) { if (chatEl) chatEl.hidden = true; return; }
+  if (!chatEl) {
+    chatEl = document.createElement('section');
+    chatEl.className = 'pl-chat';
+    chatEl.setAttribute('aria-label', 'Table chat');
+    chatEl.innerHTML = '<button type="button" class="pl-chat-head" data-chat="toggle"></button>'
+      + '<div class="pl-chat-body"><div class="pl-chat-log" aria-live="polite"></div>'
+      + `<form class="pl-chat-send"><input type="text" maxlength="${CHAT_MAX}" placeholder="Message the table" autocomplete="off" enterkeyhint="send" aria-label="Chat message">`
+      + '<button class="cc-btn" type="submit">Send</button></form><p class="pl-chat-note" hidden></p></div>';
+    chatEl.addEventListener('submit', e => { e.preventDefault(); sendChat(); });
+    chatEl.addEventListener('click', e => {
+      if (!e.target.closest('[data-chat="toggle"]')) return;
+      setup.chat = setup.chat === false;
+      if (setup.chat) chatUnread = 0;
+      saveSetup();
+      syncChat();
+      if (setup.chat) chatEl.querySelector('input')?.focus();
+    });
+    root.after(chatEl);
+    chatShown = null;
+  }
+  chatEl.hidden = false;
+  const shut = setup.chat === false;
+  chatEl.classList.toggle('shut', shut);
+  const head = chatEl.querySelector('.pl-chat-head');
+  head.textContent = shut ? `Chat${chatUnread ? ` · ${chatUnread} new` : ''}` : 'Chat';
+  head.setAttribute('aria-expanded', String(!shut));
+  head.classList.toggle('unread', shut && chatUnread > 0);
+  const note = chatEl.querySelector('.pl-chat-note');
+  note.textContent = chatNote;
+  note.hidden = !chatNote;
+  if (chatShown !== chat) {
+    const log = chatEl.querySelector('.pl-chat-log');
+    const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    log.innerHTML = chat.length
+      ? chat.map(m => `<div><b>${esc(m.from)}</b> ${esc(m.text)}</div>`).join('')
+      : '<div class="pl-chat-empty">Nothing yet. Say hello to the table.</div>';
+    if (atEnd || chatShown === null) log.scrollTop = log.scrollHeight;
+    chatShown = chat;
+  }
 }
 
 // An update for guest `to`, encrypted; without their key it isn't sent.
@@ -1045,6 +1167,7 @@ function startHosting(code, game) {
   hostGame = game;
   mode = 'host';
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
+  resetChat();
   gtoTable = false;
   review = null;
   myRunAnswer = null;
@@ -1249,6 +1372,7 @@ let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the las
 
 function startGuest(code) {
   mode = 'guest';
+  resetChat();
   wholeChips = false;
   joinedByCode = false;
   myChips = null;
@@ -1272,6 +1396,7 @@ function startGuest(code) {
 
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
+  if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
   if (m.type === 'state') {
     lastView = m.view;
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
@@ -1884,6 +2009,7 @@ function netBarHtml() {
 function render() {
   // The club list steps aside while a table is on the Play tab (style.css).
   document.body.classList.toggle('pl-seated', seated);
+  syncChat();
   if (!open) return;
   // A ladder game shows on the Ladder tab as well as Bots.
   if (seated && view !== 'play' && !(ladder && view === 'ladder')) {
@@ -2370,6 +2496,7 @@ export async function openPlay(el, shortcut, v = 'play') {
 
 export function closePlay() {
   open = false;
+  syncChat();
   clearTimeout(timer);
   cancelDeal();
 }
