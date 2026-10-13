@@ -549,48 +549,40 @@ function ladderOverHtml() {
   return {status: `<span class="pl-result ld-over ${o.won ? 'won' : 'lost'}">${text}</span>`, button: `<button class="tr-start" data-act="ladder-next">${label}</button>`};
 }
 
-// A table for friends (#152), in three steps: 1 its name (and yours, the
-// first time), 2 the game and table size, 3 the blinds and buy-in, presets
-// or any values. No bots; seats stay empty until people join, and everyone
+// A table for friends (#152), on one form since V3 (#225): your name the
+// first time, the game, blinds (presets or any values), seats, buy-in and
+// an optional name. No bots; seats stay empty until people join, and everyone
 // asks the host for chips within the buy-in. Turns use the default time.
 let fstep = 1;
 let fnote = '';
 const FRIENDS_TURN_SECS = 30;
 
+// V3 (#225): everything on one form, with the invite panel beside it.
 function friendsSetupHtml() {
   const f = setup.friends;
-  let h = '<div class="pl-head"><h1>Start a game to invite friends</h1>';
-  h += '<p>Send them the code or link once it starts. Nothing is kept once everyone has left.</p></div>';
-  h += `<div class="pl-setup pl-multi"><span class="pl-meta">Step ${fstep} of 3: ${['', 'its name', 'the game', 'blinds and buy-in'][fstep]}</span>`;
-  if (fstep === 1) {
-    h += `<div class="pl-row"><span class="pl-label">Game name</span><input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}"></div>`;
-    // Your name, the first time; after that it's in Player settings (#144).
-    if (!setup.name) h += '<div class="pl-row"><span class="pl-label">Your name</span><input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see"></div>';
-  } else if (fstep === 2) {
-    h += optsRow('Game', GAMES.map(g => optBtn(f.game === g.id, 'data-fgame', g.id, g.label)));
-    // No more seats than the game can deal to (PLO6: 6).
-    h += optsRow('Table size', TABLE_SIZES.filter(n => n <= maxSeats(f.game)).map(n => optBtn(f.seats === n, 'data-fseats', n, n)));
-    h += `<p class="pl-desc">${gameOf(f.game).name}, up to ${f.seats} players, you included.</p>`;
-  } else {
-    const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
-    h += optsRow('Blinds', [...FRIENDS_BLINDS.map(([sb, bb]) => optBtn(preset?.[1] === bb, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)), optBtn(!preset, 'data-fblinds', 'custom', 'Custom')]);
-    if (!preset || f.customBlinds) {
-      h += '<div class="pl-row"><span class="pl-label"></span><div class="pl-opts">';
-      h += `<label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.sb)}"></label>`;
-      h += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.bb)}"></label></div></div>`;
-    }
-    h += '<div class="pl-row"><span class="pl-label">Buy-in</span><div class="pl-opts">';
-    h += `<label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.minBB * f.bb)}"></label>`;
-    h += `<label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.maxBB * f.bb)}"></label>`;
-    h += '</div></div>';
-    h += `<p class="pl-desc">In chips: ${f.minBB}–${f.maxBB} big blinds. Everyone, you too, tops up to between these, and chips carry over from hand to hand.</p>`;
+  const chip = (on, attr, value, text) => `<button type="button" class="sg-chip${on ? ' on' : ''}" ${attr}="${value}" aria-pressed="${on}">${text}</button>`;
+  const field = (label, body) => `<div class="sg-field"><span class="sg-label">${label}</span>${body}</div>`;
+  let h = '<div class="pl-head"><h1>Start a game</h1></div><div class="sg-wrap"><div class="sg-form">';
+  // Your name, the first time; after that it's in Player settings (#144).
+  if (!setup.name) h += field('Your name', '<input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see">');
+  h += field('Game', `<div class="sg-chips">${GAMES.map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
+  const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
+  let blinds = `<div class="sg-chips">${FRIENDS_BLINDS.map(([sb, bb]) => chip(preset?.[1] === bb && !f.customBlinds, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)).join('')}${chip(!preset || !!f.customBlinds, 'data-fblinds', 'custom', 'Custom')}</div>`;
+  if (!preset || f.customBlinds) {
+    blinds += `<div class="sg-nums"><label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.sb)}"></label>`;
+    blinds += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.bb)}"></label></div>`;
   }
+  h += field('Blinds', blinds);
+  // No more seats than the game can deal to (PLO6: 6).
+  h += field('Seats', `<div class="sg-chips">${TABLE_SIZES.filter(n => n <= maxSeats(f.game)).map(n => chip(f.seats === n, 'data-fseats', n, n)).join('')}</div>`);
+  h += field('Buy-in', `<div class="sg-nums"><label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.minBB * f.bb)}"></label><label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.maxBB * f.bb)}"></label></div>`);
+  h += field('Name it', `<input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}">`);
   if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
-  h += '<div class="pl-actions">';
-  if (fstep < 3) h += '<button class="tr-start" data-act="fnext">Next</button>';
-  else h += '<button class="tr-start" data-act="host">Start the game</button>';
-  if (fstep > 1) h += '<button class="btn-small" data-act="fback">Back</button>';
-  h += '</div></div>';
+  h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
+  h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
+  h += '<span>Once the table is open, share the code or the link.</span>';
+  h += '<div class="sg-code" aria-hidden="true">····-····</div>';
+  h += '<span class="sg-note">Nothing is kept once everyone leaves.</span></aside></div>';
   return h;
 }
 
@@ -600,7 +592,7 @@ function readFriendsStep() {
   const val = id => root.querySelector('#' + id);
   readNameInput();
   if (val('pf-title')) f.title = val('pf-title').value.trim().slice(0, 40);
-  if (fstep === 1 && !setup.name) return 'Enter your name: it’s what the others see.';
+  if (!setup.name) return 'Enter your name: it’s what the others see.';
   if (val('pf-sb')) {
     const sb = parseChips(val('pf-sb').value), bb = parseChips(val('pf-bb').value);
     if (!(sb >= 1 && bb >= sb && bb <= MAX_CHIPS)) return 'Blinds are amounts like 1 or 0.25: a small blind of at least 0.01, and a big blind at least that.';

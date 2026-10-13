@@ -155,11 +155,10 @@ function toast(text) {
 // ---- Start a game (#152, #209) ----
 
 // What it is; play.js draws its steps. A club that lasts is on Clubs.
+// Since V3 (#225) play.js draws the whole page, heading included.
 function renderHost() {
-  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Start a game</h1>';
-  h += '<p>A table for tonight: share a code with friends, play, and nothing is kept once everyone has left. For a club that lasts, with members, chips and history, see <a href="#clubs">Clubs</a>.</p></div>';
-  joinRoot.innerHTML = h + '</div>';
-  joinRoot.hidden = false;
+  joinRoot.innerHTML = '';
+  joinRoot.hidden = true;
 }
 
 // ---- the Join tab (#141) ----
