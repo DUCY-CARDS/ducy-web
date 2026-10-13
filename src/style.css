@@ -1621,6 +1621,13 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-side-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0 0; border: 0; border-top: 1px solid #d9caa3; background: none; color: inherit; font: 500 15px var(--font-ui); cursor: pointer; text-align: left; }
 .cl-side-row.on, .cl-side-row:hover { color: #b0391f; }
 .cl-forget { align-self: flex-start; font-size: 13px; }
+.cl-side-ask { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid #d9caa3; font-size: 15px; }
+.cl-side-btns { display: flex; gap: 6px; }
+.cl-side-card .btn-small:not(.primary) { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.cl-side-card .cl-side-row:first-child, .cl-side-ask + .cl-side-row { border-top: 0; padding-top: 0; }
+.cl-home-main > .pl-actions { margin: 0; }
+.cl-tcard .cl-acts { margin-left: auto; display: flex; gap: 6px; }
+.cl-home-head .cl-badge { align-self: center; }
 @media (max-width: 640px) { .cl-home-name { font-size: 30px; } .cl-home-chips { margin-left: 0; } }
 
 /* Start a game (play.js, V3 #225): one cream form, the invite panel beside it. */
