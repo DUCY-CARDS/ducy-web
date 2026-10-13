@@ -1737,7 +1737,7 @@ function summaryLine(s) {
   return line;
 }
 
-const smallCard = c => `<span class="pl-sc${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0] === 'T' ? '10' : c[0]}${SUITS[c[1]]}</span>`;
+const smallCard = c => `<span class="pl-sc s-${c[1]}${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0] === 'T' ? '10' : c[0]}${SUITS[c[1]]}</span>`;
 
 function summaryBody(s) {
   const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
@@ -1932,9 +1932,16 @@ function controlsHtml() {
       // A Regulars table: rebuy when you're out, top up when you're short.
       if (regulars && mode === 'solo') {
         const mine = num(s.seats[0].stack);
-        if (!mine) { raise = `<button class="tr-start" data-act="rebuy">Rebuy ${c(regulars.buyIn)}</button>`; call = blank; }
-        else if (mine < regulars.buyIn) fold = `<button class="tr-btn" data-act="rebuy">Top up to ${c(regulars.buyIn)}</button>`;
-        if (regularsNote) status += ` <span class="pl-meta">· ${esc(regularsNote)}</span>`;
+        // Out of chips (#225): say so at once, with Rebuy or Leave the
+        // table; who left and who sat down goes on its own line.
+        const swaps = regularsNote.startsWith('You’re out') ? '' : regularsNote;
+        if (!mine) {
+          status = '<span class="pl-result">You’re out of chips. Rebuy to keep playing.</span>';
+          raise = `<button class="tr-start" data-act="rebuy">Rebuy ${c(regulars.buyIn)}</button>`;
+          call = '<button class="tr-btn" data-act="leave">Leave the table</button>';
+          fold = blank;
+        } else if (mine < regulars.buyIn) fold = `<button class="tr-btn" data-act="rebuy">Top up to ${c(regulars.buyIn)}</button>`;
+        if (swaps) status += `<span class="pl-meta pl-swaps">${esc(swaps)}</span>`;
       }
     }
   } else if (foldQueued) {
