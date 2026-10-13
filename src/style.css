@@ -763,6 +763,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
    folded away inside it. */
 .sg-form.rg-form { flex: none; max-width: 640px; }
 .cl-clubs:empty { display: none; }
+.rg-go { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.rg-note { font-size: 14px; color: #5d6b55; }
 .rg-form .tf-more > summary { color: #5d6b55; font-weight: 600; cursor: pointer; }
 .rg-form .pl-label { color: #1d3a2c; font-weight: 600; }
 .rg-form .pl-desc, .rg-form .pl-seatno { color: #5d6b55; }
