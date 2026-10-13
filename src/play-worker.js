@@ -3,6 +3,8 @@
 // two. Protocol: each request {id, op, args} gets {id, result} or {id, error}.
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game, stacks) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
+//        state | setStack(seat, chips) | setBot(seat, id, chips, seed) |
+//        setTopUp(on) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
 //        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
@@ -97,6 +99,14 @@ const ops = {
     return snapshot(table.newHand());
   },
   review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
+  // The Regulars (#225), between hands: a seat's chips, a new Regular in a
+  // bot seat, and no automatic top-ups (you rebuy when you choose). Each
+  // returns whether this ducy-wasm could do it (setBot and setTopUp came
+  // with ducy#225).
+  state: () => snapshot(table.state()),
+  setStack: (seat, chips) => (table.setStack ? (table.setStack(seat, BigInt(chips)), true) : false),
+  setBot: (seat, id, chips, seed) => (table.setBot ? (table.setBot(seat, id, BigInt(chips), BigInt(seed)), true) : false),
+  setTopUp: on => (table.setTopUp ? (table.setTopUp(!!on), true) : false),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.

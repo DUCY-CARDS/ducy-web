@@ -1,0 +1,63 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { BANKROLL_BUY_INS, betweenHands, pickRegulars, startBank } from '../src/regulars.js';
+
+const ALL = ['doug_poker', 'milk_king', 'jen_silly', 'phil_bigmouth', 'nik_airbag', 'tom_collins', 'rampart'];
+const seq = (...xs) => { let i = 0; return () => xs[i++ % xs.length]; };
+
+test('each Regular brings three buy-ins: one on the table, two behind', () => {
+  assert.equal(BANKROLL_BUY_INS, 3);
+  assert.deepEqual(startBank(['a', 'b'], 100), [0, 200, 200]);
+});
+
+test('Regulars are picked at random, all different', () => {
+  const p = pickRegulars(ALL, 5, seq(0.5, 0.1, 0.9, 0.3, 0.7));
+  assert.equal(p.length, 5);
+  assert.equal(new Set(p).size, 5);
+  for (const id of p) assert.ok(ALL.includes(id));
+  // More seats than Regulars: repeats rather than empty seats.
+  assert.equal(pickRegulars(['a', 'b'], 3, seq(0)).length, 3);
+});
+
+test('a Regular above half a buy-in is left alone', () => {
+  const r = betweenHands({stacks: [100, 50, 400], bank: [0, 200, 200], bots: ['a', 'b'], buyIn: 100, all: ALL});
+  assert.deepEqual(r.sets, []);
+  assert.deepEqual(r.swaps, []);
+  assert.deepEqual(r.bank, [0, 200, 200]);
+});
+
+test('below half a buy-in, a Regular tops up to a full buy-in from the bankroll', () => {
+  const r = betweenHands({stacks: [100, 30, 0], bank: [0, 200, 200], bots: ['a', 'b'], buyIn: 100, all: ALL});
+  assert.deepEqual(r.sets, [{seat: 1, chips: 100}, {seat: 2, chips: 100}]);
+  assert.deepEqual(r.bank, [0, 130, 100]);
+});
+
+test('the last of a bankroll tops up only what is left', () => {
+  const r = betweenHands({stacks: [100, 10], bank: [0, 40], bots: ['a'], buyIn: 100, all: ALL});
+  assert.deepEqual(r.sets, [{seat: 1, chips: 50}]);
+  assert.deepEqual(r.bank, [0, 0]);
+});
+
+test('with chips left and nothing behind, a Regular plays them out', () => {
+  const r = betweenHands({stacks: [100, 20], bank: [0, 0], bots: ['a'], buyIn: 100, all: ALL});
+  assert.deepEqual(r.sets, []);
+  assert.deepEqual(r.swaps, []);
+});
+
+test('broke with nothing behind, a Regular leaves and a new one sits down', () => {
+  const r = betweenHands({stacks: [100, 0, 300], bank: [0, 0, 200], bots: ['doug_poker', 'milk_king'], buyIn: 100, all: ALL, rng: seq(0)});
+  assert.equal(r.swaps.length, 1);
+  const [s] = r.swaps;
+  assert.equal(s.seat, 1);
+  assert.equal(s.from, 'doug_poker');
+  assert.ok(!['doug_poker', 'milk_king'].includes(s.id), 'someone not already at the table');
+  assert.equal(s.chips, 100);
+  assert.equal(r.bank[1], 200, 'with a fresh bankroll');
+  assert.deepEqual(r.bots, [s.id, 'milk_king']);
+});
+
+test('your own stack is never topped up', () => {
+  const r = betweenHands({stacks: [0, 100], bank: [0, 200], bots: ['a'], buyIn: 100, all: ALL});
+  assert.deepEqual(r.sets, []);
+  assert.deepEqual(r.swaps, []);
+});
