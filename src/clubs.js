@@ -1124,6 +1124,13 @@ function render() {
   const nameKept = nameTyping && {v: nameTyping.value, focus: document.activeElement === nameTyping};
   root.innerHTML = h;
   if (window.scrollY !== y) window.scrollTo(0, y);
+  // Tabs that scroll sideways (a phone): the open one in view.
+  for (const bar of root.querySelectorAll('.cl-dash-tabs')) {
+    const on = bar.querySelector('.pl-tab.on');
+    if (!on || bar.scrollWidth <= bar.clientWidth) continue;
+    const over = on.getBoundingClientRect().right - bar.getBoundingClientRect().right;
+    if (over > 0) bar.scrollLeft += over + 8;
+  }
   const nameInput = nameKept && root.querySelector('form[data-nameform] input');
   if (nameInput) { nameInput.value = nameKept.v; if (nameKept.focus) nameInput.focus(); }
   for (const d of root.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
@@ -1554,7 +1561,7 @@ function settingsHtml() {
     } else h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Back up the club</button></div>';
     if (backupNote) h += `<p class="pl-desc">${esc(backupNote)}</p>`;
     // Moving devices (#191): the backup is the way.
-    h += '<p class="pl-desc"><b>Running it from another device too</b> (your phone, say): back it up here, then on that device open ducy, go to Host → Create a club and choose “Restore it from its backup file”. The backup also brings your player ID, so that device is you. One device at a time runs the club: the other shows Reconnect.</p>';
+    h += '<p class="pl-desc"><b>Running it from another device too</b> (your phone, say): back it up here, then on that device open ducy, go to Clubs and, under Create a club, choose “Restore it from its backup file”. The backup also brings your player ID, so that device is you. One device at a time runs the club: the other shows Reconnect.</p>';
   } else h += '<p class="pl-desc">A club run in this tab is kept in this browser only. Move it to always on to back it up.</p>';
   h += `<h3>Delete</h3><div class="pl-actions">${remote ?'<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
   return h;
