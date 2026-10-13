@@ -119,7 +119,8 @@ function dealOmaha(n) {
 }
 
 // Top-% games share one flow; these pick Hold'em or Omaha by hole-card count.
-const gameName = n => (n === 2 ? 'NLHE' : `PLO${n}`);
+// V3's names (#225): the same as the Pre-flop ranges overview.
+const gameName = n => (n === 2 ? 'Hold’em' : `Omaha ${n}`);
 const handsName = n => (n === 2 ? 'Hold’em hands' : `${n}-card hands`);
 const dealTop = n => (n === 2 ? dealHand() : dealOmaha(n));
 const topPercentile = h => (h.length === 2 ? HOLDEM_PERCENTILE[handClass(h[0], h[1])] : omahaPercentile(h));
@@ -704,24 +705,21 @@ function answerPractice(yes) {
   }
 }
 
+// Practice (V3, #225): the skill's score on a bar marked at 90, its spade,
+// the hand, Fold or Play, and a line on the last hand.
+const SPADE_D = 'M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-2-.3 2.6-1.2 4.4-2.8 5.8h8c-1.6-1.4-2.5-3.2-2.8-5.8.8 1.2 2.2 2 3.9 2 2.6 0 4.9-2 4.9-5 0-5.1-6.8-9-10-13.2z';
 function renderPractice() {
-  const pr = st.practice, lvl = levelFor(pr.score);
-  let h = '<div class="tr-wrap tr-play">';
-  h += '<div class="tr-bar">';
-  h += `<div><div class="tr-preview-name">${gameName(pr.cards)} · top ${pr.pct}% · Practice${pr.drill ? ` · ${esc(shortLabel(pr.cards, pr.drill))}` : ''}</div>`;
-  h += `<div class="tr-preview-meta">Play the top ${pr.pct}% of ${handsName(pr.cards)}</div></div>`;
-  h += `<div class="tr-progress"><span class="tr-level lvl-${lvl.name.toLowerCase()}">${lvl.name}</span><span>${pr.correct}/${pr.answered} correct</span></div>`;
-  h += '<button class="link-btn" data-act="end-practice">End</button></div>';
+  const pr = st.practice;
+  let h = '<div class="tr-wrap tr-play tr-v3">';
+  h += '<div class="tr-v3-head"><button type="button" class="link-btn tr-back" data-act="overview">Pre-flop ranges ›</button>';
+  h += `<h1>${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` · ${esc(shortLabel(pr.cards, pr.drill).toLowerCase())}` : ''}</h1></div>`;
 
   const deltaText = pr.delta > 0 ? `+${pr.delta}` : pr.delta < 0 ? `${pr.delta}` : '';
-  h += '<div class="tr-score">';
-  h += `<div class="tr-score-num"><b>${pr.score}</b><span>/ 100</span>${deltaText ? `<em class="${pr.delta > 0 ? 'up' : 'down'}" data-k="${pr.answered}">${deltaText}</em>` : ''}</div>`;
-  h += '<div class="tr-score-bar">';
-  h += `<div class="tr-score-fill" style="width:${pr.score}%"></div>`;
-  for (const l of LEVELS.slice(1)) h += `<span class="tr-score-mark" style="left:${l.from}%" title="${l.name}"></span>`;
-  h += '</div>';
-  // The last label hangs from the right edge so it can't run off narrow screens.
-  h += '<div class="tr-score-labels">' + LEVELS.map((l, i) => `<span style="${i === LEVELS.length - 1 ? 'right:0' : `left:${l.from}%`}">${l.name}</span>`).join('') + '</div>';
+  const won = pr.best >= MASTERY;
+  h += '<div class="tr-v3-score">';
+  h += `<div class="tr-v3-bar" role="img" aria-label="Score ${pr.score} of 100; ${MASTERY} masters it"><div class="tr-v3-fill" style="width:${pr.score}%"></div><span class="tr-v3-goal" style="left:${MASTERY}%" title="${MASTERY}: mastered"></span></div>`;
+  h += `<b class="tr-v3-num">${pr.score}</b>${deltaText ? `<em class="tr-v3-delta ${pr.delta > 0 ? 'up' : 'down'}" data-k="${pr.answered}">${deltaText}</em>` : ''}`;
+  h += `<svg class="tr-v3-spade${won ? ' won' : ''}" viewBox="0 0 32 32" width="30" height="30" role="img" aria-label="${won ? 'Spade earned' : 'Spade not earned yet'}"><path d="${SPADE_D}"/></svg>`;
   h += '</div>';
 
   if (pr.mastered) {
@@ -739,7 +737,7 @@ function renderPractice() {
   // Feedback re-shows the same hand, so only a fresh deal animates.
   // data-focus marks hands dealt to work on a diagnosed weak spot.
   const focusAttr = !pr.feedback && pr.current.focus ? ` data-focus="${pr.current.focus}"` : '';
-  h += `<div class="tr-felt"><div class="tr-cards${show.length > 2 ? ' omaha' : ''}"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}${focusAttr}>${show.map(cardHtml).join('')}</div></div>`;
+  h += `<div class="tr-felt"><div class="tr-v3-ask">Is this hand in the top ${pr.pct}%?</div><div class="tr-cards${show.length > 2 ? ' omaha' : ''}"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}${focusAttr}>${show.map(cardHtml).join('')}</div></div>`;
   if (pr.feedback) {
     const f = pr.feedback;
     const where = f.pct < pr.pct ? `inside your top ${pr.pct}%` : `outside your top ${pr.pct}%`;
@@ -753,7 +751,15 @@ function renderPractice() {
     h += `<button class="tr-btn no" data-answer="no">Fold<kbd>F</kbd></button>`;
     h += `<button class="tr-btn yes" data-answer="yes">Play<kbd>R</kbd></button>`;
     h += '</div>';
+    // The last hand, when it was right (a miss gets its own explanation).
+    const last = pr.history.at(-1);
+    if (last?.correct) {
+      const side = last.pct < pr.pct ? 'inside' : 'outside';
+      const near = Math.abs(last.pct - pr.pct) < 3 ? `just ${side}` : side;
+      h += `<div class="tr-v3-last"><b>Right${pr.delta > 0 ? ` · +${pr.delta}` : ''}</b><span>Last hand: ${handText(last.cards)} is the ${pctLabel(last.pct)}, ${near}.</span></div>`;
+    }
   }
+  h += `<div class="tr-v3-foot"><span>${pr.answered} hands · ${pr.correct} right · streak ${pr.streak}</span><button type="button" class="link-btn" data-act="end-practice">End practice</button></div>`;
   h += '</div>';
   root.innerHTML = h;
 }
