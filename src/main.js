@@ -1575,6 +1575,17 @@ function saveSettings() {
   try { localStorage.setItem('ducySettings', JSON.stringify(settings)); } catch {}
 }
 
+// The You page (player-settings.js, V3 #225) changes the four-colour deck:
+// it asks with a 'ducy-setting' event, so this module keeps the setting.
+window.addEventListener('ducy-setting', e => {
+  const {key, value} = e.detail || {};
+  if (key !== 'fourColor') return;
+  settings.fourColor = !!value;
+  saveSettings();
+  applySettings();
+  render();
+});
+
 function scheduleCalc(delay) {
   if (calcTimer) clearTimeout(calcTimer);
   calcTimer = null;

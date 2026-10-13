@@ -1,5 +1,6 @@
-// Player settings (#144): everything about you that most people set once
-// and leave, in a dialog opened from the Play section's tab bar: your name,
+// Player settings (#144), "You" since V3 (#225): everything about you that
+// most people set once and leave, in a dialog opened from the bar under the
+// top bar: your name, the spades you've earned, table settings,
 // your avatar at the table, your player ID with its backup and restore, how many club hands to keep,
 // notifications when something needs you (#145), and the relay in use.
 //
@@ -12,9 +13,10 @@ import {
   backupNeedsPassword, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId,
 } from './identity.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
-import { setTableAvatar, setTableName, tableAvatar, tableName } from './play.js';
+import { cycleTablePref, setTableAvatar, setTableName, tableAvatar, tableName, tablePrefs } from './play.js';
 import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { keepHands, memberName, renameMember, setKeepHands, hasClubs } from './clubs.js';
+import { SPADE_PATH, hubData } from './home.js';
 
 const NOTIFY_KEY = 'ducyNotify';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -23,6 +25,8 @@ let el = null;
 let me = null;
 let idForm = null; // {kind: 'backup'}, or {kind: 'restore', text, id} waiting for a password
 let note = '';
+let pickAvatar = false; // the avatar choices are open
+const fourColor = () => document.documentElement.classList.contains('four-color');
 
 // Whether to tell this person, with a system notification, when something
 // needs them while the page isn't in front (#145). Off unless they turn it on.
@@ -43,6 +47,7 @@ export async function openPlayerSettings() {
   }
   note = '';
   idForm = null;
+  pickAvatar = false;
   el.hidden = false;
   render();
   try { me = await loadIdentity(); } catch { note = 'This browser can’t keep a player ID (private mode or storage blocked).'; }
@@ -62,32 +67,56 @@ function close() {
   el.innerHTML = '';
 }
 
+// The You page (V3, #225): you at the top (avatar, name, spades earned),
+// then At the table and Your data.
 function render() {
   if (!el || el.hidden) return;
-  let h = '<div class="cl-replay-bg" data-ps="close"></div><div class="cl-replay cl-dialog ps" role="dialog" aria-label="Player settings">';
-  h += '<div class="cl-replay-head"><b>Player settings</b><button class="link-btn" data-ps="close">Close</button></div>';
-  h += `<form class="pl-row" data-psform="name"><span class="pl-label">Your name</span><input class="pl-text" name="name" maxlength="20" placeholder="What others see" value="${esc(myName())}"><button class="btn-small" type="submit">Save</button></form>`;
-  h += '<p class="pl-desc">What other players and club hosts see.</p>';
-  // Your avatar at the table, or none (your initial).
+  let h = '<div class="cl-replay-bg" data-ps="close"></div><div class="cl-replay cl-dialog ps" role="dialog" aria-label="You">';
+  h += '<div class="cl-replay-head"><b class="ps-title">You</b><button class="link-btn" data-ps="close">Close</button></div>';
   const mine = tableAvatar();
-  h += '<div class="pl-row ps-avrow"><span class="pl-label">Avatar</span><div class="ps-avatars" role="radiogroup" aria-label="Avatar">';
-  h += `<button type="button" class="ps-av none${mine ? '' : ' on'}" role="radio" aria-checked="${!mine}" data-ps="avatar" data-id="" title="None">${esc([...myName().trim()][0]?.toUpperCase() || '?')}</button>`;
-  let set;
-  for (const a of PLAYER_AVATARS) {
-    // A heading where a named set (e.g. Bitcoin) starts.
-    if (a.set && a.set !== set) h += `<span class="ps-avset">${esc(a.set)}</span>`;
-    set = a.set;
-    h += `<button type="button" class="ps-av${a.id === mine ? ' on' : ''}" role="radio" aria-checked="${a.id === mine}" data-ps="avatar" data-id="${a.id}" title="${esc(a.label)}"><img src="${avatarUrl(a.id)}" alt="${esc(a.label)}"></button>`;
+  const initial = esc([...myName().trim()][0]?.toUpperCase() || '?');
+  const d = hubData();
+  const spades = d.mastered + Math.max(0, d.rung - 1);
+  h += '<div class="ps-top">';
+  h += mine ? `<img class="ps-me" src="${avatarUrl(mine)}" alt="Your avatar">` : `<span class="ps-me none" aria-label="No avatar">${initial}</span>`;
+  h += '<div class="ps-me-text">';
+  h += `<form class="ps-name" data-psform="name"><label for="ps-name">Your name</label><span class="ps-name-row"><input class="pl-text" id="ps-name" name="name" maxlength="20" placeholder="What others see" value="${esc(myName())}"><button class="btn-small" type="submit">Save</button></span></form>`;
+  h += `<button type="button" class="link-btn ps-change" data-ps="pick" aria-expanded="${pickAvatar}">${pickAvatar ? 'Done' : 'Change avatar'}</button></div>`;
+  h += `<div class="ps-spades" title="Skills mastered and ladder rungs climbed"><svg viewBox="0 0 32 32" width="44" height="44" aria-hidden="true"><path d="${SPADE_PATH}"/></svg><b>${spades}</b><span>spades earned</span></div>`;
+  h += '</div>';
+  // Your avatar at the table, or none (your initial).
+  if (pickAvatar) {
+    h += '<div class="ps-avatars" role="radiogroup" aria-label="Avatar">';
+    h += `<button type="button" class="ps-av none${mine ? '' : ' on'}" role="radio" aria-checked="${!mine}" data-ps="avatar" data-id="" title="None">${initial}</button>`;
+    let set;
+    for (const a of PLAYER_AVATARS) {
+      // A heading where a named set (e.g. Bitcoin) starts.
+      if (a.set && a.set !== set) h += `<span class="ps-avset">${esc(a.set)}</span>`;
+      set = a.set;
+      h += `<button type="button" class="ps-av${a.id === mine ? ' on' : ''}" role="radio" aria-checked="${a.id === mine}" data-ps="avatar" data-id="${a.id}" title="${esc(a.label)}"><img src="${avatarUrl(a.id)}" alt="${esc(a.label)}"></button>`;
+    }
+    h += '</div>';
   }
-  h += '</div></div>';
-  h += '<p class="pl-desc">Shown at your seat at the table.</p>';
+  const p = tablePrefs();
+  const row = (label, value, act) => `<div class="ps-row"><span>${label}</span>${act ? `<button type="button" class="ps-val" data-ps="${act}">${value}</button>` : `<b>${value}</b>`}</div>`;
+  h += '<div class="ps-sections"><section class="ps-section"><span class="ps-section-title">At the table</span>';
+  h += row('Auto-deal', p.autoDeal ? 'On' : 'Off', 'pref-autoDeal');
+  h += row('Run it twice', {ask: 'Ask', twice: 'Always', once: 'Never'}[p.runTwice], 'pref-runTwice');
+  h += row('Sounds', p.sounds ? 'On' : 'Off', 'pref-sounds');
+  h += row('Four-colour deck', fourColor() ? 'On' : 'Off', 'fourcolor');
+  if (hasClubs()) h += `<div class="ps-row"><span>Club hands kept</span><span class="ps-opts">${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-ps="keep" data-n="${n}">${n}</button>`).join('')}</span></div>`;
+  h += '</section><section class="ps-section"><span class="ps-section-title">Your data</span>';
   // The player ID, with backup and restore.
-  h += '<div class="pl-row"><span class="pl-label">Player ID</span><div class="pl-opts">';
-  h += `<code class="pl-pid" title="Your ID in clubs">${me ? esc(showId(me.id)) : '…'}</code>`;
-  h += `<button class="btn-small" data-ps="backup"${me ? '' : ' disabled'}>Back up</button>`;
-  h += '<label class="btn-small">Restore<input type="file" data-ps="file" accept=".json,application/json" hidden></label>';
-  h += '</div></div>';
-  h += '<p class="pl-desc">Clubs know you by this ID, and it lives only in this browser: back it up to keep it, or to use it on another device.</p>';
+  h += `<div class="ps-row"><span>Player ID</span><code class="pl-pid" title="Clubs know you by this ID; it lives only in this browser">${me ? esc(showId(me.id)) : '…'}</code></div>`;
+  h += `<div class="ps-row"><span>Back up this device</span><button type="button" class="ps-val" data-ps="backup"${me ? '' : ' disabled'}>Download</button></div>`;
+  h += '<div class="ps-row"><span>Restore from a backup</span><label class="ps-val">Choose file<input type="file" data-ps="file" accept=".json,application/json" hidden></label></div>';
+  // Notifications (#145): only if this browser has them.
+  if ('Notification' in window) {
+    const denied = Notification.permission === 'denied';
+    h += `<label class="ps-row ps-check"><span>Notifications</span><input type="checkbox" data-ps="notify"${notifyOn() ? ' checked' : ''}${denied ? ' disabled' : ''} aria-label="Tell me when someone asks to join or for chips while this page isn’t in front"></label>`;
+    if (denied) h += '<p class="pl-desc">This browser blocks notifications from ducy; allow them in its site settings first.</p>';
+  }
+  h += '</section></div>';
   if (idForm?.kind === 'backup') {
     h += '<form class="pl-idform" data-psform="backup">';
     h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
@@ -101,15 +130,6 @@ function render() {
     h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Restore</button><button class="btn-small" type="button" data-ps="cancel">Cancel</button></div></form>';
   }
   if (note) h += `<p class="pl-desc">${esc(note)}</p>`;
-  if (hasClubs()) {
-    h += `<div class="pl-row"><span class="pl-label">Club hands</span><div class="pl-opts">${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-ps="keep" data-n="${n}">${n}</button>`).join('')}</div><span class="pl-desc">How many of your hands to keep in each club, for your history.</span></div>`;
-  }
-  // Notifications (#145): only if this browser has them.
-  if ('Notification' in window) {
-    const denied = Notification.permission === 'denied';
-    h += `<label class="pl-row ps-check"><input type="checkbox" data-ps="notify"${notifyOn() ? ' checked' : ''}${denied ? ' disabled' : ''}> Tell me when someone asks to join or for chips while this page isn’t in front</label>`;
-    if (denied) h += '<p class="pl-desc">This browser blocks notifications from ducy; allow them in its site settings first.</p>';
-  }
   // The relay isn't shown (#152): only the warning for a local test page
   // that's talking to the live one.
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
@@ -126,6 +146,12 @@ async function onClick(e) {
   else if (a === 'cancel') { idForm = null; render(); }
   else if (a === 'keep') { setKeepHands(Number(b.dataset.n)); render(); }
   else if (a === 'avatar') { setTableAvatar(b.dataset.id); render(); el.querySelector('.ps-av.on')?.focus(); }
+  else if (a === 'pick') { pickAvatar = !pickAvatar; render(); }
+  else if (a.startsWith('pref-')) { cycleTablePref(a.slice(5)); render(); }
+  else if (a === 'fourcolor') {
+    window.dispatchEvent(new CustomEvent('ducy-setting', {detail: {key: 'fourColor', value: !fourColor()}}));
+    render();
+  }
 }
 
 async function onChange(e) {

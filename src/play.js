@@ -1413,6 +1413,18 @@ export function setTableName(n) {
   render();
 }
 
+// Table settings shown on the You page (player-settings.js, V3 #225), and a
+// way to change each: auto-deal and sounds on or off, run it twice cycling
+// ask, always, never.
+export const tablePrefs = () => ({autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds});
+export function cycleTablePref(key) {
+  if (key === 'autoDeal') setup.autoDeal = !setup.autoDeal;
+  else if (key === 'sounds') setup.sounds = !setup.sounds;
+  else if (key === 'runTwice') setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(tablePrefs().runTwice) + 1) % RUN_PREFS.length];
+  saveSetup();
+  render();
+}
+
 // Your seat's avatar, picked in Player settings: one of PLAYER_AVATARS, or ''.
 export const tableAvatar = () => (PLAYER_AVATARS.some(a => a.id === setup.avatar) ? setup.avatar : '');
 export function setTableAvatar(id) {
