@@ -15,7 +15,7 @@
 
 import { openPlay, closePlay, joinTable, tableGroup, tableName } from './play.js';
 import {
-  anyClubs, closeClubs, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
+  anyClubs, closeClubs, clubCrumb, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
 import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
@@ -87,14 +87,21 @@ export function startBackground() {
 function renderTabs() {
   const nav = el('sub-tabs');
   if (!nav) return;
+  const crumbs = crumbFor(page || 'equity', page === 'play' ? tableGroup() : null);
+  // A club's page (#225): Play › Private clubs › its name.
+  const inClub = page === 'clubs' && clubCrumb();
+  if (inClub) crumbs.splice(-1, 1, {...crumbs.at(-1), href: '#clubs'}, {label: inClub});
   let h = '<span class="v3-crumbs">';
-  crumbFor(page || 'equity', page === 'play' ? tableGroup() : null).forEach((c, i) => {
+  crumbs.forEach((c, i) => {
     if (i) h += '<span class="v3-crumb-sep" aria-hidden="true">›</span>';
     h += c.href ? `<a href="${c.href}">${esc(c.label)}</a>` : `<span aria-current="page">${esc(c.label)}</span>`;
   });
   h += '</span>';
   // You: name, player ID, backups and the rest, in a dialog (#144).
   h += `<button class="pt-me" type="button" data-pt="player" title="Player settings" aria-label="Player settings"><span class="pt-me-name">${esc(myName() || 'You')} </span><span aria-hidden="true">⚙</span></button>`;
+  // Redrawn as the clubs change: only when it reads differently.
+  if (nav.dataset.html === h) return;
+  nav.dataset.html = h;
   nav.innerHTML = h;
   if (!nav.dataset.ready) {
     nav.dataset.ready = '1';
@@ -107,6 +114,8 @@ function renderTabs() {
 // settings), a new request while the page isn't in front says so.
 let lastNeeds = 0;
 function changed() {
+  // A club's name arriving, for the breadcrumb.
+  if (tab === 'clubs') renderTabs();
   const n = needsYou();
   setTitleWaiting(n);
   // The home spade in the top bar: what's waiting for you in your clubs, or
