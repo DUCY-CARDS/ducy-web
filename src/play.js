@@ -368,7 +368,8 @@ function optsRow(label, items) {
 const optBtn = (on, attr, value, text) => `<button class="cc-btn${on ? ' on' : ''}" ${attr}="${value}">${text}</button>`;
 
 // Play the Regulars (#225): pick a game and sit down with five random
-// Regulars. Choosing your own opponents (and the GTO bot) is under More.
+// Regulars, new ones every time. Choosing your own opponents (and the GTO
+// bot) is the advanced option, folded away whenever you arrive.
 function botsSetupHtml() {
   fillBots();
   // V3 (#225): Start a game's cream form, with the game and Sit down up
@@ -377,8 +378,9 @@ function botsSetupHtml() {
   h += '<p>Play immediately against the Regulars.</p></div>';
   h += '<div class="pl-setup sg-form rg-form">';
   h += `<div class="sg-field"><span class="sg-label">Game</span><div class="sg-chips">${GAMES.map(g => `<button type="button" class="sg-chip${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}" aria-pressed="${setup.game === g.id}">${g.label}</button>`).join('')}</div></div>`;
-  h += '<button class="tr-start sg-open" data-act="sitregulars">Sit down</button>';
-  h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Choose your opponents</summary><div class="cl-more">`;
+  h += `<div class="rg-go"><button class="tr-start sg-open" data-act="sitregulars">Sit down</button><span class="rg-note">${REGULARS_SEATS} Regulars, picked at random.</span></div>`;
+  // Choosing who you play is the advanced option, folded away.
+  h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Advanced: choose your opponents</summary><div class="cl-more">`;
   h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
   // Who sits where: heads-up, the one opponent stays in view (that's where
   // the GTO bot is picked); otherwise, with the blinds and buy-in, under
@@ -2661,6 +2663,9 @@ export async function openPlay(el, shortcut, v = 'play') {
   }
   // Coming to Start a game starts at its first step.
   if (v === 'host' && (view !== 'host' || !open)) { fstep = 1; fnote = ''; }
+  // Coming to Play the Regulars: random Regulars, with choosing your own
+  // folded away until you open it again (#225).
+  if (v === 'play' && (view !== 'play' || !open)) setup.moreOpen = false;
   open = true;
   // A message about leaving a table stays on the tab it was for.
   if (v !== view && errView && v !== errView) { netNote = ''; errView = null; }
