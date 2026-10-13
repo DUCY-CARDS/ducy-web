@@ -10,10 +10,15 @@
   <meta property="og:image" content="apple-touch-icon.png">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <!-- Before any stylesheet arrives: just the felt until main.js opens the
+       first page (style.css has the rest, and a fallback reveal). -->
+  <style>body.booting { background: #1d3a2c; } body.booting > * { visibility: hidden; }</style>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&family=Alfa+Slab+One&family=Work+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="src/style.css">
 </head>
-<body>
+<!-- Hidden until main.js has picked the page (the engine loads first), so
+     the calculator below doesn't flash before the landing page. -->
+<body class="booting">
   <!-- V3 (#225): no menu. The spade goes home (the landing page), and a
        breadcrumb under it leads back to Study or Play. -->
   <div class="topbar">

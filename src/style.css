@@ -34,6 +34,10 @@
 a { color: var(--teal); }
 a:hover { color: var(--teal-hover); }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); padding: 0; }
+/* Until main.js has opened the first page: nothing, just the felt. If the
+   script never runs, the page shows anyway after a few seconds. */
+body.booting > * { visibility: hidden; animation: boot-reveal 0s 6s forwards; }
+@keyframes boot-reveal { to { visibility: visible; } }
 
 .topbar {
   display: flex; align-items: center; height: 48px; padding: 0 20px;
