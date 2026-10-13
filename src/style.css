@@ -502,6 +502,40 @@ body.mode-trainer :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
   color: var(--red); background: none; border: none; cursor: pointer; padding: 2px 6px;
 }
 
+/* Equity's seat picker (range-selection design, #244): exact cards, standard
+   ranges a tap below them, and Custom range with the chart and How wide. */
+.modal-header > span:first-child { font-size: 15px; color: var(--fg-strong); }
+.modal-x { background: none; border: 0; color: var(--fg-muted); font-size: 22px; line-height: 1; width: 36px; height: 36px; cursor: pointer; }
+.modal-x:hover { color: var(--fg-strong); }
+.eq-head-acts { display: flex; align-items: center; gap: 8px; }
+.eq-quick { width: 520px; max-width: 100%; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.eq-quick-label, .eq-label { font-size: 12px; font-weight: 600; color: var(--fg-muted); }
+.eq-quick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.eq-chip { border: 1px solid var(--border); background: var(--bg-inset); color: var(--fg); border-radius: 999px; padding: 7px 13px; font: 600 13px var(--font-ui); cursor: pointer; }
+.eq-chip:hover, .eq-chip.on { background: #f3e7c9; border-color: #f3e7c9; color: #1d3a2c; }
+.eq-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; }
+.eq-custom { font-size: 14px; }
+.eq-done { padding: 8px 18px; font-size: 14px; }
+.range-picker.eq-range { width: min(820px, 86vw); display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.eq-range-chart { flex: 1 1 340px; min-width: 0; }
+.eq-range-chart .range-info { display: flex; justify-content: space-between; align-items: center; }
+.eq-range-tools { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.eq-wide { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; }
+.eq-wide-btn { border: 1px solid var(--border); background: var(--bg-inset); color: var(--fg); border-radius: 8px; padding: 6px 0 4px; font: 600 12px var(--font-ui); display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: pointer; }
+.eq-wide-btn small { font-size: 9px; font-weight: 500; color: var(--fg-muted); min-height: 11px; }
+.eq-wide-btn:hover { border-color: var(--fg-muted); }
+.eq-wide-btn.on { background: #f3e7c9; border-color: #f3e7c9; color: #1d3a2c; }
+.eq-wide-btn.on small { color: #5d6b55; }
+.eq-more > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--fg); padding: 9px 0 6px; border-top: 1px solid var(--border); }
+.eq-more[open] > summary { margin-bottom: 6px; }
+.eq-more .range-text { width: 100%; box-sizing: border-box; }
+/* Presets read like the other sections in Custom range. */
+.presets.eq-more { margin-top: 0; padding-top: 0; border-top: 0; }
+.presets.eq-more > summary { list-style: revert; font: 600 13px var(--font-ui); text-transform: none; letter-spacing: 0; color: var(--fg); }
+.presets.eq-more > summary::before { content: '\25B6'; font-size: 10px; margin-right: 8px; }
+.eq-range .saved-ranges { margin-top: 0; padding-top: 0; border-top: 0; }
+@media (max-width: 640px) { .eq-wide { grid-template-columns: repeat(5, minmax(0, 1fr)); } .eq-quick { width: auto; } }
+
 /* Card picker */
 .card-picker { width: 520px; }
 .psuit { display: flex; align-items: center; gap: 0; margin-bottom: 6px; }
