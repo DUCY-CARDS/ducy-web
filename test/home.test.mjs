@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HUBS, crumbFor, hubData, hubHtml } from '../src/home.js';
+import { HUBS, crumbFor, hubData, hubHtml, sideOf, sideSwitch } from '../src/home.js';
 import { ORDER } from '../src/ladder.js';
 
 const store = (items = {}) => ({ getItem: k => (k in items ? items[k] : null), setItem() {} });
@@ -48,9 +48,10 @@ test('the landing page has only Study and Play', () => {
 test('each hub links where it should', () => {
   const d = hubData(store());
   const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
-  assert.deepEqual(links('study'), ['#', '#equity', '#trainer', '#challenge']);
-  assert.deepEqual(links('challenge'), ['#', '#study', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#host', '#clubs', '#practice']);
+  // After the spade home and any way back: Study or Play.
+  assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge']);
+  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo6']);
+  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice']);
   assert.equal(HUBS.length, 4);
 });
 
@@ -77,4 +78,14 @@ test('the Study page shows progress', () => {
   assert.match(h, /3 of 28 skills mastered/);
   assert.match(h, /Rung 5 of 20/);
   assert.match(h, /--pct:11%/);
+});
+
+test('every page but the landing page can cross between Study and Play', () => {
+  for (const p of ['study', 'challenge', 'equity', 'trainer', 'ladder']) assert.equal(sideOf(p), 'study', p);
+  for (const p of ['lobby', 'practice', 'host', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
+  assert.equal(sideOf('play', 'clubs'), 'play');
+  assert.equal(sideOf('home'), '');
+  assert.match(sideSwitch('play'), /href="#study">Study<\/a><a href="#lobby" aria-current="true">Play/);
+  for (const hub of ['study', 'challenge', 'lobby']) assert.match(hubHtml(hub, {mastered: 0, skills: 28, rung: 1, rungs: 20}), /class="v3-switch"/, hub);
+  assert.doesNotMatch(hubHtml('home', {}), /v3-switch/);
 });

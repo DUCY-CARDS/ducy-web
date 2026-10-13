@@ -49,6 +49,22 @@ export function crumbFor(p, table) {
   return trail;
 }
 
+/**
+ * Study or Play, whichever side `side` is on ('study' or 'play'; else
+ * neither): two links to cross between them from any page.
+ */
+export function sideSwitch(side) {
+  const a = (s, href, label) => `<a href="${href}"${s === side ? ' aria-current="true"' : ''}>${label}</a>`;
+  return `<nav class="v3-switch" aria-label="Study or Play">${a('study', '#study', 'Study')}${a('play', '#lobby', 'Play')}</nav>`;
+}
+
+/** Which side page `p` is on: 'study', 'play' or '' (the landing page). */
+export function sideOf(p, table) {
+  const crumbs = crumbFor(p, table);
+  const top = crumbs[0]?.href || (p === 'study' || p === 'challenge' ? '#study' : p === 'lobby' ? '#lobby' : '');
+  return top === '#study' ? 'study' : top === '#lobby' ? 'play' : '';
+}
+
 // The trainer's skills: the games it drills and its top-% targets.
 const SKILL_GAMES = [2, 4, 5, 6];
 const SKILL_TARGETS = [10, 15, 20, 25, 30, 40, 50];
@@ -107,11 +123,11 @@ const bigSpade = () =>
   `<path class="v3-bigspade-face" d="${SPADE_PATH}"/>` +
   `<path class="v3-bigspade-stitch" d="${STITCH}"/></svg>`;
 
-// Each page's top: the spade home, and the way back.
-function head(title, back) {
+// Each page's top: the spade home, the way back, and Study or Play (`side`).
+function head(title, back, side) {
   let h = '<header class="v3-head"><a class="v3-home-link" href="#" aria-label="DUCY home">' + spade(32) + '</a>';
   if (back) h += `<a class="v3-back" href="${back.href}">${esc(back.label)} ›</a>`;
-  return h + `<h1>${esc(title)}</h1></header>`;
+  return h + `<h1>${esc(title)}</h1>${sideSwitch(side)}</header>`;
 }
 
 // A 13×13 chart of the top 40% of Hold'em hands (the Study card's picture).
@@ -148,7 +164,7 @@ function homePage() {
 }
 
 function studyPage(d) {
-  let h = '<div class="v3-page">' + head('Study');
+  let h = '<div class="v3-page">' + head('Study', null, 'study');
   h += '<div class="v3-games"><span class="v3-label">Games</span><span class="v3-chip">Hold’em</span><span class="v3-chip">Omaha · 4, 5 or 6 cards</span><span class="v3-chip">Omaha 8-or-better · 4, 5 or 6 cards</span></div>';
   h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#equity"><span class="v3-tile-text"><span class="v3-tile-name">Equity</span><span>Any hands, any board, any game.</span></span>';
   h += '<span class="v3-bars" aria-hidden="true"><span style="height:46%"></span><span style="height:54%"></span></span></a>';
@@ -163,7 +179,7 @@ function studyPage(d) {
 }
 
 function challengePage(d) {
-  let h = '<div class="v3-page">' + head('Challenge the Regulars', {href: '#study', label: 'Study'});
+  let h = '<div class="v3-page">' + head('Challenge the Regulars', {href: '#study', label: 'Study'}, 'study');
   h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Climb the ladder</span><span>Best of three. Win to climb, lose to drop.</span></span>';
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
@@ -179,7 +195,7 @@ function challengePage(d) {
 }
 
 function lobbyPage() {
-  let h = '<div class="v3-page">' + head('Play');
+  let h = '<div class="v3-page">' + head('Play', null, 'play');
   h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span><span>A game for tonight.</span></span>';
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
   h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form></div>';
