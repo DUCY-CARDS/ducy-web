@@ -624,18 +624,18 @@ function render() {
       } else if (s.mode === 'range') {
         const cnt = [...s.sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
         h += `<div class="seat-range" data-rng="${i}">`;
-        h += `<div class="seat-range-label">Range</div>`;
+        h += `<div class="seat-range-label">${escapeHtml(rangeName(s) || 'Range')}</div>`;
         h += `<div class="seat-range-count">${cnt} combos</div>`;
         h += '</div>';
       } else if (s.mode === 'orange') {
         const info = omahaRangeInfo(s.text);
         h += `<div class="seat-range${info.ok ? '' : ' bad'}" data-orng="${i}" title="${escapeHtml(s.text)}">`;
-        h += `<div class="seat-range-label">Range</div>`;
+        h += `<div class="seat-range-label">${escapeHtml(rangeName(s) || 'Range')}</div>`;
         h += `<div class="seat-range-count">${escapeHtml(coverageText(info) || 'Empty')}</div>`;
         h += '</div>';
       } else if (s.mode === 'random') {
         h += `<div class="seat-random">`;
-        h += `<div class="seat-random-label">Random</div>`;
+        h += `<div class="seat-random-label">Any hand</div>`;
         h += '</div>';
       }
       if (calced && eqs[i] != null) {
@@ -672,7 +672,7 @@ function renderSide() {
   if (!side) return;
   const be = bestEq();
   const hand = s => (s.mode === 'cards' ? s.cards.filter(Boolean).map(c => { const d = cd(c); return `<span class="eq-c ${d.cl}">${d.t}</span>`; }).join(' ') || 'No cards yet'
-    : s.mode === 'random' ? 'Random' : 'Range');
+    : rangeName(s) || 'Range');
   let h = '<span class="eq-side-title">Who’s ahead</span>';
   const rows = seats.map((s, i) => [s, i]).filter(([s]) => s);
   if (rows.length < 2) h += '<p class="eq-side-empty">Add two hands, or ranges, to see who’s ahead.</p>';
@@ -680,7 +680,7 @@ function renderSide() {
     h += '<div class="eq-bars">';
     for (const [s, i] of rows) {
       const eq = calced && eqs[i] != null ? eqs[i] : null;
-      h += `<div class="eq-row"><b>Seat ${i + 1} · ${hand(s)}</b><span>${eq == null ? '–' : (eq * 100).toFixed(settings.decimals) + '%'}</span></div>`;
+      h += `<div class="eq-row"><b>Player ${i + 1} · ${hand(s)}</b><span>${eq == null ? '–' : (eq * 100).toFixed(settings.decimals) + '%'}</span></div>`;
       h += `<div class="eq-bar"><div class="${eq != null && eq >= be - 0.001 ? 'lead' : ''}" style="width:${eq == null ? 0 : (eq * 100).toFixed(2)}%"></div></div>`;
     }
     h += '</div>';
@@ -749,11 +749,34 @@ function nextBoardSlot(curBoard, curCard) {
   return null;
 }
 
+// The standard ranges offered for a seat (range-selection design, #244): the
+// top of all hands by ducy's ranking, 100% being any hand.
+const RANGE_WIDTHS = [5, 10, 15, 20, 25, 30, 40, 50, 100];
+// Any hand in Omaha shorthand: every card any card.
+const anyOmaha = () => 'x'.repeat(g().cards);
+
+// A seat's range, set to the top `pct`% (100: any hand). Omaha has only any
+// hand this way for now: its shorthand has no top-% term yet.
+function seatWidth(si, pct) {
+  if (curG === 'nlhe') seats[si] = {mode: 'range', sel: topRange(pct)};
+  else seats[si] = {mode: 'orange', text: anyOmaha()};
+  dirty(); render();
+}
+
+// "Top 25%", "Any hand", or null for a range that's none of the standard ones.
+function rangeName(s) {
+  if (s.mode === 'random') return 'Any hand';
+  if (s.mode === 'orange') return s.text.trim().toLowerCase() === anyOmaha() ? 'Any hand' : null;
+  if (s.mode !== 'range') return null;
+  const p = RANGE_WIDTHS.find(w => sameSel(topRange(w), s.sel));
+  return p == null ? null : p === 100 ? 'Any hand' : `Top ${p}%`;
+}
+
 function openSeatModePicker(seatIdx) {
   let h = `<div class="modal-header"><span>Player ${seatIdx+1}</span></div>`;
   h += '<div class="seat-mode-picker">';
-  h += `<button class="seat-mode-btn" data-smode="cards" data-si="${seatIdx}">Pick Cards</button>`;
-  h += `<button class="seat-mode-btn" data-smode="random" data-si="${seatIdx}">Random</button>`;
+  h += `<button class="seat-mode-btn" data-smode="cards" data-si="${seatIdx}">Pick cards</button>`;
+  h += `<button class="seat-mode-btn" data-smode="random" data-si="${seatIdx}">Any hand</button>`;
   h += '</div>';
   showModal(h);
 }
@@ -781,20 +804,18 @@ function openCardPicker(seatIdx, cardIdx) {
   target = {type:'hand', seat:seatIdx, card:cardIdx, seatMode:'cards'};
   const u = used();
   const gm = g();
-  const hand = s ? s.cards : [];
+  // A seat holding a range shows empty slots until a card is picked.
+  const hand = s && s.mode === 'cards' ? s.cards : [];
   const isHoldem = curG === 'nlhe';
 
   const uForPicker = new Set(u);
   if (hand[cardIdx]) uForPicker.delete(hand[cardIdx]);
 
-  let h = '';
-  if (isHoldem || !isBombPot()) {
-    h += '<div class="modal-tabs">';
-    h += '<button class="mtab on" data-mt="cards">Cards</button>';
-    h += '<button class="mtab" data-mt="range">Range</button>';
-    h += '</div>';
-  }
-  h += `<div class="modal-header"><span>Player ${seatIdx+1}</span></div>`;
+  // Exact cards first (range-selection design, #244): someone wants a
+  // number fast. A standard range is a tap below them, anything else is
+  // Custom range.
+  const ranges = isHoldem || !isBombPot();
+  let h = `<div class="modal-header"><span>Player ${seatIdx+1}</span><button class="modal-x" data-done aria-label="Close">×</button></div>`;
 
   h += '<div class="picker-hand">';
   for (let j = 0; j < gm.cards; j++) {
@@ -821,6 +842,16 @@ function openCardPicker(seatIdx, cardIdx) {
     h += '</div>';
   }
   h += '</div>';
+  if (ranges) {
+    // Omaha's shorthand has no top-% term yet: only any hand there.
+    const widths = isHoldem ? RANGE_WIDTHS : [100];
+    h += `<div class="eq-quick"><span class="eq-quick-label">${isHoldem ? 'Or a range: the top of all hands' : 'Or a range'}</span><div class="eq-quick-chips">`;
+    for (const p of widths) h += `<button class="eq-chip" data-width="${p}">${p === 100 ? 'Any hand · 100%' : `${p}%`}</button>`;
+    h += '</div></div>';
+  }
+  h += '<div class="eq-foot">';
+  h += ranges ? '<button class="link-btn eq-custom" data-mt="range">Custom range…</button>' : '<span></span>';
+  h += '<button class="btn-small primary eq-done" data-done>Done</button></div>';
   showModal(h);
 }
 
@@ -833,17 +864,15 @@ function openOmahaRangePicker(seatIdx) {
   const s = seats[seatIdx];
   const text = s && s.mode === 'orange' ? s.text : '';
   target = {type: 'hand', seat: seatIdx, seatMode: 'orange'};
-  let h = '<div class="modal-tabs">';
-  h += '<button class="mtab" data-mt="cards">Cards</button>';
-  h += '<button class="mtab on" data-mt="range">Range</button>';
-  h += '</div>';
-  h += `<div class="modal-header"><span>Player ${seatIdx + 1} range · PLO${g().cards}</span>`;
-  h += '<button class="modal-clear" id="oclear">Clear</button></div>';
+  const game = `${curG.includes('hl') ? 'Omaha 8-or-better' : 'Omaha'} ${g().cards}`;
+  let h = `<div class="modal-header"><span>Player ${seatIdx + 1} · range · ${game}</span>`;
+  h += '<span class="eq-head-acts"><button class="link-btn" data-mt="cards">‹ Exact cards</button><button class="modal-x" data-done aria-label="Close">×</button></span></div>';
   h += '<div class="range-picker">';
-  h += `<textarea class="range-text" id="otxt" rows="3" placeholder="AAxx$ds, KKxx$ds, $rd$ds" spellcheck="false" autocapitalize="off">${escapeHtml(text)}</textarea>`;
+  h += `<div class="eq-quick-chips"><button class="eq-chip${text.trim().toLowerCase() === anyOmaha() ? ' on' : ''}" data-width="100">Any hand · 100%</button></div>`;
+  h += `<label class="eq-label" for="otxt">Or type it</label><textarea class="range-text" id="otxt" rows="3" placeholder="AAxx$ds, KKxx$ds, $rd$ds" spellcheck="false" autocapitalize="off">${escapeHtml(text)}</textarea>`;
   const info = omahaRangeInfo(text);
   h += `<div class="range-info"><span id="ocov" class="${info.ok || !text ? '' : 'bad'}">${escapeHtml(text ? coverageText(info) : 'Type a range in shorthand')}</span></div>`;
-  h += '<div class="saved-head" style="margin-top:12px"><span>Examples</span></div><div class="preset-grid">';
+  h += '<details class="eq-more"><summary>How the shorthand works</summary><div class="preset-grid">';
   for (const [t, label] of OMAHA_RANGE_EXAMPLES) {
     h += `<button class="preset oex" data-oex="${escapeHtml(t)}" title="${escapeHtml(label)}"><span class="saved-name">${escapeHtml(t)}</span><span class="saved-meta">${escapeHtml(label)}</span></button>`;
   }
@@ -851,8 +880,9 @@ function openOmahaRangePicker(seatIdx) {
   h += '<div class="presets-foot">Terms are separated by commas; a hand is in the range if it matches any term. ' +
     'Ranks and cards (<code>AA</code>, <code>AsKs</code>, <code>x</code> = any card), then conditions: ' +
     '<code>$ds</code> <code>$ss</code> <code>$r</code> suits, <code>$np</code> <code>$1p</code> <code>$2p</code> pairs, ' +
-    '<code>$rd</code> rundown (<code>$rd1</code> one gap, <code>$3rd</code> three-card), <code>$!cond</code> negates.</div>';
+    '<code>$rd</code> rundown (<code>$rd1</code> one gap, <code>$3rd</code> three-card), <code>$!cond</code> negates.</div></details>';
   h += '</div>';
+  h += '<div class="eq-foot"><span></span><button class="btn-small primary eq-done" data-done>Done</button></div>';
   showModal(h);
 }
 
@@ -874,13 +904,11 @@ function openRangePicker(seatIdx, opts = {}) {
   const sel = (s && s.mode==='range') ? s.sel : new Set();
   target = {type:'hand', seat:seatIdx, seatMode:'range'};
 
-  let h = '<div class="modal-tabs">';
-  h += '<button class="mtab" data-mt="cards">Cards</button>';
-  h += '<button class="mtab on" data-mt="range">Range</button>';
-  h += '</div>';
-  h += `<div class="modal-header"><span>Player ${seatIdx+1} range</span>`;
-  h += '<button class="modal-clear" id="rclear">Clear</button></div>';
-  h += '<div class="range-picker"><div class="rgrid" id="rgrid">';
+  // Custom range (range-selection design, #244): the chart on the left; How
+  // wide, typing it, presets and saved ranges on the right.
+  let h = `<div class="modal-header"><span>Player ${seatIdx+1} · range</span>`;
+  h += '<span class="eq-head-acts"><button class="link-btn" data-mt="cards">‹ Exact cards</button><button class="modal-x" data-done aria-label="Close">×</button></span></div>';
+  h += '<div class="range-picker eq-range"><div class="eq-range-chart"><div class="rgrid" id="rgrid">';
 
   for (let r = 0; r < 13; r++) for (let c = 0; c < 13; c++) {
     let l = r===c ? RK[r]+RK[c] : r<c ? RK[r]+RK[c]+'s' : RK[c]+RK[r]+'o';
@@ -889,16 +917,21 @@ function openRangePicker(seatIdx, opts = {}) {
 
   const cnt = [...sel].reduce((a,k) => a + (COMBOS[k]||0), 0);
   const pctH = (cnt / 1326 * 100).toFixed(1);
-  h += `</div><div class="range-info"><span id="rcnt">${cnt} combos · ${pctH}%</span></div>`;
-  // Fills the grid with the top X% of hands by ducy's Hold'em ranking.
-  const topV = Math.max(1, Math.round(cnt / 13.26));
-  h += '<label class="range-top"><span>Top</span>';
-  h += `<input type="range" id="rtop" min="1" max="100" step="1" value="${topV}" aria-label="Fill with the top percent of hands">`;
-  h += `<b id="rtopv">${topV}%</b></label>`;
-  h += `<textarea class="range-text" id="rtxt" placeholder="AA, AKs, QQ+ ...">${[...sel].join(', ')}</textarea>`;
-  h += presetsHtml(sel);
-  h += savedRangesHtml(sel, opts);
+  h += `</div><div class="range-info"><span id="rcnt">${cnt} combos · ${pctH}%</span><button class="link-btn" id="rclear">Clear</button></div></div>`;
+  h += '<div class="eq-range-tools">';
+  // How wide: the top of all hands by ducy's Hold'em ranking.
+  const now = RANGE_WIDTHS.find(w => sameSel(topRange(w), sel));
+  h += '<span class="eq-label">How wide?</span><div class="eq-wide" role="radiogroup" aria-label="How wide">';
+  for (const p of RANGE_WIDTHS) {
+    const tag = p <= 10 ? 'tight' : p === 100 ? 'any' : p >= 40 ? 'loose' : '';
+    h += `<button class="eq-wide-btn${p === now ? ' on' : ''}" role="radio" aria-checked="${p === now}" data-width="${p}">${p}%<small>${tag}</small></button>`;
+  }
   h += '</div>';
+  h += `<details class="eq-more"${sel.size && now == null ? ' open' : ''}><summary>Type it</summary><textarea class="range-text" id="rtxt" placeholder="AA, AKs, QQ+ ...">${[...sel].join(', ')}</textarea></details>`;
+  h += presetsHtml(sel);
+  h += `<details class="eq-more"${opts.msg || opts.name ? ' open' : ''}><summary>Saved ranges</summary>${savedRangesHtml(sel, opts)}</details>`;
+  h += '</div></div>';
+  h += '<div class="eq-foot"><span></span><button class="btn-small primary eq-done" data-done>Done</button></div>';
   showModal(h);
 }
 
@@ -907,7 +940,7 @@ const PRESETS_OPEN_KEY = 'ducyPresetsOpen';
 let presetsOpen = (() => { try { return localStorage.getItem(PRESETS_OPEN_KEY) === '1'; } catch { return false; } })();
 
 function presetsHtml(sel) {
-  let h = `<details class="presets" id="rpresets"${presetsOpen ? ' open' : ''}>`;
+  let h = `<details class="presets eq-more" id="rpresets"${presetsOpen ? ' open' : ''}>`;
   h += '<summary class="saved-head"><span>Presets</span><span class="presets-note">100bb: 6-max approx., heads-up GTO</span></summary>';
   for (const g of PRESET_GROUPS) {
     const items = RANGE_PRESETS.filter(p => p.spot === g.spot);
@@ -1256,6 +1289,19 @@ document.getElementById('mbg').addEventListener('click', e => {
     return;
   }
 
+  if (e.target.closest('[data-done]')) { closeModal(); return; }
+
+  // A standard range, one tap (#244): from the cards it's done; in a range
+  // view it shows on the chart.
+  const width = e.target.closest('[data-width]');
+  if (width && target && target.type === 'hand') {
+    seatWidth(target.seat, +width.dataset.width);
+    if (target.seatMode === 'range') openRangePicker(target.seat);
+    else if (target.seatMode === 'orange') openOmahaRangePicker(target.seat);
+    else closeModal();
+    return;
+  }
+
   const mt = e.target.closest('[data-mt]');
   if (mt && target && target.type === 'hand' && !isBombPot()) {
     const mode = mt.dataset.mt;
@@ -1263,10 +1309,8 @@ document.getElementById('mbg').addEventListener('click', e => {
       if (curG === 'nlhe') openRangePicker(target.seat);
       else openOmahaRangePicker(target.seat);
     } else {
-      if (!seats[target.seat] || seats[target.seat].mode !== 'cards') {
-        seats[target.seat] = {mode:'cards', cards: new Array(g().cards).fill(null)};
-        dirty(); render();
-      }
+      // A range stays until a card is picked (#244): looking at the cards
+      // doesn't lose it.
       openCardPicker(target.seat, 0);
     }
     return;
@@ -1289,7 +1333,7 @@ document.getElementById('mbg').addEventListener('click', e => {
   const ph = e.target.closest('[data-ph]');
   if (ph && target && target.type === 'hand') {
     const j = +ph.dataset.ph;
-    const hand = seats[target.seat].cards;
+    const hand = seats[target.seat]?.mode === 'cards' ? seats[target.seat].cards : [];
     if (hand[j]) {
       hand[j] = null;
       dirty(); render();
@@ -1318,6 +1362,8 @@ document.getElementById('mbg').addEventListener('click', e => {
   if (pk && target) {
     const card = pk.dataset.pk;
     if (target.type === 'hand') {
+      // The first card picked for a seat holding a range replaces it.
+      if (seats[target.seat]?.mode !== 'cards') seats[target.seat] = {mode: 'cards', cards: new Array(g().cards).fill(null)};
       seats[target.seat].cards[target.card] = card;
       dirty(); render();
       const next = seats[target.seat].cards.indexOf(null);
