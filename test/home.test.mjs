@@ -54,6 +54,24 @@ test('each hub links where it should', () => {
   assert.equal(HUBS.length, 4);
 });
 
+test('your record against the GTO bot is what it lost, per 100 hands', () => {
+  const d = hubData(store({ducyPlayStats: JSON.stringify({v: 1, games: {
+    nlhe: {gto: {hands: 200, netBB: -8.2}, you: {hands: 900, netBB: 40}},
+    plo4: {'gto-plo': {hands: 50, netBB: 6}},
+  }})}));
+  const [holdem, plo4, plo6] = d.gto;
+  assert.equal(holdem.hands, 200);
+  assert.ok(Math.abs(holdem.bb100 - 4.1) < 1e-9);
+  assert.ok(Math.abs(plo4.bb100 + 12) < 1e-9);
+  assert.equal(plo6.hands, 0);
+  assert.equal(plo6.bb100, null);
+  const h = hubHtml('challenge', d);
+  assert.match(h, /\+4\.1 bb\/100/);
+  assert.match(h, /−12\.0 bb\/100/);
+  assert.match(h, /200 hands/);
+  assert.match(h, /Not played yet/);
+});
+
 test('the Study page shows progress', () => {
   const h = hubHtml('study', {mastered: 3, skills: 28, rung: 5, rungs: 20});
   assert.match(h, /3 of 28 skills mastered/);

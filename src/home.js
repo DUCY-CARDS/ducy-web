@@ -65,8 +65,32 @@ export function hubData(storage = globalThis.localStorage) {
     skills: skills.total,
     rung: Math.min(rungs, ladder.level + 1),
     rungs,
+    gto: gtoRecords(storage),
   };
 }
+
+// Your record against the GTO bot in each game, from the bot tables' saved
+// stats (play.js, 'ducyPlayStats'): the GTO bot only plays heads-up, so you
+// won what it lost. [{hash, name, hands, bb100}], bb100 null with no hands.
+export const GTO_GAMES = [
+  {hash: 'codedoug', name: 'Hold’em', game: 'nlhe', bot: 'gto'},
+  {hash: 'gto-plo4', name: 'Omaha · 4 cards', game: 'plo4', bot: 'gto-plo'},
+  {hash: 'gto-plo6', name: 'Omaha · 6 cards', game: 'plo6', bot: 'gto-plo6'},
+];
+function gtoRecords(storage) {
+  let games = {};
+  try {
+    const s = JSON.parse(storage.getItem('ducyPlayStats') || 'null');
+    if (s && s.v === 1 && s.games) games = s.games;
+  } catch {}
+  return GTO_GAMES.map(g => {
+    const c = games[g.game]?.[g.bot];
+    const hands = c?.hands || 0;
+    return {hash: g.hash, name: g.name, hands, bb100: hands ? (-(c.netBB || 0) / hands) * 100 : null};
+  });
+}
+
+const bbText = v => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)} bb/100`;
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
@@ -145,8 +169,11 @@ function challengePage(d) {
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
   h += '<h2 class="v3-h2">The GTO bot</h2><p class="v3-note">100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
-  for (const [hash, name] of [['codedoug', 'Hold’em'], ['gto-plo4', 'Omaha · 4 cards'], ['gto-plo6', 'Omaha · 6 cards']]) {
-    h += `<a class="v3-tile v3-tile-dark" href="#${hash}"><span class="v3-tile-name">${name}</span><b>Play →</b></a>`;
+  for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
+    h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><span class="v3-tile-name">${g.name}</span>`;
+    if (g.hands) h += `<span class="v3-record${g.bb100 < 0 ? ' down' : ''}">${bbText(g.bb100)}</span><span class="v3-dim">${g.hands} hands</span>`;
+    else h += '<span class="v3-record none">Not played yet</span>';
+    h += '<b>Play →</b></a>';
   }
   return h + '</div></div>';
 }

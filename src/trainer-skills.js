@@ -1,12 +1,13 @@
 // Practice pacing and the list of skills (game × target) for the range
 // trainer's adaptive practice. Pure functions, so they can be tested.
 
-export const MASTERY = 100;
+// A skill scores 0 to 100, and 90 or more masters it (V3, #225).
+export const MASTERY = 90;
 
 // Points for a correct answer at a given score. The climb gets slower as the
 // score rises, and from 80 up every point is one more right answer, so
-// mastery takes about 50 correct answers in a row from 0 (more with any
-// misses), and the last 20 points are all close calls.
+// mastery takes about 36 correct answers in a row from 0 (more with any
+// misses), and the last 10 points are all close calls.
 export function gainFor(score) {
   return score < 40 ? 4 : score < 60 ? 3 : score < 80 ? 2 : 1;
 }

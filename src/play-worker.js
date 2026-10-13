@@ -6,7 +6,8 @@
 //        state | setStack(seat, chips) | setBot(seat, id, chips, seed) |
 //        setTopUp(on) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
-//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
+//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review |
+//        reviewDecision
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -107,6 +108,9 @@ const ops = {
   setStack: (seat, chips) => (table.setStack ? (table.setStack(seat, BigInt(chips)), true) : false),
   setBot: (seat, id, chips, seed) => (table.setBot ? (table.setBot(seat, id, BigInt(chips), BigInt(seed)), true) : false),
   setTopUp: on => (table.setTopUp ? (table.setTopUp(!!on), true) : false),
+  // Your latest decision graded as soon as it's made (live feedback); null
+  // with a ducy-wasm older than reviewLastDecision.
+  reviewDecision: () => (table.reviewLastDecision ? table.reviewLastDecision() : null),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.
