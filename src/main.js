@@ -1948,5 +1948,7 @@ else showNav('equity');
 loadFromHash();
 render();
 updateGameUI();
+// The first page is open: show it (index.html hides the page until now).
+document.body.classList.remove('booting');
 NARROW.addEventListener('change', render);
 scheduleCalc(0);
