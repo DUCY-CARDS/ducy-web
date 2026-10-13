@@ -1622,6 +1622,7 @@ function lastActions() {
 // opens to the whole summary.
 let lastSummary = null; // {hand, html, line}
 let lastSummaryOpen = false; // the one-line version opened, kept from hand to hand
+let tableMenuOpen = false; // the table's ⋯ menu, kept open across redraws
 
 // The summary in one line: who won the (main) pot, how, and your result.
 function summaryLine(s) {
@@ -1726,15 +1727,20 @@ function renderTable() {
   h += '<div class="pl-bar">';
   h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
   if (mode !== 'solo') h += netBarHtml();
+  // V3 (#225): the table's settings in one ⋯ menu, and Leave beside it.
+  const item = (act, label, on, title = '') =>
+    `<button type="button" class="pl-menu-item" data-act="${act}"${on == null ? '' : ` aria-pressed="${on}"`}${title ? ` title="${title}"` : ''}><span>${label}</span>${on == null ? '' : `<b>${on ? 'On' : 'Off'}</b>`}</button>`;
   h += '<span class="pl-tools">';
-  h += `<button class="cc-btn${autoDealOn() ? ' on' : ''}" data-act="autodeal" aria-pressed="${autoDealOn()}">Auto-deal</button>`;
-  if (autoDealOn()) h += `<button class="cc-btn" data-act="dealdelay" title="Wait before the next hand">${setup.dealSecs}s</button>`;
-  if (!ladder && !watching) h += `<button class="cc-btn" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once">${RUN_LABELS[runPref()]}</button>`;
-  h += `<button class="cc-btn${setup.hud ? ' on' : ''}" data-act="hud" aria-pressed="${!!setup.hud}">HUD</button>`;
-  if (mode !== 'solo' && !watching) h += `<button class="cc-btn${setup.sounds ? ' on' : ''}" data-act="sounds" aria-pressed="${!!setup.sounds}" title="A chime when it’s your turn, and an alert at 5 seconds left">Sound</button>`;
-  if (reviewTable() && mode === 'solo') h += `<button class="cc-btn${setup.review ? ' on' : ''}" data-act="review" aria-pressed="${!!setup.review}" title="Grade your decisions against the GTO bot after each hand">Review</button>`;
-  h += `<button class="cc-btn${statsOpen ? ' on' : ''}" data-act="stats" aria-pressed="${statsOpen}">Stats</button>`;
-  h += `<button class="link-btn" data-act="leave">${watching ? 'Stop watching' : 'Leave table'}</button></span></div>`;
+  h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
+  h += item('autodeal', 'Auto-deal', autoDealOn());
+  if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="Wait before the next hand"><span>Wait before dealing</span><b>${setup.dealSecs}s</b></button>`;
+  if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
+  if (reviewTable() && mode === 'solo') h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against the GTO bot after each hand');
+  h += item('hud', 'Stats on seats', !!setup.hud);
+  h += item('stats', 'Stats table', statsOpen);
+  if (mode !== 'solo' && !watching) h += item('sounds', 'Sounds', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
+  h += '</div></details>';
+  h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   h += '<div class="pl-felt">';
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
   // Run twice: the second board, each pot split between the two.
@@ -2457,7 +2463,16 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.addEventListener('change', onChange);
     // The last hand's one-line summary stays open (or shut) from hand to hand.
     // (toggle doesn't bubble: caught on the way down.)
-    root.addEventListener('toggle', e => { if (e.target.matches?.('.pl-sum-compact')) lastSummaryOpen = e.target.open; }, true);
+    root.addEventListener('toggle', e => {
+      if (e.target.matches?.('.pl-sum-compact')) lastSummaryOpen = e.target.open;
+      if (e.target.matches?.('.pl-menu')) tableMenuOpen = e.target.open;
+    }, true);
+    // The ⋯ menu closes on a click anywhere outside it.
+    document.addEventListener('click', e => {
+      if (!tableMenuOpen || e.target.closest?.('.pl-menu')) return;
+      tableMenuOpen = false;
+      root.querySelector('.pl-menu')?.removeAttribute('open');
+    });
     root.addEventListener('pointerover', onPointer);
     root.addEventListener('pointerleave', onPointer);
     document.addEventListener('keydown', onKey);
