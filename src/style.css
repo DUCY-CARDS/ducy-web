@@ -1399,6 +1399,14 @@ body.mode-v3 :is(.topbar, .sub-tabs, .toolbar, .table-wrap, .trainer, .psec, .be
 .v3 h1, .v3-h2 { font-family: var(--v3-display); font-weight: 400; margin: 0; line-height: 1; text-wrap: balance; }
 .v3-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .v3-head h1 { font-size: 46px; }
+/* Study or Play (#225): across to the other side, from any page. */
+.v3-switch { margin-left: auto; display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: #12261c; flex: none; }
+.v3-switch a { padding: 6px 14px; border-radius: 999px; font: 600 14px var(--font-ui); color: #c4b893; text-decoration: none; }
+.v3-switch a:hover { color: #fff; }
+.v3-switch a[aria-current] { background: #f3e7c9; color: #1d3a2c; }
+.sub-tabs .v3-switch a { padding: 4px 12px; font-size: 13px; }
+.sub-tabs .v3-switch + .pt-me { margin-left: 8px; }
+@media (max-width: 640px) { .sub-tabs .v3-switch a { padding: 4px 9px; } }
 .v3-home-link { display: flex; }
 .v3-spade path { fill: currentColor; }
 .v3-back { text-decoration: none; font-weight: 600; color: var(--v3-cream-dim) !important; }

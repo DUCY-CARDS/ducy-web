@@ -21,7 +21,7 @@ import { parseInvite } from './club.js';
 import { linkedHost, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
-import { crumbFor } from './home.js';
+import { crumbFor, sideOf, sideSwitch } from './home.js';
 
 export const TABS = ['play', 'ladder', 'join', 'host', 'clubs'];
 // Each tab's window title (#195): "Private clubs · DUCY".
@@ -94,6 +94,8 @@ function renderTabs() {
   });
   h += '</span>';
   // You: name, player ID, backups and the rest, in a dialog (#144).
+  // Across to the other side, from any page (#225).
+  h += sideSwitch(sideOf(page || 'equity', page === 'play' ? tableGroup() : null));
   h += `<button class="pt-me" type="button" data-pt="player" title="Player settings" aria-label="Player settings"><span class="pt-me-name">${esc(myName() || 'You')} </span><span aria-hidden="true">⚙</span></button>`;
   nav.innerHTML = h;
   if (!nav.dataset.ready) {
