@@ -1448,7 +1448,7 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .v3-bars span + span { background: var(--v3-red); }
 .v3-versus { display: flex; align-items: center; gap: 14px; font-family: var(--v3-display); font-size: 26px; }
 .v3-versus img { width: 72px; height: 72px; border-radius: 50%; border: 4px solid var(--v3-red-ink); }
-.v3-rungs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 520px; }
+.v3-rungs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 640px; }
 .v3-rungs .v3-spade.won path { fill: var(--v3-felt); }
 .v3-rungs .v3-spade.next path { fill: var(--v3-red); }
 .v3-rungs .v3-spade.open path { fill: none; stroke: #7d8a72; stroke-width: 1.6; stroke-dasharray: 2 1.4; }
@@ -1463,6 +1463,10 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .v3-join button { background: var(--v3-cream); color: var(--v3-felt); }
 .v3-btn-red { background: var(--v3-red); color: var(--v3-red-ink) !important; }
 .v3-or { color: var(--v3-muted); }
+.v3-record { font-family: var(--v3-display); font-size: 28px; line-height: 1.1; }
+.v3-record.down { color: #e9836f; }
+.v3-record.none { font-size: 20px; color: var(--v3-muted); }
+.v3-dim { color: var(--v3-muted); font-size: 14px; }
 .v3 :focus-visible { outline: 3px solid #e3a23b; outline-offset: 3px; }
 @media (max-width: 760px) {
   .v3 { padding: 20px 16px 48px; }
