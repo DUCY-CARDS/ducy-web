@@ -1,5 +1,6 @@
-// Sounds at a table played with other people: a gentle chime when it's your
-// turn, and a sharper alert when 5 seconds are left to act. Made with Web
+// Sounds at the table, with people or bots: a gentle chime when it's your
+// turn, and a sharper alert when 5 seconds are left to act (where there's a
+// turn clock). Made with Web
 // Audio, so there are no sound files. Browsers only let a page play sound
 // after the person has interacted with it: `unlockSounds()` is called on
 // each click, and until then the sounds are simply silent.

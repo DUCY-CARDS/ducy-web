@@ -184,7 +184,7 @@ let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
-// Sounds at tables with other people (sounds.js): the turn the chime was
+// Sounds at the table (sounds.js): the turn the chime was
 // played for ("hand:events"), and the deadline its 5-second alert went for
 // (0: none yet), so a time bank that extends the turn gets its own alert.
 const HURRY_MS = 5000;
@@ -1570,8 +1570,9 @@ function startClock() {
   }, 250);
 }
 
-// Sounds are for tables with other people, while it's this person's turn.
-const soundsOn = () => setup.sounds && mode !== 'solo' && !watching;
+// Sounds at every table, bots' too, while it's this person's turn (not while
+// watching).
+const soundsOn = () => setup.sounds && !watching;
 const myTurn = () => !!state?.legal && !state.complete;
 
 // A chime once when the turn comes to this person.
@@ -1846,7 +1847,7 @@ function renderTable() {
   }
   h += item('hud', 'Stats on seats', !!setup.hud);
   h += item('stats', 'Stats table', statsOpen);
-  if (mode !== 'solo' && !watching) h += item('sounds', 'Sounds', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
+  if (!watching) h += item('sounds', 'Sounds', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   h += '<div class="pl-felt">';
