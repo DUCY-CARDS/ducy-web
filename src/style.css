@@ -1478,3 +1478,42 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
   .v3-ring span { width: 78px; height: 78px; font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .v3-door, .v3-tile { transition: none; } }
+
+/* Pre-flop ranges' overview (ranges-overview.js): the felt inside the trainer. */
+.v3-embed { min-height: auto; margin-top: 4px; }
+.v3-headline { display: flex; flex-direction: column; gap: 8px; }
+.v3-headline h1 { font-size: 44px; }
+.v3-headline p { margin: 0; color: var(--v3-cream-dim); font-size: 18px; }
+.v3-areas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.v3-area { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 16px; border: 0; cursor: pointer; text-align: left; font: inherit; background: var(--v3-felt-hi); color: var(--v3-cream); box-shadow: 0 6px 0 var(--v3-shadow); }
+.v3-area.on { background: var(--v3-cream); color: var(--v3-felt); }
+.v3-area-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.v3-area-text b { font-size: 17px; }
+.v3-ring-sm { width: 64px; height: 64px; }
+.v3-ring-sm span { width: 48px; height: 48px; font-size: 18px; }
+.v3-area:not(.on) .v3-ring { background: conic-gradient(var(--v3-cream) 0 var(--pct), #24402f var(--pct) 100%); }
+.v3-area:not(.on) .v3-ring span { background: var(--v3-felt-hi); }
+.v3-skillcard { background: var(--v3-cream); color: var(--v3-felt); border-radius: 18px; padding: 8px 26px 18px; box-shadow: 0 8px 0 var(--v3-shadow); }
+.v3-skillcard-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-block: 14px; border-bottom: 1px solid #d9caa3; font-size: 14px; color: #5d6b55; }
+.v3-skillcard-head .v3-tile-name { font-size: 24px; color: var(--v3-felt); }
+.v3-subsection { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; align-items: center; padding-block: 14px; border-bottom: 1px solid #e5d8b6; }
+.v3-subsection:last-child { border-bottom: 0; }
+.v3-sub-name { font-weight: 600; font-size: 16px; }
+.v3-skillrow, .v3-chiprow { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.v3-skill { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 62px; padding: 4px 0; border: 0; background: none; cursor: pointer; font: inherit; color: var(--v3-felt); border-radius: 10px; }
+.v3-skill:hover { background: #e9dcb8; }
+.v3-skill span { font-size: 11px; }
+.v3-skill b { font-size: 12px; }
+.v3-skill .v3-spade.won path { fill: var(--v3-felt); }
+.v3-skill .v3-spade.open path { fill: none; stroke: #7d8a72; stroke-width: 1.4; stroke-dasharray: 2 1.4; }
+.v3-chipbtn { border: 1px solid #c9b98f; background: #fffaf0; color: var(--v3-felt); border-radius: 999px; padding: 6px 12px; font: 600 13px var(--v3-text); cursor: pointer; }
+.v3-chipbtn:hover { background: #fff; }
+.tr-back { display: block; margin-bottom: 6px; font-size: 14px; }
+@media (max-width: 760px) {
+  .v3-areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .v3-subsection { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .v3-headline h1 { font-size: 34px; }
+  .v3-area { padding: 12px; gap: 10px; }
+  .v3-ring-sm { width: 46px; height: 46px; }
+  .v3-ring-sm span { width: 34px; height: 34px; font-size: 14px; }
+}

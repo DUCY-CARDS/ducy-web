@@ -2,12 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MASTERY, gainFor, answersToMaster, skillKey, parseSkillKey, skillState, skillTable } from '../src/trainer-skills.js';
 
-test('mastery takes about 50 right answers, the last 20 points one at a time', () => {
-  assert.equal(answersToMaster(0), 46);
+test('90 masters a skill: about 36 right answers, the last 10 points one at a time', () => {
+  assert.equal(MASTERY, 90);
+  assert.equal(answersToMaster(0), 36);
   for (let s = 80; s < MASTERY; s++) assert.equal(gainFor(s), 1);
-  assert.equal(answersToMaster(80), 20);
-  // Slower than the old pace (28 from 0).
-  assert.ok(answersToMaster(0) > 40);
+  assert.equal(answersToMaster(80), 10);
 });
 
 test('skill keys round-trip, and drill keys are not skills', () => {
@@ -19,13 +18,14 @@ test('skill keys round-trip, and drill keys are not skills', () => {
   assert.equal(parseSkillKey('omaha:4:30:ds'), null);
 });
 
-test('a skill stays mastered after reaching 100, even if the score drops', () => {
+test('a skill stays mastered after reaching 90, even if the score drops', () => {
   assert.equal(skillState(undefined).status, 'new');
   assert.equal(skillState({score: 0, best: 0, answered: 0}).status, 'new');
-  assert.equal(skillState({score: 62, best: 70, answered: 40}).status, 'started');
-  const s = skillState({score: 93, best: 100, answered: 80});
+  assert.equal(skillState({score: 62, best: 89, answered: 40}).status, 'started');
+  assert.equal(skillState({score: 90, best: 90, answered: 40}).status, 'mastered');
+  const s = skillState({score: 84, best: 95, answered: 80});
   assert.equal(s.status, 'mastered');
-  assert.equal(s.score, 93);
+  assert.equal(s.score, 84);
 });
 
 test('the skills table lists every game and target, plus targets already practiced', () => {
