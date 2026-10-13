@@ -4,7 +4,8 @@
 //   ops: personalities | create(bots, buyIn, sb, bb, seed, game, stacks) |
 //        newHand(reset) | advance | act(kind, amount) | runTwice(yes) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
-//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review
+//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review |
+//        reviewDecision
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -97,6 +98,9 @@ const ops = {
     return snapshot(table.newHand());
   },
   review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
+  // Your latest decision graded as soon as it's made (live feedback); null
+  // with a ducy-wasm older than reviewLastDecision.
+  reviewDecision: () => (table.reviewLastDecision ? table.reviewLastDecision() : null),
   advance: () => snapshot(table.advance()),
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.
