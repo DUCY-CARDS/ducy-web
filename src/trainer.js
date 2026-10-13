@@ -9,6 +9,7 @@ import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './om
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 import { MASTERY, gainFor, skillKey, skillState, skillTable } from './trainer-skills.js';
+import { overviewHtml } from './ranges-overview.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -34,7 +35,9 @@ const OMAHA_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 let root = null;
 let open = false;
 // drill: a hand kind (tag) to practise on its own, or null for all hands.
-let st = {screen: 'setup', game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: '', drill: null};
+// The first screen is the overview (ranges-overview.js, V3 #225); ovCards is
+// the game it has open.
+let st = {screen: 'overview', ovCards: 2, game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: '', drill: null};
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -193,7 +196,7 @@ function handCountAndStart() {
 function renderOmahaSetup() {
   const {cards, pct} = st.omaha;
   let h = '<div class="tr-wrap">';
-  h += '<div class="tr-head"><h1>Range trainer</h1>';
+  h += '<div class="tr-head"><button type="button" class="link-btn tr-back" data-act="overview">‹ All skills</button><h1>Pre-flop ranges</h1>';
   h += `<p>Decide for each random hand whether it’s in the top ${pct}% of ${handsName(cards)}. Practice adapts to you and explains mistakes; a test gives no feedback until the end.</p></div>`;
   h += gameTabs();
   h += '<div class="tr-setup"><div class="tr-choose">';
@@ -285,7 +288,7 @@ function levelChip(rec) {
   return `<span class="tr-level lvl-${levelFor(score).name.toLowerCase()}">${rec ? `${levelFor(score).name} · ${score}` : 'New'}</span>`;
 }
 
-// Every skill (game × target) with where it stands: mastered (✓, once 100 is
+// Every skill (game × target) with where it stands: mastered (✓, once 90 is
 // reached; the current score is shown too), started (its score) or not yet.
 // Picking one selects that game and target.
 function skillsList(cards, pct) {
@@ -306,7 +309,7 @@ function skillsList(cards, pct) {
     h += '</tr>';
   }
   h += '</tbody></table>';
-  h += `<p class="tr-note">Practice raises a skill’s score toward 100: about 50 right answers in a row from 0, with the last 20 points all close calls. Reaching 100 masters it (✓). You can keep practicing; right answers hold it at 100, and mistakes still cost points.</p>`;
+  h += `<p class="tr-note">Practice raises a skill’s score toward 100. ${MASTERY} or more masters it (✓): about 36 right answers in a row from 0.</p>`;
   return h + '</details>';
 }
 
@@ -679,9 +682,9 @@ function answerPractice(yes) {
   const prev = loadProgress()[pr.key] || {};
   saveProgress(pr.key, {...prev, score: pr.score, best: pr.best, answered: pr.total});
   recordLifetime(pr, tags, correct);
-  // Mastery is announced when the score reaches 100. After that, practice
-  // carries on: right answers keep it at 100 and mistakes still cost points,
-  // so it's announced again only after dropping below 100 and climbing back.
+  // Mastery is announced when the score reaches MASTERY (90). After that,
+  // practice carries on up to 100, and mistakes still cost points, so it's
+  // announced again only after dropping below 90 and climbing back.
   if (pr.score >= MASTERY && before < MASTERY) { pr.mastered = true; render(); return; }
   if (correct) nextPractice();
   else {
@@ -723,7 +726,7 @@ function renderPractice() {
 
   if (pr.mastered) {
     h += '<div class="tr-mastered" role="status"><strong>Mastered!</strong>';
-    h += `<p>You reached 100 on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands. It stays mastered. Keep practicing to stay sharp: right answers hold your score at 100, and mistakes still cost points. Or try another skill, or start over from 0.</p>`;
+    h += `<p>You reached ${MASTERY} on ${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` (${esc(labelsFor(pr.cards)[pr.drill])})` : ''} after ${pr.total} hands, and earned its spade. It stays mastered. Keep practicing toward 100, or try another skill.</p>`;
     h += '<div class="tr-actions"><button class="tr-btn" data-act="end-practice">Session summary</button>';
     h += '<button class="tr-btn" data-act="restart-practice">Start over from 0</button>';
     h += '<button class="tr-btn yes" data-act="keep-practicing">Keep practicing</button></div></div>';
@@ -860,7 +863,7 @@ function renderSetup() {
   const t = targetFor(st.choice) || targetFor(st.choice = 'preset:open-btn');
   const saved = savedRanges();
   let h = '<div class="tr-wrap">';
-  h += '<div class="tr-head"><h1>Range trainer</h1>';
+  h += '<div class="tr-head"><button type="button" class="link-btn tr-back" data-act="overview">‹ All skills</button><h1>Pre-flop ranges</h1>';
   h += `<p>Pick a range, then decide for each random hand whether it belongs. There’s no feedback along the way; after ${st.total} hands you’ll see your accuracy and which hands you wrongly played or wrongly folded.</p></div>`;
   h += gameTabs();
   h += '<div class="tr-setup">';
@@ -1095,7 +1098,8 @@ function renderSummary() {
 
 function render() {
   if (!open) return;
-  if (st.screen === 'practice') renderPractice();
+  if (st.screen === 'overview') root.innerHTML = overviewHtml(loadProgress(), st.ovCards);
+  else if (st.screen === 'practice') renderPractice();
   else if (st.screen === 'practice-summary') renderPracticeSummary();
   else if (st.screen === 'play') renderPlay();
   else if (st.screen === 'summary') renderSummary();
@@ -1141,12 +1145,21 @@ function answer(yes) {
 function onClick(e) {
   // The skills list stays open (or closed) across re-renders.
   if (e.target.closest('.tr-skills > summary')) { st.skillsOpen = !st.skillsOpen; return; }
-  const el = e.target.closest('[data-skill],[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct]');
+  const el = e.target.closest('[data-skill],[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct],[data-ovgame],[data-ovchoice]');
   if (!el) return;
   if (el.dataset.act !== 'reset-progress') st.confirmReset = false;
+  if (el.dataset.ovgame) { st.ovCards = +el.dataset.ovgame; render(); return; }
+  if (el.dataset.ovchoice) {
+    // A chart by position from the overview: Hold'em's range test.
+    st.game = 'holdem'; st.choice = el.dataset.ovchoice; st.edit = null; st.screen = 'setup';
+    render();
+    return;
+  }
   if (el.dataset.skill) {
     const [cards, pct] = el.dataset.skill.split(':').map(Number);
     st.omaha.cards = cards; st.omaha.pct = pct; st.drill = null;
+    // From the overview, a skill opens its practice screen.
+    if (st.screen === 'overview') { st.game = 'omaha'; st.screen = 'setup'; }
     render();
   }
   else if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
@@ -1182,6 +1195,7 @@ function onClick(e) {
   else if (el.dataset.act === 'cancel-edit') { st.edit = null; render(); }
   else if (el.dataset.act === 'delete') deleteEdit();
   else if (el.dataset.act === 'quit' || el.dataset.act === 'setup') { st.screen = 'setup'; render(); }
+  else if (el.dataset.act === 'overview') { st.screen = 'overview'; st.edit = null; render(); }
 }
 
 function onKey(e) {

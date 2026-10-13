@@ -152,6 +152,11 @@ const reviewTable = () => gtoTable && tableGame.id === 'nlhe';
 // expanded to show the bot's mix.
 let review = null;
 let reviewOpen = new Set();
+// Live feedback (#56): each of your decisions this hand, graded as soon as
+// it's made. items are {data} once back, {pending: true} until then; keys
+// in `liveOpen` are the ones expanded.
+let live = {hand: 0, items: []};
+let liveOpen = new Set();
 // Review totals since sitting down, and all time (kept in localStorage).
 let sessionReview = emptyTotals();
 let allReview = loadReviewTotals();
@@ -216,7 +221,7 @@ let myChatLimit = chatLimiter();
 let chatNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -817,6 +822,7 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null}) {
   recordedHand = 0;
   gtoTable = gto;
   review = null;
+  live = {hand: 0, items: []};
   sessionReview = emptyTotals();
   const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game, stacks);
   if (snap) show(snap);
@@ -906,6 +912,9 @@ async function act(kind, amount = 0) {
   const snap = await request('act', kind, amount);
   if (!snap) return false;
   raiseTo = 0;
+  // Asked for before the bot's turn, so it grades this decision; the worker
+  // answers it first, inside the bot's minimum wait.
+  startLive(snap.state);
   show(snap);
   return true;
 }
@@ -1170,6 +1179,7 @@ function startHosting(code, game) {
   resetChat();
   gtoTable = false;
   review = null;
+  live = {hand: 0, items: []};
   myRunAnswer = null;
   sessionStats = {};
   recordedHand = 0;
@@ -1380,6 +1390,7 @@ function startGuest(code) {
   chipAsk = 0;
   gtoTable = false;
   review = null;
+  live = {hand: 0, items: []};
   sessionStats = {};
   recordedHand = 0;
   room = code;
@@ -1735,7 +1746,10 @@ function renderTable() {
   h += item('autodeal', 'Auto-deal', autoDealOn());
   if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="Wait before the next hand"><span>Wait before dealing</span><b>${setup.dealSecs}s</b></button>`;
   if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
-  if (reviewTable() && mode === 'solo') h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against the GTO bot after each hand');
+  if (reviewTable() && mode === 'solo') {
+    h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against the GTO bot as soon as you make it');
+    h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against the GTO bot after each hand');
+  }
   h += item('hud', 'Stats on seats', !!setup.hud);
   h += item('stats', 'Stats table', statsOpen);
   if (mode !== 'solo' && !watching) h += item('sounds', 'Sounds', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
@@ -1773,6 +1787,7 @@ function renderTable() {
     const note = s.complete ? (num(seat.net) > 0 ? `+${c(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
+    if (i === 0) h += liveBadgeHtml();
     if (setup.hud) h += hudHtml(seatId(i));
     if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${c(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
@@ -1783,6 +1798,7 @@ function renderTable() {
   h += controlsHtml();
   h += sitOutHtml();
   h += chipsHtml();
+  h += liveHtml();
   h += reviewHtml();
   // The hand's action, then the stats below it.
   const log = s.events.map(eventText).filter(Boolean);
@@ -2157,11 +2173,13 @@ const STREET = {preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River'};
 // "Ks 9d" as the card faces' text.
 const boardText = b => (b ? b.split(' ').map(c => `${c[0]}${SUITS[c[1]] || ''}`).join(' ') : '');
 
-function decisionHtml(d, i) {
+// One graded decision, a line that opens to the bot's mix. `key` is the
+// click attribute: "rev" in the hand review, "live" in live feedback.
+function decisionHtml(d, i, key = 'rev') {
   const flagged = FLAGGED.includes(d.grade);
-  const open = reviewOpen.has(i);
+  const open = (key === 'live' ? liveOpen : reviewOpen).has(i);
   const cls = ['pl-rev-row', `g-${d.grade}`, open ? 'open' : ''].filter(Boolean).join(' ');
-  let h = `<li class="${cls}"><button class="pl-rev-line" data-rev="${i}" aria-expanded="${open}">`;
+  let h = `<li class="${cls}"><button class="pl-rev-line" data-${key}="${i}" aria-expanded="${open}">`;
   h += `<span class="pl-rev-street">${STREET[d.street] || esc(d.street)}${d.board ? ` <span class="pl-rev-board">${esc(boardText(d.board))}</span>` : ''}</span>`;
   h += `<span class="pl-rev-act">${esc(d.action)}</span>`;
   if (flagged && d.grade !== 'deviation' && d.best) h += `<span class="pl-rev-best">best: ${esc(d.best)}</span>`;
@@ -2216,10 +2234,58 @@ function reviewHtml() {
   if (!r.decisions.length) return h + '<span class="pl-meta">You had no decisions this hand.</span></div></div>';
   const lost = r.bb_lost > 0 ? `<span class="pl-rev-total bad">−${bbText(r.bb_lost)} bb from your decisions</span>` : '<span class="pl-rev-total">No bb lost to mistakes</span>';
   h += `${lost}<span class="pl-meta">Result ${r.result > 0 ? '+' : ''}${bbText(r.result)} bb (luck included)</span></div>`;
-  h += `<ul class="pl-rev-list">${r.decisions.map(decisionHtml).join('')}</ul>`;
+  h += `<ul class="pl-rev-list">${r.decisions.map((d, i) => decisionHtml(d, i)).join('')}</ul>`;
   if (r.note) h += `<p class="pl-meta">${esc(r.note[0].toUpperCase() + r.note.slice(1))}.</p>`;
   h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s own strategy, which is strong but not perfect, using the range it could hold, not its actual cards. Preflop plays are compared with its mix only.</p>';
   return h + '</div>';
+}
+
+// ---- live feedback (#56) ----
+
+// Asks the worker to grade the decision just made, with only what you could
+// see then (the engine's reviewLastDecision). With an older ducy-wasm, or
+// away from the Hold'em GTO bot, there's no grade and nothing shows.
+function startLive(s) {
+  if (mode !== 'solo' || !reviewTable() || !setup.live || !s) return;
+  const hand = num(s.hand_number);
+  if (live.hand !== hand) { live = {hand, items: []}; liveOpen = new Set(); }
+  const item = {pending: true};
+  live.items.push(item);
+  const mine = session;
+  call('reviewDecision').then(data => {
+    if (mine !== session || live.hand !== hand) return;
+    if (data) { item.data = data; delete item.pending; } else live.items = live.items.filter(x => x !== item);
+    render();
+  }, e => {
+    console.warn(e);
+    if (mine === session && live.hand === hand) { live.items = live.items.filter(x => x !== item); render(); }
+  });
+}
+
+// Live feedback is on and has something for the hand on the table.
+const liveShown = () => mode === 'solo' && reviewTable() && setup.live && !!state && live.hand === num(state.hand_number) && live.items.length > 0;
+
+// This hand's graded decisions, under the action bar so the buttons never
+// move. Once the hand is over, the full hand review takes over if it's on.
+function liveHtml() {
+  if (!liveShown() || (state.complete && setup.review)) return '';
+  let h = '<div class="pl-review pl-live"><ul class="pl-rev-list">';
+  live.items.forEach((x, i) => {
+    if (x.pending) h += '<li class="pl-rev-row"><span class="pl-meta pl-live-wait">Grading your decision…</span></li>';
+    else h += decisionHtml(x.data, i, 'live');
+  });
+  return h + '</ul></div>';
+}
+
+// The latest grade, by your seat: a quiet tick for a fine play, the grade
+// and bb lost otherwise.
+function liveBadgeHtml() {
+  if (!liveShown()) return '';
+  const d = live.items[live.items.length - 1].data;
+  if (!d) return '';
+  if (!FLAGGED.includes(d.grade)) return `<div class="pl-live-badge g-${esc(d.grade)}" title="${esc(GRADE_LABEL[d.grade] || d.grade)}">✓</div>`;
+  const cost = d.bb_lost > 0 ? ` −${bbText(d.bb_lost)} bb` : '';
+  return `<div class="pl-live-badge g-${esc(d.grade)}">${esc(GRADE_LABEL[d.grade] || d.grade)}${cost}</div>`;
 }
 
 // Review totals for the Stats panel.
@@ -2245,12 +2311,18 @@ function onClick(e) {
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live]');
   if (!el) return;
   const d = el.dataset;
   if (d.rev != null) {
     const i = +d.rev;
     if (reviewOpen.has(i)) reviewOpen.delete(i); else reviewOpen.add(i);
+    render();
+    return;
+  }
+  if (d.live != null) {
+    const i = +d.live;
+    if (liveOpen.has(i)) liveOpen.delete(i); else liveOpen.add(i);
     render();
     return;
   }
@@ -2304,6 +2376,7 @@ function onClick(e) {
   }
   else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
+  else if (el.dataset.act === 'live') { setup.live = !setup.live; saveSetup(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
   else if (el.dataset.act === 'reset-stats') resetStats();
   else if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
