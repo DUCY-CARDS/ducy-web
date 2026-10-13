@@ -1,79 +1,45 @@
+/* V3 (#225): the whole site is the "Felt Room": felt green, cream and brick
+   red, in every theme. --teal is kept as the accent's name (it's used all
+   over); it's brick red now. --red, --blue and --green are the suit colours
+   on card faces, dark enough for white cards and still readable on felt. */
 :root {
-  --bg: #edeef0;
-  --bg-raised: #f7f7f8;
-  --bg-inset: #e2e3e6;
-  --fg: #3e4248;
-  --fg-muted: #848890;
-  --fg-strong: #16191e;
-  --teal: #2e7888;
-  --teal-hover: #38909e;
-  --teal-faint: rgba(46,120,136,0.12);
-  --red: #a04040;
-  --blue: #2f5fa8;
-  --green: #2e7a3c;
-  --amber: #8a5a00;
-  --amber-faint: rgba(214,150,30,0.14);
-  --border: #ced0d4;
-  --card-face: #fff;
-  --card-ink: #16191e;
-  --felt: #2c3834;
-  --felt-border: #3e4a44;
-  --radius: 4px;
-  --font-ui: 'Libre Franklin', system-ui, sans-serif;
+  --bg: #1d3a2c;
+  --bg-raised: #24472f;
+  --bg-inset: #15301f;
+  --fg: #e4d9b9;
+  --fg-muted: #a9b8a6;
+  --fg-strong: #f6ecd2;
+  --teal: #d9573c;
+  --teal-hover: #e8705a;
+  --teal-faint: rgba(217,87,60,0.18);
+  --red: #c8403a;
+  --blue: #2463c9;
+  --green: #1f8a40;
+  --amber: #e8b04a;
+  --amber-faint: rgba(232,176,74,0.14);
+  --border: #3d6650;
+  --card-face: #fbf8ef;
+  --card-ink: #12261c;
+  --felt: #2c5a43;
+  --felt-border: #5a3624;
+  --radius: 6px;
+  --font-ui: 'Work Sans', system-ui, sans-serif;
   --font-data: 'Overpass Mono', monospace;
+  --font-display: 'Alfa Slab One', Georgia, serif;
   --card-w: 42px;
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #14171b;
-    --bg-raised: #1c2026;
-    --bg-inset: #252a31;
-    --fg: #c7cbd1;
-    --fg-muted: #858c96;
-    --fg-strong: #f0f2f4;
-    --teal: #3b97a8;
-    --teal-hover: #4aaabb;
-    --teal-faint: rgba(59,151,168,0.18);
-    --red: #c65858;
-    --blue: #4f82d4;
-    --green: #3f9c52;
-    --amber: #e0a64a;
-    --amber-faint: rgba(224,166,74,0.14);
-    --border: #323840;
-    --card-face: #f3f3f1;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #14171b;
-  --bg-raised: #1c2026;
-  --bg-inset: #252a31;
-  --fg: #c7cbd1;
-  --fg-muted: #858c96;
-  --fg-strong: #f0f2f4;
-  --teal: #3b97a8;
-  --teal-hover: #4aaabb;
-  --teal-faint: rgba(59,151,168,0.18);
-  --red: #c65858;
-  --blue: #4f82d4;
-  --green: #3f9c52;
-  --amber: #e0a64a;
-  --amber-faint: rgba(224,166,74,0.14);
-  --border: #323840;
-  --card-face: #f3f3f1;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; margin: 0; }
+a { color: var(--teal); }
+a:hover { color: var(--teal-hover); }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); padding: 0; }
 
 .topbar {
   display: flex; align-items: center; height: 48px; padding: 0 20px;
   border-bottom: 1px solid var(--border); background: var(--bg-raised); gap: 24px;
 }
-.wordmark { font-family: var(--font-data); font-size: 17px; font-weight: 700; color: var(--fg-strong); letter-spacing: -0.03em; }
+.wordmark { font-family: var(--font-display); font-size: 20px; font-weight: 400; color: var(--fg-strong); letter-spacing: 0.04em; }
 .wasm-status {
   margin-left: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted);
 }
@@ -113,7 +79,7 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 
 /* Range trainer */
 .tr-wrap { max-width: 880px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-.tr-head h1 { font-size: 22px; font-weight: 700; color: var(--fg-strong); text-wrap: balance; }
+.tr-head h1 { font-family: var(--font-display); font-size: 34px; font-weight: 400; line-height: 1.05; color: var(--fg-strong); text-wrap: balance; }
 .tr-head p { font-size: 14px; color: var(--fg-muted); margin-top: 6px; max-width: 62ch; line-height: 1.45; }
 .tr-setup { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 24px; align-items: start; }
 .tr-group { font-size: 12px; font-weight: 600; color: var(--fg-muted); margin: 12px 0 6px; }
@@ -383,8 +349,8 @@ body.mode-trainer :is(.toolbar, .table-wrap) { display: none; }
 }
 .felt {
   position: absolute; top: 20%; left: 18%; right: 18%; bottom: 20%;
-  background: linear-gradient(170deg, #313b38, #2a3430);
-  border: 3px solid var(--felt-border); border-radius: 45%;
+  background: radial-gradient(ellipse at 50% 40%, #33694e 0%, #23503a 75%);
+  border: 8px solid var(--felt-border); border-radius: 45%;
   box-shadow: inset 0 2px 12px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.06);
   display: flex; align-items: center; justify-content: center;
 }
@@ -906,7 +872,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-status.cl-member { color: var(--teal); font-weight: 600; }
 .cl-status.cl-declined, .cl-status.cl-removed, .cl-status.cl-bad_invite { color: var(--red, #c0392b); }
 .pl-wrap { max-width: 980px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-.pl-head h1 { font-size: 22px; color: var(--fg-strong); margin: 0 0 4px; }
+.pl-head h1 { font-family: var(--font-display); font-size: 34px; font-weight: 400; line-height: 1.05; color: var(--fg-strong); margin: 0 0 6px; }
 .pl-head p, .pl-meta { color: var(--fg-muted); font-size: 13px; margin: 0; }
 .pl-setup { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
 .pl-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
