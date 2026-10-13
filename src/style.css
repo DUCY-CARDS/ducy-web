@@ -1589,6 +1589,35 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-act-card .cl-restore { font-size: 13px; }
 @media (max-width: 640px) { .cl-club-acts { grid-template-columns: minmax(0, 1fr); } .cl-club { padding: 16px; } .cl-club-name { font-size: 22px; } }
 
+/* Club home for a member (clubs.js, V3 #225): the name and your chips, then
+   tables beside You here. */
+.cl-home-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.cl-home-name { margin: 0; font: 400 40px/1.05 var(--font-display); color: var(--fg-strong); overflow-wrap: anywhere; }
+.cl-home-chips { margin-left: auto; background: #f3e7c9; color: #1d3a2c; border-radius: 999px; padding: 8px 14px; font-weight: 600; }
+.cl-manage { margin-bottom: 18px; }
+.cl-home { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.cl-home h2 { margin: 0; font: 400 26px var(--font-display); color: var(--fg-strong); }
+.cl-home-main { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.cl-home-side { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.cl-home-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cl-tcards { gap: 12px; }
+.cl-tables li.cl-tcard { gap: 14px; padding: 16px 18px; border-radius: 16px; background: #24472f; color: #f3e7c9; box-shadow: 0 6px 0 #0f2219; font-size: 14px; }
+.cl-tables li.cl-tcard.cream { background: #f3e7c9; color: #1d3a2c; }
+.cl-tcard-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cl-tcard-text .cl-name { font-size: 18px; }
+.cl-tcard-meta { color: #a9b8a6; }
+.cl-tcard.cream .cl-tcard-meta, .cl-tcard.cream .cl-why { color: #5d6b55; }
+.cl-tcard .btn-small { padding: 9px 16px; font-size: 14px; border-radius: 10px; }
+.cl-tcard .btn-small:not(.primary) { background: transparent; color: inherit; border-color: currentColor; }
+.cl-side-card { background: #f3e7c9; color: #1d3a2c; border-radius: 16px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 6px 0 #0f2219; }
+.cl-side-card .cl-next, .cl-side-note { margin: 0; font-size: 14px; }
+.cl-side-card .cl-ask { display: flex; flex-wrap: wrap; gap: 6px; }
+.cl-side-card .cl-ask .pl-text { flex: 1 1 100px; width: auto; background: #fffaf0; color: #1d3a2c; border: 1px solid #c9b98f; }
+.cl-side-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0 0; border: 0; border-top: 1px solid #d9caa3; background: none; color: inherit; font: 500 15px var(--font-ui); cursor: pointer; text-align: left; }
+.cl-side-row.on, .cl-side-row:hover { color: #b0391f; }
+.cl-forget { align-self: flex-start; font-size: 13px; }
+@media (max-width: 640px) { .cl-home-name { font-size: 30px; } .cl-home-chips { margin-left: 0; } }
+
 /* Start a game (play.js, V3 #225): one cream form, the invite panel beside it. */
 .sg-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
 .sg-form { flex: 1 1 420px; min-width: 0; background: #f3e7c9; color: #1d3a2c; border-radius: 20px; padding: 24px 26px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 8px 0 #0f2219; }
