@@ -1,15 +1,14 @@
 // Pre-flop ranges' first screen (V3, #225), like IXL: an overall score for
-// each game, then that game's skills in groups, each a spade, filled once
-// mastered (a score of 90 or more). Picking a skill opens its practice in
-// trainer.js. Pure: built from the trainer's saved progress.
+// each game, then that game's top-% skills, each a spade, filled once
+// mastered (a score of 90 or more), with the next one to practise up front
+// (#244). Picking a skill opens its practice in trainer.js. Pure: built from
+// the trainer's saved progress.
 
 import { MASTERY, skillState, skillKey } from './trainer-skills.js';
-import { PRESET_GROUPS, RANGE_PRESETS } from './presets.js';
 import { SPADE_PATH } from './home.js';
 
 export const OVERVIEW_GAMES = [[2, 'Hold’em'], [4, 'Omaha 4'], [5, 'Omaha 5'], [6, 'Omaha 6']];
 export const TOP_TARGETS = [10, 15, 20, 25, 30, 40, 50];
-const SPOT_NAMES = {open: 'Opening', '3bet': '3-betting', '4bet': '4-betting', hu: 'Heads-up', other: 'Other'};
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
@@ -38,23 +37,31 @@ export function overviewHtml(progress, cards = 2) {
     h += `<span class="v3-area-text"><b>${g.name}</b><span>${g.mastered} of ${g.total} skills</span></span></button>`;
   }
   h += '</div>';
-  h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">${open.name} skills</span><span>${MASTERY}+ earns a spade</span></div>`;
-  h += '<div class="v3-subsection"><span class="v3-sub-name">Top-% ranges</span><div class="v3-skillrow">';
+  // One track per game (range-selection design, #244): the top-% skills,
+  // the next to work on marked, and a big button to practise it. Opening
+  // ranges by position come later (#249).
+  const next = nextSkill(open);
+  h += '<div class="v3-track">';
+  h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">Your ranges</span><span>${MASTERY}+ earns a spade</span></div>`;
+  h += '<div class="v3-skillrow v3-trackrow">';
   for (const s of open.skills) {
     const state = s.status === 'mastered' ? 'won' : 'open';
     const label = s.status === 'mastered' ? 'Mastered' : s.status === 'started' ? `Score ${s.score}` : 'Not started';
-    h += `<button type="button" class="v3-skill" data-skill="${open.cards}:${s.pct}">${spade(state, label)}<span>Top ${s.pct}%</span><b>${s.status === 'new' ? '–' : s.score}</b></button>`;
+    h += `<button type="button" class="v3-skill${s === next ? ' next' : ''}" data-skill="${open.cards}:${s.pct}">${spade(state, label)}<span>Top ${s.pct}%</span><b>${s.status === 'new' ? '–' : s.score}</b></button>`;
   }
-  h += '</div></div>';
-  // Hold'em's charts by position and situation: tests for now, without scores.
-  if (open.cards === 2) {
-    for (const g of PRESET_GROUPS) {
-      const presets = RANGE_PRESETS.filter(p => p.spot === g.spot);
-      if (!presets.length) continue;
-      h += `<div class="v3-subsection"><span class="v3-sub-name">${esc(SPOT_NAMES[g.spot] || g.label)}</span><div class="v3-chiprow">`;
-      for (const p of presets) h += `<button type="button" class="v3-chipbtn" data-ovchoice="preset:${esc(p.id)}">${esc(p.name)}</button>`;
-      h += '</div></div>';
-    }
+  h += '</div>';
+  if (next) {
+    const left = next.status === 'started' ? `${next.score} of ${MASTERY} to earn its spade.` : `Score ${MASTERY} to earn its spade.`;
+    h += `<div class="v3-track-go"><button type="button" class="tr-start" data-skill="${open.cards}:${next.pct}">Practice top ${next.pct}%</button><span>${left}</span></div>`;
+  } else {
+    h += `<div class="v3-track-go"><span>Every ${esc(open.name)} range mastered. Tap one to keep practising.</span></div>`;
   }
-  return h + '</section></div></div>';
+  h += '</section>';
+  h += '<aside class="v3-later"><b>Coming later</b><span>Opening ranges by position, for each game and number of players.</span></aside>';
+  return h + '</div></div></div>';
+}
+
+/** The skill to work on next: the first not yet mastered, easiest first. */
+export function nextSkill(game) {
+  return game.skills.find(s => s.status !== 'mastered') || null;
 }
