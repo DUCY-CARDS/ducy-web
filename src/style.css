@@ -1532,6 +1532,34 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
   .v3-ring-sm span { width: 34px; height: 34px; font-size: 14px; }
 }
 
+/* You (player-settings.js, V3 #225): you on a cream card, then At the table
+   and Your data. */
+.ps.cl-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+.ps-title { font-family: var(--font-display); font-weight: 400; font-size: 30px; color: var(--fg-strong); }
+.ps-top { background: #f3e7c9; color: #1d3a2c; border-radius: 18px; padding: 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; box-shadow: 0 6px 0 #0f2219; }
+.ps-me { width: 92px; height: 92px; border-radius: 50%; flex: none; }
+.ps-me.none { display: flex; align-items: center; justify-content: center; background: #1d3a2c; color: #f3e7c9; font: 400 38px var(--font-display); }
+.ps-me-text { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ps-name { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 14px; }
+.ps-name-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ps-name .pl-text { background: #fffaf0; color: #1d3a2c; border: 1px solid #c9b98f; border-radius: 10px; padding: 9px 12px; font: 500 17px var(--font-ui); max-width: 260px; }
+.ps-name .btn-small { background: #1d3a2c; color: #f3e7c9; border-color: #1d3a2c; }
+.ps-change { align-self: flex-start; color: #b0391f !important; font-weight: 600; }
+.ps-spades { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0 10px; }
+.ps-spades svg path { fill: #1d3a2c; }
+.ps-spades b { font: 400 30px var(--font-display); }
+.ps-spades span { font-size: 13px; color: #5d6b55; }
+.ps-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ps-section { background: var(--bg-inset); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; min-width: 0; }
+.ps-section-title { font-family: var(--font-display); font-size: 22px; color: var(--fg-strong); padding-bottom: 6px; }
+.ps-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 10px; border-top: 1px solid var(--border); color: var(--fg); }
+.ps-val { background: none; border: 0; padding: 4px 0; font: 600 15px var(--font-ui); color: var(--teal); cursor: pointer; }
+.ps-val:hover { color: var(--teal-hover); }
+.ps-val[disabled] { color: var(--fg-muted); cursor: default; }
+.ps-opts { display: flex; gap: 4px; }
+.ps-row .pl-pid { font-size: 13px; }
+@media (max-width: 640px) { .ps-sections { grid-template-columns: minmax(0, 1fr); } .ps-me { width: 72px; height: 72px; } }
+
 /* Start a game (play.js, V3 #225): one cream form, the invite panel beside it. */
 .sg-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
 .sg-form { flex: 1 1 420px; min-width: 0; background: #f3e7c9; color: #1d3a2c; border-radius: 20px; padding: 24px 26px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 8px 0 #0f2219; }
