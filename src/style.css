@@ -831,6 +831,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-results li { display: contents; }
 .cl-pc { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 34px; padding: 0 3px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-face); color: var(--card-ink); font-family: var(--font-data); font-size: 13px; font-weight: 600; }
 .cl-pc.s-h, .cl-pc.s-d { color: var(--red); }
+.four-color .cl-pc.s-d { color: var(--blue); }
+.four-color .cl-pc.s-c { color: var(--green); }
 .cl-pc.back { background: repeating-linear-gradient(45deg, var(--teal) 0 4px, var(--teal-hover) 4px 8px); border-color: var(--teal); }
 .cl-pc.slot { background: transparent; border-style: dashed; }
 .cl-replay-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; }
@@ -987,6 +989,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-sum-cards { display: inline-flex; gap: 2px; }
 .pl-sc { font-family: var(--font-data); font-size: 12px; font-weight: 700; padding: 0 3px; border: 1px solid var(--border); border-radius: 3px; background: #fff; color: #1a1a1a; }
 .pl-sc.r { color: #c0392b; }
+.four-color .pl-sc.s-d { color: var(--blue); }
+.four-color .pl-sc.s-c { color: var(--green); }
 /* A hand shown down: name and cards, what they made under them. */
 .pl-summary ul.pl-sum-shown { gap: 6px; }
 .pl-sum-shown li { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 6px; }
@@ -1028,6 +1032,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-status .pl-bank { margin-left: 6px; }
 .pl-status .pl-bank.on { color: var(--red); }
 .pl-result { color: var(--fg-strong); font-weight: 600; }
+.pl-swaps { display: block; margin-top: 4px; font-size: 13px; }
 .pl-act-fold { grid-area: fold; }
 .pl-act-call { grid-area: call; }
 .pl-act-raise { grid-area: raise; }
