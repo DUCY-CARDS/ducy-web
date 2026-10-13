@@ -23,7 +23,7 @@ import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
-import { hurrySound, turnSound, unlockSounds } from './sounds.js';
+import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
@@ -223,7 +223,7 @@ let myChatLimit = chatLimiter();
 let chatNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -680,6 +680,7 @@ function peel(before, snap) {
     if (mine !== session || !open) { peeling = false; return; }
     if (i < steps.length) {
       state = steps[i];
+      gameSounds();
       render();
       peelTimer = setTimeout(next, PEEL_MS[Math.min(i, PEEL_MS.length - 1)]);
       i += 1;
@@ -733,6 +734,7 @@ function show(snap) {
     turnEnds = snap.turnMsLeft != null ? (clockStopped || Date.now()) + num(snap.turnMsLeft) : 0;
   }
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
+  gameSounds();
   botToAct = snap.botToAct;
   // A finished hand, for a club player's hand history (#71).
   const hn = num(snap.state.hand_number);
@@ -1426,10 +1428,11 @@ export function setTableName(n) {
 // Table settings shown on the You page (player-settings.js, V3 #225), and a
 // way to change each: auto-deal and sounds on or off, run it twice cycling
 // ask, always, never.
-export const tablePrefs = () => ({autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds});
+export const tablePrefs = () => ({autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds, gameSounds: !!setup.gameSounds});
 export function cycleTablePref(key) {
   if (key === 'autoDeal') setup.autoDeal = !setup.autoDeal;
   else if (key === 'sounds') setup.sounds = !setup.sounds;
+  else if (key === 'gameSounds') setup.gameSounds = !setup.gameSounds;
   else if (key === 'runTwice') setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(tablePrefs().runTwice) + 1) % RUN_PREFS.length];
   saveSetup();
   render();
@@ -1574,6 +1577,39 @@ function startClock() {
 // watching).
 const soundsOn = () => setup.sounds && !watching;
 const myTurn = () => !!state?.legal && !state.complete;
+
+// Game sounds (a setting apart from the alerts): the shuffle as a hand is
+// dealt, chips for each bet, raise or call (a stack for an all-in), a flick
+// for each board card, and the pot pushed to its winner, in that order when
+// one update brings several.
+let soundSeen = {hand: '', events: 0};
+function gameSounds() {
+  if (!state) return;
+  const hand = `${session}:${num(state.hand_number)}`;
+  const events = state.events || [];
+  if (hand !== soundSeen.hand) {
+    // A new hand (or table): the shuffle; what's already happened in it
+    // stays quiet.
+    soundSeen = {hand, events: events.length};
+    if (num(state.hand_number) && setup.gameSounds) shuffleSound();
+    return;
+  }
+  // Fewer events than before: a reveal step going back, nothing new.
+  const fresh = events.slice(soundSeen.events);
+  soundSeen.events = Math.max(soundSeen.events, events.length);
+  if (!setup.gameSounds || !fresh.length) return;
+  let chips = 0, cards = 0, pot = false;
+  for (const e of fresh) {
+    if (e.type === 'bet' || e.type === 'raise' || e.type === 'call') chips = Math.max(chips, e.all_in ? 4 : e.type === 'call' ? 1 : 2);
+    else if (e.type === 'board') cards += e.cards?.length || 1;
+    else if (e.type === 'award') pot = true;
+  }
+  let at = 0;
+  const later = (ms, fn) => (ms ? setTimeout(fn, ms) : fn());
+  if (chips) { chipsSound(chips); at += 220; }
+  if (cards) { later(at, () => cardSound(cards)); at += 120 * cards + 100; }
+  if (pot) later(at, () => potSound(num(state.seats[0]?.won) > 0));
+}
 
 // A chime once when the turn comes to this person.
 function turnChime() {
@@ -1847,7 +1883,8 @@ function renderTable() {
   }
   h += item('hud', 'Stats on seats', !!setup.hud);
   h += item('stats', 'Stats table', statsOpen);
-  if (!watching) h += item('sounds', 'Sounds', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
+  if (!watching) h += item('sounds', 'Alerts', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
+  h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   h += '<div class="pl-felt">';
@@ -2484,6 +2521,7 @@ function onClick(e) {
     if (armRunChoice()) return;
   }
   else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
+  else if (el.dataset.act === 'gamesounds') { setup.gameSounds = !setup.gameSounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'live') { setup.live = !setup.live; saveSetup(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
