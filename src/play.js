@@ -29,6 +29,7 @@ import { handText, handWords } from './hand-words.js';
 import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
+import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
   BLINDS, START_BB, WINS_TO_TAKE, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
@@ -365,12 +366,16 @@ function optsRow(label, items) {
 
 const optBtn = (on, attr, value, text) => `<button class="cc-btn${on ? ' on' : ''}" ${attr}="${value}">${text}</button>`;
 
+// Play the Regulars (#225): pick a game and sit down with five random
+// Regulars. Choosing your own opponents (and the GTO bot) is under More.
 function botsSetupHtml() {
   fillBots();
-  let h = '<div class="pl-head"><h1>Play the bots</h1>';
-  h += '<p>No-limit Hold’em or pot-limit Omaha against ducy’s bot personalities. Each one plays a different style, and some adapt to how you play.</p></div>';
+  let h = '<div class="pl-head"><h1>Play the Regulars</h1>';
+  h += '<p>Play immediately against the Regulars.</p></div>';
   h += '<div class="pl-setup">';
   h += optsRow('Game', GAMES.map(g => optBtn(setup.game === g.id, 'data-pgame', g.id, g.label)));
+  h += '<div class="pl-actions"><button class="tr-start" data-act="sitregulars">Sit down</button></div>';
+  h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Choose your opponents</summary><div class="cl-more">`;
   h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
   // Who sits where: heads-up, the one opponent stays in view (that's where
   // the GTO bot is picked); otherwise, with the blinds and buy-in, under
@@ -383,20 +388,17 @@ function botsSetupHtml() {
     picks += `</select><span class="pl-desc">${esc(p ? p.description : '')}</span></label>`;
   });
   picks += '</div>';
-  if (setup.count === 1) h += picks;
-  else h += `<p class="pl-meta">Against ${setup.bots.map(id => esc(botChoices().find(x => x.id === id)?.name || id)).join(', ')}.</p>`;
-  h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>More options</summary><div class="cl-more">`;
+  h += picks;
   h += optsRow('Blinds', BOT_BLINDS.map(([sb, bb]) => optBtn(setup.bb === bb, 'data-blinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)));
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
-  if (setup.count > 1) h += picks;
-  h += '</div></details>';
   const gtoGames = [gtoAvailable && 'No-limit Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
   const gamesText = gtoGames.length > 1 ? `${gtoGames.slice(0, -1).join(', ')} or ${gtoGames.at(-1)}` : gtoGames[0];
   if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent) to face the GTO bot.</p>`;
   if (gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
-  if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
-  h += '<button class="tr-start" data-act="sit">Sit down</button></div>';
+  h += '<button class="tr-start" data-act="sit">Sit down with these</button></div>';
+  h += '</div></details>';
+  if (setupNote) h += `<p class="pl-desc">${esc(setupNote)}</p>`;
   h += '</div>';
   return h;
 }
@@ -737,6 +739,7 @@ function show(snap) {
   startReview();
   ladderCheck();
   ladderKeep(state);
+  regularsCheck();
   if (armRunChoice()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
@@ -790,6 +793,69 @@ async function prepareGto(bots = setup.bots) {
   }
 }
 
+// ---- Play the Regulars (#225) ----
+// A 6-handed table of random Regulars run like a card room (regulars.js):
+// between hands each tops up from a bankroll of three buy-ins, and one who
+// has lost it all leaves for a new one. You rebuy or top up when you choose.
+let regulars = null; // {bank, buyIn, done, pending} at a Regulars table
+let regularsNote = ''; // who left and who sat down, after the last hand
+
+async function sitRegulars() {
+  setupNote = '';
+  setup.count = REGULARS_SEATS;
+  setup.bots = pickRegulars(personalities.map(p => p.id), REGULARS_SEATS);
+  saveSetup();
+  ladder = null;
+  await sitDown({bots: setup.bots, game: setup.game, buyIn: setup.buyIn, sb: setup.sb, bb: setup.bb, gto: false, regs: true});
+}
+
+const regularName = id => personalities.find(p => p.id === id)?.name || id;
+
+// A hand just finished at a Regulars table: top up the Regulars who need it
+// and replace the ones who are out (once per hand). nextHand waits for it.
+function regularsCheck() {
+  if (!regulars || mode !== 'solo' || !state?.complete) return;
+  const hn = num(state.hand_number);
+  if (!hn || hn === regulars.done) return;
+  regulars.done = hn;
+  regulars.pending = regularsBetween().catch(e => console.warn(e));
+}
+
+async function regularsBetween() {
+  const r = betweenHands({
+    stacks: state.seats.map(x => num(x.stack)), bank: regulars.bank, bots: tableBots,
+    buyIn: regulars.buyIn, all: personalities.map(p => p.id),
+  });
+  for (const {seat, chips} of r.sets) await call('setStack', seat, chips);
+  const notes = [];
+  const seated = [...tableBots];
+  for (const sw of r.swaps) {
+    if (await call('setBot', sw.seat, sw.id, sw.chips, crypto.getRandomValues(new Uint32Array(1))[0])) {
+      seated[sw.seat - 1] = sw.id;
+      notes.push(`${regularName(sw.from)} left. ${regularName(sw.id)} sat down.`);
+    } else {
+      // An older ducy-wasm can't change who sits there: the same Regular
+      // buys in again.
+      await call('setStack', sw.seat, sw.chips);
+    }
+  }
+  tableBots = seated;
+  regulars.bank = r.bank;
+  regularsNote = notes.join(' ');
+  if (notes.length) render();
+}
+
+// Rebuy (out of chips) or top up (below a buy-in) to a full buy-in.
+async function rebuy() {
+  if (!regulars || !state?.complete) return;
+  if (regulars.pending) await regulars.pending;
+  await call('setStack', 0, regulars.buyIn);
+  state.seats[0].stack = regulars.buyIn;
+  regularsNote = '';
+  render();
+  armDeal();
+}
+
 async function startTable() {
   setupNote = '';
   if (!await prepareGto()) { render(); return; }
@@ -804,8 +870,10 @@ async function startTable() {
 // training (every hand at 100 BB, with the review in Hold'em).
 // `stacks`, when given, are each seat's chips for the first hand (a ladder
 // game resuming), instead of the buy-in.
-async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null}) {
+async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false}) {
   clearTimeout(timer);
+  regulars = regs ? {bank: startBank(bots, buyIn), buyIn, done: 0, pending: null} : null;
+  regularsNote = '';
   cancelDeal();
   lastSummary = null;
   tableGame = gameOf(game);
@@ -825,6 +893,8 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null}) {
   live = {hand: 0, items: []};
   sessionReview = emptyTotals();
   const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game, stacks);
+  // At a Regulars table nothing tops you up: you rebuy when you choose.
+  if (snap && regulars) await call('setTopUp', false);
   if (snap) show(snap);
 }
 
@@ -833,6 +903,16 @@ async function nextHand() {
   if (mode === 'host' && hostInfo.playersIn < 2) return; // no one to deal to
   // A ladder game that's over deals no more (ladder-next goes on).
   if (ladder?.over) return;
+  // A Regulars table: the seats are settled first, and you need chips.
+  if (mode === 'solo' && regulars) {
+    if (regulars.pending) await regulars.pending;
+    if (state && !num(state.seats[0].stack)) {
+      regularsNote = 'You’re out of chips. Rebuy to keep playing.';
+      cancelDeal();
+      render();
+      return;
+    }
+  }
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
@@ -1843,6 +1923,13 @@ function controlsHtml() {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
       raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
       if (autoDealOn() && num(s.hand_number)) call = `<button class="tr-btn" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
+      // A Regulars table: rebuy when you're out, top up when you're short.
+      if (regulars && mode === 'solo') {
+        const mine = num(s.seats[0].stack);
+        if (!mine) { raise = `<button class="tr-start" data-act="rebuy">Rebuy ${c(regulars.buyIn)}</button>`; call = blank; }
+        else if (mine < regulars.buyIn) fold = `<button class="tr-btn" data-act="rebuy">Top up to ${c(regulars.buyIn)}</button>`;
+        if (regularsNote) status += ` <span class="pl-meta">· ${esc(regularsNote)}</span>`;
+      }
     }
   } else if (foldQueued) {
     if (L) {
@@ -2386,6 +2473,8 @@ function onClick(e) {
   else if (el.dataset.size) { raiseTo = +el.dataset.size; render(); }
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
+  else if (el.dataset.act === 'sitregulars') sitRegulars();
+  else if (el.dataset.act === 'rebuy') rebuy();
   else if (el.dataset.act === 'next') nextHand();
   else if (el.dataset.act === 'pause') hold('user', !holds.has('user'));
   else if (el.dataset.act === 'dealdelay') {
