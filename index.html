@@ -31,7 +31,7 @@
   <div class="toolbar">
     <div class="game-sel" id="game-sel">
       <div class="game-group">
-        <button class="game-btn on" data-game="nlhe">Hold'em</button>
+        <button class="game-btn on" data-game="nlhe">Hold’em</button>
       </div>
       <div class="game-group">
         <button class="game-btn" data-game="omaha">Omaha</button>
@@ -42,7 +42,7 @@
         </div>
       </div>
       <div class="game-group">
-        <button class="game-btn" data-game="omaha-hl">Omaha Hi-Lo</button>
+        <button class="game-btn" data-game="omaha-hl">Omaha 8-or-better</button>
         <div class="card-count dim" id="cc-omaha-hl">
           <button class="cc-btn on" data-cc="4">4</button>
           <button class="cc-btn" data-cc="5">5</button>
@@ -50,7 +50,7 @@
         </div>
       </div>
       <div class="game-group">
-        <button class="game-btn" data-game="bomb-pot">Bomb Pot</button>
+        <button class="game-btn" data-game="bomb-pot">Bomb pot</button>
       </div>
       <div class="game-group" id="bp-random" hidden>
         <span class="group-label">Random players</span>
@@ -74,6 +74,8 @@
     </div>
   </div>
 
+  <!-- Equity (#225): the table, with Who's ahead beside it (main.js). -->
+  <div class="eq-layout">
   <div class="table-wrap" id="tw">
     <div class="felt">
       <div class="board-area">
@@ -87,6 +89,8 @@
         </div>
       </div>
     </div>
+  </div>
+  <aside class="eq-side" id="eq-side" aria-live="polite"></aside>
   </div>
 
   <main class="trainer" id="trainer"></main>
