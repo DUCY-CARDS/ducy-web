@@ -1082,8 +1082,20 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-sizes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; height: 100%; }
 .pl-sizes .btn-small { justify-content: center; padding: 4px 6px; }
 .pl-size-slot { display: block; }
-.pl-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.pl-tools { display: flex; gap: 8px; align-items: center; }
 .pl-tools .link-btn { margin-left: 6px; }
+/* The table's ⋯ menu and Leave (V3, #225). */
+.pl-menu { position: relative; }
+.pl-menu > summary { list-style: none; cursor: pointer; font-weight: 700; font-size: 18px; line-height: 1; padding: 7px 14px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--fg-strong); user-select: none; }
+.pl-menu > summary::-webkit-details-marker { display: none; }
+.pl-menu[open] > summary { background: var(--bg-inset); }
+.pl-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 230px; display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--bg-raised); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,0.25); }
+.pl-menu-item { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 12px; border: 0; border-radius: 8px; background: none; color: var(--fg-strong); font: 600 14px var(--font-ui); cursor: pointer; text-align: left; }
+.pl-menu-item:hover, .pl-menu-item:focus-visible { background: var(--bg-inset); }
+.pl-menu-item b { font-weight: 600; color: var(--fg-muted); }
+.pl-menu-item[aria-pressed="true"] b { color: var(--teal); }
+.pl-leave { font: 600 14px var(--font-ui); padding: 7px 14px; border-radius: 10px; border: 1px solid var(--border); background: none; color: var(--fg-strong); cursor: pointer; }
+.pl-leave:hover { background: var(--bg-inset); }
 .pl-hud { font-family: var(--font-data); font-size: 10px; color: #e9ecef; background: rgba(0,0,0,0.35); padding: 0 6px; border-radius: 3px; white-space: nowrap; }
 .pl-stats { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
 .pl-stats-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--fg-strong); }
@@ -1155,6 +1167,29 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-seat.hero .pl-hole.n6 .pl-card + .pl-card { margin-left: -5px; }
   .pl-bot { grid-template-columns: 48px minmax(0, 1fr); }
   .pl-bot .pl-desc { grid-column: 2; }
+}
+/* Your Omaha hand fans out (V3, #225): the cards overlap and tilt, each
+   showing its rank and suit in the corner. */
+.pl-seat.hero .pl-hole:is(.n4, .n5, .n6) { align-items: flex-end; padding-top: 6px; }
+.pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card { align-items: flex-start; justify-content: flex-start; padding: 3px 4px; box-shadow: -2px 1px 3px rgba(0,0,0,0.25); transform-origin: 50% 100%; }
+.pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card + .pl-card { margin-left: -12px; }
+.pl-seat.hero .pl-hole.n4 .pl-card:nth-child(1) { transform: rotate(-7deg) translateY(2px); }
+.pl-seat.hero .pl-hole.n4 .pl-card:nth-child(2) { transform: rotate(-2deg); }
+.pl-seat.hero .pl-hole.n4 .pl-card:nth-child(3) { transform: rotate(2deg); }
+.pl-seat.hero .pl-hole.n4 .pl-card:nth-child(4) { transform: rotate(7deg) translateY(2px); }
+.pl-seat.hero .pl-hole.n5 .pl-card:nth-child(1) { transform: rotate(-9deg) translateY(4px); }
+.pl-seat.hero .pl-hole.n5 .pl-card:nth-child(2) { transform: rotate(-4deg) translateY(1px); }
+.pl-seat.hero .pl-hole.n5 .pl-card:nth-child(4) { transform: rotate(4deg) translateY(1px); }
+.pl-seat.hero .pl-hole.n5 .pl-card:nth-child(5) { transform: rotate(9deg) translateY(4px); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(1) { transform: rotate(-11deg) translateY(6px); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(2) { transform: rotate(-6deg) translateY(2px); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(3) { transform: rotate(-2deg); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(4) { transform: rotate(2deg); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(5) { transform: rotate(6deg) translateY(2px); }
+.pl-seat.hero .pl-hole.n6 .pl-card:nth-child(6) { transform: rotate(11deg) translateY(6px); }
+@media (max-width: 640px) {
+  .pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card + .pl-card { margin-left: -14px; }
+  .pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card { padding: 2px 3px; }
 }
 
 /* Setup tabs: play the bots, or host a table for friends. */
