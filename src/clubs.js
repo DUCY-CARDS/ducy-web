@@ -42,9 +42,9 @@ import { bigMove, isBigMove } from './club-roles.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
-import { joinTableVia, showFairCheck, tableName } from './play.js';
+import { celebrateAtTable, joinTableVia, showFairCheck, tableName } from './play.js';
 import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
-import { hostPromosHtml, memberPromosHtml, readPromoForm } from './club-promos-ui.js';
+import { hostPromosHtml, memberPromosHtml, promosPartHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -573,7 +573,7 @@ function onSubmit(e) {
     let settings;
     try { settings = readPromoForm(promoF); } catch (err) { promoNote = err.message; render(); return; }
     const id = promoF.dataset.promoform;
-    hostAct(id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
+    promoCmd(promoF.dataset.code, id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
     return;
   }
   // An invite link pasted on the list (#225).
@@ -790,8 +790,10 @@ function connectMembership(mem) {
       }
       if (msg.body?.type === 'tables') checkSeatWatch(mem);
       // A promotion prize, or a new high hand (#267), wherever you are.
+      // At the club's table, it's celebrated there instead (#278).
       if (msg.body?.type === 'promo_event' && mem.promoEvent) {
-        notice(`${cname}: ${mem.promoEvent.text}`, clubHash(mem.code));
+        if (seatedAt?.code === mem.code) celebrateAtTable(mem.promoEvent.text);
+        else notice(`${cname}: ${mem.promoEvent.text}`, clubHash(mem.code));
         mem.promoEvent = null;
       }
       // The club moved to an always-on room (#98): greet it as the new host.
@@ -985,6 +987,36 @@ function resultsHtml(entries, names = null, tableNames = {}) {
   return h + '</ul></details>';
 }
 
+// A promotion prize's hand (#278): a Replay button for a ledger entry that
+// names one. `who`: whose history to look in ('host', or your id).
+function promoReplayBtn(e, code, who) {
+  if (!e.hand || (e.kind !== 'promo' && e.kind !== 'promo_void')) return '';
+  return ` <button class="link-btn" data-cl="promo-replay" data-code="${esc(code)}" data-who="${esc(who)}" data-hand="${esc(e.hand)}">Replay the hand</button>`;
+}
+
+// Opens the hand behind a prize: in the host's history by its id; in a
+// member's own by the table and hand number (their record of the same hand
+// was made in their browser, at a slightly different time).
+async function openPromoReplay(code, who, handId) {
+  const parts = String(handId).split(':');
+  const at = Number(parts.pop()), hand = Number(parts.pop());
+  parts.shift();
+  const table = parts.join(':');
+  let list = [];
+  try {
+    const remoteHost = isRemote() && who === 'host' && code === club?.code;
+    list = remoteHost ? await owner.run('hands', {limit: 200}) : await listHands(code, who, 1000);
+  } catch (e) { console.warn(e); }
+  const rec = list.find(r => r.id === handId)
+    || list.filter(r => r.table === table && r.hand === hand && Math.abs(r.at - at) < 30 * 60e3).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
+  if (!rec) {
+    alert(who === 'host' ? 'That hand is no longer in the club’s hand history.' : 'That hand isn’t in this browser’s hand history: it keeps the hands you played here, up to a limit.');
+    return;
+  }
+  replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
+  render();
+}
+
 async function openReplay(id) {
   // One loaded from an always-on club's room is already in the list (#125).
   const listed = [...handLists.values()].flat().find(r => r.id === id);
@@ -1064,6 +1096,8 @@ function sitAt(code, table) {
   }, {
     label: `${mem.name} · ${t.name}`,
     whole: !!tourney,
+    // The club's promotions for this table (#278), kept current as they change.
+    banner: () => tableBannerText(mem.promos, {table, game: t.game, tourney: !!tourney}),
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
     // Each hand you played goes in your hand history (#71), as you saw it,
     // kept here a moment for checking its deal (#136).
@@ -1488,7 +1522,7 @@ function hostHtml() {
     h += tablesHtml();
     h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
   } else if (dashTab === 'settings') h += settingsHtml();
-  else if (dashTab === 'promos') h += hostPromosHtml(club, {form: promoForm, note: promoNote});
+  else if (dashTab === 'promos') h += hostPromosHtml(club, promoFor ? {} : {form: promoForm, note: promoNote});
   else if (dashTab === 'players') {
     h += helpListHtml(helpReqs);
     if (pending.length || asking.length) {
@@ -1585,6 +1619,18 @@ let dashTab = 'tables';
 const DASH_TABS = ['tables', 'tourneys', 'players', 'accounting', 'promos', 'history', 'settings'];
 // The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
 let promoForm = null, promoNote = '';
+// Whose promotions the form is for: '' the club you run, or the code of a
+// club where you're an assistant (#274).
+let promoFor = '';
+// A promotion action: run here for the club you run, or sent to the host
+// of a club where you're an assistant (its result comes back as the
+// assistant view, or a note). Resolves to whether it went.
+function promoCmd(code, op, args) {
+  if (!code) return hostAct(op, args);
+  adminCmd(code, {op, ...args});
+  render();
+  return Promise.resolve(true);
+}
 // The tab is remembered per club, and the address says it (#clubs/players), so
 // it can be linked to (#193).
 let dashFor = '';
@@ -1645,8 +1691,8 @@ function accountingHtml() {
     h += `<div class="pl-row cl-ledger-filters">${sel('member', 'Everyone', people)}${sel('kind', 'Everything', kinds)}${tables.length ? sel('table', 'Every table', tables) : ''}`;
     h += `<button class="btn-small" data-cl="ledger-csv">Export CSV${shown.length < ledger.length ? ` (${shown.length})` : ''}</button></div><ul>`;
     for (const e of [...shown].reverse().slice(0, 200)) {
-      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out'].includes(e.kind) ? '−' : '+';
-      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin', 'promo_void'].includes(e.kind) ? '−' : '+';
+      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
     }
     h += '</ul>';
     if (shown.length > 200) h += `<p class="pl-meta">The newest 200 of ${shown.length}; Export CSV has them all.</p>`;
@@ -1820,7 +1866,7 @@ function memberHomeHtml(m, manage = '') {
         h += '<ul class="cl-ledger">';
         for (const e of [...m.entries].reverse().slice(0, 50)) {
           const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin', 'promo_void'].includes(e.kind) ? '−' : '+';
-          h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
+          h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, code, me.id)}</li>`;
         }
         h += '</ul>';
       } else h += '<p class="pl-meta">No chips in or out yet.</p>';
@@ -2014,8 +2060,8 @@ const UNREACHABLE = 'Can’t reach the club right now: these work again once it�
 const ROLE_TEXT = {
   assistant: {
     name: 'game assistant',
-    can: ['let players in or decline them', 'give chips from your own balance, and answer chip requests', 'open and close tables', 'remove members (not other assistants)'],
-    cannot: ['create chips: what you give comes out of your balance', 'change the club’s settings, backups or roles'],
+    can: ['let players in or decline them', 'give chips from your own balance, and answer chip requests', 'open and close tables', 'set up and run promotions, and pay or void their prizes', 'remove members (not other assistants)'],
+    cannot: ['create chips: what you give comes out of your balance (promotion prizes are the club’s)', 'change the club’s settings, backups or roles'],
     note: 'The host sees everything you do in their activity log.',
     hostNote: 'You’ll see everything they do in the History tab’s activity log.',
   },
@@ -2061,10 +2107,10 @@ function adminFormHtml(code, x) {
 }
 
 // An assistant's tools (#190): the host's dashboard, with the tabs and
-// actions an assistant has. Tables and Players, laid out as the host's;
-// Tournaments, Accounting, History and Settings stay the host's. The tab is
-// remembered per club, as the host's is.
-const ADMIN_TABS = ['tables', 'players'];
+// actions an assistant has. Tables, Players and Promotions (#274), laid out
+// as the host's; Tournaments, Accounting, History and Settings stay the
+// host's. The tab is remembered per club, as the host's is.
+const ADMIN_TABS = ['tables', 'players', 'promos'];
 function adminTab(code) {
   let t = '';
   try { t = localStorage.getItem(`ducyClubTab:${code}`) || ''; } catch {}
@@ -2091,7 +2137,13 @@ function adminHtml(m, hostHere) {
   const tab = adminTab(m.code);
   const sub = (id, label) => `<button class="pl-tab${tab === id ? ' on' : ''}" role="tab" aria-selected="${tab === id}" data-cl="atab" data-code="${code}" data-tab="${id}">${label}</button>`;
   const players = `Players${waiting ? ` <span class="pt-badge" aria-label="${waiting} waiting for you">${waiting}</span>` : ''}`;
-  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${open.length})`)}${sub('players', players)}</div>`;
+  const toPay = (a.promos?.awards || []).filter(w => w.status === 'held').length;
+  const promos = `Promotions${toPay ? ` <span class="pt-badge" aria-label="${toPay} to pay">${toPay}</span>` : ''}`;
+  h += `<div class="pl-tabs cl-dash-tabs" role="tablist">${sub('tables', `Tables (${open.length})`)}${sub('players', players)}${sub('promos', promos)}</div>`;
+  if (tab === 'promos') {
+    const mine = promoFor === m.code;
+    return h + promosPartHtml(a.promos, {form: mine ? promoForm : null, note: mine ? promoNote : '', code: m.code, disabled: !hostHere}) + '</div>';
+  }
   if (tab === 'tables') {
     h += `<h3>Tables${open.length ? ` (${open.length})` : ''}</h3>`;
     if (open.length || closed.length) {
@@ -2163,18 +2215,18 @@ async function onClick(e) {
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'dash') { setDash(b.dataset.tab); render(); }
-  // High Hand promotions (#278).
-  else if (act === 'promo-new') { promoForm = 'new'; promoNote = ''; render(); }
-  else if (act === 'promo-edit') { promoForm = b.dataset.id; promoNote = ''; render(); }
+  // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).
+  else if (act === 'promo-new') { promoForm = 'new'; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
+  else if (act === 'promo-edit') { promoForm = b.dataset.id; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
   else if (act === 'promo-cancel') { promoForm = null; promoNote = ''; render(); }
   else if (act === 'promo-status') {
     if (b.dataset.status === 'ended' && !confirm('End this promotion? A period under way pays out as usual at its end.')) return;
-    hostAct('promo_status', {id: b.dataset.id, status: b.dataset.status});
-  } else if (act === 'promo-approve') hostAct('approve_award', {id: b.dataset.id});
+    promoCmd(b.dataset.code, 'promo_status', {id: b.dataset.id, status: b.dataset.status});
+  } else if (act === 'promo-approve') promoCmd(b.dataset.code, 'approve_award', {id: b.dataset.id});
   else if (act === 'promo-void') {
     const why = prompt('Void this prize? Its chips are taken back from the member’s balance. Why (shown in their ledger)?', '');
     if (why === null) return;
-    hostAct('void_award', {id: b.dataset.id, why});
+    promoCmd(b.dataset.code, 'void_award', {id: b.dataset.id, why});
   }
   else if (act === 'atab') { setAdminTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'backup') { backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
@@ -2278,6 +2330,7 @@ async function onClick(e) {
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
   else if (act === 'replay') openReplay(b.dataset.id);
+  else if (act === 'promo-replay') openPromoReplay(b.dataset.code, b.dataset.who, b.dataset.hand);
   else if (act === 'replay-to') stepReplay(Number(b.dataset.i));
   else if (act === 'replay-play') toggleReplayPlay();
   else if (act === 'replay-close') closeReplay();
@@ -2494,7 +2547,7 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('change', e => {
       const pf = e.target.closest('form[data-promoform]');
       if (!pf) return;
-      if (e.target.dataset.promokind) { promoForm = e.target.value === 'bonus' ? 'new-bonus' : 'new'; render(); }
+      if (e.target.dataset.promokind) { promoForm = e.target.value === 'bonus' ? 'new-bonus' : 'new'; promoFor = pf.dataset.code || ''; render(); }
       if (e.target.dataset.promoevery) pf.querySelector('.cl-promo-session').hidden = e.target.value !== 'session';
     });
     root.addEventListener('change', e => {

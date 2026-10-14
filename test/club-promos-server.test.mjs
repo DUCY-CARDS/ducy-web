@@ -8,8 +8,14 @@ import './wasm.mjs';
 import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
-import { processHand } from '../src/club-promos.js';
-import { totals } from '../src/club-chips.js';
+import { newPromo, processHand, promosBody } from '../src/club-promos.js';
+import { issue, totals } from '../src/club-chips.js';
+import { approve, newClub } from '../src/club.js';
+import { clubEngine } from '../src/club-engine.js';
+import { newTourney, register } from '../src/club-tourneys.js';
+import { createTourneyHost } from '../src/club-tourney-host.js';
+import { handRecord } from '../src/hand-replay.js';
+import * as ducy from '../wasm/ducy_wasm.js';
 
 function memoryStorage() {
   const m = new Map();
@@ -112,4 +118,49 @@ test('a promotion pays its high hand on the alarm, and after the room wakes', as
   } finally {
     mock.timers.reset();
   }
+});
+
+// #274: a tournament's finished hands reach the promotions that count them,
+// from each table's spectator view (no hidden cards; seats name members).
+test('tournament hands reach a promotion that counts them', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const club = newClub('F', 'ABCD-EFGH', 'HOSTHOST', 0);
+  const ids = ['p0', 'p1', 'p2', 'p3'];
+  for (const id of ids) { club.members[id] = {id, name: id.toUpperCase(), status: 'pending', requestedAt: 0}; approve(club, id, 0); issue(club, id, 10000, 0); }
+  const promo = newPromo(club, {kind: 'high_hand', name: 'Tourney high hand', games: ['nlhe'], every: 'day', prizes: [500], minCategory: 'high_card', tourneys: true, tz: 0});
+  const t = newTourney(club, {name: 'T', buyIn: 100, stack: 1500, structure: [{sb: 10, bb: 20, ante: 0, minutes: 30}], opensAt: 0, startsAt: Date.now() + 200, minPlayers: 2, maxPlayers: 9, tableSize: 9});
+  for (const id of ids) register(club, t.id, id, 10);
+  const engine = clubEngine(ducy.MultiTable);
+  const seen = [];
+  let host = null;
+  const deliver = (to, msg) => queueMicrotask(() => {
+    const u = msg.update;
+    if (u?.type !== 'state' || !u.view.legal || u.view.complete) return;
+    host.handle(t.id, to, {type: 'act', seq: u.seq, kind: u.view.legal.can_check ? 'check' : 'call', amount: 0});
+  });
+  host = createTourneyHost({
+    club: () => club, save() {}, sendTable: deliver, chipsChanged() {}, online: () => true,
+    call: async (op, ...args) => engine.ops[op](...args),
+    store: {get: async () => null, put: async () => {}, drop: async () => {}},
+    turnMs: 3000, nextHandMs: 30, botPaceMs: 5, levelMs: 60_000,
+    onHand: (tid, table, view) => {
+      const rec = handRecord({club: club.code, table: `tourney:${tid}`, tableName: 'T', game: 'nlhe', view, who: 'host'});
+      rec.tourney = tid;
+      rec.sub = table;
+      seen.push(rec);
+      processHand(club, rec, view.seats.map((s, i) => ({seat: i, client_id: s.id})).filter(p => p.client_id));
+    },
+  });
+  host.startAll();
+  for (let i = 0; i < 60 && !host.running(t.id); i++) await sleep(50);
+  for (const id of ids) await host.handle(t.id, id, {type: 'join', name: id});
+  for (let i = 0; i < 200 && seen.filter(r => r.showdown).length < 3; i++) await sleep(50);
+  const shown = seen.filter(r => r.showdown);
+  assert.ok(shown.length >= 3, `hands seen: ${seen.length}`);
+  assert.equal(new Set(seen.map(r => `${r.sub}|${r.hand}`)).size, seen.length, 'each hand once');
+  // Only shown cards: every seat with cards reached the showdown.
+  for (const r of shown) for (const s of r.seats) if (s.cards) assert.ok(!s.folded);
+  const leaders = promosBody(club).promos.find(p => p.id === promo.id).leaders.nlhe;
+  assert.ok(leaders.length >= 1 && ids.map(x => x.toUpperCase()).includes(leaders[0].name), 'the leaderboard has a tournament hand');
+  host.cancel(t.id);
 });

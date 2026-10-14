@@ -1549,9 +1549,12 @@ export function setTableAvatar(id) {
 let leaveHook = null;
 // With `watch`, only watch the table (a club host, #73): no seat, nothing to
 // act on, and the hands aren't added to your stats.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false} = {}) {
+// `banner()`: a line to show above the felt while seated (a club's running
+// promotions, #278), or ''.
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
+  bannerHook = banner;
   wholeChips = whole;
   watching = watch;
   handHook = onHand;
@@ -1571,9 +1574,33 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
 }
 let watching = false;
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
+let bannerHook = null; // joinTableVia's banner()
+
+// A moment at the table worth celebrating (#278): a promotion prize, or a
+// new high hand. Shown above the felt for a few seconds, where the banner
+// is, so it never covers cards or seats.
+let celebration = null; // {text, until}
+let celebrationTimer = null;
+export function celebrateAtTable(text) {
+  if (!seated || !state) return;
+  celebration = {text: String(text), until: Date.now() + CELEBRATE_MS};
+  clearTimeout(celebrationTimer);
+  celebrationTimer = setTimeout(() => { celebration = null; if (seated) render(); }, CELEBRATE_MS);
+  render();
+}
+const CELEBRATE_MS = 6000;
+
+// The banner, or a celebration in its place.
+function promoLineHtml() {
+  if (celebration && Date.now() < celebration.until) return `<div class="pl-promo-line celebrate" role="status"><span aria-hidden="true">★</span> ${esc(celebration.text)}</div>`;
+  const text = bannerHook?.() || '';
+  return text ? `<div class="pl-promo-line">${esc(text)}</div>` : '';
+}
 
 function startGuest(code) {
   mode = 'guest';
+  bannerHook = null;
+  celebration = null;
   resetChat();
   wholeChips = false;
   joinedByCode = false;
@@ -1752,6 +1779,8 @@ function clockText() {
 function leaveTable(note = '') {
   ladderLeave();
   wholeChips = false;
+  bannerHook = null;
+  celebration = null;
   lastSummary = null;
   clearTimeout(timer);
   clearTimeout(resuming);
@@ -2093,6 +2122,7 @@ function renderTable() {
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
+  if (mode === 'guest') h += promoLineHtml();
   // 8 or 9 seats: smaller seats (style.css). A bomb pot: two boards of
   // the same size, rather than run twice's smaller second one.
   h += `<div class="pl-felt${n >= CROWDED ? ' crowded' : ''}${bombHand(s) ? ' two-boards' : ''}">`;

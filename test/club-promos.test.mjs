@@ -220,3 +220,54 @@ test('changes to a running period wait for the next one (#274)', () => {
   settlePeriods(club, T0 + D);
   assert.equal(promo.tiers[0].amount, 3000);
 });
+
+test('tournament hands count only when the promotion says so; a hand counts once (#274)', () => {
+  const club = clubWith('ann', 'bob');
+  const off = newPromo(club, {...BONUS, name: 'Cash only', capPerTier: 0}, T0);
+  const on = newPromo(club, {...BONUS, name: 'Everywhere', capPerTier: 0, tourneys: true}, T0);
+  assert.equal(off.tourneys, false);
+  assert.equal(on.tourneys, true);
+  assert.match(promoRules(on), /Tournament hands count too\.$/);
+  const ids = players(['ann', 'bob']);
+  const t = {...rec({hands: [['Kc', 'Kd'], ['2c', '3d']], board: ['Kh', 'Ks', '8d', '7c', '9h'], at: T0, table: 'tourney:abc'}), hand: 7, tourney: 'abc', sub: 0};
+  const r = processHand(club, t, ids);
+  assert.deepEqual(r.paid.map(a => a.promoName), ['Everywhere']);
+  assert.equal(club.promos.hands.find(h => h.promo === off.id).ineligible, 'tournament hand');
+  // The same hand reported again (a host that restarted) pays nothing more.
+  assert.deepEqual(processHand(club, {...t, id: 'again'}, ids).paid, []);
+  // Another of the tournament's tables, with the same hand number, is its own hand.
+  assert.equal(processHand(club, {...t, id: 'other', sub: 1}, ids).paid.length, 1);
+});
+
+test('assistants run promotions, logged; members see the banner (#274, #278)', async () => {
+  const {runAdmin, adminBody} = await import('../src/club-roles.js');
+  const {tableBannerText} = await import('../src/club-promos-ui.js');
+  const club = clubWith('ann', 'bob', 'cy');
+  club.members.cy.role = 'assistant';
+  assert.throws(() => runAdmin(club, 'bob', {op: 'new_promo', promo: HH}, T0), /not an assistant/);
+  const r = runAdmin(club, 'cy', {op: 'new_promo', promo: {...HH, games: ['nlhe']}}, T0);
+  assert.equal(r.promos, true);
+  const promo = club.promos.list[0];
+  assert.equal(adminBody(club).promos.list[0].id, promo.id, 'assistants see the promotions');
+  runAdmin(club, 'cy', {op: 'promo_status', id: promo.id, status: 'paused'}, T0);
+  assert.equal(promo.status, 'paused');
+  runAdmin(club, 'cy', {op: 'promo_status', id: promo.id, status: 'running'}, T0);
+  runAdmin(club, 'cy', {op: 'edit_promo', id: promo.id, promo: {...HH, games: ['nlhe'], prizes: [7000]}}, T0);
+  assert.equal(promo.prizes[0], 7000);
+  assert.deepEqual(club.log.map(l => l.text), ['Cy started the promotion Daily high hand', 'Cy paused the promotion Daily high hand', 'Cy resumed the promotion Daily high hand', 'Cy changed the promotion Daily high hand']);
+
+  // The table banner: no leader yet, then the hand to beat; not at tournaments.
+  const at = {table: 't1', game: 'nlhe'};
+  assert.equal(tableBannerText(promosBody(club, T0), at, T0), 'Daily high hand: no qualifying hand yet');
+  processHand(club, rec({hands: [['Kc', 'Kd'], ['2c', '3d']], board: ['Kh', 'Ks', '8d', '7c', '9h'], at: T0}), players(['ann', 'bob']));
+  assert.equal(tableBannerText(promosBody(club, T0), at, T0), 'Daily high hand: quad kings (Ann) to beat');
+  assert.equal(tableBannerText(promosBody(club, T0), {...at, tourney: true}, T0), '');
+  assert.equal(tableBannerText(promosBody(club, T0), {...at, game: 'plo4'}, T0), '');
+
+  // The prize at the period's end: the assistant voids it.
+  const [w] = settlePeriods(club, T0 + D);
+  const v = runAdmin(club, 'cy', {op: 'void_award', id: w.id, why: 'test'}, T0 + D);
+  assert.equal(club.members.ann.balance, 0);
+  assert.equal(v.replies[0].body.entries.at(-1).kind, 'promo_void', 'Ann gets the void in her account');
+  assert.match(club.log.at(-1).text, /Cy voided Ann’s 70 from Daily high hand/);
+});
