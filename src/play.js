@@ -1961,7 +1961,7 @@ function renderTable() {
 function controlsHtml() {
   const s = state;
   const blank = '<span class="pl-slot" aria-hidden="true"></span>';
-  let status = '', fold = blank, check = blank, call = blank, raise = blank, sizes = blank, amount = blank;
+  let status = '', fold = blank, call = blank, raise = blank, sizes = blank, amount = blank;
   const L = s.legal;
   if (peeling) {
     status = '<span class="pl-result">All-in: dealing the rest of the board…</span>';
@@ -2023,11 +2023,11 @@ function controlsHtml() {
     if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
   } else {
     status = `Your turn${timeBankHtml()}`;
-    // Check has a place and a key of its own, empty whenever you face a bet,
-    // so a bet that lands as you go to check can't turn your tap or key
-    // into a fold or a call.
+    // Check and Call never share a place or a key, so a bet that lands as you
+    // go to check can't turn your tap into a call. Checking is free exactly
+    // when folding isn't allowed, so Check takes Fold's empty place.
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
-    if (L.can_check) check = '<button class="tr-btn" data-act="check">Check <kbd>K</kbd></button>';
+    if (L.can_check) fold = '<button class="tr-btn" data-act="check">Check <kbd>K</kbd></button>';
     else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${c(L.call)} <kbd>C</kbd></button>`;
     const range = L.raise || L.bet;
     if (range) {
@@ -2042,7 +2042,7 @@ function controlsHtml() {
     }
   }
   return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
-    `<div class="pl-act-fold">${fold}</div><div class="pl-act-check">${check}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div>` +
+    `<div class="pl-act-fold">${fold}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div>` +
     `<div class="pl-act-sizes">${sizes}</div><div class="pl-act-amount">${amount}</div></div>`;
 }
 

@@ -1097,10 +1097,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
 
 .pl-controls {
-  /* Check has its own place, empty whenever you face a bet, so a bet that
-     lands as you go to check never puts Fold or Call under your tap. */
-  display: grid; grid-template-columns: repeat(3, 124px) 170px;
-  grid-template-areas: "status status status status" "fold check call raise" "sizes sizes sizes sizes" "amount amount amount amount";
+  display: grid; grid-template-columns: repeat(3, 170px);
+  grid-template-areas: "status status status" "fold call raise" "sizes sizes sizes" "amount amount amount";
   grid-template-rows: 20px 42px 30px 24px;
   gap: 8px 10px; justify-content: center; align-items: center;
 }
@@ -1111,16 +1109,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-result { color: var(--fg-strong); font-weight: 600; }
 .pl-swaps { display: block; margin-top: 4px; font-size: 13px; }
 .pl-act-fold { grid-area: fold; }
-.pl-act-check { grid-area: check; }
 .pl-act-call { grid-area: call; }
 .pl-act-raise { grid-area: raise; }
 .pl-act-sizes { grid-area: sizes; }
 .pl-act-amount { grid-area: amount; display: flex; align-items: center; }
 /* Every slot is the same size whether it holds a control or not. */
-.pl-act-fold, .pl-act-check, .pl-act-call, .pl-act-raise { height: 42px; }
+.pl-act-fold, .pl-act-call, .pl-act-raise { height: 42px; }
 .pl-act-sizes { height: 30px; }
 .pl-act-amount { height: 24px; }
-.pl-act-fold .tr-btn, .pl-act-check .tr-btn, .pl-act-call .tr-btn, .pl-act-raise .tr-btn, .pl-act-raise .tr-start {
+.pl-act-fold .tr-btn, .pl-act-call .tr-btn, .pl-act-raise .tr-btn, .pl-act-raise .tr-start {
   width: 100%; height: 42px; min-width: 0; padding: 0 10px; white-space: nowrap; font-size: 14px;
 }
 .pl-slot { display: block; width: 100%; height: 100%; }
@@ -1194,11 +1191,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-clock { font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e9ecef; border-radius: 999px; padding: 0 7px; }
 
 @media (max-width: 640px) {
-  .pl-controls { grid-template-columns: repeat(3, 1fr) 1.4fr; column-gap: 6px; }
-  .pl-act-fold .tr-btn, .pl-act-check .tr-btn, .pl-act-call .tr-btn, .pl-act-raise .tr-btn, .pl-act-raise .tr-start { font-size: 13px; padding: 0 6px; }
-  /* "Raise to 141.12" can be wider than its place: the amount goes under. */
-  .pl-act-raise .tr-btn { white-space: normal; line-height: 1.15; }
-  .pl-act-raise kbd, .pl-act-call kbd, .pl-act-check kbd, .pl-act-fold kbd { display: none; }
+  .pl-controls { grid-template-columns: repeat(3, 1fr); }
+  .pl-act-fold .tr-btn, .pl-act-call .tr-btn, .pl-act-raise .tr-btn, .pl-act-raise .tr-start { font-size: 13px; padding: 0 6px; }
+  .pl-act-raise kbd, .pl-act-call kbd, .pl-act-fold kbd { display: none; }
   .pl-felt { aspect-ratio: 3 / 4; margin: 24px 30px 34px; border-radius: 120px; }
   .pl-seat { width: 84px; }
   .pl-av { width: 40px; height: 40px; }
