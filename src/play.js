@@ -34,6 +34,7 @@ import {
   BLINDS, START_BB, STAKES_EVERY, WINS_TO_TAKE, answerStakes, finishGame, gameBlinds, keepGame,
   loadProgress, newProgress, pausedGame, opponentOf, rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
+import { addHand, lessonsByHand, lessonsShare } from './ladder-review.js';
 import { SPADE_PATH } from './home.js';
 
 let worker = null;
@@ -166,9 +167,14 @@ let tableBots = [];
 // game: {opp, rung, over: null | {won, outcome}, offer: null | [sb, bb]}
 // (offer: the bot wants to raise the stakes, waiting for your answer).
 // `ladderNote` says how the last series went, on the Ladder tab.
+// Each ladder hand is reviewed as it ends (#284): `reviewing` says whether
+// this game can be, `reviewed` is the last hand number asked for and
+// `pending` the reviews not back yet. Once the game is over, `review` is its
+// review (ladder-review.js). `ladderOpen` holds the lessons expanded.
 let ladderProgress = loadProgress();
 let ladder = null;
 let ladderNote = '';
+let ladderOpen = new Set();
 // Hand review works against the Hold'em GTO bot only.
 const reviewTable = () => gtoTable && tableGame.id === 'nlhe';
 // The last finished hand's review: {hand, data} once it's back, {hand,
@@ -478,6 +484,7 @@ function ladderHtml() {
   const info = botInfo(opp);
   let h = `<div class="pl-head"><h1>Climb the ladder</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, lose to drop.</p></div>`;
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
+  h += ladderLastReviewHtml();
   // The next series.
   const record = p.record[opp];
   const known = ladderRevealed(p, rungs, level, level);
@@ -540,11 +547,60 @@ async function startLadderGame() {
     render();
     return;
   }
-  ladder = {opp, rung, over: null, offer: null, handsBefore: hands};
+  const reviewer = await ladderReviewer();
+  ladder = {opp, rung, over: null, offer: null, handsBefore: hands, at: Date.now(), reviewing: false, reviewed: 0, pending: 0, review: null};
+  ladderOpen = new Set();
   // The game's blinds, raised or not; the buy-in is only a floor here (the
   // stacks are set), so it's the starting one.
   const [sb, bb] = gameBlinds(ladderProgress);
-  await sitDown({bots: [opp], game: 'nlhe', buyIn: Math.max(START_BB * BLINDS[1], bb), sb, bb, gto: false, stacks});
+  await sitDown({bots: [opp], game: 'nlhe', buyIn: Math.max(START_BB * BLINDS[1], bb), sb, bb, gto: false, stacks, reviewAll: reviewer});
+}
+
+// The GTO bot's strategy, which ladder hands are graded against (#284):
+// loaded once (a few MB the first time, then kept on this device). Without
+// it the game is played all the same, just not reviewed.
+async function ladderReviewer() {
+  if (!gtoAvailable) return false;
+  if (gtoReady) return true;
+  root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the hand review (about 3 MB the first time, then it’s kept on this device)…</p></div>';
+  try { navigator.storage?.persist?.(); } catch {}
+  try {
+    await call('loadGto', GTO_MANIFEST);
+    gtoReady = true;
+    return true;
+  } catch (e) {
+    console.warn(e);
+    return false;
+  }
+}
+
+// After each ladder hand: its review, asked for once and added to the game's
+// when it's back, without holding up play.
+function ladderReviewHand() {
+  const g = ladder;
+  if (!g?.reviewing || mode !== 'solo' || !state?.complete) return;
+  const hn = num(state.hand_number);
+  if (!hn || hn <= g.reviewed) return;
+  g.reviewed = hn;
+  g.pending++;
+  call('reviewNew').then(data => {
+    if (data) ladderAddReview(g, data, g.handsBefore + hn);
+  }, e => console.warn(e)).finally(() => {
+    g.pending--;
+    if (ladder === g || view === 'ladder') render();
+  });
+}
+
+// Adds a hand's review to its game's: kept with the game while it goes on
+// (so a paused game keeps it), and as the last game's once it's over.
+function ladderAddReview(g, data, hand) {
+  if (g.over) {
+    g.review = addHand(g.review, data, hand);
+    if (ladderProgress.lastReview?.at === g.at) ladderProgress = {...ladderProgress, lastReview: {...ladderProgress.lastReview, ...g.review}};
+  } else if (ladderProgress.game) {
+    ladderProgress = {...ladderProgress, game: {...ladderProgress.game, review: addHand(ladderProgress.game.review, data, hand)}};
+  } else return;
+  saveProgress(ladderProgress);
 }
 
 // After each hand of a game still going: the bot's offer to raise the
@@ -588,8 +644,15 @@ function ladderCheck() {
   const mine = num(state.seats[0].stack), theirs = num(state.seats[1].stack);
   if (mine > 0 && theirs > 0) return;
   const rungs = ladderRungs();
+  // The game's review so far; the last hand's is added when it's back.
+  const review = ladderProgress.game?.review || null;
   const r = finishGame(ladderProgress, rungs, mine > 0);
   ladderProgress = r.progress;
+  ladder.review = review;
+  if (ladder.reviewing) {
+    const hands = ladder.handsBefore + num(state.hand_number);
+    ladderProgress = {...ladderProgress, lastReview: {at: ladder.at, opp: ladder.opp, won: mine > 0, hands, ...review}};
+  }
   saveProgress(ladderProgress);
   ladder.over = {won: mine > 0, outcome: r.outcome, next: opponentOf(ladderProgress, rungs)};
 }
@@ -859,6 +922,7 @@ function show(snap) {
   recordStats();
   startReview();
   ladderCheck();
+  ladderReviewHand();
   ladderKeep(state);
   ladderOfferCheck();
   regularsCheck();
@@ -1003,8 +1067,9 @@ const bombSetting = () => (setup.bomb && !gameOf(setup.game).bomb ? bombEvery(se
 // training (every hand at 100 BB, with the review in Hold'em).
 // `stacks`, when given, are each seat's chips for the first hand (a ladder
 // game resuming), instead of the buy-in.
-// `bombs` is a bomb pot every so many hands (0 for none).
-async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false, bombs = 0}) {
+// `bombs` is a bomb pot every so many hands (0 for none). `reviewAll` keeps
+// a ladder game's hands for review (ladder.reviewing says if it could).
+async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false, bombs = 0, reviewAll = false}) {
   clearTimeout(timer);
   regulars = regs ? {bank: startBank(bots, buyIn), buyIn, done: 0, pending: null} : null;
   regularsNote = '';
@@ -1031,6 +1096,8 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
   if (snap && regulars) await call('setTopUp', false);
   // Bomb pots on two boards, the ante a big blind; off with an older ducy-wasm.
   tableBombs = snap && bombs && await call('setBombPots', bombs, bb) ? bombs : 0;
+  // Before the bot can act: it may fold the first hand straight away.
+  if (snap && reviewAll && ladder) ladder.reviewing = await call('setReviewAll', true);
   if (snap) show(snap);
 }
 
@@ -2193,6 +2260,7 @@ function renderTable() {
   h += chipsHtml();
   h += liveHtml();
   h += reviewHtml();
+  h += ladderReviewHtml();
   // The hand's action, then the stats below it.
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
@@ -2610,10 +2678,11 @@ const STREET = {preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River'};
 const boardText = b => (b ? b.split(' ').map(c => `${c[0]}${SUITS[c[1]] || ''}`).join(' ') : '');
 
 // One graded decision, a line that opens to the bot's mix. `key` is the
-// click attribute: "rev" in the hand review, "live" in live feedback.
+// click attribute: "rev" in the hand review, "live" in live feedback, "lad"
+// in a ladder game's review.
 function decisionHtml(d, i, key = 'rev') {
   const flagged = FLAGGED.includes(d.grade);
-  const open = (key === 'live' ? liveOpen : reviewOpen).has(i);
+  const open = (key === 'live' ? liveOpen : key === 'lad' ? ladderOpen : reviewOpen).has(i);
   const cls = ['pl-rev-row', `g-${d.grade}`, open ? 'open' : ''].filter(Boolean).join(' ');
   let h = `<li class="${cls}"><button class="pl-rev-line" data-${key}="${i}" aria-expanded="${open}">`;
   h += `<span class="pl-rev-street">${STREET[d.street] || esc(d.street)}${d.board ? ` <span class="pl-rev-board">${esc(boardText(d.board))}</span>` : ''}</span>`;
@@ -2674,6 +2743,56 @@ function reviewHtml() {
   if (r.note) h += `<p class="pl-meta">${esc(r.note[0].toUpperCase() + r.note.slice(1))}.</p>`;
   h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s own strategy, which is strong but not perfect, using the range it could hold, not its actual cards. Preflop plays are compared with its mix only.</p>';
   return h + '</div>';
+}
+
+// ---- a ladder game's review (#284) ----
+
+// The game's costliest decisions, each a line (as in the hand review) under
+// the hand it came from, opening to the bot's options. `rv` is the game's
+// review ({totals, lessons}, ladder-review.js); `pending` says reviews are
+// still being worked out; `hands` is the game's hands.
+function ladderLessonsHtml(rv, pending, hands) {
+  let h = '<div class="pl-review ld-review"><div class="pl-review-head"><b>Where to improve</b>';
+  const t = rv?.totals;
+  if (!t?.hands) return h + `<span class="pl-meta">${pending ? 'Reviewing your hands…' : 'No hands to review from this game.'}</span></div></div>`;
+  const {all, shown} = lessonsShare(rv);
+  h += all > 0
+    ? `<span class="pl-rev-total bad">−${bbText(all)} bb from your decisions</span>${t.hands >= 20 ? `<span class="pl-meta">${bbText(per100(t))} bb per 100 hands</span>` : ''}`
+    : '<span class="pl-rev-total">No bb lost to mistakes</span>';
+  if (pending) h += '<span class="pl-meta">Reviewing the last hand…</span>';
+  h += '</div>';
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const missed = hands > t.hands ? ` of ${hands}` : '';
+  h += `<p class="pl-meta">${t.hands}${missed} hands reviewed · ${n(t.decisions, 'decision', 'decisions')} · ${n(t.blunders, 'blunder', 'blunders')} · ${n(t.mistakes, 'mistake', 'mistakes')} · ${n(t.inaccuracies, 'inaccuracy', 'inaccuracies')} · ${t.deviations} off-strategy preflop</p>`;
+  const lessons = rv.lessons || [];
+  if (!lessons.length) return h + '<p class="pl-meta">Nothing stood out: every decision was one the GTO bot makes, or close to it.</p></div>';
+  h += `<p class="ld-review-lead">${lessons.length === 1 ? 'The decision' : `The ${lessons.length} decisions`} that cost the most${all > 0 && shown < all ? ` (${bbText(shown)} of the ${bbText(all)} bb)` : ''}:</p>`;
+  h += '<ol class="ld-lessons">';
+  for (const x of lessonsByHand(lessons)) {
+    const result = x.result ? ` · you ${x.result > 0 ? 'won' : 'lost'} ${bbText(Math.abs(x.result))} bb` : '';
+    h += `<li><div class="ld-lesson-hand pl-meta">Hand ${x.hand} · you held <b>${esc(boardText(x.hole))}</b>${x.board ? ` · board ${esc(boardText(x.board))}` : ''}${result}</div>`;
+    h += `<ul class="pl-rev-list">${x.items.map(({d, i}) => decisionHtml(d, i, 'lad')).join('')}</ul>`;
+    if (x.note) h += `<p class="pl-meta">${esc(x.note[0].toUpperCase() + x.note.slice(1))}.</p>`;
+    h += '</li>';
+  }
+  h += '</ol>';
+  h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s strategy at 100 BB, using the range it could hold, not the cards your opponent had. Against a Regular the best play can differ: a strategy built to exploit their style may win more. Preflop plays are compared with the bot’s mix only.</p>';
+  return h + '</div>';
+}
+
+// At the table, once a ladder game is over.
+function ladderReviewHtml() {
+  if (!ladder?.over || !ladder.reviewing || !state?.complete) return '';
+  return ladderLessonsHtml(ladder.review, ladder.pending > 0, ladder.handsBefore + num(state.hand_number));
+}
+
+// On the Ladder tab: the last game's review, folded away.
+function ladderLastReviewHtml() {
+  const rv = ladderProgress.lastReview;
+  if (!rv?.totals?.hands) return '';
+  const who = esc(botInfo(rv.opp).name);
+  const pending = ladder?.at === rv.at && ladder.pending > 0;
+  return `<details class="ld-last"><summary>Your last game, ${rv.won ? 'won' : 'lost'} against ${who}: where to improve</summary>${ladderLessonsHtml(rv, pending, rv.hands)}</details>`;
 }
 
 // ---- live feedback (#56) ----
@@ -2747,7 +2866,7 @@ function onClick(e) {
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-bomb],[data-fbomb]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb]');
   if (!el) return;
   const d = el.dataset;
   if (d.bomb) { setup.bomb = d.bomb === 'on'; saveSetup(); render(); return; }
@@ -2761,6 +2880,12 @@ function onClick(e) {
   if (d.live != null) {
     const i = +d.live;
     if (liveOpen.has(i)) liveOpen.delete(i); else liveOpen.add(i);
+    render();
+    return;
+  }
+  if (d.lad != null) {
+    const i = +d.lad;
+    if (ladderOpen.has(i)) ladderOpen.delete(i); else ladderOpen.add(i);
     render();
     return;
   }
