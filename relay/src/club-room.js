@@ -21,6 +21,7 @@ import { ensureTables } from '../../src/club-tables.js';
 import { createClubServer } from '../../src/club-server.js';
 import { clubEngine } from '../../src/club-engine.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
+import { FREE_LIMITS } from './registry.js';
 
 // How old a create request may be (its seq is at least the time it was signed).
 const CREATE_WINDOW_MS = 5 * 60_000;
@@ -38,7 +39,7 @@ export async function createClub(storage, env, code, claim = async () => {}) {
   const body = env.body || {};
   if (body.type !== 'create_club' || body.club !== code) throw new Error('Not a request for this club.');
   if (Math.abs(Date.now() - Number(env.seq)) > CREATE_WINDOW_MS) throw new Error('The request is too old; try again.');
-  await claim(env.from, code);
+  await claim(env.from, code, String(body.name || '').slice(0, 50));
   const identity = await createIdentity();
   const club = newClub(body.name, code, identity.id);
   club.ownerId = env.from;
@@ -70,7 +71,7 @@ export async function importClub(storage, env, code, claim = async () => {}) {
   if (data.hostId !== env.from) throw new Error('Only the club’s host can move it.');
   if (!data.members || typeof data.members !== 'object' || !data.chips) throw new Error('That isn’t a club.');
   if (Object.values(data.members).some(m => m?.seat)) throw new Error('People are still at tables. Close the tables first.');
-  await claim(env.from, code);
+  await claim(env.from, code, String(data.name || '').slice(0, 50));
   const identity = await createIdentity();
   const club = {...data, hostId: identity.id, ownerId: env.from, alwaysOn: true};
   ensureTables(club);
@@ -81,6 +82,13 @@ export async function importClub(storage, env, code, claim = async () => {}) {
   await storage.put('memberPubs', {});
   await storage.put('club', club);
   return {hostId: identity.id};
+}
+
+// The club server's plan and limits from its registry record (#265). An
+// older club with no record keeps the free limits.
+function planOf(record) {
+  const limits = record?.limits || FREE_LIMITS;
+  return {limits: {...limits}, plan: record ? {plan: record.plan, expires: record.expires ?? null} : null};
 }
 
 // Is `env` the old host's signed handoff to this club's identity (#98)?
@@ -101,7 +109,9 @@ async function isHandoff(club, env) {
 // backup.js).
 // `timers`: {set(fn, ms), clear(handle)} for the tables' clocks (#135); the
 // Worker backs it with the room's alarm, the local relay uses plain timers.
-export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, timers = null}) {
+// `record`: the club's record in the registry (registry.js, #265), for its
+// plan and limits; server.setRecord(record) when the super admin changes it.
+export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -185,7 +195,27 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     },
     hostKeyPair, memberPubs,
     onMemberKey: (id, pub) => { memberPubs[id] = pub; later(() => storage.put('memberPubs', {...memberPubs})); },
+    ...planOf(record),
   });
+  server.setRecord = rec => { const p = planOf(rec); server.setLimits(p.limits, p.plan); };
+  // What the super admin sees of the club (#265): its shape and activity,
+  // no one's cards or chats.
+  server.adminInfo = async () => {
+    const members = Object.values(club.members);
+    const count = s => members.filter(m => m.status === s).length;
+    const index = (await storage.get('hands')) || [];
+    const day = Date.now() - 864e5;
+    return {
+      name: club.name, ownerId: club.ownerId, createdAt: club.createdAt,
+      members: {member: count('member'), pending: count('pending'), online: server.online.size, seated: members.filter(m => m.seat).length},
+      tables: (club.tables || []).filter(t => t.status !== 'closed').map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status, running: server.running(t.id), seated: server.seatedCounts()[t.id] || 0})),
+      tourneys: (club.tourneys || []).filter(t => ['scheduled', 'running'].includes(t.status) || Date.now() - (t.endedAt || 0) < 7 * 864e5)
+        .map(t => ({name: t.name, game: t.game, status: t.status, startsAt: t.startsAt, entries: t.entries.length})),
+      hands: {kept: index.length, lastDay: index.filter(h => h.at >= day).length, last: index.length ? index[index.length - 1].at : null},
+      ledger: (club.chips?.ledger || []).slice(-15).map(e => ({at: e.at, kind: e.kind, amount: e.amount, member: club.members[e.member]?.name || e.member})),
+      limits: server.limits(),
+    };
+  };
   // A club that moved here from a browser (#98): its old host's handoff,
   // which members need before they'll accept this room's messages. It's
   // kept, and given to everyone as they connect.

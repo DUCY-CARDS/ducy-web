@@ -53,9 +53,21 @@ function tableId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(6)), b => (b % 36).toString(36)).join('');
 }
 
-// Adds a table to the club from the host's choices; throws on bad input.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now()) {
+// The club's plan allows `limits.tables` tables open at once (#265); throws
+// if one more would be too many. No limits: no cap.
+export function checkTableLimit(club, limits) {
+  const most = limits?.tables;
+  if (!Number.isSafeInteger(most)) return;
+  if (openTables(club).length >= most) {
+    throw new Error(most === 0 ? 'This club can’t open tables. Ask ducy about it.' : `This club can have ${most} ${most === 1 ? 'table' : 'tables'} open at once. Close one first, or ask ducy for more.`);
+  }
+}
+
+// Adds a table to the club from the host's choices; throws on bad input,
+// or when the club's `limits` (#265) allow no more.
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now(), limits = null) {
   ensureTables(club);
+  checkTableLimit(club, limits);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
   if (!whole(sb) || !whole(bb) || bb < sb) throw new Error('The big blind must be at least the small blind, both above 0.');
   if (!whole(minBB) || !whole(maxBB) || maxBB < minBB) throw new Error('The maximum buy-in must be at least the minimum.');

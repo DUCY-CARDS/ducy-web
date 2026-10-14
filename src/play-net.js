@@ -135,6 +135,13 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
         onFail('This is open in another tab or window, which took it over. Use that one, or reload this page to take it back.');
         return;
       }
+      // 4003: ducy paused the club, or its free trial ended (#265): say why,
+      // and look again now and then, in case it's back.
+      if (e.code === 4003) {
+        onStatus(e.reason || 'ducy has paused this club.');
+        retry = setTimeout(open, 5 * 60_000);
+        return;
+      }
       // 4001: the room already has a host; 4004: no such table. After a drop
       // a guest keeps trying while the host comes back.
       // 4008: this page sent faster than the relay allows (#103).

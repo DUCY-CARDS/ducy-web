@@ -58,8 +58,21 @@ function structure(steps) {
   return out;
 }
 
-// A new tournament. Throws why the settings won't do.
-export function newTourney(club, s = {}, now = Date.now()) {
+// The club's plan allows `limits.tourneysPerDay` tournaments a day (#265):
+// at most that many, not cancelled, starting within any 24 hours. Throws if
+// one starting at `startsAt` would be too many. No limits: no cap.
+export function checkTourneyLimit(club, startsAt, limits) {
+  const most = limits?.tourneysPerDay;
+  if (!Number.isSafeInteger(most)) return;
+  const near = ensureTourneys(club).filter(t => t.status !== 'cancelled' && Math.abs(t.startsAt - startsAt) < 864e5).length;
+  if (near >= most) {
+    throw new Error(most === 0 ? 'This club can’t run tournaments. Ask ducy about it.' : `This club can run ${most} ${most === 1 ? 'tournament' : 'tournaments'} a day, and ${most === 1 ? 'another starts' : `${most} others start`} within 24 hours of this one. Pick another time, or ask ducy for more.`);
+  }
+}
+
+// A new tournament. Throws why the settings won't do, or when the club's
+// `limits` (#265) allow no more that day.
+export function newTourney(club, s = {}, now = Date.now(), limits = null) {
   ensureTourneys(club);
   const name = String(s.name ?? '').trim().slice(0, MAX_TOURNEY_NAME) || `Tournament ${club.tourneys.length + 1}`;
   const game = s.game || 'nlhe';
@@ -70,6 +83,7 @@ export function newTourney(club, s = {}, now = Date.now()) {
   const opensAt = s.opensAt ?? now, startsAt = s.startsAt;
   if (!whole(opensAt) || !whole(startsAt)) throw new Error('Pick when registration opens and when it starts.');
   if (startsAt < opensAt) throw new Error('It must start after registration opens.');
+  checkTourneyLimit(club, startsAt, limits);
   const minPlayers = s.minPlayers ?? 2, maxPlayers = s.maxPlayers ?? 100;
   if (!whole(minPlayers) || minPlayers < 2 || !whole(maxPlayers) || maxPlayers < minPlayers || maxPlayers > MAX_ENTRIES) throw new Error('At least 2 players, and a maximum no smaller than the minimum.');
   const most = maxSeats(game);

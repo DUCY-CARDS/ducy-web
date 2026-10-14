@@ -220,3 +220,21 @@ test('a top-up the table hands back returns to the balance, and the totals still
   const s = tableSessions(club.chips.ledger).find(x => x.member === 'ann');
   assert.equal(s.put, 170, 'the session counts only what stayed on the table');
 });
+
+test('a club’s plan limits the tables open at once (#265)', () => {
+  const club = clubWith();
+  const two = {tables: 2, tourneysPerDay: 1};
+  const a = newTable(club, {}, 0, two);
+  newTable(club, {}, 0, two);
+  assert.throws(() => newTable(club, {}, 0, two), /2 tables open at once/);
+  // Closing one makes room; a closing table still counts until it's closed.
+  a.status = 'closing';
+  assert.throws(() => newTable(club, {}, 0, two), /2 tables open at once/);
+  a.status = 'closed';
+  newTable(club, {}, 0, two);
+  assert.throws(() => newTable(club, {}, 0, {tables: 1}), /1 table open at once/);
+  assert.throws(() => newTable(club, {}, 0, {tables: 0}), /can’t open tables/);
+  // No limits: no cap.
+  newTable(club, {}, 0, null);
+  assert.equal(openTables(club).length, 3);
+});

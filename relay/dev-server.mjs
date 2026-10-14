@@ -102,12 +102,13 @@ async function clubOf(room, code) {
     room.rebuildChecked = true;
     if (!(await pullBackup(backups, storageOf(room), code).catch(e => { console.warn('club: not rebuilt:', e); return false; }))) return null;
   }
-  room.club ||= engine().then(MultiTable => openClub({
+  room.club ||= Promise.all([engine(), reg.status(code)]).then(([MultiTable, {record}]) => openClub({
     storage: storageOf(room),
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],
     MultiTable,
-    onUsage: minutes => reg.used(minutes),
+    record,
+    onUsage: minutes => reg.used(minutes, Date.now(), code),
     onSaved: () => scheduleBackup(room, code),
     // Deleted by its owner: an ordinary room again; members are let go.
     onDeleted: async () => {
@@ -131,9 +132,51 @@ function enqueue(room, from, raw) {
   return true;
 }
 
+// The super admin's API (#265), as in the Worker, when ADMIN_TOKEN is set
+// in the environment.
+async function admin(req, res, url) {
+  const out = (v, status = 200) => {
+    res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST'});
+    res.end(JSON.stringify(v));
+  };
+  if (req.method === 'OPTIONS') return out({}, 204);
+  const token = process.env.ADMIN_TOKEN || '';
+  if (token.length < 24) return out({error: 'The admin API isn’t set up (ADMIN_TOKEN).'}, 403);
+  if ((req.headers.authorization || '').replace(/^Bearer\s+/i, '') !== token) return out({error: 'Wrong admin token.'}, 401);
+  let body = {};
+  if (req.method === 'POST') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    try { body = JSON.parse(raw || '{}'); } catch {}
+  }
+  try {
+    const path = url.pathname;
+    if (path === '/admin/clubs' && req.method === 'GET') return out(await reg.list());
+    if (path === '/admin/grant' && req.method === 'POST') return out(await reg.grant(String(body.id), body));
+    if (path === '/admin/revoke' && req.method === 'POST') { await reg.revoke(String(body.id)); return out({ok: true}); }
+    const m = path.match(/^\/admin\/club\/([^/]+)$/);
+    const code = m && decodeURIComponent(m[1]);
+    if (!code || !CODE.test(code)) return out({error: 'not found'}, 404);
+    const room = rooms.get(code);
+    if (req.method === 'POST') {
+      const rec = await reg.setClub(code, body);
+      const st = await reg.status(code);
+      if (room?.club) (await room.club).setRecord(st.record);
+      if (st.blocked && room) for (const [gid, g] of room.guests) if (gid !== st.record?.owner) g.ws.close(4003, st.blocked.slice(0, 120));
+      return out(rec);
+    }
+    const club = room ? await clubOf(room, code) : null;
+    return out({...(await reg.status(code)), inside: {online: room?.guests.size || 0, host: !!room?.host, queued: room?.queued.length || 0, club: club ? await club.adminInfo() : null}});
+  } catch (e) {
+    return out({error: e.message}, 409);
+  }
+}
+
 // Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
-// GET /usage, as the Worker answers it; everything else is WebSockets.
+// GET /usage and /admin/…, as the Worker answers them; everything else is WebSockets.
 const http = createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
   if (req.url !== '/usage') { res.writeHead(404); res.end('ducy relay'); return; }
   res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': '*'});
   res.end(JSON.stringify(await reg.usage()));
@@ -180,6 +223,28 @@ wss.on('connection', (ws, req) => {
     const isClub = !!existing?.store.has('club');
     if (!existing?.host && !queue && !isClub) return ws.close(4004, 'no such table');
     const room = roomFor(code);
+    // A paused club, or a trial that's ended (#265): only its owner gets in.
+    // Checked before the connection counts, with its messages held meanwhile.
+    if (isClub) {
+      const held = [];
+      const hold = d => held.push(d);
+      ws.on('message', hold);
+      reg.status(code).then(st => {
+        ws.off('message', hold);
+        if (st.blocked && id !== st.record?.owner) return ws.close(4003, st.blocked.slice(0, 120));
+        guest(ws, room, code, id, queue, isClub, held);
+      });
+      return;
+    }
+    guest(ws, room, code, id, queue, isClub, []);
+  } else {
+    ws.close(4000, 'bad role');
+  }
+});
+
+// A guest's connection, accepted: `held`, any messages it sent meanwhile.
+function guest(ws, room, code, id, queue, isClub, held) {
+  {
     room.guests.get(id)?.ws.close(4009, 'replaced');
     room.guests.delete(id);
     if (room.guests.size >= MAX_GUESTS) return ws.close(4029, 'the room is full');
@@ -220,11 +285,11 @@ wss.on('connection', (ws, req) => {
             if (msg.from !== id) throw new Error('The request must come from you.');
             if (type === 'create_club') {
               if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
-              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
+              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name)))});
               await clubOf(room, code);
             } else {
               if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
-              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c) => reg.claim(owner, c)))});
+              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name)))});
               const c = await clubOf(room, code);
               // What members left while the host was away goes to the club.
               const waiting = room.queued;
@@ -252,8 +317,7 @@ wss.on('connection', (ws, req) => {
       else if (room.host) send(room.host, {from: id, event: 'close'});
       dropIfEmpty(code, room);
     });
-  } else {
-    ws.close(4000, 'bad role');
   }
-});
+  for (const d of held) ws.emit('message', d);
+}
 console.log(`ducy relay on ws://localhost:${port}`);

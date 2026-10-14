@@ -489,6 +489,8 @@ const CONN = {on: 'Connected', unreachable: 'Club unreachable', reconnecting: 'R
 // A member's connection to a club (`n`, its playerNets entry), with what
 // still holds while it's down.
 function connText(n, meanwhile) {
+  // Paused by ducy, or a trial that ended (#265): the relay's reason.
+  if (n?.blocked) return esc(n.blocked);
   if (n?.online && n.hostHere) return CONN.on;
   if (n?.online) return `${CONN.unreachable}. ${meanwhile}`;
   if (n) return `${CONN.reconnecting} ${meanwhile}`;
@@ -802,11 +804,13 @@ function connectMembership(mem) {
     }
   };
   entry.net = connect(mem.code, 'guest', me.id, {
-    onOpen() { entry.online = true; entry.hostHere = true; mem.error = ''; greet(); render(); },
+    onOpen() { entry.online = true; entry.hostHere = true; entry.blocked = ''; mem.error = ''; greet(); render(); },
     // One message at a time, in order: a new host key must be in place
     // before the encrypted updates after it.
     onMessage(msg) { entry.inbox = entry.inbox.then(() => handle(msg)).catch(e => console.warn(e)); },
-    onStatus(s) { entry.online = !s; render(); },
+    // A status other than reconnecting is the relay's reason the club is
+    // closed to members for now (#265).
+    onStatus(s) { entry.online = !s; entry.blocked = s && s !== 'Reconnecting…' ? s : ''; render(); },
     // 4004 means the relay had no host and doesn't hold requests (a relay
     // older than queue mode).
     onFail(reason) {
@@ -1350,10 +1354,14 @@ function notice(text, go = 'play') {
 // Since V3 (#225), a card beside Join a club on the list.
 function createHtml() {
   if (club || isRemote()) return '';
-  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Members, chips and tables that last.</span>';
+  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Members, chips and tables that last. Your first club is a free 14-day trial: 2 tables and 1 tournament a day. To keep a club going, ask ducy.</span>';
   h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || '')}">`;
   h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create a club'}</button></span>`;
-  if (alwaysFailed) h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
+  if (alwaysFailed) {
+    h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
+    // Asking for permission (#265): ducy needs this player's ID to grant it.
+    if (/permission/.test(alwaysFailed.reason) && me?.id) h += `<p class="pl-meta">Your player ID, for ducy: <code class="cl-id">${esc(me.id)}</code></p>`;
+  }
   // Already have one (#191): its backup brings it back, here or on another device.
   h += '<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
   return h + '</section>';
@@ -1416,6 +1424,20 @@ function relayWarningHtml() {
   return '';
 }
 
+// The club's plan (#265), from the relay: a free trial with its days left,
+// or a club; and what it allows.
+function planHtml(p) {
+  if (!p?.limits) return '';
+  const n = (k, one, many) => `${p.limits[k]} ${p.limits[k] === 1 ? one : many}`;
+  const allows = `up to ${n('tables', 'table', 'tables')} open, ${n('tourneysPerDay', 'tournament', 'tournaments')} a day`;
+  if (p.plan === 'trial' && p.expires) {
+    const days = Math.ceil((p.expires - Date.now()) / 864e5);
+    const left = days > 1 ? `${days} days left` : days === 1 ? 'last day' : 'ended';
+    return `<p class="pl-meta cl-plan">Free trial club: ${left} · ${allows}. To keep it going after the trial, ask ducy.</p>`;
+  }
+  return `<p class="pl-meta cl-plan">Club plan: ${allows}. Need more? Ask ducy.</p>`;
+}
+
 function hostHtml() {
   if (!club && isRemote()) return `<section class="cl-card"><h2>${esc(owner.record.name)}</h2><p class="pl-meta">Connecting to your always-on club…</p></section>`;
   if (!club) return '';
@@ -1438,6 +1460,7 @@ function hostHtml() {
   if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
   if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
   if (!remote) h += `<p class="pl-meta">Runs in this tab · code ${esc(club.code)}</p>`;
+  if (remote) h += planHtml(owner.view?.plan);
   h += backupNagHtml() + checklistHtml();
   const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
   const helpReqs = openHelp(club);

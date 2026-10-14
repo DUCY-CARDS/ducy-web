@@ -55,7 +55,7 @@ jobs:
       - name: Relay tests
         run: |
           npm ci --prefix relay
-          node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/club-room.test.mjs
+          node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/registry.test.mjs test/club-room.test.mjs
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v4

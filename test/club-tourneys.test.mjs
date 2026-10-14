@@ -147,3 +147,24 @@ test('settings are checked', () => {
   assert.throws(() => newTourney(club, {...at, stack: 1500, structure: LEVELS, minPlayers: 5, maxPlayers: 3}), /maximum/);
   assert.throws(() => newTourney(club, {...at, stack: 1500, structure: LEVELS, buyIn: -1}), /buy-in/);
 });
+
+test('a club’s plan limits its tournaments a day (#265)', () => {
+  const club = clubWith(0);
+  const H = 3600e3, day = 864e5;
+  const make = (startsAt, limits) => newTourney(club, {stack: 1500, structure: LEVELS, opensAt: 0, startsAt}, 0, limits);
+  const one = {tables: 2, tourneysPerDay: 1};
+  const first = make(10 * day, one);
+  // Another within 24 hours of it is one too many; a day later is fine.
+  assert.throws(() => make(10 * day + 23 * H, one), /1 tournament a day/);
+  assert.throws(() => make(10 * day - 5 * H, one), /1 tournament a day/);
+  make(12 * day, one);
+  // A cancelled one frees its day.
+  cancelTourney(club, first.id, 0, 'test');
+  make(10 * day + 2 * H, one);
+  // Two a day, or none; no limits, no cap.
+  make(20 * day, {tourneysPerDay: 2});
+  make(20 * day + H, {tourneysPerDay: 2});
+  assert.throws(() => make(20 * day + 2 * H, {tourneysPerDay: 2}), /2 tournaments a day/);
+  assert.throws(() => make(40 * day, {tourneysPerDay: 0}), /can’t run tournaments/);
+  make(20 * day + 3 * H, null);
+});
