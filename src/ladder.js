@@ -9,7 +9,7 @@
 // play.js plays the games.
 
 export const LADDER_KEY = 'ducyLadder';
-export const START_BB = 100;
+export const START_BB = 200;
 export const WINS_TO_TAKE = 2; // of 3
 // The blinds of every hand, in chips (hundredths: 100/200 shows as 1/2).
 export const BLINDS = [100, 200];
@@ -30,6 +30,7 @@ export const BLINDS = [100, 200];
 // they're in the order chosen for the ladder rather than measured: Jen
 // Silly, Andrew Favorable, the Mathematician, Tommy Sweeden, Phil Bigmouth,
 // Danny Smallball, Michael Miserable, then Doug Poker at the top.
+// The games themselves start 200 BB deep; the order is from 100 BB.
 export const ORDER = [
   'rampart', 'milk_king', 'nik_airbag', 'chris_moneybags', 'jonny_slow', 'gus_bluffsen', 'brad_owned',
   'robin_jane_lewd', 'bungleman', 'tom_collins', 'mister_cheating', 'jen_silly', 'andrew_favorable',
@@ -60,9 +61,19 @@ export const TOTAL_CHIPS = 2 * START_BB * BLINDS[1];
 export function loadProgress(storage = globalThis.localStorage) {
   try {
     const p = JSON.parse(storage.getItem(LADDER_KEY) || 'null');
-    if (p && p.v === 1 && Number.isInteger(p.level)) return {...newProgress(), ...p, record: {...p.record}};
+    if (p && p.v === 1 && Number.isInteger(p.level)) return fitGame({...newProgress(), ...p, record: {...p.record}});
   } catch {}
   return newProgress();
+}
+
+// A game paused when the ladder started shallower (100 BB) goes on at this
+// depth, with each player keeping their share of the chips.
+function fitGame(p) {
+  const s = p.game?.stacks;
+  if (!Array.isArray(s) || s.length !== 2) return {...p, game: null};
+  const total = s[0] + s[1];
+  if (total === TOTAL_CHIPS || !(total > 0)) return p;
+  return keepGame(p, s[0] * TOTAL_CHIPS / total, p.game.hands);
 }
 
 export function saveProgress(p, storage = globalThis.localStorage) {
