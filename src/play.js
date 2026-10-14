@@ -71,6 +71,9 @@ const GAMES = [
   {id: 'plo4', label: 'Omaha 4', name: 'Pot-limit Omaha', cards: 4, pl: true},
   {id: 'plo5', label: 'Omaha 5', name: 'Pot-limit Omaha 5', cards: 5, pl: true},
   {id: 'plo6', label: 'Omaha 6', name: 'Pot-limit Omaha 6', cards: 6, pl: true},
+  // Bomb pots on two boards, at the Regulars only: everyone antes $5 (the
+  // engine's ante is the big blind), no preflop betting, $500 stacks.
+  {id: 'plo4-bomb', label: 'Bomb pot', name: 'Omaha bomb pot · two boards', cards: 4, pl: true, bomb: true, sb: 200, bb: 500, buyIn: 50000},
 ];
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // A friends table: its name, game, blinds, seats in all (the host's
@@ -579,7 +582,7 @@ function friendsSetupHtml() {
   let h = '<div class="pl-head"><h1>Start a game</h1></div><div class="sg-wrap"><div class="sg-form">';
   // Your name, the first time; after that it's in Player settings (#144).
   if (!setup.name) h += field('Your name', '<input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see">');
-  h += field('Game', `<div class="sg-chips">${GAMES.map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
+  h += field('Game', `<div class="sg-chips">${GAMES.filter(g => !g.bomb).map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
   const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
   let blinds = `<div class="sg-chips">${FRIENDS_BLINDS.map(([sb, bb]) => chip(preset?.[1] === bb && !f.customBlinds, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)).join('')}${chip(!preset || !!f.customBlinds, 'data-fblinds', 'custom', 'Custom')}</div>`;
   if (!preset || f.customBlinds) {
@@ -679,6 +682,23 @@ function peelSteps(before, after) {
     }));
   };
   const first = [from, ...revealCounts(from, after.board.length)];
+  // A double board (bomb pots): both boards were out from the flop, so they're
+  // dealt together, street by street.
+  if (before.second_board?.length) {
+    const together = boards => {
+      let seen = 0;
+      return after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
+        if (e.type === 'award') return false;
+        if (e.type === 'board') seen += 1;
+        return e.type === 'board' || e.type === 'second_board' ? seen <= boards : true;
+      }));
+    };
+    return first.map((k, step) => ({
+      ...base, peelRuns: 1, board: after.board.slice(0, k), second_board: after.second_board.slice(0, k), events: together(step),
+      peelNext: step + 1 < first.length ? [1, k, first[step + 1]] : null,
+      peelWait: step + 1 < first.length ? peelWait(first[step + 1]) : PEEL_MS.result,
+    }));
+  }
   const second = after.second_board?.length ? after.second_board : null;
   const steps = first.map((k, step) => ({
     ...base, board: after.board.slice(0, k), second_board: [], events: firstEvents(step),
@@ -844,7 +864,10 @@ async function sitRegulars() {
   setup.bots = pickRegulars(personalities.map(p => p.id), REGULARS_SEATS);
   saveSetup();
   ladder = null;
-  await sitDown({bots: setup.bots, game: setup.game, buyIn: setup.buyIn, sb: setup.sb, bb: setup.bb, gto: false, regs: true});
+  // A bomb pot table has its own fixed amounts.
+  const g = gameOf(setup.game);
+  const {sb, bb, buyIn} = g.bomb ? g : setup;
+  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto: false, regs: true});
 }
 
 const regularName = id => personalities.find(p => p.id === id)?.name || id;
@@ -901,8 +924,11 @@ async function startTable() {
   saveSetup();
   ladder = null;
   const gto = setup.bots.length === 1 && setup.bots[0] === gtoBot()?.id;
-  const buyIn = gto ? GTO_BUY_IN_BB * setup.bb : setup.buyIn;
-  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb: setup.sb, bb: setup.bb, gto});
+  // A bomb pot table has its own fixed amounts.
+  const g = gameOf(setup.game);
+  const {sb, bb} = g.bomb ? g : setup;
+  const buyIn = gto ? GTO_BUY_IN_BB * setup.bb : g.bomb ? g.buyIn : setup.buyIn;
+  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto});
 }
 
 // Sits down at a new bot table and deals its first hand. `gto` is GTO
@@ -1770,7 +1796,7 @@ function eventText(e) {
     case 'raise': return `${who} ${v('raise', 'raises')} to ${c(e.to)}${allIn}`;
     case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
     case 'runs': return e.count === 2 ? 'Running it twice' : 'Running it once';
-    case 'second_board': return `Second run: ${e.cards.join(' ')}`;
+    case 'second_board': return `${tableGame.bomb ? 'Board 2' : 'Second run'}: ${e.cards.join(' ')}`;
     case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
     default: return '';
   }
@@ -1801,6 +1827,18 @@ let lastSummary = null; // {hand, html, line}
 let lastSummaryOpen = false; // the one-line version opened, kept from hand to hand
 let tableMenuOpen = false; // the table's ⋯ menu, kept open across redraws
 
+// A pot's awards, one per winner: run twice or on two boards, someone who
+// wins both halves is named once, with the whole amount.
+function winners(p) {
+  const out = [];
+  for (const a of p.awards) {
+    const w = out.find(x => x.seat === a.seat);
+    if (w) w.amount = num(w.amount) + num(a.amount);
+    else out.push({...a});
+  }
+  return out;
+}
+
 // The summary in one line: who won the (main) pot, how, and your result.
 function summaryLine(s) {
   const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
@@ -1810,8 +1848,9 @@ function summaryLine(s) {
   if (s.showdown && contested.length) {
     const p = contested[0];
     const cards = i => (s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` ${s.seats[i].cards.map(smallCard).join('')}` : '');
-    const names = p.awards.map(a => `${who(a.seat)}${cards(a.seat)}`).join(' and ');
-    line = `${names} ${p.awards.length > 1 ? 'split' : 'won'} ${c(p.amount)}`;
+    const won = winners(p);
+    const names = won.map(a => `${who(a.seat)}${cards(a.seat)}`).join(' and ');
+    line = `${names} ${won.length > 1 ? 'split' : 'won'} ${c(p.amount)}`;
     if (p.winning_hand) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
     if (contested.length > 1) line += `, and ${contested.length - 1} side pot${contested.length > 2 ? 's' : ''}`;
   } else if (pots.length) {
@@ -1832,7 +1871,8 @@ function summaryBody(s) {
   const holeOf = i => (s.showdown && s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` <span class="pl-sum-cards">${s.seats[i].cards.map(smallCard).join('')}</span>` : '');
   let h = `<div class="pl-sum-head"><b>Hand ${num(s.hand_number)}</b></div>`;
   // The board (each run's, when it ran twice), on its own rows.
-  const boards = s.second_board?.length ? [['Run 1', s.board], ['Run 2', s.second_board]] : [['Board', s.board]];
+  const [one, two] = tableGame.bomb ? ['Board 1', 'Board 2'] : ['Run 1', 'Run 2'];
+  const boards = s.second_board?.length ? [[one, s.board], [two, s.second_board]] : [['Board', s.board]];
   for (const [label, cards] of boards) {
     if (cards?.length) h += `<div class="pl-sum-boardrow"><span class="pl-sum-label">${label}</span><span class="pl-sum-board">${cards.map(smallCard).join('')}</span></div>`;
   }
@@ -1847,8 +1887,9 @@ function summaryBody(s) {
   } else {
     contested.forEach((p, k) => {
       const label = contested.length > 1 ? (k === 0 ? 'Main pot' : `Side pot ${k}`) : 'Pot';
-      const names = p.awards.map(a => `<b>${who(a.seat)}</b>${holeOf(a.seat)}`);
-      const split = p.awards.length > 1 ? ` split ${p.awards.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}` : '';
+      const won = winners(p);
+      const names = won.map(a => `<b>${who(a.seat)}</b>${holeOf(a.seat)}`);
+      const split = won.length > 1 ? ` split ${won.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}` : '';
       h += `<li>${label} ${c(p.amount)}: ${names.join(' and ')}${split}${p.winning_hand ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : ''}</li>`;
     });
     for (const p of pots.filter(x => x.eligible.length === 1)) {
@@ -1902,7 +1943,8 @@ function renderTable() {
   const last = lastActions();
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
+  const stakes = tableGame.bomb ? `ante ${c(s.ante ?? tableGame.bb)}` : `blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}`;
+  h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · ${stakes}</span>`;
   if (mode !== 'solo') h += netBarHtml();
   // V3 (#225): the table's settings in one ⋯ menu, and Leave beside it.
   const item = (act, label, on, title = '') =>
@@ -1931,7 +1973,7 @@ function renderTable() {
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : slot(1, i))).join('')}</div>`;
   // Run twice: the second board, each pot split between the two.
   // (Mid-runout it shows empty too, while its first cards are coming.)
-  if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="The second run">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
+  if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="${tableGame.bomb ? 'Board 2' : 'The second run'}">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
@@ -1954,8 +1996,10 @@ function renderTable() {
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
-      const words = handWords(seat.cards, s.board);
-      if (words) h += `<div class="pl-handname">${esc(words)}</div>`;
+      // On a double board, what you make on each, first board first.
+      const second = s.second_board?.length >= 3 ? handWords(seat.cards, s.second_board) : null;
+      const words = [handWords(seat.cards, s.board), second].filter(Boolean).join(' / ');
+      if (words) h +=`<div class="pl-handname">${esc(words)}</div>`;
     }
     const note = s.complete ? (num(seat.net) > 0 ? `+${c(seat.net)}` : '') : (seat.away ? 'Away' : seat.all_in ? 'All-in' : last[i] || '');
     if (note) h += `<div class="pl-note">${note}</div>`;
