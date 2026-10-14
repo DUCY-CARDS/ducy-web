@@ -60,6 +60,24 @@ export function memberPromosHtml(p, now = Date.now()) {
   return h + '</div>';
 }
 
+// The table banner (#278): the promotions running for a table's hands, in
+// a line: the high hand's leader to beat, or the bonuses still on offer.
+// `table`: its id, `game`, and `tourney` (a tournament's table). '' if none.
+export function tableBannerText(p, {table = '', game = '', tourney = false} = {}, now = Date.now()) {
+  const on = (p?.promos || []).filter(x => x.status === 'running' && x.period && now < x.period.end && x.games.includes(game)
+    && (tourney ? x.tourneys : !x.tables?.length || x.tables.includes(table)));
+  const parts = on.map(x => {
+    if (x.kind === 'high_hand') {
+      const lead = x.leaders?.[game]?.[0];
+      return lead ? `${x.name}: ${lower(lead.hand)} (${lead.name}) to beat` : `${x.name}: no qualifying hand yet`;
+    }
+    const open = (x.caps || []).filter(c => !c.cap || c.used < c.cap);
+    if (!open.length) return `${x.name}: all paid this period`;
+    return `${x.name}: ${open.map(c => `${tierName(c.category).toLowerCase()} ${chipText(c.amount)}`).join(', ')}`;
+  });
+  return parts.slice(0, 2).join(' · ') + (parts.length > 2 ? ` · ${parts.length - 2} more` : '');
+}
+
 // ---- the manager ----
 
 const PERIOD_TEXT = {hour: 'Each hour', day: 'Each day', week: 'Each week (from Monday)', session: 'A session, on set days'};
@@ -68,11 +86,11 @@ const CAT_OPTIONS = CATEGORIES.slice(3);
 const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 // The form for a new promotion, or for changing `edit` (its settings).
-function formHtml(edit, newKind = 'high_hand') {
+function formHtml(edit, newKind = 'high_hand', cd = '') {
   const v = edit || {kind: newKind, games: ['nlhe'], every: 'day', prizes: [5000], minCategory: 'full_house', ties: 'split',
     tiers: [{category: 'quads', amount: 1000}, {category: 'straight_flush', amount: 2500}, {category: 'royal_flush', amount: 10000}], capPerTier: 5, capPerPlayer: 0, minPlayers: 4, minPot: 0, budget: 0, days: [5], from: 20 * 60, to: 23 * 60};
   const kind = v.kind;
-  let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}">`;
+  let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}"${cd}>`;
   if (!edit) {
     h += `<div class="pl-row"><label class="pl-label">Kind <select class="pl-text" name="kind" data-promokind="1">
       <option value="high_hand"${kind === 'high_hand' ? ' selected' : ''}>High hand of the period</option>
@@ -102,21 +120,30 @@ function formHtml(edit, newKind = 'high_hand') {
     <div class="pl-row"><label class="pl-label">Players dealt in, at least <input class="pl-text cl-num" type="number" min="2" max="9" name="minPlayers" value="${v.minPlayers ?? 4}"></label>
     <label class="pl-label">Pot, at least <input class="pl-text cl-num" name="minPot" inputmode="decimal" value="${v.minPot ? chipInput(v.minPot) : ''}"></label></div>
     <div class="pl-row"><label class="pl-label">Budget per period <input class="pl-text cl-num" name="budget" inputmode="decimal" value="${v.budget ? chipInput(v.budget) : ''}"></label> <span class="pl-meta">Blank: none. Over it, a high hand waits for you to approve it, and bonuses stop.</span></div>
-    <p class="pl-meta">Tournament hands don’t count. Prizes are club chips you give; nothing comes out of the pots.</p></details>`;
-  h += `<div class="pl-actions"><button class="tr-start" type="submit">${edit ? 'Save for the next period' : 'Start it'}</button><button class="btn-small" type="button" data-cl="promo-cancel">Cancel</button></div>`;
+    <div class="pl-row"><label><input type="checkbox" name="tourneys"${v.tourneys ? ' checked' : ''}> Tournament hands count too</label></div>
+    <p class="pl-meta">Prizes are club chips the club gives; nothing comes out of the pots.</p></details>`;
+  h += `<div class="pl-actions"><button class="tr-start" type="submit">${edit ? 'Save for the next period' : 'Start it'}</button><button class="btn-small" type="button" data-cl="promo-cancel"${cd}>Cancel</button></div>`;
   return h + '</form>';
 }
 
 // The manager's Promotions part: each promotion with its period so far, the
 // awards (approve or void), and the latest qualifying hands.
-export function hostPromosHtml(club, {form = null, note = ''} = {}, now = Date.now()) {
-  const a = promosAdmin(club, now);
+export const hostPromosHtml = (club, opts = {}, now = Date.now()) => promosPartHtml(promosAdmin(club, now), {...opts, replay: club.code}, now);
+
+// The same from promosAdmin's data `a`, for the host or (`code`: their
+// club's) an assistant, whose buttons carry the code so they go to the
+// host (#274); `disabled` while the club can't be reached.
+// `replay`: the club's code, for the host, whose history holds the hands
+// behind the prizes (#278).
+export function promosPartHtml(a, {form = null, note = '', code = '', disabled = false, replay = ''} = {}, now = Date.now()) {
+  a ||= {list: [], awards: [], hands: []};
+  const cd = (code ? ` data-code="${esc(code)}"` : '') + (disabled ? ' disabled' : '');
   let h = '<div class="cl-promos-host">';
   if (note) h += `<p class="pl-desc pl-neterr">${esc(note)}</p>`;
-  if (form) h += form.startsWith('new') ? formHtml(null, form === 'new-bonus' ? 'bonus' : 'high_hand') : formHtml(a.list.find(p => p.id === form));
-  else h += '<div class="pl-actions"><button class="tr-start" data-cl="promo-new">New promotion</button></div>';
+  if (form) h += form.startsWith('new') ? formHtml(null, form === 'new-bonus' ? 'bonus' : 'high_hand', cd) : formHtml(a.list.find(p => p.id === form), 'high_hand', cd);
+  else h += `<div class="pl-actions"><button class="tr-start" data-cl="promo-new"${cd}>New promotion</button></div>`;
   const live = a.list.filter(p => p.status !== 'ended');
-  if (!live.length && !form) h += '<p class="pl-meta">No promotions yet. A high hand of the day, or bonuses for quads and better, give members something to chase. The prizes are club chips you give.</p>';
+  if (!live.length && !form) h += '<p class="pl-meta">No promotions yet. A high hand of the day, or bonuses for quads and better, give members something to chase. The prizes are club chips the club gives.</p>';
   for (const p of live) {
     h += `<div class="cl-promo"><div class="cl-promo-head"><b>${esc(p.name)}</b><span class="pl-meta">${p.status === 'paused' ? 'Paused' : p.period ? left(p.period.end, now) : 'Not on right now'}</span></div>`;
     h += `<p class="pl-desc">${esc(p.rules)}${p.next ? ' <span class="pl-meta">(changes waiting for the next period)</span>' : ''}</p>`;
@@ -127,19 +154,20 @@ export function hostPromosHtml(club, {form = null, note = ''} = {}, now = Date.n
       }
     }
     if (p.caps) h += `<ul class="cl-promo-caps">${p.caps.map(c => `<li>${esc(tierName(c.category))} ${chips(c.amount)}: ${c.used}${p.capPerTier ? ` of ${p.capPerTier}` : ''} paid</li>`).join('')}</ul>`;
-    h += `<div class="pl-actions"><button class="btn-small" data-cl="promo-edit" data-id="${esc(p.id)}">Change</button>`;
-    h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="${p.status === 'paused' ? 'running' : 'paused'}">${p.status === 'paused' ? 'Resume' : 'Pause'}</button>`;
-    h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="ended">End</button></div></div>`;
+    h += `<div class="pl-actions"><button class="btn-small" data-cl="promo-edit" data-id="${esc(p.id)}"${cd}>Change</button>`;
+    h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="${p.status === 'paused' ? 'running' : 'paused'}"${cd}>${p.status === 'paused' ? 'Resume' : 'Pause'}</button>`;
+    h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="ended"${cd}>End</button></div></div>`;
   }
   if (a.awards.length) {
     h += '<h3>Prizes</h3><ul class="cl-list cl-promo-awards">';
     for (const w of a.awards) {
       const canVoid = w.status === 'held' || (w.status === 'paid' && now - (w.paidAt || w.at) < VOID_MS);
       h += `<li><span class="cl-name">${esc(w.name)}</span><span>${esc(lower(w.handName))} ${cardsHtml(w.cards)}</span><span class="cl-chips">${chips(w.amount)}</span>`;
-      h += `<span class="pl-meta">${esc(w.promoName)}${w.place ? ` · ${w.place === 1 ? '1st' : w.place === 2 ? '2nd' : '3rd'}` : ''} · ${esc(ago(w.paidAt || w.at))}${w.status === 'void' ? ' · voided' : w.status === 'held' ? ' · waiting for you' : ''}</span>`;
+      h += `<span class="pl-meta">${esc(w.promoName)}${w.place ? ` · ${w.place === 1 ? '1st' : w.place === 2 ? '2nd' : '3rd'}` : ''} · ${esc(ago(w.paidAt || w.at))}${w.status === 'void' ? ' · voided' : w.status === 'held' ? ' · waiting to be paid' : ''}</span>`;
       h += '<span class="cl-acts">';
-      if (w.status === 'held') h += `<button class="btn-small primary" data-cl="promo-approve" data-id="${esc(w.id)}">Pay it</button>`;
-      if (canVoid) h += `<button class="btn-small" data-cl="promo-void" data-id="${esc(w.id)}">Void</button>`;
+      if (replay && w.hand) h += `<button class="btn-small" data-cl="promo-replay" data-code="${esc(replay)}" data-who="host" data-hand="${esc(w.hand)}">Replay</button>`;
+      if (w.status === 'held') h += `<button class="btn-small primary" data-cl="promo-approve" data-id="${esc(w.id)}"${cd}>Pay it</button>`;
+      if (canVoid) h += `<button class="btn-small" data-cl="promo-void" data-id="${esc(w.id)}"${cd}>Void</button>`;
       h += '</span></li>';
     }
     h += '</ul>';
@@ -169,6 +197,7 @@ export function readPromoForm(f) {
     kind, name: v('name'), games: checked('games'), every: v('every'),
     days: checked('days').map(Number), from: time('from'), to: time('to'),
     minPlayers: Number(v('minPlayers')) || 4, minPot: amount('minPot', 'The pot'), budget: amount('budget', 'The budget'),
+    tourneys: !!f.elements.tourneys?.checked,
     // The manager's time zone now, as minutes to add to UTC.
     tz: -new Date().getTimezoneOffset(),
   };

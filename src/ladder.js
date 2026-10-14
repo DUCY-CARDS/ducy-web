@@ -65,10 +65,13 @@ export function rungsFor(ids, gto) {
 
 // `chips` are yours away from the table: a game under way has a buy-in of them
 // at the table. `game` is the game under way, kept so it can be left and
-// resumed: {stacks: [yours, theirs], hands, blinds: [sb, bb], offerAt}, or null.
+// resumed: {stacks: [yours, theirs], hands, blinds: [sb, bb], offerAt, review}, or null.
 // offerAt is the hand count at which the bot next offers to raise the
 // stakes. A game kept before the stakes could rise has neither: it goes on
-// at its rung's blinds, with the first offer at STAKES_EVERY.
+// at its rung's blinds, with the first offer at STAKES_EVERY. `review` is its
+// ladder-review.js review so far, once a hand is graded. `lastReview` is the
+// last finished game's review, with {at, opp, won, hands}, to read on the
+// Ladder tab (absent until there's one).
 export function newProgress() {
   return {v: 2, level: 0, best: 0, wins: 0, losses: 0, chips: START_CHIPS, playing: false, titles: 0, record: {}, game: null};
 }
@@ -118,7 +121,7 @@ export function startGame(p, rungs) {
 
 // The game so far, after each action: your chips behind, and theirs (all the
 // rest). Leaving in the middle of a hand folds it: what you'd put in the pot
-// is theirs. The game's blinds and next offer stay as they are.
+// is theirs. The game's blinds, next offer and review stay as they are.
 export function keepGame(p, mine, hands) {
   const all = p.game ? p.game.stacks[0] + p.game.stacks[1] : tableChipsAt(p.level);
   const m = Math.max(0, Math.min(all, Math.round(mine)));

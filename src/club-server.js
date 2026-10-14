@@ -224,6 +224,8 @@ export function createClubServer({
   // promotions after any change, and a word when they win or someone takes
   // the lead.
   const memberIds = () => [...online].filter(id => club.members[id]?.status === 'member');
+  // A hand's name mid-sentence: "two pair, kings and twos", "a royal flush".
+  const midSentence = s => s.charAt(0).toLowerCase() + s.slice(1);
   function broadcastPromos() {
     if (!club.promos?.list?.length) return;
     const body = promosBody(club);
@@ -234,22 +236,35 @@ export function createClubServer({
     for (const a of awards) {
       if (a.status !== 'paid') continue;
       accountTo(a.member);
-      if (online.has(a.member)) promoEvent(a.member, 'award', `${a.promoName}: you won ${chipText(a.amount)} for ${a.handName.replace(/^A /, 'a ')}.`);
+      if (online.has(a.member)) promoEvent(a.member, 'award', `${a.promoName}: you won ${chipText(a.amount)} for ${midSentence(a.handName)}.`);
     }
   }
   // A finished hand at a club table: bonuses and leaderboards.
+  // Resolves to whether the hand counted for any promotion (qualifying or not).
   function promoHand(rec, players) {
-    if (!club.promos?.list?.some(p => p.status === 'running')) return;
+    if (!club.promos?.list?.some(p => p.status === 'running')) return false;
     let r;
-    try { r = processHand(club, rec, players || []); } catch (e) { console.warn('club: promotions:', e); return; }
-    if (!r.paid.length && !r.leads.length && !club.promos.hands.some(h => h.hand === rec.id)) return;
+    try { r = processHand(club, rec, players || []); } catch (e) { console.warn('club: promotions:', e); return false; }
+    if (!r.paid.length && !r.leads.length && !club.promos.hands.some(h => h.hand === rec.id)) return false;
     promoPaid(r.paid);
     for (const l of r.leads) {
-      for (const id of memberIds()) promoEvent(id, 'lead', `New high hand in ${gameLabel(l.game)}: ${l.hand.hand.replace(/^A /, 'a ')}, ${l.hand.name}.`);
+      for (const id of memberIds()) promoEvent(id, 'lead', `New high hand in ${gameLabel(l.game)}: ${midSentence(l.hand.hand)}, ${l.hand.name}.`);
     }
     changed();
     broadcastPromos();
     armPromos();
+    return true;
+  }
+  // A tournament hand (#274): recorded like a cash table's, as table
+  // `tourney:<id>` (as members record it), and kept in the host's history
+  // when it counted for a promotion, so its prize can be replayed.
+  function promoTourneyHand(tid, table, view) {
+    const t = tourneyById(club, tid);
+    const rec = handRecord({club: club.code, table: `tourney:${tid}`, tableName: t?.name || 'Tournament', game: t?.game || '', view, who: 'host'});
+    rec.tourney = tid;
+    rec.sub = table;
+    const players = view.seats.map((s, i) => ({seat: i, client_id: s.id})).filter(p => p.client_id);
+    if (promoHand(rec, players)) storeHand(rec, {days: club.keepDays ?? HOST_KEEP_DAYS});
   }
   // Periods ending pay their high hands: on a timer for the soonest end
   // (the room's alarm in an always-on club, #135), and whenever the club
@@ -322,6 +337,8 @@ export function createClubServer({
       tourneysChanged: broadcastTourneys,
       liveChanged: () => { liveChanged(); onChange(); },
       online: id => online.has(id),
+      // Only while a promotion counts tournament hands (#274).
+      onHand: (tid, table, view) => { if (club.promos?.list?.some(p => p.status === 'running' && p.tourneys)) promoTourneyHand(tid, table, view); },
       ...engine,
     });
     tourneyHost.startAll();
@@ -349,6 +366,8 @@ export function createClubServer({
       if (r.table?.start && tableHost) started(tableHost.start(r.table.start));
       if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
       if (r.table) broadcastTables();
+      // An assistant's promotion command (#274).
+      if (r.promos) { promoPaid(r.paid || []); broadcastPromos(); armPromos(); }
       sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
     } catch (e) {
       sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: e.message}});

@@ -10,13 +10,18 @@
 //   give                     chips from the assistant's own balance
 //   grant | deny             a member's chip request (granted from the assistant's balance)
 //   new_table | close_table | hide_table
-// Assistants can't create chips, change club settings, or appoint anyone.
+//   new_promo | edit_promo | promo_status | approve_award | void_award
+//                            High Hand promotions (#274): set up and run
+//                            them, pay a prize held over budget, void one
+// Assistants can't create chips (beyond promotion prizes the host's
+// promotions pay), change club settings, or appoint anyone.
 // Every assistant action goes in the club's activity log, which the host sees.
 
 import { approve, decline, removeMember, account } from './club.js';
 import { chipText } from './chip-format.js';
 import { answerRequest, declineRequest, ensureChips, transfer } from './club-chips.js';
 import { newTable, tableById } from './club-tables.js';
+import { approveAward, editPromo, newPromo, promosAdmin, setPromoStatus, voidAward } from './club-promos.js';
 
 export const MAX_LOG = 500;
 
@@ -87,6 +92,8 @@ export function adminBody(club, seatedCounts = {}) {
       id: t.id, name: t.name, game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats,
       status: t.status, taken: seatedCounts[t.id] || 0,
     })),
+    // The promotions, as the host sees them (#274).
+    promos: club.promos?.list?.length || club.promos?.awards?.length ? promosAdmin(club) : null,
   };
 }
 
@@ -146,6 +153,34 @@ export function runAdmin(club, by, cmd, now = Date.now(), limits = null) {
       t.status = 'closing';
       logAction(club, by, `${a.name} closed table ${t.name}`, now);
       return {replies: [], table: {close: t.id}};
+    }
+    // High Hand promotions (#274). `promos` tells the host to send the
+    // promotions out and set their timer; `paid`, prizes it should announce.
+    case 'new_promo': {
+      const p = newPromo(club, cmd.promo || {}, now);
+      logAction(club, by, `${a.name} started the promotion ${p.name}`, now);
+      return {replies: [], promos: true};
+    }
+    case 'edit_promo': {
+      const p = editPromo(club, String(cmd.id), cmd.promo || {}, now);
+      logAction(club, by, `${a.name} changed the promotion ${p.name}`, now);
+      return {replies: [], promos: true};
+    }
+    case 'promo_status': {
+      const p = setPromoStatus(club, String(cmd.id), String(cmd.status));
+      const did = {running: 'resumed', paused: 'paused', ended: 'ended'}[p.status];
+      logAction(club, by, `${a.name} ${did} the promotion ${p.name}`, now);
+      return {replies: [], promos: true};
+    }
+    case 'approve_award': {
+      const w = approveAward(club, String(cmd.id), now);
+      logAction(club, by, `${a.name} paid ${w.name} ${chipText(w.amount)} for ${w.promoName}`, now, w.amount);
+      return {replies: [], promos: true, paid: [w]};
+    }
+    case 'void_award': {
+      const {award: w} = voidAward(club, String(cmd.id), now, cmd.why || '');
+      logAction(club, by, `${a.name} voided ${w.name}’s ${chipText(w.amount)} from ${w.promoName}`, now, w.amount);
+      return {replies: [account(club, w.member, club.chips.ledger.at(-1).n - 1)], promos: true};
     }
     case 'hide_table': {
       const t = tableById(club, cmd.table);

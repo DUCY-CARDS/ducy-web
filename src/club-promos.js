@@ -206,7 +206,8 @@ export function promoSettings(s = {}) {
   out.minPlayers = whole(s.minPlayers ?? 4, 2, 9) ? s.minPlayers ?? 4 : 4;
   out.minPot = chips(s.minPot ?? 0) ? s.minPot ?? 0 : 0;
   out.tables = (Array.isArray(s.tables) ? s.tables : []).map(String).slice(0, 50);
-  out.tourneys = false; // tournaments don't count for now (#274)
+  // Whether tournament hands count too (#274); off unless the manager says so.
+  out.tourneys = s.tourneys === true;
   out.budget = chips(s.budget ?? 0) ? s.budget ?? 0 : 0;
   out.startsAt = whole(s.startsAt ?? 0, 0, 1e14) ? s.startsAt ?? 0 : 0;
   out.endsAt = whole(s.endsAt ?? 0, 0, 1e14) ? s.endsAt ?? 0 : 0;
@@ -283,6 +284,7 @@ const tierFor = (promo, cat) => promo.tiers.find(t => CATEGORIES.indexOf(t.categ
 
 // Why a hand can't count for `promo` ('' when it can): its conditions.
 function ineligible(promo, rec, game, players) {
+  if (rec.tourney && !promo.tourneys) return 'tournament hand';
   if (!promo.games.includes(game)) return 'game';
   if (promo.tables.length && !promo.tables.includes(rec.table)) return 'table';
   if (players < promo.minPlayers) return `fewer than ${promo.minPlayers} players`;
@@ -329,8 +331,15 @@ function payAward(club, a, now) {
 export function processHand(club, rec, players, now = rec?.at ?? Date.now()) {
   const p = ensurePromos(club);
   const out = {paid: [], leads: [], budget: []};
+  // A hand counts once, even if its table reports it again (a host that
+  // restarted). `sub`: a tournament's own table, whose hand numbers are its own.
+  const key = `${rec?.table}|${rec?.sub ?? ''}|${rec?.hand}`;
+  p.seen ??= [];
+  if (rec?.hand && p.seen.includes(key)) return out;
   const shown = shownHands(rec, players);
   if (!shown.length) return out;
+  p.seen.push(key);
+  if (p.seen.length > 400) p.seen.splice(0, p.seen.length - 400);
   const game = rec.game || 'nlhe';
   const dealt = (rec.seats || []).filter(s => s.inHand).length;
   for (const promo of p.list) {
@@ -365,7 +374,7 @@ export function processHand(club, rec, players, now = rec?.at ?? Date.now()) {
         const key = `${promo.id}|${period.key}|${game}`;
         const board = (p.boards[key] ||= []);
         const leader = board[0];
-        board.push({member: h.member, name: h.name, score: h.score, category: h.category, hand: h.hand, cards: h.cards, handId: rec.id, table: rec.table, at: rec.at});
+        board.push({member: h.member, name: club.members[h.member]?.name || h.name, score: h.score, category: h.category, hand: h.hand, cards: h.cards, handId: rec.id, table: rec.table, at: rec.at});
         board.sort((a, b) => b.score - a.score || a.at - b.at);
         board.splice(BOARD_KEEP);
         if (board[0].handId === rec.id && board[0].member === h.member && (!leader || leader.score < h.score)) out.leads.push({promo: promo.name, game, hand: board[0]});
@@ -519,6 +528,10 @@ const EVERY = {hour: 'each hour', day: 'each day', week: 'each week'};
 
 // A promotion's rules in a sentence.
 export function promoRules(promo) {
+  return rulesCore(promo) + (promo.tourneys ? ' Tournament hands count too.' : '');
+}
+
+function rulesCore(promo) {
   const when = promo.every === 'session' ? 'each session' : EVERY[promo.every];
   const games = promo.games.map(gameName).join(', ');
   if (promo.kind === 'high_hand') {
@@ -539,7 +552,7 @@ export function promosBody(club, now = Date.now()) {
   const promos = p.list.filter(x => x.status !== 'ended').map(promo => {
     const period = periodOf(promo, now);
     const view = {id: promo.id, name: promo.name, kind: promo.kind, status: promo.status, rules: promoRules(promo), games: promo.games,
-      period: period ? {start: period.start, end: period.end} : null, minPlayers: promo.minPlayers};
+      period: period ? {start: period.start, end: period.end} : null, minPlayers: promo.minPlayers, tables: promo.tables, tourneys: promo.tourneys};
     if (promo.kind === 'high_hand') {
       view.leaders = Object.fromEntries(promo.games.map(g => [g, (period && p.boards[`${promo.id}|${period.key}|${g}`] || []).slice(0, 3)
         .map(b => ({name: b.name, hand: b.hand, cards: b.cards, at: b.at}))]));

@@ -1003,6 +1003,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .ld-go .tr-start { margin: 0; }
 .ld-rules { font-size: 13px; color: #5d6b55; }
 .ld-note { border-left: 3px solid var(--teal); padding-left: 10px; color: var(--fg); }
+/* A ladder game's review (#284): its costliest decisions, hand by hand. */
+.ld-review p { margin: 0; }
+.ld-review-lead { color: var(--fg-strong); }
+.ld-lessons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ld-lesson-hand { padding: 0 8px 2px; }
+.ld-lesson-hand b { font-family: var(--font-data); font-weight: 600; color: var(--fg-strong); }
+.ld-last { margin: 0 0 14px; }
+.ld-last > summary { cursor: pointer; font-weight: 600; color: var(--fg-strong); padding: 4px 0; }
+.ld-last .ld-review { margin-top: 6px; }
 .ld-rungs { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
 .ld-rung { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 6px 10px; border-radius: 14px; background: #24472f; color: #f3e7c9; min-width: 0; text-align: center; }
 .ld-rung .ld-spade { position: absolute; top: 6px; right: 6px; }
@@ -1860,3 +1869,9 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .cl-promo-form .cl-num { width: 6em; }
 .cl-promo-awards li { flex-wrap: wrap; }
 @media (max-width: 640px) { .cl-promo-form .cl-num { width: 5em; } }
+/* At a club table (#278): the promotions in a line above the felt, never
+   over cards or seats; a prize or a new high hand takes the line for a moment. */
+.pl-promo-line { align-self: center; max-width: 100%; padding: 4px 12px; border-radius: 999px; background: rgba(243, 231, 201, 0.12); color: var(--fg); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+.pl-promo-line.celebrate { background: #f3e7c9; color: #1d3a2c; font-weight: 600; box-shadow: 0 0 0 2px #d9a441; animation: pl-promo-pop 0.6s ease-out; }
+@keyframes pl-promo-pop { 0% { transform: scale(0.85); opacity: 0; } 60% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .pl-promo-line.celebrate { animation: none; } }
