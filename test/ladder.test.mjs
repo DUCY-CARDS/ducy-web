@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BLINDS, CHAMPION, ORDER, START_BB, TOTAL_CHIPS, finishGame, keepGame, loadProgress, newProgress, pausedGame,
-  opponentOf, rungsFor, saveProgress, startGame,
+  BLINDS, CHAMPION, ORDER, STAKES_EVERY, START_BB, TOTAL_CHIPS, answerStakes, finishGame, gameBlinds,
+  keepGame, loadProgress, newProgress, pausedGame, opponentOf, rungsFor, saveProgress, stakesOffer, startGame,
 } from '../src/ladder.js';
 
 const RUNGS = ['a', 'b', 'c'];
@@ -70,10 +70,10 @@ test('a game left in the middle resumes with the same chips', () => {
   let p = newProgress();
   assert.equal(pausedGame(p), null);
   p = startGame(p);
-  assert.deepEqual(p.game, {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0});
+  assert.deepEqual(p.game, {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0, blinds: BLINDS, offerAt: STAKES_EVERY});
   // Twelve hands in, you have 26,500 behind (mid-hand: your bet in the pot is theirs).
   p = keepGame(p, 26500, 12);
-  assert.deepEqual(pausedGame(p), {stacks: [26500, TOTAL_CHIPS - 26500], hands: 12});
+  assert.deepEqual(pausedGame(p), {stacks: [26500, TOTAL_CHIPS - 26500], hands: 12, blinds: BLINDS, offerAt: STAKES_EVERY});
   // Coming back keeps the game, not a fresh one.
   assert.deepEqual(startGame(p).game, p.game);
   assert.equal(p.losses, 0, 'leaving isn’t losing');
@@ -105,11 +105,41 @@ test('progress is kept, and bad saves start over', () => {
   saveProgress(p, broken);
 });
 
-test('every game plays at the same blinds, 1/2', () => {
-  assert.deepEqual(BLINDS, [100, 200]);
+test('every 100 hands the bot offers to double the blinds', () => {
+  let p = startGame(newProgress());
+  assert.equal(stakesOffer(p), null);
+  p = keepGame(p, 41000, STAKES_EVERY - 1);
+  assert.equal(stakesOffer(p), null);
+  p = keepGame(p, 41000, STAKES_EVERY);
+  assert.deepEqual(stakesOffer(p), [200, 400]);
+  // Accepted: double from the next hand, and the next offer 100 hands on.
+  p = answerStakes(p, true);
+  assert.deepEqual(gameBlinds(p), [200, 400]);
+  assert.equal(stakesOffer(p), null);
+  p = keepGame(p, 30000, 2 * STAKES_EVERY);
+  assert.deepEqual(stakesOffer(p), [400, 800]);
+  // Turned down: the blinds stay, and it comes again 100 hands later.
+  p = answerStakes(p, false);
+  assert.deepEqual(gameBlinds(p), [200, 400]);
+  assert.equal(stakesOffer(keepGame(p, 30000, 2 * STAKES_EVERY + 50)), null);
+  assert.deepEqual(stakesOffer(keepGame(p, 30000, 3 * STAKES_EVERY)), [400, 800]);
+  // The raised blinds are kept with the paused game.
+  assert.deepEqual(startGame({...p, playing: false}).game.blinds, [200, 400]);
 });
 
-test('games start 200 BB deep', () => {
+test('no offer when someone can’t cover the doubled big blind', () => {
+  const p = keepGame(startGame(newProgress()), 350, STAKES_EVERY);
+  assert.equal(stakesOffer(p), null);
+});
+
+test('a game kept before the stakes could rise goes on at 1/2', () => {
+  const p = startGame({...newProgress(), playing: true, game: {stacks: [53000, 27000], hands: 40}});
+  assert.deepEqual(gameBlinds(p), BLINDS);
+  assert.equal(p.game.offerAt, STAKES_EVERY);
+});
+
+test('games start 200 BB deep at 1/2', () => {
+  assert.deepEqual(BLINDS, [100, 200]);
   assert.equal(START_BB, 200);
   assert.equal(TOTAL_CHIPS, 2 * 200 * BLINDS[1]);
 });

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LESSONS_KEPT, addHand, lessonsByHand, lessonsShare, newGameReview } from '../src/ladder-review.js';
-import { keepGame, newProgress, startGame } from '../src/ladder.js';
+import { BLINDS, STAKES_EVERY, TOTAL_CHIPS, answerStakes, keepGame, loadProgress, newProgress, saveProgress, startGame } from '../src/ladder.js';
 
 const dec = (grade, bbLost, action = 'call 3bb') => ({street: 'flop', board: 'Ks 9d 4h', pot: 6, to_call: 3, action, gto: [], main: 'fold', best: 'fold', bb_lost: bbLost, stderr: 0, grade});
 const hand = (...decisions) => ({hole: 'Ah Kd', board: 'Ks 9d 4h 2c 7s', decisions, bb_lost: decisions.reduce((a, d) => a + d.bb_lost, 0), result: -12.5, note: null});
@@ -54,4 +54,18 @@ test('a game in progress keeps its review as the chips change', () => {
   const q = keepGame({...p, game: {...p.game, review}}, 300, 4);
   assert.deepEqual(q.game.review, review);
   assert.equal(q.game.hands, 4);
+});
+
+test('a review survives raised stakes and a paused game resuming', () => {
+  const p = startGame(newProgress());
+  const review = addHand(null, hand(dec('mistake', 2)), 1);
+  const q = answerStakes(keepGame({...p, game: {...p.game, review}}, 30000, STAKES_EVERY), true);
+  const storage = {getItem() { return this.value; }, setItem(key, value) { this.value = value; }};
+  saveProgress(keepGame(q, 28000, STAKES_EVERY + 1), storage);
+  const resumed = startGame(loadProgress(storage));
+  assert.deepEqual(resumed.game.review, review);
+  assert.deepEqual(resumed.game.blinds, BLINDS.map(n => n * 2));
+  assert.equal(resumed.game.offerAt, STAKES_EVERY * 2);
+  assert.equal(resumed.game.hands, STAKES_EVERY + 1);
+  assert.deepEqual(resumed.game.stacks, [28000, TOTAL_CHIPS - 28000]);
 });

@@ -31,8 +31,8 @@ import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
-  BLINDS, START_BB, WINS_TO_TAKE, finishGame, keepGame, loadProgress, newProgress, pausedGame,
-  opponentOf, rungsFor, saveProgress, startGame,
+  BLINDS, START_BB, STAKES_EVERY, WINS_TO_TAKE, answerStakes, finishGame, gameBlinds, keepGame,
+  loadProgress, newProgress, pausedGame, opponentOf, rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
 import { addHand, lessonsByHand, lessonsShare } from './ladder-review.js';
 import { SPADE_PATH } from './home.js';
@@ -164,8 +164,9 @@ let gtoTable = false;
 // The bots at the table in play, one per seat after yours.
 let tableBots = [];
 // The ladder (#212): your progress, and the game in play, if it's a ladder
-// game: {opp, rung, over: null | {won, outcome}}. `ladderNote` says how the
-// last series went, on the Ladder tab.
+// game: {opp, rung, over: null | {won, outcome}, offer: null | [sb, bb]}
+// (offer: the bot wants to raise the stakes, waiting for your answer).
+// `ladderNote` says how the last series went, on the Ladder tab.
 // Each ladder hand is reviewed as it ends (#284): `reviewing` says whether
 // this game can be, `reviewed` is the last hand number asked for and
 // `pending` the reviews not back yet. Once the game is over, `review` is its
@@ -498,11 +499,14 @@ function ladderHtml() {
   if (record) h += `<span class="ld-before">Before: ${record.won} won, ${record.lost} lost</span>`;
   h += '</div>';
   const paused = pausedGame(p);
-  if (paused) h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}.</p>`;
+  if (paused) {
+    const raised = gameBlinds(p)[1] !== BLINDS[1] ? `, blinds ${blindsText(gameBlinds(p))}` : '';
+    h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}${raised}.</p>`;
+  }
   if (setupNote) h += `<p class="ld-desc">${esc(setupNote)}</p>`;
   const play = paused ? `Resume game ${game}` : game === 1 ? 'Start the series' : `Play game ${game}`;
   h += `<div class="ld-go"><button class="tr-start" data-act="ladder-play">${play}</button>`;
-  h += `<span class="ld-rules">Hold’em, ${START_BB} big blinds each, blinds ${blindsText(BLINDS)}, no rebuys.</span></div>`;
+  h += `<span class="ld-rules">Hold’em, ${START_BB} big blinds each, blinds ${blindsText(BLINDS)}, no rebuys. Every ${STAKES_EVERY} hands, they may offer to double the blinds.</span></div>`;
   h += '</section>';
   // Every rung, easiest first: a filled spade for each one beaten.
   h += '<ol class="ld-rungs" aria-label="The ladder, easiest first">';
@@ -544,10 +548,12 @@ async function startLadderGame() {
     return;
   }
   const reviewer = await ladderReviewer();
-  ladder = {opp, rung, over: null, handsBefore: hands, at: Date.now(), reviewing: false, reviewed: 0, pending: 0, review: null};
+  ladder = {opp, rung, over: null, offer: null, handsBefore: hands, at: Date.now(), reviewing: false, reviewed: 0, pending: 0, review: null};
   ladderOpen = new Set();
-  const [sb, bb] = BLINDS;
-  await sitDown({bots: [opp], game: 'nlhe', buyIn: START_BB * bb, sb, bb, gto: false, stacks, reviewAll: reviewer});
+  // The game's blinds, raised or not; the buy-in is only a floor here (the
+  // stacks are set), so it's the starting one.
+  const [sb, bb] = gameBlinds(ladderProgress);
+  await sitDown({bots: [opp], game: 'nlhe', buyIn: Math.max(START_BB * BLINDS[1], bb), sb, bb, gto: false, stacks, reviewAll: reviewer});
 }
 
 // The GTO bot's strategy, which ladder hands are graded against (#284):
@@ -595,6 +601,41 @@ function ladderAddReview(g, data, hand) {
     ladderProgress = {...ladderProgress, game: {...ladderProgress.game, review: addHand(ladderProgress.game.review, data, hand)}};
   } else return;
   saveProgress(ladderProgress);
+}
+
+// After each hand of a game still going: the bot's offer to raise the
+// stakes, once it's due. Dealing waits for your answer.
+function ladderOfferCheck() {
+  if (!ladder || ladder.over || ladder.offer || peeling || !state?.complete || !num(state.hand_number)) return;
+  ladder.offer = stakesOffer(ladderProgress);
+}
+
+// Your answer: accepted, the blinds double from the next hand.
+async function ladderAnswer(yes) {
+  if (!ladder?.offer) return;
+  const [sb, bb] = ladder.offer;
+  // An older ducy-wasm can't change the blinds: the stakes stay.
+  const ok = yes && await call('setRules', 'nlhe', sb, bb).catch(e => { console.warn(e); return false; });
+  if (!ladder?.offer) return; // left the table meanwhile
+  ladderProgress = answerStakes(ladderProgress, ok);
+  saveProgress(ladderProgress);
+  ladder.offer = null;
+  if (ok) {
+    state.small_blind = sb;
+    state.big_blind = bb;
+  }
+  render();
+  armDeal();
+}
+
+// The offer, where Next hand would be.
+function ladderOfferHtml() {
+  const name = esc(botInfo(ladder.opp).name);
+  return {
+    status: `<span class="pl-result ld-offer">${name} wants to raise the stakes to ${blindsText(ladder.offer)}.</span>`,
+    fold: '<button class="tr-btn" data-act="stakes-no">Keep the blinds</button>',
+    raise: '<button class="tr-start" data-act="stakes-yes">Raise the stakes</button>',
+  };
 }
 
 // After each hand: a game is over once someone has all the chips.
@@ -883,6 +924,7 @@ function show(snap) {
   ladderCheck();
   ladderReviewHand();
   ladderKeep(state);
+  ladderOfferCheck();
   regularsCheck();
   if (armRunChoice()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
@@ -1062,8 +1104,9 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
 async function nextHand() {
   if (mode === 'guest') return; // the host deals
   if (mode === 'host' && hostInfo.playersIn < 2) return; // no one to deal to
-  // A ladder game that's over deals no more (ladder-next goes on).
-  if (ladder?.over) return;
+  // A ladder game that's over deals no more (ladder-next goes on), and one
+  // waits for your answer to raising the stakes.
+  if (ladder?.over || ladder?.offer) return;
   // A Regulars table: the seats are settled first, and you need chips.
   if (mode === 'solo' && regulars) {
     if (regulars.pending) await regulars.pending;
@@ -1096,7 +1139,7 @@ function cancelDeal() {
 function armDeal() {
   cancelDeal();
   // A hosted table waits for the host's first deal; guests never deal.
-  if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number) || ladder?.over) { syncDeal(); return; }
+  if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number) || ladder?.over || ladder?.offer) { syncDeal(); return; }
   dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
   const mine = session;
   const tick = () => {
@@ -2276,6 +2319,12 @@ function controlsHtml() {
       const o = ladderOverHtml();
       status += ' ' + o.status;
       raise = o.button;
+    } else if (ladder?.offer) {
+      // The offer takes the line: the hand's result is in the log.
+      const o = ladderOfferHtml();
+      status = o.status;
+      fold = o.fold;
+      raise = o.raise;
     } else if (mode === 'guest') {
       status += ' <span class="pl-meta">· The host deals the next hand</span>';
     } else if (mode === 'host' && hostInfo.playersIn < 2) {
@@ -2926,6 +2975,7 @@ function onClick(e) {
     leaveTable();
   }
   else if (el.dataset.act === 'ladder-play') startLadderGame();
+  else if (el.dataset.act === 'stakes-yes' || el.dataset.act === 'stakes-no') ladderAnswer(el.dataset.act === 'stakes-yes');
   else if (el.dataset.act === 'ladder-next') {
     // The series goes on: the next game. Otherwise back to the ladder, which
     // says how the series went.

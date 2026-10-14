@@ -1,18 +1,21 @@
 // The heads-up ladder (#212), Train's Punch-Out: play the bots one at a time,
 // easiest first, up to the GTO bot at the top. Each rung is a best-of-3
 // series of heads-up freezeouts: everyone starts with START_BB big blinds, no
-// rebuys, and the blinds stay the same until someone has all the chips. Win
-// the series to move up a rung; lose it and drop one.
+// rebuys. Every STAKES_EVERY hands the bot offers to raise the stakes:
+// double the blinds, if you accept. Win the series to move up a rung; lose it
+// and drop one.
 // Progress (your rung, the series under way, the game under way with both
-// stacks, your best, your record against each bot) is kept on this device, so
-// a game left in the middle picks up where it was. This file is the rules and the record;
-// play.js plays the games.
+// stacks and its blinds, your best, your record against each bot) is kept on
+// this device, so a game left in the middle picks up where it was. This file
+// is the rules and the record; play.js plays the games.
 
 export const LADDER_KEY = 'ducyLadder';
 export const START_BB = 200;
 export const WINS_TO_TAKE = 2; // of 3
-// The blinds of every hand, in chips (hundredths: 100/200 shows as 1/2).
+// The blinds a game starts at, in chips (hundredths: 100/200 shows as 1/2).
 export const BLINDS = [100, 200];
+// How many hands go by between offers to double the blinds.
+export const STAKES_EVERY = 100;
 
 // The bots, easiest to hardest: by how much the GTO bot wins from each,
 // heads-up No-limit Hold'em at 100 BB, 40,000 duplicate hands each (ducy-gto's
@@ -50,8 +53,11 @@ export function rungsFor(ids, gto) {
 }
 
 // `game` is the game under way, kept so it can be left and resumed:
-// {stacks: [yours, theirs], hands, review}, or null (review is its
-// ladder-review.js review so far, once a hand is graded). `lastReview` is the
+// {stacks: [yours, theirs], hands, blinds: [sb, bb], offerAt, review}, or null.
+// offerAt is the hand count at which the bot next offers to raise the
+// stakes. A game kept before the stakes could rise has neither: it goes on
+// at BLINDS, with the first offer at STAKES_EVERY. `review` is its
+// ladder-review.js review so far, once a hand is graded. `lastReview` is the
 // last finished game's review, with {at, opp, won, hands}, to read on the
 // Ladder tab (absent until there's one).
 export function newProgress() {
@@ -89,16 +95,39 @@ export const opponentOf = (p, rungs) => rungs[levelOf(p, rungs)];
 
 // A game is starting, or resuming where it was left.
 export function startGame(p) {
-  const fresh = {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0};
-  return {...p, playing: true, game: p.game || fresh};
+  const fresh = {stacks: [TOTAL_CHIPS / 2, TOTAL_CHIPS / 2], hands: 0, blinds: [...BLINDS], offerAt: STAKES_EVERY};
+  return {...p, playing: true, game: p.game ? {blinds: [...BLINDS], offerAt: STAKES_EVERY, ...p.game} : fresh};
 }
 
 // The game so far, after each action: your chips behind, and theirs (all the
 // rest). Leaving in the middle of a hand folds it: what you'd put in the pot
-// is theirs. Anything else kept with the game (its review) stays.
+// is theirs. The game's blinds, next offer and review stay as they are.
 export function keepGame(p, mine, hands) {
   const m = Math.max(0, Math.min(TOTAL_CHIPS, Math.round(mine)));
   return {...p, game: {...p.game, stacks: [m, TOTAL_CHIPS - m], hands}};
+}
+
+// The game's blinds now.
+export const gameBlinds = p => p.game?.blinds || BLINDS;
+
+// The bot's offer to raise the stakes, once the game has reached its next
+// offer: the doubled blinds, or null. Both players need more than the new big
+// blind behind, or there's nothing to raise.
+export function stakesOffer(p) {
+  const g = p.game;
+  if (!p.playing || !g || g.hands < (g.offerAt ?? STAKES_EVERY)) return null;
+  const [sb, bb] = gameBlinds(p);
+  const next = [sb * 2, bb * 2];
+  return Math.min(...g.stacks) > next[1] ? next : null;
+}
+
+// Your answer to the offer: accepted, the blinds double from the next hand.
+// Either way the next offer is STAKES_EVERY hands on.
+export function answerStakes(p, yes) {
+  const offer = stakesOffer(p);
+  const g = {...p.game, offerAt: p.game.hands + STAKES_EVERY};
+  if (yes && offer) g.blinds = offer;
+  return {...p, game: g};
 }
 
 // A game was left (or the page closed) and is waiting to be resumed.
