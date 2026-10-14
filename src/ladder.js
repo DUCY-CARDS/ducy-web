@@ -50,7 +50,10 @@ export function rungsFor(ids, gto) {
 }
 
 // `game` is the game under way, kept so it can be left and resumed:
-// {stacks: [yours, theirs], hands}, or null.
+// {stacks: [yours, theirs], hands, review}, or null (review is its
+// ladder-review.js review so far, once a hand is graded). `lastReview` is the
+// last finished game's review, with {at, opp, won, hands}, to read on the
+// Ladder tab (absent until there's one).
 export function newProgress() {
   return {v: 1, level: 0, best: 0, wins: 0, losses: 0, playing: false, titles: 0, record: {}, game: null};
 }
@@ -92,10 +95,10 @@ export function startGame(p) {
 
 // The game so far, after each action: your chips behind, and theirs (all the
 // rest). Leaving in the middle of a hand folds it: what you'd put in the pot
-// is theirs.
+// is theirs. Anything else kept with the game (its review) stays.
 export function keepGame(p, mine, hands) {
   const m = Math.max(0, Math.min(TOTAL_CHIPS, Math.round(mine)));
-  return {...p, game: {stacks: [m, TOTAL_CHIPS - m], hands}};
+  return {...p, game: {...p.game, stacks: [m, TOTAL_CHIPS - m], hands}};
 }
 
 // A game was left (or the page closed) and is waiting to be resumed.

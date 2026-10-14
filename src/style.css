@@ -1003,6 +1003,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .ld-go .tr-start { margin: 0; }
 .ld-rules { font-size: 13px; color: #5d6b55; }
 .ld-note { border-left: 3px solid var(--teal); padding-left: 10px; color: var(--fg); }
+/* A ladder game's review (#284): its costliest decisions, hand by hand. */
+.ld-review p { margin: 0; }
+.ld-review-lead { color: var(--fg-strong); }
+.ld-lessons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ld-lesson-hand { padding: 0 8px 2px; }
+.ld-lesson-hand b { font-family: var(--font-data); font-weight: 600; color: var(--fg-strong); }
+.ld-last { margin: 0 0 14px; }
+.ld-last > summary { cursor: pointer; font-weight: 600; color: var(--fg-strong); padding: 4px 0; }
+.ld-last .ld-review { margin-top: 6px; }
 .ld-rungs { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
 .ld-rung { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 6px 10px; border-radius: 14px; background: #24472f; color: #f3e7c9; min-width: 0; text-align: center; }
 .ld-rung .ld-spade { position: absolute; top: 6px; right: 6px; }

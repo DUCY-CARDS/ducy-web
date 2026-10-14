@@ -7,7 +7,7 @@
 //        setTopUp(on) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
 //        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review |
-//        reviewDecision
+//        reviewDecision | setReviewAll(on) | reviewNew
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
@@ -38,6 +38,8 @@ const clubs = clubEngine(MultiTable);
 const now = clubs.now;
 let table = null;
 let host = null;
+// The table's hands kept for review that reviewNew has returned.
+let reviewedHands = 0;
 
 const snapshot = state => ({state, botToAct: table.botToAct()});
 
@@ -90,6 +92,7 @@ const ops = {
   // resuming); an older ducy-wasm without setStack starts everyone at the buy-in.
   create: (bots, buyIn, sb, bb, seed, game, stacks) => {
     table = new BotTable(bots, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game);
+    reviewedHands = 0;
     if (Array.isArray(stacks) && table.setStack) stacks.forEach((chips, seat) => table.setStack(seat, BigInt(chips)));
     return snapshot(table.newHand());
   },
@@ -100,6 +103,16 @@ const ops = {
     return snapshot(table.newHand());
   },
   review: () => (table.reviewLastHand ? table.reviewLastHand() : null),
+  // Ladder games (#284): keep heads-up hands against any bot for review
+  // (false with a ducy-wasm older than setReviewAll), and the review of the
+  // hand just kept, or null when no new hand was kept since the last call.
+  setReviewAll: on => (table.setReviewAll ? (table.setReviewAll(!!on), true) : false),
+  reviewNew: () => {
+    const n = table.reviewableHands ? table.reviewableHands() : 0;
+    if (n === reviewedHands) return null;
+    reviewedHands = n;
+    return table.reviewLastHand();
+  },
   // The Regulars (#225), between hands: a seat's chips, a new Regular in a
   // bot seat, and no automatic top-ups (you rebuy when you choose). Each
   // returns whether this ducy-wasm could do it (setBot and setTopUp came
