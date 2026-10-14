@@ -26,6 +26,8 @@ export function handRecord({club, table, tableName, game, view, who}, now = Date
     club, table, tableName, game, who, at: now,
     hand: num(view.hand_number), sb: num(view.small_blind), bb: num(view.big_blind), button: num(view.button),
     holeCards: num(view.hole_cards), board: view.board || [], showdown: !!view.showdown,
+    // Run twice or a bomb pot's second board (#267 counts each board).
+    ...(view.second_board?.length ? {board2: view.second_board} : {}),
     pot: (view.pots || []).reduce((s, p) => s + num(p.amount), 0) || seats.reduce((s, x) => s + x.won, 0),
     seats, events: view.events || [],
   };

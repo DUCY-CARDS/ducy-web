@@ -280,6 +280,18 @@ export async function playerReceive(mem, env) {
     mem.tourneys = Array.isArray(b.tourneys) ? b.tourneys : [];
     return true;
   }
+  // High Hand promotions (#267, club-promos.js): what's running, and a
+  // moment worth telling the member about (a prize, a new leader).
+  if (b.type === 'promos') {
+    mem.hostSeq = env.seq;
+    mem.promos = {promos: Array.isArray(b.promos) ? b.promos : [], recent: Array.isArray(b.recent) ? b.recent : []};
+    return true;
+  }
+  if (b.type === 'promo_event') {
+    mem.hostSeq = env.seq;
+    mem.promoEvent = {kind: b.kind === 'award' ? 'award' : 'lead', text: String(b.text || '').slice(0, 200), at: env.seq};
+    return true;
+  }
   if (b.type === 'tourney_error') {
     mem.hostSeq = env.seq;
     mem.tourneyError = {tourney: b.tourney, reason: String(b.reason || '')};
