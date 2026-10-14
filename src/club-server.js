@@ -41,7 +41,7 @@
 import { signMessage } from './identity.js';
 import { account, approve, decline, hostReceive, removeMember, revokeInvite } from './club.js';
 import { declineRequest, grantRequest, issue, reclaim } from './club-chips.js';
-import { cashOutEveryone, ensureTables, newTable, openTables, tableById, tablesBody } from './club-tables.js';
+import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
 import { cancelTourney, newTourney, register, setPayout, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
@@ -51,6 +51,10 @@ import {
 } from './club-agents.js';
 import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
 import { handRecord } from './hand-replay.js';
+import {
+  approveAward, editPromo, newPromo, nextSettle, processHand, promosAdmin, promosBody, setPromoStatus, settlePeriods, voidAward,
+} from './club-promos.js';
+import { chipText } from './chip-format.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -216,6 +220,61 @@ export function createClubServer({
     }
   }
 
+  // High Hand promotions (#267, club-promos.js). Members online get the
+  // promotions after any change, and a word when they win or someone takes
+  // the lead.
+  const memberIds = () => [...online].filter(id => club.members[id]?.status === 'member');
+  function broadcastPromos() {
+    if (!club.promos?.list?.length) return;
+    const body = promosBody(club);
+    for (const id of memberIds()) sendToPlayer({to: id, body});
+  }
+  const promoEvent = (to, kind, text) => sendToPlayer({to, body: {type: 'promo_event', club: club.code, kind, text}});
+  function promoPaid(awards) {
+    for (const a of awards) {
+      if (a.status !== 'paid') continue;
+      accountTo(a.member);
+      if (online.has(a.member)) promoEvent(a.member, 'award', `${a.promoName}: you won ${chipText(a.amount)} for ${a.handName.replace(/^A /, 'a ')}.`);
+    }
+  }
+  // A finished hand at a club table: bonuses and leaderboards.
+  function promoHand(rec, players) {
+    if (!club.promos?.list?.some(p => p.status === 'running')) return;
+    let r;
+    try { r = processHand(club, rec, players || []); } catch (e) { console.warn('club: promotions:', e); return; }
+    if (!r.paid.length && !r.leads.length && !club.promos.hands.some(h => h.hand === rec.id)) return;
+    promoPaid(r.paid);
+    for (const l of r.leads) {
+      for (const id of memberIds()) promoEvent(id, 'lead', `New high hand in ${gameLabel(l.game)}: ${l.hand.hand.replace(/^A /, 'a ')}, ${l.hand.name}.`);
+    }
+    changed();
+    broadcastPromos();
+    armPromos();
+  }
+  // Periods ending pay their high hands: on a timer for the soonest end
+  // (the room's alarm in an always-on club, #135), and whenever the club
+  // opens, so a period that ended while it slept pays on waking.
+  const promoTimers = engine.timers || {set: (fn, ms) => setTimeout(fn, ms), clear: h => clearTimeout(h)};
+  let promoTimer = null;
+  function armPromos() {
+    if (promoTimer != null) promoTimers.clear(promoTimer);
+    promoTimer = null;
+    const next = club.promos ? nextSettle(club) : null;
+    if (next != null) promoTimer = promoTimers.set(settlePromos, Math.min(Math.max(0, next - Date.now()) + 1000, 2 ** 31 - 1));
+  }
+  function settlePromos() {
+    promoTimer = null;
+    if (club.promos) {
+      const paid = settlePeriods(club);
+      if (paid.length) {
+        promoPaid(paid);
+        changed();
+      }
+      broadcastPromos();
+    }
+    armPromos();
+  }
+
   function broadcastTables() {
     if (!tableHost) return;
     const body = tablesBody(club, seatedCounts());
@@ -243,10 +302,11 @@ export function createClubServer({
       },
       tablesChanged: () => { broadcastTables(); onChange(); },
       online: id => online.has(id),
-      onHand: (tid, view) => {
+      onHand: (tid, view, players) => {
         const t = tableById(club, tid);
-        storeHand(handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'}),
-          {days: club.keepDays ?? HOST_KEEP_DAYS});
+        const rec = handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'});
+        storeHand(rec, {days: club.keepDays ?? HOST_KEEP_DAYS});
+        promoHand(rec, players);
       },
       ...engine,
     });
@@ -340,6 +400,7 @@ export function createClubServer({
       // table updates, their role, and an assistant or agent their view.
       if (tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, seatedCounts())});
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
+      if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
       if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
       if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminView()});
@@ -435,6 +496,27 @@ export function createClubServer({
       for (const m of who) accountTo(m);
       broadcastTourneys();
     },
+    // High Hand promotions (#267): set up, change (from the next period),
+    // pause, resume or end one; approve a prize held over the budget, or
+    // void one within 24 hours.
+    new_promo: ({promo}) => {
+      const p = newPromo(club, promo);
+      changed();
+      broadcastPromos();
+      armPromos();
+      return p.id;
+    },
+    edit_promo: ({id, promo}) => { editPromo(club, String(id), promo); changed(); broadcastPromos(); },
+    promo_status: ({id, status}) => { setPromoStatus(club, String(id), String(status)); changed(); broadcastPromos(); armPromos(); },
+    approve_award: ({id}) => { promoPaid([approveAward(club, String(id))]); changed(); broadcastPromos(); },
+    void_award: ({id, why = ''}) => {
+      const {award, offered} = voidAward(club, String(id), Date.now(), why);
+      accountTo(award.member);
+      changed();
+      broadcastPromos();
+      return offered ? {offered: offered.id, name: offered.name} : null;
+    },
+    promos: () => promosAdmin(club),
     set_payout: ({id, places}) => {
       setPayout(club, id, places ?? null);
       changed();
@@ -463,7 +545,7 @@ export function createClubServer({
     // The relay accepted this as the club's host: it says again who's
     // connected, and the tables start (only once: a second tab, refused by
     // the relay, never runs them).
-    async relayOpen() { await keysReady; online.clear(); startTables(); onChange(); },
+    async relayOpen() { await keysReady; online.clear(); startTables(); settlePromos(); onChange(); },
     message,
     run,
     // The host's link to the relay is up or down: tables stop their clocks

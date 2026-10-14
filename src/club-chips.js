@@ -11,7 +11,8 @@
 // balance.
 //
 // Conservation: issued − reclaimed = all club balances + all table stacks +
-// the buy-ins tournaments hold (club-tourneys.js).
+// the buy-ins tournaments hold (club-tourneys.js). Promotion prizes
+// (club-promos.js) are issued, and voided ones reclaimed.
 //
 // Amounts are whole hundredths, shown divided by 100 (chip-format.js).
 
@@ -242,6 +243,8 @@ export function balanceChange(e) {
     reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
     // Tournaments (club-tourneys.js).
     tourney_buyin: -e.amount, tourney_refund: e.amount, tourney_prize: e.amount,
+    // High Hand promotions (club-promos.js): a prize, and a voided one.
+    promo: e.amount, promo_void: -e.amount,
   }[e.kind] || 0;
 }
 

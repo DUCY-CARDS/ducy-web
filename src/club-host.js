@@ -11,7 +11,8 @@
 //   sendTable(to, msg)  send a table message (unsigned; only the host can reach a member)
 //   chipsChanged(id)    a member's balance changed: send them their account
 //   tablesChanged()     seat counts or tables changed: tell members
-//   onHand(table, view) a hand finished (the host's view: no hidden cards)
+//   onHand(table, view, players) a hand finished (the host's view: no hidden
+//                       cards; players: [{seat, client_id}], who sat where)
 //   online(id)          whether a member is connected to the relay
 //
 // A table's clock stops while the host can't reach the relay (linkHealthy
@@ -184,7 +185,7 @@ export function createTableHost({
     // A hand just finished: for the host's hand history (#71).
     if (r.complete && r.handNumber && r.handNumber !== r.recorded) {
       r.recorded = r.handNumber;
-      onHand?.(tid, state);
+      onHand?.(tid, state, r.players);
       r.publish = state;
     }
     // Between hands the engine's count is the truth.

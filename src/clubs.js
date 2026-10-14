@@ -44,6 +44,7 @@ import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand 
 import { getTable } from './table-store.js';
 import { joinTableVia, showFairCheck, tableName } from './play.js';
 import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
+import { hostPromosHtml, memberPromosHtml, readPromoForm } from './club-promos-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -565,6 +566,16 @@ function openChipForm(kind, id) {
 }
 
 function onSubmit(e) {
+  // A promotion, new or changed (#278).
+  const promoF = e.target.closest('form[data-promoform]');
+  if (promoF) {
+    e.preventDefault();
+    let settings;
+    try { settings = readPromoForm(promoF); } catch (err) { promoNote = err.message; render(); return; }
+    const id = promoF.dataset.promoform;
+    hostAct(id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
+    return;
+  }
   // An invite link pasted on the list (#225).
   const jf = e.target.closest('form[data-joinclub]');
   if (jf) { e.preventDefault(); joinPasted(jf); return; }
@@ -778,6 +789,11 @@ function connectMembership(mem) {
         if (opened.length) notice(`${cname} opened ${opened.map(t => t.name).join(', ')}.`);
       }
       if (msg.body?.type === 'tables') checkSeatWatch(mem);
+      // A promotion prize, or a new high hand (#267), wherever you are.
+      if (msg.body?.type === 'promo_event' && mem.promoEvent) {
+        notice(`${cname}: ${mem.promoEvent.text}`, clubHash(mem.code));
+        mem.promoEvent = null;
+      }
       // The club moved to an always-on room (#98): greet it as the new host.
       if (msg.body?.type === 'host_moved') {
         entry.aes = null;
@@ -1466,12 +1482,13 @@ function hostHtml() {
   const helpReqs = openHelp(club);
   syncDash();
   h += '<div class="cl-home"><section class="cl-home-main">';
-  const PARTS = {players: 'Members', accounting: 'Chips and ledger', history: 'History', settings: 'Settings'};
+  const PARTS = {players: 'Members', accounting: 'Chips and ledger', promos: 'Promotions', history: 'History', settings: 'Settings'};
   if (PARTS[dashTab]) h += `<div class="cl-home-title"><h2>${PARTS[dashTab]}</h2><button class="link-btn" data-cl="dash" data-tab="tables">‹ Tables</button></div>`;
   if (dashTab === 'tables' || dashTab === 'tourneys') {
     h += tablesHtml();
     h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
   } else if (dashTab === 'settings') h += settingsHtml();
+  else if (dashTab === 'promos') h += hostPromosHtml(club, {form: promoForm, note: promoNote});
   else if (dashTab === 'players') {
     h += helpListHtml(helpReqs);
     if (pending.length || asking.length) {
@@ -1554,6 +1571,9 @@ function manageSideHtml(pending, asking, helpReqs, members) {
   if (helpReqs.length) h += row('players', 'Help requests', helpReqs.length);
   h += row('players', 'Members', members.length);
   h += row('accounting', 'Chips and ledger', '');
+  const promosOn = (club.promos?.list || []).filter(p => p.status === 'running').length;
+  const promosWaiting = (club.promos?.awards || []).filter(a => a.status === 'held').length;
+  h += row('promos', 'Promotions', promosWaiting ? `${promosWaiting} to approve` : promosOn || '');
   h += row('history', 'History', '');
   h += row('settings', 'Settings', '');
   h += `<button type="button" class="cl-side-row" data-cl="copy"><span>Invite link</span><b>${copied ? 'Copied' : 'Copy'}</b></button>`;
@@ -1562,7 +1582,9 @@ function manageSideHtml(pending, asking, helpReqs, members) {
 
 // The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
 let dashTab = 'tables';
-const DASH_TABS = ['tables', 'tourneys', 'players', 'accounting', 'history', 'settings'];
+const DASH_TABS = ['tables', 'tourneys', 'players', 'accounting', 'promos', 'history', 'settings'];
+// The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
+let promoForm = null, promoNote = '';
 // The tab is remembered per club, and the address says it (#clubs/players), so
 // it can be linked to (#193).
 let dashFor = '';
@@ -1797,7 +1819,7 @@ function memberHomeHtml(m, manage = '') {
       if (m.entries?.length) {
         h += '<ul class="cl-ledger">';
         for (const e of [...m.entries].reverse().slice(0, 50)) {
-          const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin'].includes(e.kind) ? '−' : '+';
+          const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin', 'promo_void'].includes(e.kind) ? '−' : '+';
           h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span></li>`;
         }
         h += '</ul>';
@@ -1811,6 +1833,8 @@ function memberHomeHtml(m, manage = '') {
     h += '<h2>Tables</h2>' + memberTablesHtml(m, hostHere);
     const tours = memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null});
     if (tours) h += '<h2>Tournaments</h2>' + tours;
+    const promos = memberPromosHtml(m.promos);
+    if (promos) h += '<h2>Promotions</h2>' + promos;
   }
   h += '</section><aside class="cl-home-side"><h2>You here</h2><div class="cl-side-card">';
   // New and without chips: the first step, with the biggest buy-in at the
@@ -1843,7 +1867,7 @@ function memberHomeHtml(m, manage = '') {
   return h + '</aside></div>';
 }
 
-const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize'};
+const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided'};
 
 // What a member's club page shows in its main column (#193, #225): the
 // tables and tournaments, or your chips history or hands. Remembered per club.
@@ -2139,6 +2163,19 @@ async function onClick(e) {
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'dash') { setDash(b.dataset.tab); render(); }
+  // High Hand promotions (#278).
+  else if (act === 'promo-new') { promoForm = 'new'; promoNote = ''; render(); }
+  else if (act === 'promo-edit') { promoForm = b.dataset.id; promoNote = ''; render(); }
+  else if (act === 'promo-cancel') { promoForm = null; promoNote = ''; render(); }
+  else if (act === 'promo-status') {
+    if (b.dataset.status === 'ended' && !confirm('End this promotion? A period under way pays out as usual at its end.')) return;
+    hostAct('promo_status', {id: b.dataset.id, status: b.dataset.status});
+  } else if (act === 'promo-approve') hostAct('approve_award', {id: b.dataset.id});
+  else if (act === 'promo-void') {
+    const why = prompt('Void this prize? Its chips are taken back from the member’s balance. Why (shown in their ledger)?', '');
+    if (why === null) return;
+    hostAct('void_award', {id: b.dataset.id, why});
+  }
   else if (act === 'atab') { setAdminTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'backup') { backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
   else if (act === 'backup-cancel') { backupForm = false; render(); }
@@ -2452,6 +2489,13 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('change', e => {
       const f = e.target.dataset?.clrestore != null && e.target.files?.[0];
       if (f) { e.target.value = ''; restoreBackupFile(f); }
+    });
+    // The promotion form (#278): its kind redraws it; a session shows its days and hours.
+    root.addEventListener('change', e => {
+      const pf = e.target.closest('form[data-promoform]');
+      if (!pf) return;
+      if (e.target.dataset.promokind) { promoForm = e.target.value === 'bonus' ? 'new-bonus' : 'new'; render(); }
+      if (e.target.dataset.promoevery) pf.querySelector('.cl-promo-session').hidden = e.target.value !== 'session';
     });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');

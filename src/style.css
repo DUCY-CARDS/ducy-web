@@ -1841,3 +1841,22 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .tr-v3-last b { color: #1f7a3a; }
 .tr-v3-foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--fg-muted); font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { .tr-v3-fill { transition: none; } .tr-v3-delta { animation: none; } }
+
+/* High Hand promotions (#278): members' panel and the manager's part. */
+.cl-promos, .cl-promos-host { display: flex; flex-direction: column; gap: 10px; }
+.cl-promo { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cl-promo-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cl-promo-head b { color: var(--fg-strong); }
+.cl-promo .pl-desc { margin: 0; }
+.cl-promo-board { display: flex; flex-direction: column; gap: 2px; }
+.cl-promo-board ol, .cl-promo-recent ul, .cl-promo-caps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.cl-promo-recent ul { list-style: none; padding-left: 0; }
+.cl-promo-cards { display: inline-flex; gap: 2px; vertical-align: middle; flex-wrap: wrap; }
+.cl-promo-card { display: inline-block; min-width: 26px; padding: 1px 3px; border-radius: 4px; background: #fffaf0; color: #1d2a24; font: 600 12px/1.4 var(--font-ui); text-align: center; border: 1px solid #c9b98f; }
+.cl-promo-card.red { color: #b0391f; }
+.cl-promo-form { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--teal); border-radius: var(--radius); padding: 12px 14px; }
+.cl-promo-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.cl-promo-form .pl-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.cl-promo-form .cl-num { width: 6em; }
+.cl-promo-awards li { flex-wrap: wrap; }
+@media (max-width: 640px) { .cl-promo-form .cl-num { width: 5em; } }
