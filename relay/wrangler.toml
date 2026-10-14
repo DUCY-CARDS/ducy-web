@@ -26,9 +26,12 @@ new_sqlite_classes = ["Registry"]
 # Empty allows any origin. The site only, so other pages can't use the relay (#103);
 # a page opened from elsewhere (e.g. localhost) uses a local relay instead.
 ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
-# Always-on clubs (#98): at most this many per owner, and in all, while on
-# Cloudflare's free plan. CLUB_CREATORS, if set, is a comma-separated list
-# of the only player IDs that may create one (empty: anyone).
+# Always-on clubs (#98, #265): at most this many per owner, and in all,
+# while on Cloudflare's free plan. Creating a club takes permission, granted
+# on the admin page (admin.html), except each player's one free trial club.
+# CLUB_CREATORS: a comma-separated list of player IDs granted here as well.
+# The admin API needs a secret: `wrangler secret put ADMIN_TOKEN` (24+
+# characters, e.g. `openssl rand -hex 24`).
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""

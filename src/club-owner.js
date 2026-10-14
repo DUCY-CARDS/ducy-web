@@ -117,7 +117,7 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
         aes = await sharedKey(k, body.hostKey, {context: `club:${rec.code}`, hostId: rec.hostId, playerId: identity.id, hostPub: body.hostKey, playerPub: k.pub});
         aesFor = body.hostKey;
       }
-      view = {seated: body.seated || {}, running: body.running || [], online: body.online || [], tourneys: body.tourneys || {}};
+      view = {seated: body.seated || {}, running: body.running || [], online: body.online || [], tourneys: body.tourneys || {}, plan: body.plan || null};
       owner.club = body.data;
       onChange();
     } else if (body.type === 'owner_result') {

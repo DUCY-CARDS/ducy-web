@@ -28,6 +28,11 @@
 //                  home can do them
 //   hostInTab      the club runs in its host's own tab, so the host is
 //                  around to answer help requests (#192) while it runs
+//   limits         what the club's plan allows (#265): {tables (open at
+//                  once), tourneysPerDay}; the relay's registry sets them for
+//                  an always-on club. null: no cap. setLimits() changes them.
+//   plan           the plan, for the owner's page: {plan: 'trial' | 'club',
+//                  expires}; setLimits() may change it too
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -58,8 +63,9 @@ const SETTINGS = {
 
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, storeHand = () => {}, engine = {},
-  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false,
+  hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
 }) {
+  const planInfo = () => (plan || limits ? {...(plan || {}), limits} : null);
   const online = new Set(); // members connected now
   let tableHost = null;
   let tourneyHost = null; // the club's tournaments (#81), started with the tables
@@ -138,7 +144,7 @@ export function createClubServer({
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
     const hostKey = (await hostKeys()).pub;
-    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive()}});
+    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo()}});
   }
 
   // The owner watching a table (#73, #125): its spectator view, encrypted to
@@ -277,7 +283,7 @@ export function createClubServer({
         sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
         return;
       }
-      const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd);
+      const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd, Date.now(), limits);
       for (const rep of r.replies) sendToPlayer(rep);
       if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, seatedCounts())});
       if (r.table?.start && tableHost) started(tableHost.start(r.table.start));
@@ -396,7 +402,7 @@ export function createClubServer({
       changed();
     },
     new_table: ({table}) => {
-      const t = newTable(club, table);
+      const t = newTable(club, table, Date.now(), limits);
       changed();
       if (tableHost) started(tableHost.start(t));
       return t.id;
@@ -414,7 +420,7 @@ export function createClubServer({
     // Tournaments (#77, #79): a new one (it starts at its time), cancelling
     // one (every buy-in refunded), and the host's payouts (null: defaults).
     new_tourney: ({tourney}) => {
-      const t = newTourney(club, tourney);
+      const t = newTourney(club, tourney, Date.now(), limits);
       changed();
       tourneyHost?.schedule(t);
       broadcastTourneys();
@@ -469,5 +475,8 @@ export function createClubServer({
     watch: (tid, fn) => tableHost?.watch(tid, fn),
     tourneyLive,
     tablesRunning: () => !!tableHost,
+    // The plan's limits changed (the super admin, #265).
+    setLimits(l, p = plan) { limits = l || null; plan = p; scheduleAdmin(); },
+    limits: () => limits,
   };
 }

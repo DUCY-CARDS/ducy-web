@@ -92,7 +92,7 @@ export function adminBody(club, seatedCounts = {}) {
 
 // Carries out an assistant's command. Returns {replies, table} where table
 // is {start: t} or {close: id} for the host's table runtime, or throws why not.
-export function runAdmin(club, by, cmd, now = Date.now()) {
+export function runAdmin(club, by, cmd, now = Date.now(), limits = null) {
   if (!isAssistant(club, by)) throw new Error('You’re not an assistant in this club.');
   const a = club.members[by];
   const target = cmd?.id ? club.members[cmd.id] : null;
@@ -136,7 +136,7 @@ export function runAdmin(club, by, cmd, now = Date.now()) {
       return {replies: [account(club, cmd.id, Infinity)]};
     }
     case 'new_table': {
-      const t = newTable(club, cmd.table || {}, now);
+      const t = newTable(club, cmd.table || {}, now, limits);
       logAction(club, by, `${a.name} opened table ${t.name}`, now);
       return {replies: [], table: {start: t}};
     }

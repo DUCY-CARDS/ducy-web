@@ -23,8 +23,17 @@
 // members connecting as guests, and refuses hosts (4001).
 //
 // Close codes: 4000 bad request, 4001 the room already has a host, 4002 the
-// host left, 4004 no such table, 4008 sending too fast, 4009 replaced by a newer connection with the
-// same id, 4029 the room is full.
+// host left, 4003 the club is paused or its trial ended (#265; the reason
+// says which), 4004 no such table, 4008 sending too fast, 4009 replaced by a
+// newer connection with the same id, 4029 the room is full.
+//
+// The super admin's API (#265), when the ADMIN_TOKEN secret is set, with
+// `Authorization: Bearer <token>`:
+//   GET  /admin/clubs                 every club, who has permission, trials, limits
+//   GET  /admin/club/<code>           a club's record, and a look inside it
+//   POST /admin/grant   {id, note, maxClubs, limits}   lets a player create clubs
+//   POST /admin/revoke  {id}
+//   POST /admin/club/<code> {suspended, limits, plan, expires}
 
 import { createClub, importClub, openClub } from './club-room.js';
 import { limitsFrom, registry } from './registry.js';
@@ -70,11 +79,59 @@ const QUEUE_MS = 7 * 864e5;
 
 // The relay's one registry of always-on clubs (registry.js).
 const registryOf = env => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
+const roomOf = (env, code) => env.ROOMS.get(env.ROOMS.idFromName(code));
+
+// Same length and characters, compared without stopping early.
+function sameToken(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+// The super admin's API (#265): see the top of this file.
+async function admin(req, env, url, cors) {
+  const json = (v, status = 200) => Response.json(v, {status, headers: cors});
+  if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 24) return json({error: 'The admin API isn’t set up (ADMIN_TOKEN).'}, 403);
+  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!sameToken(token, env.ADMIN_TOKEN)) return json({error: 'Wrong admin token.'}, 401);
+  const reg = (path, body) => registryOf(env).fetch(`https://registry${path}`, {method: 'POST', body: JSON.stringify(body || {})}).then(r => r.json());
+  const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+  const path = url.pathname;
+  let out;
+  if (path === '/admin/clubs' && req.method === 'GET') out = await reg('/list');
+  else if (path === '/admin/grant' && req.method === 'POST') out = await reg('/grant', body);
+  else if (path === '/admin/revoke' && req.method === 'POST') out = await reg('/revoke', body);
+  else {
+    const m = path.match(/^\/admin\/club\/([^/]+)$/);
+    const code = m && decodeURIComponent(m[1]);
+    if (!code || !CODE.test(code)) return json({error: 'not found'}, 404);
+    if (req.method === 'POST') {
+      out = await reg('/set-club', {code, change: body});
+      // The room picks up the change at once: new limits, or members let go.
+      if (!out.error) await roomOf(env, code).fetch(`https://room/admin/refresh/${encodeURIComponent(code)}`).catch(e => console.warn(e));
+    } else {
+      const status = await reg('/status', {code});
+      const inside = await roomOf(env, code).fetch(`https://room/admin/info/${encodeURIComponent(code)}`).then(r => r.json()).catch(e => ({error: e.message}));
+      out = {...status, inside};
+    }
+  }
+  return json(out, out?.error ? 409 : 200);
+}
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (url.pathname.startsWith('/admin/')) {
+      const origin = req.headers.get('Origin');
+      // The admin page on the site, or a script (no Origin) with the token.
+      const cors = origin && (!allowed.length || allowed.includes(origin))
+        ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST', vary: 'Origin'}
+        : {};
+      if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
+      return admin(req, env, url, cors);
+    }
     // How much always-on clubs use against the free plan (#98): numbers only.
     if (url.pathname === '/usage' && req.method === 'GET') {
       const res = await registryOf(env).fetch('https://registry/usage');
@@ -104,11 +161,17 @@ export class Registry {
     const path = new URL(req.url).pathname;
     const body = req.method === 'POST' ? await req.json() : {};
     try {
-      if (path === '/claim') await this.reg.claim(String(body.owner), String(body.code));
+      if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || '')));
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
+      else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
       else if (path === '/release') await this.reg.release(String(body.code));
-      else if (path === '/used') await this.reg.used(Number(body.minutes));
+      else if (path === '/used') await this.reg.used(Number(body.minutes), Date.now(), body.code ? String(body.code) : null);
       else if (path === '/usage') return Response.json(await this.reg.usage());
+      // The super admin's (only reached through admin() in the Worker).
+      else if (path === '/list') return Response.json(await this.reg.list());
+      else if (path === '/grant') return Response.json(await this.reg.grant(String(body.id), body));
+      else if (path === '/revoke') await this.reg.revoke(String(body.id));
+      else if (path === '/set-club') return Response.json(await this.reg.setClub(String(body.code), body.change || {}));
       else return new Response('not found', {status: 404});
       return Response.json({ok: true});
     } catch (e) {
@@ -156,15 +219,63 @@ export class Room {
     if (this.clubP) return this.clubP;
     if (!(await this.state.storage.get('club')) && !(code && await this.rebuild(code))) return null;
     const online = [...new Set(this.state.getWebSockets('guest').map(g => this.guestId(g)))];
-    this.clubP = openClub({
-      storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(),
-      onUsage: minutes => this.registry('/used', {minutes}),
+    this.clubP = this.status(code)
+      .then(({record}) => openClub({
+        storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(), record,
+        onUsage: minutes => this.clubCode().then(c => this.registry('/used', {minutes, code: c})),
       onDeleted: () => this.deleted(),
-      onSaved: () => this.scheduleBackup(),
-      timers: this.tableTimers(),
-    })
+        onSaved: () => this.scheduleBackup(),
+        timers: this.tableTimers(),
+      }))
       .catch(e => { this.clubP = null; throw e; });
     return this.clubP;
+  }
+
+  // The always-on club's code here, from its storage.
+  async clubCode() {
+    return (await this.state.storage.get('club'))?.code || null;
+  }
+
+  // The club's record in the registry and whether it may run (#265),
+  // remembered for a minute (`fresh`: ask again).
+  async status(code = null, fresh = false) {
+    const c = code || await this.clubCode();
+    if (!c) return {record: null, blocked: ''};
+    if (!fresh && this.statusAt && Date.now() - this.statusAt < 60_000 && this.statusCode === c) return this.statusV;
+    try {
+      this.statusV = await this.registry('/status', {code: c});
+    } catch (e) {
+      // The registry can't be reached: let the club run as it was.
+      console.warn('club: no status:', e);
+      return this.statusV || {record: null, blocked: ''};
+    }
+    this.statusAt = Date.now();
+    this.statusCode = c;
+    return this.statusV;
+  }
+
+  // The super admin changed the club, or looks inside it (#265).
+  async adminRequest(path, code) {
+    if (path === 'refresh') {
+      const st = await this.status(code, true);
+      const club = this.clubP ? await this.clubP.catch(() => null) : null;
+      club?.setRecord(st.record);
+      // Paused: everyone but the owner is let go.
+      if (st.blocked) {
+        for (const g of this.state.getWebSockets('guest')) {
+          if (this.guestId(g) === st.record?.owner) continue;
+          try { g.close(4003, st.blocked.slice(0, 120)); } catch {}
+        }
+      }
+      return Response.json({ok: true});
+    }
+    const club = await this.club(code).catch(() => null);
+    return Response.json({
+      online: new Set(this.state.getWebSockets('guest').map(g => this.guestId(g))).size,
+      host: !!this.host(),
+      queued: (await this.queued()).length,
+      club: club ? await club.adminInfo() : null,
+    });
   }
 
   // A room the registry says holds an always-on club, with its storage
@@ -273,7 +384,7 @@ export class Room {
     try {
       if (!code || this.host() || others || (await this.queued()).length) throw new Error('That club code is in use.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await createClub(this.storage(), env, code, (owner, c) => this.registry('/claim', {owner, code: c}));
+      const made = await createClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name}));
       ws.send(JSON.stringify({type: 'club_created', ...made}));
       await this.club();
     } catch (e) {
@@ -290,7 +401,7 @@ export class Room {
       if (!code) throw new Error('Not a club room.');
       if (this.host()) throw new Error('The club is still open in a tab as its host. Close it there first.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await importClub(this.storage(), env, code, (owner, c) => this.registry('/claim', {owner, code: c}));
+      const made = await importClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name}));
       ws.send(JSON.stringify({type: 'club_imported', ...made}));
       const club = await this.club();
       for (const q of await this.queued()) {
@@ -305,6 +416,10 @@ export class Room {
   async fetch(req) {
     const url = new URL(req.url);
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
+    // From the Worker's admin API only: the outside world reaches rooms by
+    // /room/<code> WebSockets alone.
+    const adm = url.pathname.match(/^\/admin\/(refresh|info)\//);
+    if (adm) return this.adminRequest(adm[1], code);
     const role = url.searchParams.get('role');
     const id = url.searchParams.get('id') || '';
     const queue = url.searchParams.get('queue') === '1';
@@ -328,6 +443,12 @@ export class Room {
     } else if (role === 'guest') {
       if (!ID.test(id)) return refuse(4000, 'bad id');
       if (!host && !queue && !club) return refuse(4004, 'no such table');
+      // A paused club, or a trial that's ended (#265): only its owner gets in.
+      if (club) {
+        const st = await this.status(code);
+        if (st.blocked && id !== st.record?.owner) return refuse(4003, st.blocked.slice(0, 120));
+        this.noteActive(code);
+      }
       for (const old of this.state.getWebSockets('g:' + id)) old.close(4009, 'replaced');
       if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
       const tags = ['guest', 'g:' + id, 'c:' + code];
@@ -339,6 +460,14 @@ export class Room {
       return refuse(4000, 'bad role');
     }
     return new Response(null, {status: 101, webSocket: client});
+  }
+
+  // Someone connected to the club: its last-active time in the registry,
+  // at most once an hour.
+  noteActive(code) {
+    if (this.activeAt && Date.now() - this.activeAt < 3600e3) return;
+    this.activeAt = Date.now();
+    this.registry('/used', {minutes: 0, code}).catch(e => console.warn(e));
   }
 
   host(except = null) {
