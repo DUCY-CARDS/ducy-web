@@ -20,6 +20,9 @@
 //   turnMs, nextHandMs, botPaceMs, levelMs   pacing (tests use short ones;
 //                        levelMs replaces each level's minutes)
 //   observe(tid, res)    sees every engine result (tests)
+//   onHand(tid, table, view)  a hand finished at one of its tables: the
+//                        table's spectator view (no hidden cards; each
+//                        seat's id is the member), for promotions (#274)
 //
 // A running tournament is saved after every change (its tables, hands in
 // play, turn clocks and the level clock), so when the host restarts it
@@ -41,7 +44,7 @@ export const tourneyTable = tid => `tourney:${tid}`;
 export function createTourneyHost({
   club, save, sendTable, chipsChanged, tourneysChanged = () => {}, liveChanged = () => {}, online = () => true,
   call = workerCall, timers = browserTimers, store = {get: getTable, put: putTable, drop: dropTable}, turnMs = TURN_MS, nextHandMs = NEXT_HAND_MS, botPaceMs = BOT_PACE_MS, levelMs = null,
-  observe = () => {},
+  observe = () => {}, onHand = null,
 }) {
   const running = new Map(); // tid → {chain, step, onBreak, level, timers, live}
   const scheduled = new Map(); // tid → timer handle
@@ -220,9 +223,26 @@ export function createTourneyHost({
         .map(s => ({id: s.id, name: s.name, stack: Number(s.stack), table: s.at?.table, absent: !!s.absent})),
     };
     for (const m of res.out || []) sendTable(m.to, {table: tourneyTable(tid), update: m.data});
+    if (onHand) for (const x of res.tables || []) if (!x.inHand) handDone(tid, x.id);
     if (ev.winner) { finish(tid, ev.winner.id); return; }
     if (lobby) changed(); else liveChanged();
     pace(tid, res);
+  }
+
+  // Table `table` of tournament `tid` is between hands: its last hand, if
+  // not seen yet, goes to onHand. (The hand that decides the winner may be
+  // missed, if the tournament's tables are gone by the time it's looked at.)
+  async function handDone(tid, table) {
+    const r = running.get(tid);
+    if (!r) return;
+    let view;
+    try { view = await call('tourneyTable', tid, table); } catch (e) { console.warn(e); return; }
+    const n = Number(view?.hand_number);
+    if (!view?.complete || !n) return;
+    r.handsSeen ||= {};
+    if (r.handsSeen[table] === n) return;
+    r.handsSeen[table] = n;
+    try { onHand(tid, table, view); } catch (e) { console.warn('tournament hand:', e); }
   }
 
   // What happens next: an absent player's move, the next hands (not during

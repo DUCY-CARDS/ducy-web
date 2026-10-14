@@ -305,7 +305,7 @@ export async function playerReceive(mem, env) {
   }
   if (b.type === 'admin') {
     mem.hostSeq = env.seq;
-    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || [], help: b.help || []};
+    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || [], help: b.help || [], promos: b.promos || null};
     return true;
   }
   // The host's key for this session's encrypted table updates (e2e.js),

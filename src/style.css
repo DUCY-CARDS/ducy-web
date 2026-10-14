@@ -1869,3 +1869,9 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .cl-promo-form .cl-num { width: 6em; }
 .cl-promo-awards li { flex-wrap: wrap; }
 @media (max-width: 640px) { .cl-promo-form .cl-num { width: 5em; } }
+/* At a club table (#278): the promotions in a line above the felt, never
+   over cards or seats; a prize or a new high hand takes the line for a moment. */
+.pl-promo-line { align-self: center; max-width: 100%; padding: 4px 12px; border-radius: 999px; background: rgba(243, 231, 201, 0.12); color: var(--fg); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+.pl-promo-line.celebrate { background: #f3e7c9; color: #1d3a2c; font-weight: 600; box-shadow: 0 0 0 2px #d9a441; animation: pl-promo-pop 0.6s ease-out; }
+@keyframes pl-promo-pop { 0% { transform: scale(0.85); opacity: 0; } 60% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .pl-promo-line.celebrate { animation: none; } }
