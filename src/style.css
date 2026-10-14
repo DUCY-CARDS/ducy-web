@@ -1224,6 +1224,41 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-bot { grid-template-columns: 48px minmax(0, 1fr); }
   .pl-bot .pl-desc { grid-column: 2; }
 }
+/* 8 or 9 seats (play.js CROWDED): smaller seats, so neighbours don't run
+   into each other; yours keeps its size. */
+.pl-felt.crowded .pl-seat:not(.hero) { width: 92px; gap: 2px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-av { width: 42px; height: 42px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-av + .pl-hole { margin-top: -14px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-hole .pl-card { width: 26px; height: 37px; font-size: 11px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n4 .pl-card + .pl-card { margin-left: -10px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n5 .pl-card + .pl-card { margin-left: -13px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n6 .pl-card + .pl-card { margin-left: -15px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-plate { min-width: 80px; padding: 2px 5px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-plate b { max-width: 82px; font-size: 10px; }
+.pl-felt.crowded .pl-seat:not(.hero) .pl-plate span { font-size: 11px; }
+.pl-felt.crowded .pl-seat:not(.hero) :is(.pl-note, .pl-hud) { font-size: 9px; }
+/* A bomb pot's two boards are equal: the second isn't a smaller second run. */
+.pl-felt.two-boards .pl-board2 { transform: none; margin-top: 0; opacity: 1; }
+.pl-felt.two-boards .pl-center { gap: 5px; }
+.pl-felt.crowded.two-boards .pl-board .pl-card { width: 34px; height: 48px; font-size: 14px; }
+@media (max-width: 640px) {
+  /* A little taller, for the side columns of four (play.js crowdedPos). */
+  .pl-felt.crowded { aspect-ratio: 2 / 3; }
+  .pl-felt.crowded .pl-seat:not(.hero) { width: 70px; gap: 1px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-av { width: 28px; height: 28px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-av.none { font-size: 13px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-av + .pl-hole { margin-top: -10px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-hole .pl-card { width: 20px; height: 28px; font-size: 9px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n4 .pl-card + .pl-card { margin-left: -8px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n5 .pl-card + .pl-card { margin-left: -10px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n6 .pl-card + .pl-card { margin-left: -12px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-plate { min-width: 62px; padding: 1px 3px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-plate b { max-width: 64px; font-size: 9px; }
+  .pl-felt.crowded .pl-seat:not(.hero) .pl-plate span { font-size: 10px; }
+  .pl-felt.crowded .pl-seat:not(.hero) :is(.pl-note, .pl-hud) { font-size: 8px; padding: 0 3px; }
+  .pl-felt.crowded.two-boards .pl-board .pl-card { width: 24px; height: 34px; font-size: 10px; }
+  .pl-felt.crowded.two-boards .pl-board { gap: 3px; }
+}
 /* Your Omaha hand fans out (V3, #225): the cards overlap and tilt, each
    showing its rank and suit in the corner. */
 .pl-seat.hero .pl-hole:is(.n4, .n5, .n6) { align-items: flex-end; padding-top: 6px; }
