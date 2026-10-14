@@ -17,20 +17,22 @@ export const BLINDS = [100, 200];
 // The bots, easiest to hardest: by how much the GTO bot wins from each,
 // heads-up No-limit Hold'em at 100 BB, 40,000 duplicate hands each (ducy-gto's
 // gto_match against the gto-hunl-300m model). The GTO bot is the champion.
+// Measured again after the bots' tuning and spew guard (ducy #239–#241).
 // Its win rate in bb/100 (± 95%) against each, from rampart at the bottom:
-//   rampart 107 ± 24, nik_airbag 99 ± 25, bungleman 98 ± 20, milk_king 72 ± 16,
-//   chris_moneybags 51 ± 13, robin_jane_lewd 50 ± 16, gus_bluffsen 37 ± 10,
-//   tom_collins 33 ± 16, mister_cheating 31 ± 18, jen_silly 29 ± 10,
-//   jonny_slow 25 ± 6, brad_owned 24 ± 9, andrew_favorable 24 ± 9,
-//   doug_poker 21 ± 11, tommy_sweeden 20 ± 13, michael_miserable 19 ± 10,
-//   danny_smallball 18 ± 12, the_mathematician 17 ± 13, phil_bigmouth 10 ± 12.
-// Neighbours in the upper half are often within each other's intervals, so
-// the top six (all within 17–21 but Phil's 10) are in the order chosen for
-// the ladder rather than measured: the Mathematician, Tommy Sweeden, Phil
-// Bigmouth, Danny Smallball, Michael Miserable, then Doug Poker at the top.
+//   rampart 72 ± 15, milk_king 67 ± 17, nik_airbag 44 ± 20,
+//   chris_moneybags 38 ± 13, jonny_slow 25 ± 8, gus_bluffsen 22 ± 9,
+//   brad_owned 22 ± 7, robin_jane_lewd 20 ± 13, bungleman 19 ± 11,
+//   tom_collins 18 ± 13, mister_cheating 18 ± 15, the_mathematician 15 ± 14,
+//   michael_miserable 14 ± 10, jen_silly 14 ± 10, phil_bigmouth 13 ± 9,
+//   tommy_sweeden 12 ± 12, danny_smallball 11 ± 12, doug_poker 9 ± 13,
+//   andrew_favorable 7 ± 11.
+// The top eight are all within 7–15, inside each other's intervals, so
+// they're in the order chosen for the ladder rather than measured: Jen
+// Silly, Andrew Favorable, the Mathematician, Tommy Sweeden, Phil Bigmouth,
+// Danny Smallball, Michael Miserable, then Doug Poker at the top.
 export const ORDER = [
-  'rampart', 'nik_airbag', 'bungleman', 'milk_king', 'chris_moneybags', 'robin_jane_lewd', 'gus_bluffsen',
-  'tom_collins', 'mister_cheating', 'jen_silly', 'jonny_slow', 'brad_owned', 'andrew_favorable',
+  'rampart', 'milk_king', 'nik_airbag', 'chris_moneybags', 'jonny_slow', 'gus_bluffsen', 'brad_owned',
+  'robin_jane_lewd', 'bungleman', 'tom_collins', 'mister_cheating', 'jen_silly', 'andrew_favorable',
   'the_mathematician', 'tommy_sweeden', 'phil_bigmouth', 'danny_smallball', 'michael_miserable', 'doug_poker',
 ];
 export const CHAMPION = 'gto';
