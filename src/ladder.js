@@ -29,26 +29,25 @@ export const buyInAt = level => START_BB * blindsAt(level)[1];
 export const START_CHIPS = 2 * buyInAt(0);
 
 // The bots, easiest to hardest: by how much the GTO bot wins from each,
-// heads-up No-limit Hold'em at 100 BB, 40,000 duplicate hands each (ducy-gto's
-// gto_match against the gto-hunl-300m model). The GTO bot is the champion.
-// Measured again after the bots' tuning and spew guard (ducy #239–#241).
-// Its win rate in bb/100 (± 95%) against each, from rampart at the bottom:
-//   rampart 72 ± 15, milk_king 67 ± 17, nik_airbag 44 ± 20,
-//   chris_moneybags 38 ± 13, jonny_slow 25 ± 8, gus_bluffsen 22 ± 9,
-//   brad_owned 22 ± 7, robin_jane_lewd 20 ± 13, bungleman 19 ± 11,
-//   tom_collins 18 ± 13, mister_cheating 18 ± 15, the_mathematician 15 ± 14,
-//   michael_miserable 14 ± 10, jen_silly 14 ± 10, phil_bigmouth 13 ± 9,
-//   tommy_sweeden 12 ± 12, danny_smallball 11 ± 12, doug_poker 9 ± 13,
-//   andrew_favorable 7 ± 11.
-// The top eight are all within 7–15, inside each other's intervals, so
-// they're in the order chosen for the ladder rather than measured: Jen
-// Silly, Andrew Favorable, the Mathematician, Tommy Sweeden, Phil Bigmouth,
-// Danny Smallball, Michael Miserable, then Doug Poker at the top.
-// The games themselves are 200 BB deep; the order is from 100 BB.
+// heads-up No-limit Hold'em at 200 BB, the ladder's depth, 40,000 duplicate
+// hands each (ducy-gto's gto_match --stack 200 against the gto-hunl-300m
+// model, which plays the deeper stacks off its 100 BB tree). The GTO bot is
+// the champion. Measured after the bots' tuning and spew guard (ducy
+// #239–#241). Its win rate in bb/100 (± 95%) against each, from the bottom:
+//   milk_king 168 ± 32, rampart 153 ± 33, nik_airbag 149 ± 37,
+//   mister_cheating 65 ± 26, chris_moneybags 56 ± 24, tom_collins 39 ± 21,
+//   jonny_slow 27 ± 12, tommy_sweeden 22 ± 16, robin_jane_lewd 21 ± 24,
+//   gus_bluffsen 17 ± 16, andrew_favorable 16 ± 18, jen_silly 15 ± 17,
+//   michael_miserable 15 ± 17, brad_owned 14 ± 12, phil_bigmouth 14 ± 17,
+//   bungleman 14 ± 20, the_mathematician 6 ± 21, doug_poker 5 ± 15,
+//   danny_smallball -3 ± 19.
+// Everyone from Jonny Slow up is inside the others' intervals; they're in
+// measured order, except Doug Poker stays at the top, where he was chosen
+// to be.
 export const ORDER = [
-  'rampart', 'milk_king', 'nik_airbag', 'chris_moneybags', 'jonny_slow', 'gus_bluffsen', 'brad_owned',
-  'robin_jane_lewd', 'bungleman', 'tom_collins', 'mister_cheating', 'jen_silly', 'andrew_favorable',
-  'the_mathematician', 'tommy_sweeden', 'phil_bigmouth', 'danny_smallball', 'michael_miserable', 'doug_poker',
+  'milk_king', 'rampart', 'nik_airbag', 'mister_cheating', 'chris_moneybags', 'tom_collins', 'jonny_slow',
+  'tommy_sweeden', 'robin_jane_lewd', 'gus_bluffsen', 'andrew_favorable', 'jen_silly', 'michael_miserable',
+  'brad_owned', 'phil_bigmouth', 'bungleman', 'the_mathematician', 'danny_smallball', 'doug_poker',
 ];
 export const CHAMPION = 'gto';
 
