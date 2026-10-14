@@ -1796,8 +1796,41 @@ const num = v => Number(v); // serde sends u64 as numbers (or BigInt for very la
 
 function seatPos(i, n) {
   // The player (seat 0) sits at the bottom; the rest go clockwise around the oval.
+  if (n >= CROWDED) return crowdedPos(n)[i];
   const a = Math.PI / 2 + (i / n) * 2 * Math.PI;
   return {x: 50 + 44 * Math.cos(a), y: 50 + 40 * Math.sin(a)};
+}
+
+// Tables of 8 or 9: equal angles bunch the seats at the oval's ends (a wide
+// felt's sides, a phone's tall felt's top and bottom), where they overlap. So
+// the seats are spaced evenly by distance round the felt's edge instead, as
+// it's drawn: 2:1, or 2:3 on a phone (style.css, .pl-felt.crowded).
+const CROWDED = 8;
+const HERO_ROOM = 1.3;
+const crowdedCache = {};
+function crowdedPos(n) {
+  const aspect = matchMedia('(max-width: 640px)').matches ? 2 / 3 : 2;
+  const key = `${n}:${aspect}`;
+  if (crowdedCache[key]) return crowdedCache[key];
+  const at = t => ({x: 50 + 44 * Math.cos(t), y: 50 + 40 * Math.sin(t)});
+  // Lengths on screen: x scaled by the felt's width over its height.
+  const steps = 720, ts = [], lens = [0];
+  for (let k = 0; k <= steps; k++) ts.push(Math.PI / 2 + (k / steps) * 2 * Math.PI);
+  for (let k = 1; k <= steps; k++) {
+    const a = at(ts[k - 1]), b = at(ts[k]);
+    lens.push(lens[k - 1] + Math.hypot((b.x - a.x) * aspect, b.y - a.y));
+  }
+  const total = lens[steps];
+  // Your seat's fanned cards are wider than anyone's, so its neighbours sit
+  // a third further off; the rest share what's left evenly.
+  const gap = total / n, mine = gap * HERO_ROOM;
+  const out = [];
+  for (let i = 0, k = 0; i < n; i++) {
+    const want = i === 0 ? 0 : mine + ((i - 1) / (n - 2)) * (total - 2 * mine);
+    while (lens[k + 1] < want) k++;
+    out.push(at(ts[k]));
+  }
+  return (crowdedCache[key] = out);
 }
 
 // A seat's avatar: yours as picked in Player settings, a bot's main look by
@@ -2060,7 +2093,9 @@ function renderTable() {
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
-  h += '<div class="pl-felt">';
+  // 8 or 9 seats: smaller seats (style.css). A bomb pot: two boards of
+  // the same size, rather than run twice's smaller second one.
+  h += `<div class="pl-felt${n >= CROWDED ? ' crowded' : ''}${bombHand(s) ? ' two-boards' : ''}">`;
   // During an all-in runout, the slots about to be dealt pulse.
   const slot = (run, i) => {
     const [r, a, b] = (peeling && s.peelNext) || [];
