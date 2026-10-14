@@ -1867,8 +1867,12 @@ function winners(p) {
   }
   return out;
 }
+// Two boards: run twice, or a bomb pot's. A pot's winning hand is then only
+// the first board's; the hands on each are listed with the showdown instead.
+const twoBoards = s => s.second_board?.length === 5;
 
 // The summary in one line: who won the (main) pot, how, and your result.
+// On two boards, one player winning both "scooped" it.
 function summaryLine(s) {
   const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
   const pots = (s.pots || []).filter(p => p.awards?.length);
@@ -1879,8 +1883,8 @@ function summaryLine(s) {
     const cards = i => (s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` ${s.seats[i].cards.map(smallCard).join('')}` : '');
     const won = winners(p);
     const names = won.map(a => `${who(a.seat)}${cards(a.seat)}`).join(' and ');
-    line = `${names} ${won.length > 1 ? 'split' : 'won'} ${c(p.amount)}`;
-    if (p.winning_hand) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
+    line = `${names} ${won.length > 1 ? 'split' : twoBoards(s) ? 'scooped' : 'won'} ${c(p.amount)}`;
+    if (p.winning_hand && !twoBoards(s)) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
     if (contested.length > 1) line += `, and ${contested.length - 1} side pot${contested.length > 2 ? 's' : ''}`;
   } else if (pots.length) {
     const a = pots[0].awards[0];
@@ -1918,8 +1922,10 @@ function summaryBody(s) {
       const label = contested.length > 1 ? (k === 0 ? 'Main pot' : `Side pot ${k}`) : 'Pot';
       const won = winners(p);
       const names = won.map(a => `<b>${who(a.seat)}</b>${holeOf(a.seat)}`);
-      const split = won.length > 1 ? ` split ${won.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}` : '';
-      h += `<li>${label} ${c(p.amount)}: ${names.join(' and ')}${split}${p.winning_hand ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : ''}</li>`;
+      const split = won.length > 1 ? ` split ${won.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}`
+        : twoBoards(s) ? ` ${won[0].seat === 0 && !watching ? 'scoop' : 'scoops'} both ${tableGame.bomb ? 'boards' : 'runs'}` : '';
+      const hand = p.winning_hand && !twoBoards(s) ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : '';
+      h += `<li>${label} ${c(p.amount)}: ${names.join(' and ')}${split}${hand}</li>`;
     });
     for (const p of pots.filter(x => x.eligible.length === 1)) {
       for (const a of p.awards) h += `<li class="pl-meta">${who(a.seat)} ${a.seat === 0 && !watching ? 'get' : 'gets'} ${c(a.amount)} back, uncalled</li>`;
