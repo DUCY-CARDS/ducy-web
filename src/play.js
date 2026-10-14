@@ -816,7 +816,8 @@ async function sitRegulars() {
 const regularName = id => personalities.find(p => p.id === id)?.name || id;
 
 // A hand just finished at a Regulars table: top up the Regulars who need it
-// and replace the ones who are out (once per hand). nextHand waits for it.
+// and replace the ones who are out, or who just got up to go (regulars.js
+// LEAVE_CHANCE), once per hand. nextHand waits for it.
 function regularsCheck() {
   if (!regulars || mode !== 'solo' || !state?.complete) return;
   const hn = num(state.hand_number);
