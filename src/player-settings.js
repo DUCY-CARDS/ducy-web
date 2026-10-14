@@ -102,7 +102,9 @@ function render() {
   h += '<div class="ps-sections"><section class="ps-section"><span class="ps-section-title">At the table</span>';
   h += row('Auto-deal', p.autoDeal ? 'On' : 'Off', 'pref-autoDeal');
   h += row('Run it twice', {ask: 'Ask', twice: 'Always', once: 'Never'}[p.runTwice], 'pref-runTwice');
-  h += row('Sounds', p.sounds ? 'On' : 'Off', 'pref-sounds');
+  // Alerts (your turn, 5 seconds left) apart from the game's own sounds.
+  h += row('Alerts', p.sounds ? 'On' : 'Off', 'pref-sounds');
+  h += row('Game sounds', p.gameSounds ? 'On' : 'Off', 'pref-gameSounds');
   h += row('Four-colour deck', fourColor() ? 'On' : 'Off', 'fourcolor');
   if (hasClubs()) h += `<div class="ps-row"><span>Club hands kept</span><span class="ps-opts">${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-ps="keep" data-n="${n}">${n}</button>`).join('')}</span></div>`;
   h += '</section><section class="ps-section"><span class="ps-section-title">Your data</span>';
