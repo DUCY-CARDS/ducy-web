@@ -251,7 +251,7 @@ let myChatLimit = chatLimiter();
 let chatNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 40000, buyInV: 2, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -289,6 +289,12 @@ function loadSetup() {
       if (s.chips !== 'cents') { delete s.sb; delete s.bb; delete s.buyIn; delete s.friends; }
       // Saved before auto-deal was on by default (and off at GTO tables).
       if (s.autoDealV !== 2) { delete s.autoDeal; delete s.gtoAutoDeal; }
+      // Saved when the default buy-in was 100 BB: it's 200 BB now. A buy-in
+      // picked by hand (50 BB) is kept.
+      if (s.buyInV !== 2) {
+        if (s.bb && s.buyIn === 100 * s.bb) s.buyIn = 200 * s.bb;
+        s.buyInV = 2;
+      }
       return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
     }
   } catch {}
