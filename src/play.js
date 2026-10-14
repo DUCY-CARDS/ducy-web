@@ -1958,6 +1958,22 @@ function renderTable() {
 // isn't available leaves its slot blank, so a button never moves under the
 // pointer: a click aimed at Fold can't land on Call or Raise because the
 // screen changed. Between hands Next hand sits in the Raise slot.
+// When a button changes what it does, it ignores taps for SLOT_GUARD_MS, so a
+// tap aimed at the old button can't do the new thing. The middle place also
+// waits when it first appears: your turn can arrive with Call there because
+// someone just bet, under a tap you meant for Check.
+const SLOT_GUARD_MS = 500;
+const slotAct = {}, slotChanged = {};
+function noteSlot(slot, html) {
+  const a = html.match(/data-act="([^"]+)"/)?.[1] || '';
+  if (a && a !== slotAct[slot] && (slotAct[slot] || slot === 'call')) slotChanged[slot] = Date.now();
+  slotAct[slot] = a;
+}
+const slotGuard = el => {
+  const slot = el.closest('.pl-act-fold, .pl-act-call, .pl-act-raise')?.className.match(/pl-act-(\w+)/)?.[1];
+  return !!slot && Date.now() - (slotChanged[slot] || 0) < SLOT_GUARD_MS;
+};
+
 function controlsHtml() {
   const s = state;
   const blank = '<span class="pl-slot" aria-hidden="true"></span>';
@@ -2023,11 +2039,11 @@ function controlsHtml() {
     if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
   } else {
     status = `Your turn${timeBankHtml()}`;
-    // Check and Call never share a place or a key, so a bet that lands as you
-    // go to check can't turn your tap into a call. Checking is free exactly
-    // when folding isn't allowed, so Check takes Fold's empty place.
+    // Check and Call share the middle, as at most poker sites, but not a key:
+    // K checks and C calls, so a key press never does the other. A tap that
+    // lands just after a bet turned Check into Call is ignored (slotGuard).
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
-    if (L.can_check) fold = '<button class="tr-btn" data-act="check">Check <kbd>K</kbd></button>';
+    if (L.can_check) call = '<button class="tr-btn" data-act="check">Check <kbd>K</kbd></button>';
     else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${c(L.call)} <kbd>C</kbd></button>`;
     const range = L.raise || L.bet;
     if (range) {
@@ -2041,6 +2057,9 @@ function controlsHtml() {
         `<input type="number" class="pl-text pl-amtbox" id="pl-amtbox" inputmode="decimal" min="${amtInput(min)}" max="${amtInput(max)}" step="${amtStep()}" value="${amtInput(raiseTo)}" aria-label="Amount to ${L.raise ? 'raise to' : 'bet'}">`;
     }
   }
+  noteSlot('fold', fold);
+  noteSlot('call', call);
+  noteSlot('raise', raise);
   return `<div class="pl-controls"><div class="pl-status">${status}</div>` +
     `<div class="pl-act-fold">${fold}</div><div class="pl-act-call">${call}</div><div class="pl-act-raise">${raise}</div>` +
     `<div class="pl-act-sizes">${sizes}</div><div class="pl-act-amount">${amount}</div></div>`;
@@ -2581,6 +2600,7 @@ function onClick(e) {
   else if (el.dataset.act === 'copy') copyLink();
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (el.dataset.act === 'runtwice' || el.dataset.act === 'runonce') runChoice(el.dataset.act === 'runtwice');
+  else if (['fold', 'check', 'call', 'allin', 'bet', 'raise'].includes(el.dataset.act) && slotGuard(el)) return;
   else if (['fold', 'check', 'call', 'allin'].includes(el.dataset.act)) act(el.dataset.act);
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     const typed = typedBet();
