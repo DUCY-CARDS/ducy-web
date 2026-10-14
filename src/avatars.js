@@ -67,5 +67,41 @@ export const PLAYER_AVATARS = [
   {id: 'btc_rob', label: 'CEO of Bitcoin', set: 'Bitcoin'},
 ];
 
+// The release folder avatars load from: this module's, until it turns out to
+// be gone (see below).
+let avatarBase = import.meta.url;
+
 // The URL of an avatar's SVG, next to this module (so inside the release folder).
-export const avatarUrl = id => new URL(`./avatars/${id}.svg`, import.meta.url).href;
+export const avatarUrl = id => new URL(`./avatars/${id}.svg`, avatarBase).href;
+
+// A tab left open across deploys can outlive its release folder (deploy.sh
+// keeps only the newest few), and then avatars it hadn't shown yet fail to
+// load. So a failed avatar is tried again from the release the site serves
+// now, which every later avatar uses too. If that fails as well, the image is
+// hidden, leaving its round background rather than a broken-image icon.
+let liveRelease;
+const findLiveRelease = () => liveRelease ??= fetch(new URL('.', location.href), {cache: 'no-store'})
+  .then(r => r.text())
+  .then(page => {
+    const m = page.match(/src="(v\/[^"]+\/src\/)main\.js"/);
+    return m ? new URL(m[1], new URL('.', location.href)).href : null;
+  })
+  .catch(() => null);
+
+const hide = img => { img.alt = ''; img.style.visibility = 'hidden'; };
+
+if (typeof document !== 'undefined') {
+  // Image errors don't bubble, so this listens on the way down.
+  document.addEventListener('error', async e => {
+    const img = e.target;
+    if (img?.tagName !== 'IMG' || !/\/avatars\/[^/]+\.svg$/.test(img.src)) return;
+    if (img.dataset.avatarRetried) { hide(img); return; }
+    img.dataset.avatarRetried = '1';
+    const live = await findLiveRelease();
+    const next = live && new URL(`avatars/${img.src.split('/avatars/').pop()}`, live).href;
+    if (next && next !== img.src) {
+      avatarBase = live;
+      img.src = next;
+    } else hide(img);
+  }, true);
+}
