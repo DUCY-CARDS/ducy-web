@@ -235,10 +235,14 @@ let runTimer = null;
 const runPref = () => (ladder ? 'once' : RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask');
 
 // An all-in with cards to come: the rest of the board is dealt slowly (the
-// flop at once, then the turn, then the river) before the result. Hole cards
-// are face up during it only in tournament-style games (the ladder, club
-// tournaments); otherwise they're shown at the end, as at showdown.
-const PEEL_MS = [1400, 1800, 2400];
+// flop at once, then the turn, then the river) before the result, and when
+// it's run twice the second board is dealt the same way after the first.
+// The wait grows towards the river, and the slots about to be dealt pulse.
+// Hole cards are face up during it only in tournament-style games (the
+// ladder, club tournaments); otherwise they're shown at the end, as at
+// showdown.
+const PEEL_MS = {flop: 1500, turn: 2200, river: 3000, run2: 2200, result: 1800};
+const peelWait = cards => (cards <= 3 ? PEEL_MS.flop : cards === 4 ? PEEL_MS.turn : PEEL_MS.river);
 let peeling = false;
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
@@ -639,14 +643,21 @@ async function request(op, ...args) {
   }
 }
 
-// The board as it stood, then a card at a time (the flop together), with the
-// result held back until the river is out.
-// The states to show: the board as it stood with everyone all-in, then the
-// flop (together), the turn and the river, without the result.
-function peelSteps(before, after) {
-  const from = before.board.length, to = after.board.length;
-  const counts = [from];
+// How many board cards show at each reveal from `from` to `to`: the flop
+// together, then a card at a time.
+function revealCounts(from, to) {
+  const counts = [];
   for (let k = from < 3 ? 3 : from + 1; k <= to; k += 1) counts.push(k);
+  return counts;
+}
+
+// The states to show: the board as it stood with everyone all-in, then the
+// flop (together), the turn and the river, without the result; run twice,
+// then the second board the same way. Each carries `peelNext` (the board, 1
+// or 2, and the slots dealt next, which pulse), `peelWait` (how long it
+// stays before the next) and `peelRuns` (1, or 2 when it's run twice).
+function peelSteps(before, after) {
+  const from = before.board.length;
   const faceUp = !!ladder || wholeChips;
   const known = before.events.length;
   // Chips as they were before the pot was paid out.
@@ -655,16 +666,38 @@ function peelSteps(before, after) {
     ...x, stack: num(x.stack) - num(x.won), won: 0, net: 0, street_bet: 0,
     cards: faceUp || i === 0 || x.folded ? x.cards : before.seats[i]?.cards ?? null,
   }));
-  return counts.map((k, step) => {
-    // The new events up to this card: the last actions and the boards dealt so far.
-    let boards = 0;
-    const events = after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
-      if (e.type === 'award') return false;
-      if (e.type === 'board') { boards += 1; return boards <= step; }
+  const base = {...after, seats, pot, complete: false, showdown: false, legal: null, to_act: null, run_choice: false,
+    peelRuns: after.second_board?.length ? 2 : 1};
+  // The new events up to `boards` first-run boards: the last actions and the
+  // boards dealt so far; no result, and no second run yet.
+  const firstEvents = boards => {
+    let seen = 0;
+    return after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
+      if (e.type === 'award' || e.type === 'second_board') return false;
+      if (e.type === 'board') { seen += 1; return seen <= boards; }
       return true;
     }));
-    return {...after, board: after.board.slice(0, k), events, seats, pot, complete: false, showdown: false, legal: null, to_act: null, run_choice: false};
-  });
+  };
+  const first = [from, ...revealCounts(from, after.board.length)];
+  const second = after.second_board?.length ? after.second_board : null;
+  const steps = first.map((k, step) => ({
+    ...base, board: after.board.slice(0, k), second_board: [], events: firstEvents(step),
+    peelNext: step + 1 < first.length ? [1, k, first[step + 1]] : null,
+    peelWait: step + 1 < first.length ? peelWait(first[step + 1]) : second ? PEEL_MS.run2 : PEEL_MS.result,
+  }));
+  if (!second) return steps;
+  // The second run: its board appears with the cards both runs share, then
+  // deals the rest. Its one event is split by street, so each deal has a sound.
+  const shared = from;
+  const cards = after.events.slice(known).find(e => e.type === 'second_board')?.cards || second.slice(shared);
+  const all = firstEvents(first.length);
+  const counts = [shared, ...revealCounts(shared, second.length)];
+  return steps.concat(counts.map((k, step) => ({
+    ...base, board: after.board, second_board: second.slice(0, k),
+    events: all.concat(counts.slice(1, step + 1).map((c, j) => ({type: 'second_board', cards: cards.slice(counts[j] - shared, c - shared)}))),
+    peelNext: step + 1 < counts.length ? [2, k, counts[step + 1]] : null,
+    peelWait: step + 1 < counts.length ? peelWait(counts[step + 1]) : PEEL_MS.result,
+  })));
 }
 
 let peelTimer = null;
@@ -682,7 +715,7 @@ function peel(before, snap) {
       state = steps[i];
       gameSounds();
       render();
-      peelTimer = setTimeout(next, PEEL_MS[Math.min(i, PEEL_MS.length - 1)]);
+      peelTimer = setTimeout(next, steps[i].peelWait);
       i += 1;
     } else {
       peeling = false;
@@ -719,11 +752,12 @@ function armRunChoice() {
 
 function show(snap) {
   if (peeling) return;
-  // An all-in that ran out at a bot table: deal the rest slowly.
+  // An all-in that ran out at a bot table: deal the rest slowly, both runs
+  // when it's run twice.
   const before = state;
   if (snap !== peeled && mode === 'solo' && before && snap.state && !before.complete && snap.state.complete && snap.state.showdown
-      && num(before.hand_number) === num(snap.state.hand_number) && !snap.state.second_board?.length
-      && snap.state.board.length > before.board.length && (snap.seq == null || snap.seq >= shownSeq)) {
+      && num(before.hand_number) === num(snap.state.hand_number)
+      && (snap.state.board.length > before.board.length || snap.state.second_board?.length) && (snap.seq == null || snap.seq >= shownSeq)) {
     peel(before, snap);
     return;
   }
@@ -1602,7 +1636,7 @@ function gameSounds() {
   let chips = 0, cards = 0, pot = false;
   for (const e of fresh) {
     if (e.type === 'bet' || e.type === 'raise' || e.type === 'call') chips = Math.max(chips, e.all_in ? 4 : e.type === 'call' ? 1 : 2);
-    else if (e.type === 'board') cards += e.cards?.length || 1;
+    else if (e.type === 'board' || e.type === 'second_board') cards += e.cards?.length || 1;
     else if (e.type === 'award') pot = true;
   }
   let at = 0;
@@ -1889,9 +1923,15 @@ function renderTable() {
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   h += '<div class="pl-felt">';
-  h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : '<span class="pl-card slot"></span>')).join('')}</div>`;
+  // During an all-in runout, the slots about to be dealt pulse.
+  const slot = (run, i) => {
+    const [r, a, b] = (peeling && s.peelNext) || [];
+    return `<span class="pl-card slot${r === run && i >= a && i < b ? ' next' : ''}"></span>`;
+  };
+  h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : slot(1, i))).join('')}</div>`;
   // Run twice: the second board, each pot split between the two.
-  if (s.second_board?.length) h += `<div class="pl-board pl-board2" title="The second run">${s.second_board.map(cardHtml).join('')}</div>`;
+  // (Mid-runout it shows empty too, while its first cards are coming.)
+  if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="The second run">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
@@ -1980,7 +2020,8 @@ function controlsHtml() {
   let status = '', fold = blank, call = blank, raise = blank, sizes = blank, amount = blank;
   const L = s.legal;
   if (peeling) {
-    status = '<span class="pl-result">All-in: dealing the rest of the board…</span>';
+    const run = s.peelRuns !== 2 ? '' : s.peelNext?.[0] === 2 || s.second_board?.length ? 'second run' : 'first run';
+    status = `<span class="pl-result">All-in: ${run ? `dealing the ${run}…` : 'dealing the rest of the board…'}</span>`;
   } else if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
