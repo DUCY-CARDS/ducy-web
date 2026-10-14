@@ -152,7 +152,12 @@ let setup = loadSetup();
 let sessionStats = {};
 let allStats = loadStats();
 let recordedHand = 0; // hand_number of the last hand added to the stats
-let statsOpen = false;
+// The stats table: null until the player turns it on or off. Until then it
+// shows against the bots on a big screen (a desktop), where there's room
+// for it, and stays hidden on phones and at friends tables.
+let statsOpen = null;
+const BIG_SCREEN = '(min-width: 1024px)';
+const statsShown = () => statsOpen ?? (mode === 'solo' && !!globalThis.matchMedia?.(BIG_SCREEN).matches);
 // GTO training: the table is heads-up against a GTO bot.
 let gtoTable = false;
 // The bots at the table in play, one per seat after yours.
@@ -2050,7 +2055,7 @@ function renderTable() {
     h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against the GTO bot after each hand');
   }
   h += item('hud', 'Stats on seats', !!setup.hud);
-  h += item('stats', 'Stats table', statsOpen);
+  h += item('stats', 'Stats table', statsShown());
   if (!watching) h += item('sounds', 'Alerts', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   h += '</div></details>';
@@ -2113,7 +2118,7 @@ function renderTable() {
   // The hand's action, then the stats below it.
   const log = s.events.map(eventText).filter(Boolean);
   h += `<div class="pl-log" id="pl-log">${log.map(t => `<div>${esc(t)}</div>`).join('')}</div>`;
-  if (statsOpen) h += statsHtml();
+  if (statsShown()) h += statsHtml();
   h += '</div>';
   // Keep the stats table's sideways scroll across re-renders (narrow screens).
   const scrollX = root.querySelector('.pl-stats-scroll')?.scrollLeft || 0;
@@ -2727,7 +2732,7 @@ function onClick(e) {
   else if (el.dataset.act === 'gamesounds') { setup.gameSounds = !setup.gameSounds; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'live') { setup.live = !setup.live; saveSetup(); render(); }
-  else if (el.dataset.act === 'stats') { statsOpen = !statsOpen; render(); }
+  else if (el.dataset.act === 'stats') { statsOpen = !statsShown(); render(); }
   else if (el.dataset.act === 'reset-stats') resetStats();
   else if (el.dataset.pgame) { setup.game = el.dataset.pgame; render(); }
   else if (el.dataset.count) { setup.count = +el.dataset.count; render(); }
