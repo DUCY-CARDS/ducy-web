@@ -2023,8 +2023,11 @@ function controlsHtml() {
     if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
   } else {
     status = `Your turn${timeBankHtml()}`;
+    // Check and Call never share a place or a key, so a bet that lands as you
+    // go to check can't turn your tap into a call. Checking is free exactly
+    // when folding isn't allowed, so Check takes Fold's empty place.
     if (L.can_fold) fold = '<button class="tr-btn no" data-act="fold">Fold <kbd>F</kbd></button>';
-    if (L.can_check) call = '<button class="tr-btn" data-act="check">Check <kbd>C</kbd></button>';
+    if (L.can_check) fold = '<button class="tr-btn" data-act="check">Check <kbd>K</kbd></button>';
     else if (L.call != null) call = `<button class="tr-btn" data-act="call">Call ${c(L.call)} <kbd>C</kbd></button>`;
     const range = L.raise || L.bet;
     if (range) {
@@ -2665,7 +2668,8 @@ function onKey(e) {
   if (foldQueued) return; // the queued action is already being sent
   const range = L.raise || L.bet;
   if (k === 'f' && L.can_fold) act('fold');
-  else if (k === 'c') act(L.can_check ? 'check' : 'call');
+  else if (k === 'k' && L.can_check) act('check');
+  else if (k === 'c' && !L.can_check && L.call != null) act('call');
   else if (k === 'r' && range) clickBet();
   else if (k === 'p' && range) { raiseTo = potTo(num(range.min_to), num(range.max_to)); clickBet(); }
   else if (k === 't') useTimeBank();

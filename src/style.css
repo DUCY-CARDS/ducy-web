@@ -947,7 +947,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   position: relative; aspect-ratio: 2 / 1; max-width: 100%; margin: 28px 40px 40px;
   background: var(--felt); border: 6px solid var(--felt-border); border-radius: 999px;
 }
-.pl-center { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+/* Above the seats, so a side seat's labels never cover the board on a phone. */
+.pl-center { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pl-board { display: flex; gap: 6px; }
 /* Running it twice: the second board, a little smaller, under the first. */
 .pl-board2 { transform: scale(0.85); margin-top: -6px; opacity: 0.95; }
@@ -1216,7 +1217,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 /* Your Omaha hand fans out (V3, #225): the cards overlap and tilt, each
    showing its rank and suit in the corner. */
 .pl-seat.hero .pl-hole:is(.n4, .n5, .n6) { align-items: flex-end; padding-top: 6px; }
-.pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card { align-items: flex-start; justify-content: flex-start; padding: 3px 4px; box-shadow: -2px 1px 3px rgba(0,0,0,0.25); transform-origin: 50% 100%; }
+/* position: relative stacks every card in order, each over the last, so the
+   untilted middle card of five isn't drawn under its tilted neighbour. */
+.pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card { position: relative; align-items: flex-start; justify-content: flex-start; padding: 3px 4px; box-shadow: -2px 1px 3px rgba(0,0,0,0.25); transform-origin: 50% 100%; }
 .pl-seat.hero .pl-hole:is(.n4, .n5, .n6) .pl-card + .pl-card { margin-left: -12px; }
 .pl-seat.hero .pl-hole.n4 .pl-card:nth-child(1) { transform: rotate(-7deg) translateY(2px); }
 .pl-seat.hero .pl-hole.n4 .pl-card:nth-child(2) { transform: rotate(-2deg); }
