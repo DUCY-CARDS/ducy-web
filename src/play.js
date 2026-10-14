@@ -1788,6 +1788,35 @@ function lastActions() {
   return out;
 }
 
+// Whose cards are turned over at a showdown, as at a real table: first the
+// last player to bet or raise on the last street with betting (or, when that
+// street was checked through, the first to act on it), then anyone who wins
+// something. The others muck, and their cards stay face down. Your own cards
+// always show to you, and in tournament-style games (the ladder, club
+// tournaments) all-in hands, turned up before the runout, stay up. Null when
+// it isn't a showdown, so every card the state holds shows.
+function showdownShows(s) {
+  if (!s?.showdown) return null;
+  let street = 0, bettor = null, betStreet = -1, actStreet = -1;
+  const firstActor = [];
+  for (const e of s.events) {
+    if (e.type === 'board') { street += 1; continue; }
+    if (e.seat == null || !['fold', 'check', 'call', 'bet', 'raise'].includes(e.type)) continue;
+    firstActor[street] ??= e.seat;
+    actStreet = street;
+    if (e.type === 'bet' || e.type === 'raise') { bettor = e.seat; betStreet = street; }
+  }
+  const show = new Set();
+  const first = betStreet === actStreet ? bettor : firstActor[actStreet];
+  if (first != null) show.add(first);
+  s.seats.forEach((x, i) => {
+    if (num(x.won) > 0) show.add(i);
+    if ((ladder || wholeChips) && x.all_in) show.add(i);
+  });
+  if (!watching) show.add(0);
+  return show;
+}
+
 // ---- the hand's summary ----
 //
 // After a hand, a short account of what happened beside the table: who won
@@ -1859,7 +1888,11 @@ function summaryBody(s) {
 
   // The hands shown down: each player's cards and what they made, winners
   // marked. When it ran twice, what they made on each run.
-  const shown = s.seats.map((x, i) => ({...x, i})).filter(x => x.cards?.length && x.cards.every(Boolean) && !x.folded && !x.empty && !x.sitting_out && (s.showdown || (x.i === 0 && !watching)));
+  const shows = showdownShows(s);
+  const inHand = x => x.cards?.length && x.cards.every(Boolean) && !x.folded && !x.empty && !x.sitting_out;
+  const all = s.seats.map((x, i) => ({...x, i})).filter(inHand);
+  const shown = all.filter(x => (shows ? shows.has(x.i) : x.i === 0 && !watching));
+  const mucked = shows ? all.filter(x => !shows.has(x.i)) : [];
   if (shown.length) {
     const won = new Set(pots.flatMap(p => (p.eligible.length > 1 ? p.awards.map(a => a.seat) : [])));
     h += `<div class="pl-sum-label">${s.showdown ? 'Showdown' : 'Your hand'}</div><ul class="pl-sum-shown">`;
@@ -1870,6 +1903,7 @@ function summaryBody(s) {
       const mark = s.showdown && won.has(x.i);
       h += `<li${mark ? ' class="won"' : ''}><span class="pl-sum-who">${who(x.i)}</span><span class="pl-sum-cards">${x.cards.map(smallCard).join('')}</span>${name || mark ? `<span class="pl-sum-hand">${name}${mark ? ' <span class="pl-sum-won" title="Won">✓ won</span>' : ''}</span>` : ''}</li>`;
     }
+    for (const x of mucked) h += `<li class="pl-meta"><span class="pl-sum-who">${who(x.i)}</span><span class="pl-sum-hand">mucked</span></li>`;
     h += '</ul>';
   }
 
@@ -1900,6 +1934,7 @@ function summaryHtml() {
 function renderTable() {
   const s = state, n = s.seats.length;
   const last = lastActions();
+  const shows = showdownShows(s);
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
   h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}</span>`;
@@ -1947,7 +1982,9 @@ function renderTable() {
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
-    const shown = seat.cards || (seat.folded ? null : new Array(tableGame.cards).fill(null));
+    // A hand mucked at showdown stays face down (showdownShows).
+    const mucked = shows && !shows.has(i) && !seat.folded;
+    const shown = (!mucked && seat.cards) || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
