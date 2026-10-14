@@ -1,7 +1,7 @@
 // The heads-up ladder (#212), Train's Punch-Out: play the bots one at a time,
 // easiest first, up to the GTO bot at the top. Each rung is a best-of-3
 // series of heads-up freezeouts: both players buy in for START_BB big blinds,
-// no rebuys, and the blinds stay the same until someone has all the chips.
+// no rebuys. Every STAKES_EVERY hands the bot offers to double the blinds.
 // Your chips carry over from game to game: you start with two of the first
 // rung's buy-ins, each game won adds a buy-in and each game lost takes one,
 // and every rung up doubles the stakes. Win two games to move up a rung. Lose
@@ -9,9 +9,9 @@
 // the highest rung below whose buy-in you can pay; when you can't pay any,
 // you start over at the bottom with the starting chips.
 // Progress (your rung, your chips, the series under way, the game under way
-// with both stacks, your best, your record against each bot) is kept on this
-// device, so a game left in the middle picks up where it was. This file is the
-// rules and the record; play.js plays the games.
+// with both stacks and its blinds, your best, your record against each bot)
+// is kept on this device, so a game left in the middle picks up where it was.
+// This file is the rules and the record; play.js plays the games.
 
 export const LADDER_KEY = 'ducyLadder';
 export const START_BB = 200;
@@ -19,6 +19,8 @@ export const WINS_TO_TAKE = 2; // of 3
 // The first rung's blinds, in chips (hundredths: 100/200 shows as 1/2). Each
 // rung up doubles them.
 export const BLINDS = [100, 200];
+// How many hands go by between offers to double the blinds.
+export const STAKES_EVERY = 100;
 
 // A rung's stakes: its blinds, and the buy-in for each game (START_BB big blinds).
 export const blindsAt = level => BLINDS.map(b => b * 2 ** level);
@@ -63,7 +65,10 @@ export function rungsFor(ids, gto) {
 
 // `chips` are yours away from the table: a game under way has a buy-in of them
 // at the table. `game` is the game under way, kept so it can be left and
-// resumed: {stacks: [yours, theirs], hands}, or null.
+// resumed: {stacks: [yours, theirs], hands, blinds: [sb, bb], offerAt}, or null.
+// offerAt is the hand count at which the bot next offers to raise the
+// stakes. A game kept before the stakes could rise has neither: it goes on
+// at its rung's blinds, with the first offer at STAKES_EVERY.
 export function newProgress() {
   return {v: 2, level: 0, best: 0, wins: 0, losses: 0, chips: START_CHIPS, playing: false, titles: 0, record: {}, game: null};
 }
@@ -91,7 +96,8 @@ function fromV1(p) {
   if (!(total > 0)) return q;
   const all = tableChipsAt(p.level);
   const m = Math.max(0, Math.min(all, Math.round(s[0] * all / total)));
-  return {...q, game: {stacks: [m, all - m], hands: p.game.hands}};
+  const blinds = p.game.blinds?.map(b => b * 2 ** p.level);
+  return {...q, game: {...p.game, stacks: [m, all - m], ...(blinds ? {blinds} : {})}};
 }
 
 export function saveProgress(p, storage = globalThis.localStorage) {
@@ -106,17 +112,40 @@ export const opponentOf = (p, rungs) => rungs[levelOf(p, rungs)];
 // rung's stakes, each player buying in.
 export function startGame(p, rungs) {
   const level = levelOf(p, rungs);
-  const fresh = {stacks: [buyInAt(level), buyInAt(level)], hands: 0};
-  return {...p, level, playing: true, game: p.game || fresh};
+  const fresh = {stacks: [buyInAt(level), buyInAt(level)], hands: 0, blinds: blindsAt(level), offerAt: STAKES_EVERY};
+  return {...p, level, playing: true, game: p.game ? {blinds: blindsAt(level), offerAt: STAKES_EVERY, ...p.game} : fresh};
 }
 
 // The game so far, after each action: your chips behind, and theirs (all the
 // rest). Leaving in the middle of a hand folds it: what you'd put in the pot
-// is theirs.
+// is theirs. The game's blinds and next offer stay as they are.
 export function keepGame(p, mine, hands) {
   const all = p.game ? p.game.stacks[0] + p.game.stacks[1] : tableChipsAt(p.level);
   const m = Math.max(0, Math.min(all, Math.round(mine)));
-  return {...p, game: {stacks: [m, all - m], hands}};
+  return {...p, game: {...p.game, stacks: [m, all - m], hands}};
+}
+
+// The game's blinds now.
+export const gameBlinds = p => p.game?.blinds || blindsAt(p.level);
+
+// The bot's offer to raise the stakes, once the game has reached its next
+// offer: the doubled blinds, or null. Both players need more than the new big
+// blind behind, or there's nothing to raise.
+export function stakesOffer(p) {
+  const g = p.game;
+  if (!p.playing || !g || g.hands < (g.offerAt ?? STAKES_EVERY)) return null;
+  const [sb, bb] = gameBlinds(p);
+  const next = [sb * 2, bb * 2];
+  return Math.min(...g.stacks) > next[1] ? next : null;
+}
+
+// Your answer to the offer: accepted, the blinds double from the next hand.
+// Either way the next offer is STAKES_EVERY hands on.
+export function answerStakes(p, yes) {
+  const offer = stakesOffer(p);
+  const g = {...p.game, offerAt: p.game.hands + STAKES_EVERY};
+  if (yes && offer) g.blinds = offer;
+  return {...p, game: g};
 }
 
 // A game was left (or the page closed) and is waiting to be resumed.
