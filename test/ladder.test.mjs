@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BLINDS, CHAMPION, ORDER, TOTAL_CHIPS, finishGame, keepGame, loadProgress, newProgress, pausedGame,
+  BLINDS, CHAMPION, ORDER, START_BB, TOTAL_CHIPS, finishGame, keepGame, loadProgress, newProgress, pausedGame,
   opponentOf, rungsFor, saveProgress, startGame,
 } from '../src/ladder.js';
 
@@ -107,4 +107,23 @@ test('progress is kept, and bad saves start over', () => {
 
 test('every game plays at the same blinds, 1/2', () => {
   assert.deepEqual(BLINDS, [100, 200]);
+});
+
+test('games start 200 BB deep', () => {
+  assert.equal(START_BB, 200);
+  assert.equal(TOTAL_CHIPS, 2 * 200 * BLINDS[1]);
+});
+
+test('a game paused at 100 BB goes on at 200 BB with the same share', () => {
+  const store = new Map();
+  const storage = {getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v)};
+  // 100 BB each was 40,000 chips in all; you had 26,500 of them.
+  store.set('ducyLadder', JSON.stringify({...newProgress(), playing: true, wins: 1, game: {stacks: [26500, 13500], hands: 12}}));
+  const p = loadProgress(storage);
+  assert.deepEqual(pausedGame(p), {stacks: [53000, 27000], hands: 12});
+  assert.equal(p.wins, 1);
+  // A game saved at this depth is kept as it is.
+  const q = keepGame(startGame(newProgress()), 31000, 5);
+  saveProgress(q, storage);
+  assert.deepEqual(loadProgress(storage), q);
 });
