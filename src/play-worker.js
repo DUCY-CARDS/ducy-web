@@ -108,6 +108,9 @@ const ops = {
   setStack: (seat, chips) => (table.setStack ? (table.setStack(seat, BigInt(chips)), true) : false),
   setBot: (seat, id, chips, seed) => (table.setBot ? (table.setBot(seat, id, BigInt(chips), BigInt(seed)), true) : false),
   setTopUp: on => (table.setTopUp ? (table.setTopUp(!!on), true) : false),
+  // A bomb pot every `every` hands (0 for none), on two boards: false with a
+  // ducy-wasm older than setBombPots (ducy#238).
+  setBombPots: (every, ante) => (table.setBombPots ? (table.setBombPots(BigInt(every), BigInt(ante), true), true) : false),
   // Your latest decision graded as soon as it's made (live feedback); null
   // with a ducy-wasm older than reviewLastDecision.
   reviewDecision: () => (table.reviewLastDecision ? table.reviewLastDecision() : null),
@@ -149,6 +152,9 @@ const ops = {
     return host.state(now('host'));
   },
   hostResume: () => host.resume(now('host')),
+  // A bomb pot every `every` hands, on two boards; with a ducy-wasm older
+  // than setBombPots, just the state.
+  hostBombPots: (every, ante) => (host.setBombPots ? host.setBombPots(BigInt(every), BigInt(ante), true, now('host')) : host.state(now('host'))),
   hostApprove: seat => host.approveChips(seat, now('host')),
   hostDeny: seat => host.denyChips(seat, now('host')),
   hostChips: amount => host.hostChips(BigInt(amount), now('host')),

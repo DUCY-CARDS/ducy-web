@@ -80,7 +80,19 @@ const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
 // included) and the buy-in limits in big blinds (min and max, in chips, are
 // minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
 // shows as 1/2.
-const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200};
+const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200, bomb: false, bombEvery: 25};
+// Bomb pots every few hands (an option at any table): everyone antes a big
+// blind, no preflop betting, two boards. Every 25 hands unless changed.
+const BOMB_EVERY = 25;
+const bombEvery = n => Math.max(2, Math.min(1000, Math.round(+n) || BOMB_EVERY));
+// The option's field: Off or On, and how often when on. `attr` is the
+// chips' data attribute, `id` the number input's.
+function bombField(on, every, attr, id) {
+  const chip = (x, text) => `<button type="button" class="sg-chip${on === x ? ' on' : ''}" ${attr}="${x ? 'on' : 'off'}" aria-pressed="${on === x}">${text}</button>`;
+  let h = `<div class="sg-field"><span class="sg-label">Bomb pots</span><div class="sg-chips">${chip(false, 'Off')}${chip(true, 'On')}</div>`;
+  if (on) h += `<div class="sg-nums"><label class="pf-num">Every <input class="pl-text" type="number" id="${id}" min="2" max="1000" step="1" value="${every}"> hands</label></div><p class="pl-desc">Everyone antes a big blind, there’s no preflop betting, and two boards are dealt.</p>`;
+  return h + '</div>';
+}
 const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9];
 const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
@@ -133,6 +145,7 @@ const holds = new Set(); // what's pausing the countdown: 'hidden', 'hover', 'us
 let raiseTo = 0;
 let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
 let tableGame = GAMES[0]; // the game of the table in play
+let tableBombs = 0; // its bomb pots, every so many hands (0 for none or unknown)
 let setup = loadSetup();
 // Stats per game, each {playerId: counts}: since sitting down, and all time
 // (kept in localStorage).
@@ -226,7 +239,7 @@ let myChatLimit = chatLimiter();
 let chatNote = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 20000, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY, friends: {...FRIENDS_DEFAULT}};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -385,6 +398,8 @@ function botsSetupHtml() {
   h += '<p>Play immediately against the Regulars.</p></div>';
   h += '<div class="pl-setup sg-form rg-form">';
   h += `<div class="sg-field"><span class="sg-label">Game</span><div class="sg-chips">${GAMES.map(g => `<button type="button" class="sg-chip${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}" aria-pressed="${setup.game === g.id}">${g.label}</button>`).join('')}</div></div>`;
+  // Not for the bomb pot game: every hand is one there.
+  if (!gameOf(setup.game).bomb) h += bombField(!!setup.bomb, bombEvery(setup.bombEvery), 'data-bomb', 'pl-bombevery');
   h += `<div class="rg-go"><button class="tr-start sg-open" data-act="sitregulars">Sit down</button><span class="rg-note">${REGULARS_SEATS} Regulars, picked at random.</span></div>`;
   // Choosing who you play is the advanced option, folded away.
   h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Advanced: choose your opponents</summary><div class="cl-more">`;
@@ -593,6 +608,7 @@ function friendsSetupHtml() {
   // No more seats than the game can deal to (PLO6: 6).
   h += field('Seats', `<div class="sg-chips">${TABLE_SIZES.filter(n => n <= maxSeats(f.game)).map(n => chip(f.seats === n, 'data-fseats', n, n)).join('')}</div>`);
   h += field('Buy-in', `<div class="sg-nums"><label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.minBB * f.bb)}"></label><label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.maxBB * f.bb)}"></label></div>`);
+  h += bombField(!!f.bomb, bombEvery(f.bombEvery), 'data-fbomb', 'pf-bombevery');
   h += field('Name it', `<input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}">`);
   if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
   h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
@@ -609,6 +625,7 @@ function readFriendsStep() {
   const val = id => root.querySelector('#' + id);
   readNameInput();
   if (val('pf-title')) f.title = val('pf-title').value.trim().slice(0, 40);
+  if (val('pf-bombevery')) f.bombEvery = bombEvery(val('pf-bombevery').value);
   if (!setup.name) return 'Enter your name: it’s what the others see.';
   if (val('pf-sb')) {
     const sb = parseChips(val('pf-sb').value), bb = parseChips(val('pf-bb').value);
@@ -867,7 +884,7 @@ async function sitRegulars() {
   // A bomb pot table has its own fixed amounts.
   const g = gameOf(setup.game);
   const {sb, bb, buyIn} = g.bomb ? g : setup;
-  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto: false, regs: true});
+  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto: false, regs: true, bombs: bombSetting()});
 }
 
 const regularName = id => personalities.find(p => p.id === id)?.name || id;
@@ -928,14 +945,19 @@ async function startTable() {
   const g = gameOf(setup.game);
   const {sb, bb} = g.bomb ? g : setup;
   const buyIn = gto ? GTO_BUY_IN_BB * setup.bb : g.bomb ? g.buyIn : setup.buyIn;
-  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto});
+  // GTO training keeps to plain hands.
+  await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto, bombs: gto ? 0 : bombSetting()});
 }
+
+// How often the table being set up has a bomb pot: every so many hands, or 0.
+const bombSetting = () => (setup.bomb && !gameOf(setup.game).bomb ? bombEvery(setup.bombEvery) : 0);
 
 // Sits down at a new bot table and deals its first hand. `gto` is GTO
 // training (every hand at 100 BB, with the review in Hold'em).
 // `stacks`, when given, are each seat's chips for the first hand (a ladder
 // game resuming), instead of the buy-in.
-async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false}) {
+// `bombs` is a bomb pot every so many hands (0 for none).
+async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false, bombs = 0}) {
   clearTimeout(timer);
   regulars = regs ? {bank: startBank(bots, buyIn), buyIn, done: 0, pending: null} : null;
   regularsNote = '';
@@ -960,6 +982,8 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
   const snap = await request('create', bots, buyIn, sb, bb, crypto.getRandomValues(new Uint32Array(1))[0], game, stacks);
   // At a Regulars table nothing tops you up: you rebuy when you choose.
   if (snap && regulars) await call('setTopUp', false);
+  // Bomb pots on two boards, the ante a big blind; off with an older ducy-wasm.
+  tableBombs = snap && bombs && await call('setBombPots', bombs, bb) ? bombs : 0;
   if (snap) show(snap);
 }
 
@@ -1308,8 +1332,12 @@ async function hostTable() {
   // The host starts with 100 BB, kept within the table's limits.
   const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
+  const bombs = f.bomb ? bombEvery(f.bombEvery) : 0;
   request('friends', Math.min(f.seats, maxSeats(f.game)), setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
-    .then(snap => { if (snap) show(snap); });
+    .then(async snap => {
+      if (snap && bombs) { await request('bombPots', bombs, f.bb); tableBombs = bombs; }
+      if (snap) show(snap);
+    });
   // The table shows on the Play tab.
   location.hash = 'play';
 }
@@ -1318,6 +1346,7 @@ async function hostTable() {
 // clocks, for a new table (hostTable) or one resumed (resumeHosting).
 function startHosting(code, game) {
   tableGame = gameOf(game);
+  tableBombs = 0;
   hostGame = game;
   mode = 'host';
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
@@ -1572,6 +1601,7 @@ function guestMessage(m) {
     // Sitting out (#70): out or not, missed blinds, time left before the seat goes.
     mySeat = m.me ? {...m.me, outEnds: m.me.out_ms_left != null ? Date.now() + num(m.me.out_ms_left) : 0} : null;
     tableGame = GAMES.find(g => g.cards === num(m.view.hole_cards) && g.pl === m.view.pot_limit) || GAMES[0];
+    tableBombs = 0; // a guest isn't told how often; each bomb pot says so
     if (Date.now() > noteUntil) netNote = '';
     show({seq: num(m.seq), state: m.view, botToAct: false, turnMsLeft: m.turn_ms_left});
   } else if (m.type === 'rejected') {
@@ -1775,6 +1805,26 @@ function avatarHtml(i) {
   return `<div class="pl-av none" aria-hidden="true">${esc(letter.toUpperCase())}</div>`;
 }
 
+// Whether hand state `s` is a bomb pot: the bomb pot game's, or one of a
+// table's every few hands.
+const bombHand = s => tableGame.bomb || !!s?.bomb_pot;
+
+// The bar's stakes: a bomb pot's ante, or the blinds and, at a table with
+// bomb pots every few hands, when the next one comes.
+function stakesText(s) {
+  const ante = () => num(s.events?.find(e => e.type === 'ante')?.amount ?? s.ante ?? tableGame.bb);
+  if (tableGame.bomb) return `ante ${c(ante())}`;
+  if (s.bomb_pot) return `<b>bomb pot</b> · ante ${c(ante())}`;
+  let h = `blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}`;
+  if (tableBombs) {
+    // This hand (n) isn't one: the next is the first multiple after it.
+    const n = num(s.hand_number);
+    const k = Math.ceil((n + 1) / tableBombs) * tableBombs - n;
+    h += ` · ${k === 1 ? 'bomb pot next hand' : `bomb pot in ${k} hands`}`;
+  }
+  return h;
+}
+
 function eventText(e) {
   // Seat 0 is you: "You call" but "Rampart calls". At friends and club tables
   // your seat shows your name, so the log says "You" rather than "Ann call".
@@ -1796,7 +1846,7 @@ function eventText(e) {
     case 'raise': return `${who} ${v('raise', 'raises')} to ${c(e.to)}${allIn}`;
     case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
     case 'runs': return e.count === 2 ? 'Running it twice' : 'Running it once';
-    case 'second_board': return `${tableGame.bomb ? 'Board 2' : 'Second run'}: ${e.cards.join(' ')}`;
+    case 'second_board': return `${bombHand(state) ? 'Board 2' : 'Second run'}: ${e.cards.join(' ')}`;
     case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
     default: return '';
   }
@@ -1900,7 +1950,7 @@ function summaryBody(s) {
   const holeOf = i => (s.showdown && s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` <span class="pl-sum-cards">${s.seats[i].cards.map(smallCard).join('')}</span>` : '');
   let h = `<div class="pl-sum-head"><b>Hand ${num(s.hand_number)}</b></div>`;
   // The board (each run's, when it ran twice), on its own rows.
-  const [one, two] = tableGame.bomb ? ['Board 1', 'Board 2'] : ['Run 1', 'Run 2'];
+  const [one, two] = bombHand(s) ? ['Board 1', 'Board 2'] : ['Run 1', 'Run 2'];
   const boards = s.second_board?.length ? [[one, s.board], [two, s.second_board]] : [['Board', s.board]];
   for (const [label, cards] of boards) {
     if (cards?.length) h += `<div class="pl-sum-boardrow"><span class="pl-sum-label">${label}</span><span class="pl-sum-board">${cards.map(smallCard).join('')}</span></div>`;
@@ -1978,8 +2028,8 @@ function renderTable() {
   const shows = showdownShows(s);
   let h = '<div class="pl-wrap pl-play">';
   h += '<div class="pl-bar">';
-  const stakes = tableGame.bomb ? `ante ${c(s.ante ?? tableGame.bb)}` : `blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}`;
-  h += ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · ${stakes}</span>`;
+  const stakes = stakesText(s);
+  h +=ladder ? ladderBarHtml() : `<span class="pl-meta">${tableGame.name} · hand ${num(s.hand_number)} · ${stakes}</span>`;
   if (mode !== 'solo') h += netBarHtml();
   // V3 (#225): the table's settings in one ⋯ menu, and Leave beside it.
   const item = (act, label, on, title = '') =>
@@ -2008,7 +2058,7 @@ function renderTable() {
   h += `<div class="pl-center"><div class="pl-board">${[0, 1, 2, 3, 4].map(i => (s.board[i] ? cardHtml(s.board[i]) : slot(1, i))).join('')}</div>`;
   // Run twice: the second board, each pot split between the two.
   // (Mid-runout it shows empty too, while its first cards are coming.)
-  if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="${tableGame.bomb ? 'Board 2' : 'The second run'}">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
+  if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="${bombHand(s) ? 'Board 2' : 'The second run'}">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
   h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
@@ -2602,9 +2652,11 @@ function onClick(e) {
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-bomb],[data-fbomb]');
   if (!el) return;
   const d = el.dataset;
+  if (d.bomb) { setup.bomb = d.bomb === 'on'; saveSetup(); render(); return; }
+  if (d.fbomb) { readFriendsStep(); setup.friends.bomb = d.fbomb === 'on'; fnote = ''; saveSetup(); render(); return; }
   if (d.rev != null) {
     const i = +d.rev;
     if (reviewOpen.has(i)) reviewOpen.delete(i); else reviewOpen.add(i);
@@ -2734,6 +2786,7 @@ function onClick(e) {
 }
 
 function onInput(e) {
+  if (e.target.id === 'pl-bombevery' && e.target.value) { setup.bombEvery = bombEvery(e.target.value); saveSetup(); }
   if (e.target.id === 'pl-chipamt') chipAsk = parseChips(e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
     raiseTo = +e.target.value;
