@@ -173,7 +173,7 @@ function studyPage(d) {
   h += `<a class="v3-tile v3-tile-cream" href="#trainer"><span class="v3-ring" style="--pct:${pct}%" aria-hidden="true"><span>${d.mastered}</span></span>`;
   h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><span>Test your ability to play different ranges.</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
   h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Heads-up training</span>';
-  h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gus_bluffsen')}" alt=""></span>`;
+  h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gto')}" alt=""></span>`;
   h += '<span>Take on the GTO bot, and see how you do.</span></a>';
   return h + '</div></div>';
 }
