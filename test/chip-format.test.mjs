@@ -2,7 +2,25 @@
 // (chip-format.js); tournament chips are shown whole.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chipText, chipInput, parseChips } from '../src/chip-format.js';
+import { chipText, chipInput, parseChips, tableChip, toChip } from '../src/chip-format.js';
+
+test('a cash game bets in its smallest chip: the largest casino chip not above the small blind', () => {
+  // Small blinds in hundredths: 1/2, 2/5, 5/10, 10/25, 25/50, 50/100.
+  assert.deepEqual([100, 200, 500, 1000, 2500, 5000].map(tableChip), [100, 100, 500, 500, 2500, 2500]);
+  // Under a $1 small blind (0.25/0.50): any amount.
+  assert.equal(tableChip(25), 1);
+});
+
+test('bets snap to whole chips within the legal range', () => {
+  // $1 chips: 12.40 → 12, 12.60 → 13; never under the minimum.
+  assert.equal(toChip(1240, 100, 400, 20000), 1200);
+  assert.equal(toChip(1260, 100, 400, 20000), 1300);
+  assert.equal(toChip(350, 100, 400, 20000), 400);
+  // The top of the range (all-in, any amount) stays as it is.
+  assert.equal(toChip(19950, 100, 400, 19950), 19950);
+  // $5 chips at 5/10: 23 → 25.
+  assert.equal(toChip(2300, 500, 2000, 100000), 2500);
+});
 
 test('amounts are shown divided by 100, with cents only when there are any', () => {
   assert.equal(chipText(20000), '200');

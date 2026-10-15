@@ -24,7 +24,7 @@ import { checkSignature, loadIdentity, signMessage } from './identity.js';
 import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
-import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
+import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
 import { chipsHtml as chipPile, rowHtml as chipRow, seatChips } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
@@ -2458,10 +2458,11 @@ function controlsHtml() {
       const min = num(range.min_to), max = num(range.max_to);
       // Pot-limit defaults to the pot, no-limit to the minimum.
       if (!raiseTo || raiseTo < min || raiseTo > max) raiseTo = tableGame.pl ? max : min;
+      raiseTo = snapBet(raiseTo, min, max);
       const word = L.raise ? 'Raise to' : 'Bet';
       raise = `<button class="tr-btn yes" data-act="${L.raise ? 'raise' : 'bet'}">${word} <b id="pl-amtv">${c(raiseTo)}</b> <kbd>R</kbd></button>`;
       sizes = `<span class="pl-sizes">${sizeButtons(min, max)}</span>`;
-      amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="1" value="${raiseTo}" aria-label="Amount">` +
+      amount = `<input type="range" id="pl-amt" min="${min}" max="${max}" step="${betChip()}" value="${raiseTo}" aria-label="Amount">` +
         `<input type="number" class="pl-text pl-amtbox" id="pl-amtbox" inputmode="decimal" min="${amtInput(min)}" max="${amtInput(max)}" step="${amtStep()}" value="${amtInput(raiseTo)}" aria-label="Amount to ${L.raise ? 'raise to' : 'bet'}">`;
     }
   }
@@ -2473,11 +2474,17 @@ function controlsHtml() {
     `<div class="pl-act-sizes">${sizes}</div><div class="pl-act-amount">${amount}</div></div>`;
 }
 
+// The table's smallest chip: bets are whole numbers of it (chip-format.js).
+// Tournament chips bet in any amount.
+const betChip = () => (wholeChips ? 1 : tableChip(num(state.small_blind ?? setup.sb)));
+// A bet in whole chips within the legal range (all-in, the top, as it is).
+const snapBet = (v, min, max) => toChip(v, betChip(), min, max);
+
 // Pot-fraction sizes: the street total after calling and then adding that
-// fraction of the pot, clamped to the legal range.
+// fraction of the pot, in whole chips within the legal range.
 function potSize(f, min, max) {
   const s = state, call = num(s.current_bet) - num(s.seats[0].street_bet);
-  return Math.max(min, Math.min(max, num(s.current_bet) + Math.round((num(s.pot) + call) * f)));
+  return snapBet(num(s.current_bet) + Math.round((num(s.pot) + call) * f), min, max);
 }
 
 // The Pot button's amount (the P key). In pot-limit the largest bet is the
@@ -3073,6 +3080,9 @@ function onClick(e) {
   else if (el.dataset.act === 'bet' || el.dataset.act === 'raise') {
     const typed = typedBet();
     if (typed != null) raiseTo = typed;
+    // Whole chips: a typed amount between chips goes to the nearest.
+    const r = betRange();
+    if (r) raiseTo = snapBet(raiseTo, r.min, r.max);
     // Only a bet of the whole stack is "allin"; in pot-limit the top of the
     // range is usually the pot, which the engine takes as a plain bet/raise.
     act(raiseTo >= allInTo() ? 'allin' : el.dataset.act, raiseTo);
@@ -3083,7 +3093,9 @@ function onInput(e) {
   if (e.target.id === 'pl-bombevery' && e.target.value) { setup.bombEvery = bombEvery(e.target.value); saveSetup(); }
   if (e.target.id === 'pl-chipamt') chipAsk = parseChips(e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
-    raiseTo = +e.target.value;
+    // The slider steps in chips; its far end is the top of the range.
+    const r = betRange();
+    raiseTo = r ? snapBet(+e.target.value, r.min, r.max) : +e.target.value;
     const v = root.querySelector('#pl-amtv');
     if (v) v.textContent = c(raiseTo);
     const b = root.querySelector('#pl-amtbox');
