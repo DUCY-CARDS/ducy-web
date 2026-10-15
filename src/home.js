@@ -182,7 +182,7 @@ function challengePage(d) {
   let h = '<div class="v3-page">' + head('Heads-up training', {href: '#study', label: 'Study'}, 'study');
   h += '<h2 class="v3-h2">The GTO bot</h2><p class="v3-note">100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
   for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
-    h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><span class="v3-tile-name">${g.name}</span>`;
+    h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><img class="v3-tile-av" src="${avatarUrl('gto')}" alt=""><span class="v3-tile-name">${g.name}</span>`;
     if (g.hands) h += `<span class="v3-record${g.bb100 < 0 ? ' down' : ''}">${bbText(g.bb100)}</span><span class="v3-dim">${g.hands} hands</span>`;
     else h += '<span class="v3-record none">Not played yet</span>';
     h += '<b>Play →</b></a>';

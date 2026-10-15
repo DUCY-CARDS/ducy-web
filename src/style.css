@@ -1597,6 +1597,7 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .v3-tile-cream { background: var(--v3-cream); color: var(--v3-felt) !important; }
 .v3-tile-red { background: var(--v3-red); color: var(--v3-red-ink) !important; }
 .v3-tile-dark { background: var(--v3-felt-dark); border: 2px solid var(--v3-cream); box-shadow: none; }
+.v3-tile-av { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--v3-cream); }
 .v3-tile-cream:has(.v3-ring) { flex-direction: row; align-items: center; gap: 24px; }
 .v3-ring { --pct: 0%; flex: none; width: 130px; height: 130px; border-radius: 50%; background: conic-gradient(var(--v3-felt) 0 var(--pct), #ddd0ac var(--pct) 100%); display: flex; align-items: center; justify-content: center; }
 .v3-ring span { width: 98px; height: 98px; border-radius: 50%; background: var(--v3-cream); display: flex; align-items: center; justify-content: center; font-family: var(--v3-display); font-size: 36px; }
