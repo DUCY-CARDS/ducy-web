@@ -490,7 +490,7 @@ function ladderKeep(s) {
   saveProgress(ladderProgress);
 }
 
-// Climb the ladder (V3, #225): the next series on a cream card, then every
+// The heads-up challenge, the ladder (V3, #225): the next series on a cream card, then every
 // rung as a tile with a spade, filled for the ones beaten.
 function ladderHtml() {
   const rungs = ladderRungs();
@@ -498,7 +498,7 @@ function ladderHtml() {
   const level = Math.min(p.level, rungs.length - 1);
   const opp = rungs[level];
   const info = botInfo(opp);
-  let h = `<div class="pl-head"><h1>Climb the ladder</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, at double the stakes. Your chips carry over; lose and you drop to the rung you can pay for.</p></div>`;
+  let h = `<div class="pl-head"><h1>Heads-up challenge</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, at double the stakes. Your chips carry over; lose and you drop to the rung you can pay for.</p></div>`;
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
   h += ladderLastReviewHtml();
   // The next series.

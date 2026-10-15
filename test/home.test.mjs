@@ -8,7 +8,7 @@ const store = (items = {}) => ({ getItem: k => (k in items ? items[k] : null), s
 test('every older page has a breadcrumb back to Study or Play', () => {
   assert.deepEqual(crumbFor('equity'), [{href: '#study', label: 'Study'}, {href: null, label: 'Equity'}]);
   assert.deepEqual(crumbFor('trainer').map(c => c.label), ['Study', 'Pre-flop ranges']);
-  assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Study', 'Challenge the Regulars', 'Climb the ladder']);
+  assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Study', 'Challenge the Regulars', 'Heads-up challenge']);
   assert.deepEqual(crumbFor('ladder')[1].href, '#challenge');
   for (const p of ['host', 'join', 'clubs', 'practice']) assert.equal(crumbFor(p)[0].href, '#lobby', p);
   assert.deepEqual(crumbFor('nowhere'), []);
