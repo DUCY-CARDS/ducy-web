@@ -1264,9 +1264,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-av { width: 40px; height: 40px; }
   .pl-av.none { font-size: 16px; }
   .pl-av + .pl-hole { margin-top: -14px; }
-  /* Phones: chips only in the middle (bets and the pot); stacks stay numbers.
-     Bets sit nearer their seats, clear of the board and the pot. */
-  .ch-seat { display: none; }
+  /* Phones: no chips at all, too little room; stacks, bets and the pot are
+     just their amounts. Bets sit nearer their seats, clear of the board. */
+  .pl-felt .ch-row { display: none; }
   .pl-bet { left: var(--px); top: var(--py); }
   .pl-plate { min-width: 76px; padding: 2px 4px; }
   .pl-plate b { max-width: 78px; font-size: 10px; }
