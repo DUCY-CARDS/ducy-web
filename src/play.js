@@ -2275,7 +2275,9 @@ function renderTable() {
   // of the players until the betting closes.
   const bb = num(s.big_blind ?? setup.bb);
   const gathered = num(s.pot) - s.seats.reduce((t, x) => t + num(x.street_bet), 0);
-  h += gathered > 0 ? `<div class="pl-pot">${chipPile(gathered, bb, 6, 'ch-pot', true)}<span class="pl-amt">Pot ${c(gathered)}</span></div></div>` : '</div>';
+  // The total, bets out included, under it while there are bets out.
+  const total = num(s.pot) > gathered ? `<span class="pl-total">Total ${c(s.pot)}</span>` : '';
+  h += gathered > 0 || total ? `<div class="pl-pot">${chipPile(gathered, bb, 6, 'ch-pot', true)}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
