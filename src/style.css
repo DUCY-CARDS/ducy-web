@@ -1018,6 +1018,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .pl-card.slot.next { animation: none; background: rgba(243,231,201,0.12); } }
 .pl-seat { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 3px; width: 112px; }
+/* A bot's table talk (bot-chat.js): a speech bubble over its seat, placed
+   at the seat's centre on the felt and raised above its avatar. */
+.pl-say { position: absolute; transform: translate(-50%, calc(-100% - 46px)); z-index: 6; width: max-content; max-width: 180px;
+  background: #fffdf6; color: #1d2a24; font-size: 12px; line-height: 1.3; font-weight: 600; padding: 5px 9px; border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35); text-align: center; animation: pl-say-in 0.2s ease-out; pointer-events: none; }
+.pl-say::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-top-color: #fffdf6; }
+@keyframes pl-say-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pl-say { animation: none; } }
+@media (max-width: 640px) { .pl-say { max-width: 130px; font-size: 11px; } }
 /* Seat avatars (avatars.js): a bot's main look, or the one you picked. */
 .pl-av { width: 56px; height: 56px; flex: none; border-radius: 50%; overflow: hidden; background: var(--felt-border); box-shadow: 0 0 0 2px var(--felt-border); }
 .pl-av img { display: block; width: 100%; height: 100%; }
