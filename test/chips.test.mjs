@@ -75,10 +75,12 @@ test('a player bets with chips they have, and the stack shows what is left', () 
 
 test('at most `max` stacks of up to 20, biggest chips first', () => {
   const row = stacks($(10000), $(2), 5);
-  assert.equal(row.length, 5);
-  assert.ok(row.every(s => s.count >= 1 && s.count <= 20));
-  // Every colour shows before any second stack, biggest first.
-  assert.deepEqual(row.map(s => s.color), ['pink', 'yellow', 'black', 'green', 'red']);
+  assert.equal(row.length, 4);
+  assert.ok(row.every(s => (s.mix ? s.mix.reduce((n, m) => n + m.count, 0) : s.count) <= 20));
+  // A deep stack's loose big chips share one stack, the highest on top.
+  assert.deepEqual(row[0], {mix: [{color: 'pink', count: 1}, {color: 'yellow', count: 4}, {color: 'black', count: 4}]});
+  assert.deepEqual(row.slice(1).map(s => s.color), ['green', 'red', 'white']);
+  assert.match(chipsHtml($(10000), $(2)), /ch-mix/);
   assert.deepEqual(stacks($(484), $(2), 5).map(s => s.color), ['green', 'red', 'red', 'white', 'white']);
   assert.match(chipsHtml($(500), $(5)), /ch-green/);
   assert.equal(chipsHtml(0, $(5)), '');

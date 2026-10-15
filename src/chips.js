@@ -54,8 +54,9 @@ function fill(amount, bigBlind, cap, tiers) {
     const next = CHIPS[i + 1]?.value;
     if (i - first >= tiers) {
       // The rest in the biggest chips: what's left is a whole number of
-      // this chip, so they're never smaller than it.
-      out.push(...pay(left).chips.reverse());
+      // this chip, so they're never smaller than it. They're `loose`, a few
+      // of each, and go on one mixed stack (toStacks).
+      out.push(...pay(left).chips.reverse().map(c => ({...c, loose: true})));
       left = 0;
       break;
     }
@@ -150,10 +151,25 @@ export function seatChips(stack, bet, bigBlind) {
 
 // Chips ([{color, count}], biggest first) as stacks of up to STACK, at
 // most `max` of them: every colour gets a stack before any gets a second,
-// so a small chip never hides behind big ones. Biggest chips first.
+// so a small chip never hides behind big ones. Biggest chips first. Loose
+// big chips (a deep stack's, `breakdown`) go first, together on mixed
+// stacks, `{mix: [{color, count}]}` with the highest value on top.
 export function toStacks(chips, max = 5) {
-  const left = chips.map(c => ({color: c.color, count: c.count, out: []}));
-  let shown = 0;
+  const mixed = [];
+  let room = 0;
+  for (const {color, count, loose} of chips) {
+    if (!loose) continue;
+    for (let n = count; n > 0;) {
+      if (!room) { mixed.push({mix: []}); room = STACK; }
+      const k = Math.min(n, room);
+      mixed.at(-1).mix.push({color, count: k});
+      room -= k;
+      n -= k;
+    }
+  }
+  const out = mixed.slice(0, max);
+  const left = chips.filter(c => !c.loose).map(c => ({color: c.color, count: c.count, out: []}));
+  let shown = out.length;
   for (let more = true; more && shown < max;) {
     more = false;
     for (const c of left) {
@@ -164,7 +180,15 @@ export function toStacks(chips, max = 5) {
       more = true;
     }
   }
-  return left.flatMap(c => c.out);
+  return [...out, ...left.flatMap(c => c.out)];
+}
+
+function stackHtml(s) {
+  if (!s.mix) return `<span class="ch-stack ch-${s.color}" style="--n:${s.count}"></span>`;
+  // A mixed stack: one segment a colour, the top one showing its face.
+  return `<span class="ch-mix">${s.mix
+    .map(m => `<span class="ch-stack ch-${m.color}" style="--n:${m.count}"></span>`)
+    .join('')}</span>`;
 }
 
 // The stacks to draw for an amount: a stack in front of a player split as
@@ -178,9 +202,7 @@ export function stacks(amount, bigBlind, max = 5, bet = false) {
 export function rowHtml(chips, max = 5, cls = '') {
   const row = toStacks(chips, max);
   if (!row.length) return '';
-  return `<span class="ch-row${cls ? ` ${cls}` : ''}" aria-hidden="true">${row
-    .map(s => `<span class="ch-stack ch-${s.color}" style="--n:${s.count}"></span>`)
-    .join('')}</span>`;
+  return `<span class="ch-row${cls ? ` ${cls}` : ''}" aria-hidden="true">${row.map(stackHtml).join('')}</span>`;
 }
 
 export function chipsHtml(amount, bigBlind, max = 5, cls = '', bet = false) {
