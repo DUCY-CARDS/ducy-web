@@ -149,6 +149,64 @@ export function seatChips(stack, bet, bigBlind) {
   return {stack: paid.stack, bet: paid.bet};
 }
 
+const total = chips => chips.reduce((t, c) => t + c.value * c.count, 0);
+
+// Every seat's chips through a hand, from its events: each seat starts with
+// its stack at the start of the hand split as `breakdown` does, every blind,
+// ante, call, bet and raise is paid out of those chips (`payFrom`), and at
+// each new street the bets go into the pot, chip for chip. So the chips a
+// player bet are the chips in the middle: green stays green. Chips only
+// colour up or down between hands, when each stack is split afresh.
+//
+// `seats` are [{stack, street_bet}] now; `events` the hand's so far
+// ({type, seat, amount | to | dead, live}). Returns {stacks, bets, pot}:
+// each seat's chips behind and in front of it, and the pot's chips; or null
+// if the events don't add up to the seats' chips (then draw from amounts).
+export function handChips(seats, events, bigBlind) {
+  const n = seats.length;
+  // What each seat put in, to know what it started the hand with.
+  const put = new Array(n).fill(0);
+  const street = new Array(n).fill(0);
+  const paid = [];
+  for (const e of events) {
+    const s = e.seat;
+    const amt = x => Math.max(0, Number(x) || 0);
+    if (e.type === 'board') { street.fill(0); paid.push({board: true}); continue; }
+    let toPot = 0, toBet = 0;
+    if (e.type === 'ante') toPot = amt(e.amount);
+    else if (e.type === 'post') { toPot = amt(e.dead); toBet = amt(e.live); }
+    else if (e.type === 'small_blind' || e.type === 'big_blind' || e.type === 'call') toBet = amt(e.amount);
+    else if (e.type === 'bet' || e.type === 'raise') toBet = Math.max(0, amt(e.to) - street[s]);
+    else continue;
+    if (s == null || s < 0 || s >= n) return null;
+    street[s] += toBet;
+    put[s] += toPot + toBet;
+    paid.push({seat: s, toPot, toBet});
+  }
+  const have = seats.map((x, i) => breakdown(Math.max(0, Number(x.stack) || 0) + put[i], bigBlind).chips);
+  const bets = seats.map(() => []);
+  const pot = [];
+  const into = (list, chips) => chips.forEach(c => addChips(list, c.value, c.count));
+  for (const p of paid) {
+    if (p.board) {
+      bets.forEach(b => { into(pot, b); b.length = 0; });
+      continue;
+    }
+    for (const [amount, where] of [[p.toPot, pot], [p.toBet, bets[p.seat]]]) {
+      if (!amount) continue;
+      const r = payFrom(amount, have[p.seat]);
+      have[p.seat] = r.stack;
+      into(where, r.bet);
+    }
+  }
+  // The chips must match the amounts shown (whole dollars of them).
+  const whole = x => Math.floor(Math.max(0, Number(x) || 0) / 100) * 100;
+  for (let i = 0; i < n; i++) {
+    if (total(bets[i]) !== whole(seats[i].street_bet)) return null;
+  }
+  return {stacks: have, bets, pot};
+}
+
 // Chips ([{color, count}], biggest first) as stacks of up to STACK, at
 // most `max` of them: every colour gets a stack before any gets a second,
 // so a small chip never hides behind big ones. Biggest chips first. Loose

@@ -25,7 +25,7 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
-import { chipsHtml as chipPile, rowHtml as chipRow, seatChips } from './chips.js';
+import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
@@ -2278,7 +2278,12 @@ function renderTable() {
   const gathered = num(s.pot) - s.seats.reduce((t, x) => t + num(x.street_bet), 0);
   // The total, bets out included, under it while there are bets out.
   const total = num(s.pot) > gathered ? `<span class="pl-total">Total ${c(s.pot)}</span>` : '';
-  h += gathered > 0 || total ? `<div class="pl-pot">${chipPile(gathered, bb, 6, 'ch-pot', true)}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
+  // During a hand the chips follow the betting (chips.js handChips): the
+  // chips a player bet are the ones in the pot. Between hands each stack is
+  // split afresh, colouring up or down.
+  const chipsNow = !s.complete && handChips(s.seats.map(x => ({stack: num(x.stack), street_bet: num(x.street_bet)})), s.events || [], bb);
+  const potChips = chipsNow ? chipRow(chipsNow.pot, 6, 'ch-pot') : chipPile(gathered, bb, 6, 'ch-pot', true);
+  h += gathered > 0 || total ? `<div class="pl-pot">${potChips}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
@@ -2300,7 +2305,7 @@ function renderTable() {
     h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
-    const chips = seatChips(num(seat.stack), num(seat.street_bet), bb);
+    const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
     h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
