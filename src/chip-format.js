@@ -27,3 +27,21 @@ export function parseChips(text) {
 
 // Input attributes for an amount box: steps of 0.01.
 export const CHIP_STEP = '0.01';
+
+// The casino chips, in hundredths: $1 to $25,000.
+export const CASINO_CHIPS = [100, 500, 2500, 10000, 50000, 100000, 500000, 2500000];
+
+// A cash game's smallest chip, which every bet and raise is a whole number
+// of (an all-in aside): the largest casino chip not above the small blind.
+// 1/2 and 2/5 bet in $1, 5/10 and 10/25 in $5, 25/50 in $25. Below a $1
+// small blind, any amount (1). The engine has the same rule (ducy-wasm
+// default_chip).
+export const tableChip = smallBlind => [...CASINO_CHIPS].reverse().find(c => c <= smallBlind) ?? 1;
+
+// `amount` as a whole number of `chip`s, within [min, max]: the nearest,
+// except that max (often all-in, any amount) stays max.
+export function toChip(amount, chip, min, max) {
+  if (amount >= max) return max;
+  const near = Math.round(amount / chip) * chip;
+  return Math.max(min, Math.min(max, near));
+}
