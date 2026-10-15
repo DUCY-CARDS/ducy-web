@@ -979,6 +979,11 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .ch-black { --chip: #2a2a2a; }
 .ch-purple { --chip: #6b3fa0; }
 .ch-yellow { --chip: #e3b836; }
+.ch-pink { --chip: #e57fae; }
+.ch-orange { --chip: #ec7a1c; }
+.ch-blue { --chip: #2f5fb3; }
+.ch-red-500k { --chip: #c8322b; --insert: rgba(240,200,80,0.95); }
+.ch-green-1m { --chip: #2e8b57; --insert: rgba(240,200,80,0.95); }
 .ch-pot .ch-stack { --w: 20px; --face: 12px; }
 /* A seat's stack sits beside its plate, on the side facing the table. */
 .pl-plate { position: relative; }

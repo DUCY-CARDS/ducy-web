@@ -4,10 +4,13 @@
 // The smallest chip in play is the largest one not above the big blind. Each
 // chip holds up to MAX_STACKS stacks, and anything beyond colours up into the
 // next chip (the top chip holds as many as it takes), so a stack is a few
-// stacks of each of a few colours, as players keep them. What
-// bigger chips can't pay stays in smaller ones, so the chips always add up;
-// anything under $1 is left over (no fractional chips). It's worked out
-// fresh from the amount each time, so winning a pot colours up on its own.
+// stacks of each of a few colours, as players keep them. A deep stack that
+// would still take more than SHOWN stacks keeps one stack each of the
+// three smallest chips in play and the rest in the biggest chips ($10,000
+// at 1/2 is mostly yellow). What bigger chips can't pay stays in smaller
+// ones, so the chips always add up; anything under $1 is left over (no
+// fractional chips). It's worked out fresh from the amount each time, so
+// winning a pot colours up on its own.
 
 export const CHIPS = [
   {value: 100, color: 'white'},
@@ -16,20 +19,46 @@ export const CHIPS = [
   {value: 10000, color: 'black'},
   {value: 50000, color: 'purple'},
   {value: 100000, color: 'yellow'},
+  {value: 500000, color: 'pink'},
+  {value: 2500000, color: 'orange'},
+  // Tournament chips. The red and green come back, with gold edge spots to
+  // tell them from the $5 and $25 (style.css).
+  {value: 10000000, color: 'blue'},
+  {value: 50000000, color: 'red-500k'},
+  {value: 100000000, color: 'green-1m'},
 ];
 export const STACK = 20;
 const MAX_STACKS = 2;
+// Stacks a seat shows at most, and a deep stack's working chips.
+export const SHOWN = 5;
+const DEEP_TIERS = 3;
+
+const stackCount = chips => chips.reduce((n, c) => n + Math.ceil(c.count / STACK), 0);
 
 // [{value, color, count}], biggest chip first, and the `rest` under $1.
 export function breakdown(amount, bigBlind) {
+  const usual = fill(amount, bigBlind, MAX_STACKS * STACK, Infinity);
+  return stackCount(usual.chips) <= SHOWN ? usual : fill(amount, bigBlind, STACK, DEEP_TIERS);
+}
+
+// The smallest `tiers` chips in play each hold up to `cap`; whatever's left
+// after them is paid in the biggest chips (as `pay` does).
+function fill(amount, bigBlind, cap, tiers) {
   const whole = Math.floor(Math.max(0, amount) / 100) * 100;
   let left = whole;
-  let i = Math.max(0, CHIPS.findLastIndex(c => c.value <= Math.max(100, bigBlind)));
+  const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= Math.max(100, bigBlind)));
+  let i = first;
   const out = [];
-  const cap = MAX_STACKS * STACK;
   while (left > 0 && i < CHIPS.length) {
     const {value, color} = CHIPS[i];
     const next = CHIPS[i + 1]?.value;
+    if (i - first >= tiers) {
+      // The rest in the biggest chips: what's left is a whole number of
+      // this chip, so they're never smaller than it.
+      out.push(...pay(left).chips.reverse());
+      left = 0;
+      break;
+    }
     let count;
     if (!next) count = left / value; // the top chip: as many as it takes
     else {
