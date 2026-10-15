@@ -25,6 +25,7 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
+import { chipsHtml as chipPile } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
@@ -1964,6 +1965,8 @@ function seatPos(i, n) {
 // the seats are spaced evenly by distance round the felt's edge instead, as
 // it's drawn: 2:1, or 2:3 on a phone (style.css, .pl-felt.crowded).
 const CROWDED = 8;
+// How far a seat's bet sits from the seat toward the middle of the felt.
+const BET_REACH = 0.5;
 const HERO_ROOM = 1.3;
 const crowdedCache = {};
 function crowdedPos(n) {
@@ -2264,7 +2267,11 @@ function renderTable() {
   // Run twice: the second board, each pot split between the two.
   // (Mid-runout it shows empty too, while its first cards are coming.)
   if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="${bombHand(s) ? 'Board 2' : 'The second run'}">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
-  h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
+  // Chips (chips.js): the pot as a pile in the middle, bets in front of the
+  // seats, and each stack beside its seat on wider screens. The amounts stay
+  // as numbers too.
+  const bb = num(s.big_blind ?? setup.bb);
+  h += `<div class="pl-pot">${chipPile(num(s.pot), bb, 6, 'ch-pot')}<span class="pl-amt">Pot ${c(s.pot)}</span></div></div>`;
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
@@ -2285,7 +2292,7 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipPile(num(seat.stack), bb, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -2298,9 +2305,13 @@ function renderTable() {
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (i === 0) h += liveBadgeHtml();
     if (setup.hud) h += hudHtml(seatId(i));
-    if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${c(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
+    // The bet on the felt, part of the way from the seat to the middle.
+    if (num(seat.street_bet) > 0) {
+      const bx = p.x + (50 - p.x) * BET_REACH, by = p.y + (46 - p.y) * BET_REACH;
+      h += `<div class="pl-bet" style="left:${bx}%;top:${by}%">${chipPile(num(seat.street_bet), bb, 3, 'ch-bet')}<span class="pl-amt">${c(seat.street_bet)}</span></div>`;
+    }
   });
   h += '</div>';
   h += summaryHtml();

@@ -955,7 +955,31 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-board { display: flex; gap: 6px; }
 /* Running it twice: the second board, a little smaller, under the first. */
 .pl-board2 { transform: scale(0.85); margin-top: -6px; opacity: 0.95; }
-.pl-pot { font-family: var(--font-data); font-size: 13px; font-weight: 700; color: #e9ecef; background: rgba(0,0,0,0.25); padding: 2px 10px; border-radius: 999px; }
+.pl-pot { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.pl-pot > .pl-amt { font-family: var(--font-data); font-size: 13px; font-weight: 700; color: #e9ecef; background: rgba(0,0,0,0.25); padding: 2px 10px; border-radius: 999px; }
+/* Chips (chips.js): stacks seen from the side, 2px a chip, a stack of 20
+   at most. Each colour has an edge stripe of white inserts. */
+.ch-row { display: inline-flex; align-items: flex-end; gap: 2px; pointer-events: none; }
+/* The top 3px is the top chip's face, so even one chip reads as a chip. */
+.ch-stack { --chip: #f1efe8; --insert: rgba(255,255,255,0.75); width: 14px; height: calc(var(--n) * 2px + 3px); border-radius: 3px / 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.45);
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,0.3) 0 3px, transparent 3px),
+    linear-gradient(to right, transparent 22%, var(--insert) 22% 32%, transparent 32% 68%, var(--insert) 68% 78%, transparent 78%),
+    repeating-linear-gradient(to top, var(--chip) 0 1.5px, rgba(0,0,0,0.35) 1.5px 2px);
+  background-color: var(--chip); }
+.ch-white { --chip: #ecebe6; --insert: rgba(47,109,179,0.8); }
+.ch-red { --chip: #c8322b; }
+.ch-green { --chip: #2e8b57; }
+.ch-black { --chip: #2a2a2a; }
+.ch-purple { --chip: #6b3fa0; }
+.ch-yellow { --chip: #e3b836; }
+.ch-pot .ch-stack { width: 16px; }
+/* A seat's stack sits beside its plate, on the side facing the table. */
+.pl-plate { position: relative; }
+.ch-seat { position: absolute; bottom: 0; }
+.ch-seat.ch-left { right: calc(100% + 5px); flex-direction: row-reverse; }
+.ch-seat.ch-right { left: calc(100% + 5px); }
+.ch-bet .ch-stack { width: 12px; }
 .pl-card {
   width: 40px; height: 56px; border-radius: 5px; background: var(--card-face); color: var(--card-ink);
   display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-data); font-weight: 700; font-size: 16px;
@@ -1111,7 +1135,9 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-summary.last .pl-sum-full { display: none; }
 }
 /* Beside the avatar's shoulder, clear of its face. */
-.pl-bet { position: absolute; top: 4px; left: calc(50% + 30px); z-index: 1; font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
+/* A bet sits on the felt between its seat and the middle (play.js places it). */
+.pl-bet { position: absolute; transform: translate(-50%, -50%); z-index: 2; display: flex; align-items: flex-end; gap: 3px; pointer-events: none; }
+.pl-bet > .pl-amt { font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
 /* Beside the name plate, so it never covers hole cards. */
 .pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
 
@@ -1218,7 +1244,8 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-av { width: 40px; height: 40px; }
   .pl-av.none { font-size: 16px; }
   .pl-av + .pl-hole { margin-top: -14px; }
-  .pl-bet { top: 0; left: calc(50% + 21px); }
+  /* Phones: chips only in the middle (bets and the pot); stacks stay numbers. */
+  .ch-seat { display: none; }
   .pl-plate { min-width: 76px; padding: 2px 4px; }
   .pl-plate b { max-width: 78px; font-size: 10px; }
   .pl-card { width: 28px; height: 40px; font-size: 12px; }
