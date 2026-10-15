@@ -276,7 +276,12 @@ let peeling = false;
 
 // Auto-deal is on by default, but off at GTO tables, where each hand's
 // review is worth reading first; the choice at each is remembered.
-const autoDealOn = () => !!(gtoTable ? setup.gtoAutoDeal : setup.autoDeal);
+// Against the bots (the Regulars, the heads-up challenge, your own pick of
+// bots), the next hand always comes on its own: there's no Next hand to skip
+// to, and no auto-deal switch. GTO training keeps both, and so do tables of
+// people.
+const alwaysAuto = () => mode === 'solo' && !gtoTable;
+const autoDealOn = () => alwaysAuto() || !!(gtoTable ? setup.gtoAutoDeal : setup.autoDeal);
 function setAutoDeal(on) {
   if (gtoTable) setup.gtoAutoDeal = on; else setup.autoDeal = on;
 }
@@ -2238,7 +2243,7 @@ function renderTable() {
     `<button type="button" class="pl-menu-item" data-act="${act}"${on == null ? '' : ` aria-pressed="${on}"`}${title ? ` title="${title}"` : ''}><span>${label}</span>${on == null ? '' : `<b>${on ? 'On' : 'Off'}</b>`}</button>`;
   h += '<span class="pl-tools">';
   h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
-  h += item('autodeal', 'Auto-deal', autoDealOn());
+  if (!alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
   if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="Wait before the next hand"><span>Wait before dealing</span><b>${setup.dealSecs}s</b></button>`;
   if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
   if (reviewTable() && mode === 'solo') {
@@ -2380,7 +2385,9 @@ function controlsHtml() {
       status += ' <span class="pl-meta">· Dealing needs two players with chips</span>';
     } else {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
-      raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
+      // Against the bots the countdown is only shown: the hand comes on its own.
+      if (alwaysAuto() && num(s.hand_number)) status += ` <span class="pl-meta" id="pl-next">${label}</span>`;
+      else raise = `<button class="tr-start" data-act="next"><span id="pl-next">${label}</span> <kbd>Space</kbd></button>`;
       if (autoDealOn() && num(s.hand_number)) call = `<button class="tr-btn" id="pl-pause" data-act="pause">${pauseLabel()} <kbd>P</kbd></button>`;
       // A Regulars table: rebuy when you're out, top up when you're short.
       if (regulars && mode === 'solo') {
@@ -3121,7 +3128,12 @@ function onKey(e) {
   }
   if (!open || !state || e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
-  if (state.complete && (k === ' ' || k === 'enter')) { e.preventDefault(); nextHand(); return; }
+  if (state.complete && (k === ' ' || k === 'enter')) {
+    e.preventDefault();
+    // Against the bots there's no skipping ahead: the next hand comes on its own.
+    if (!(alwaysAuto() && num(state.hand_number))) nextHand();
+    return;
+  }
   if (state.complete && k === 'p' && autoDealOn()) { hold('user', !holds.has('user')); return; }
   // The rest are only for the player's turn.
   const L = state.legal;
