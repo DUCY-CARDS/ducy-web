@@ -28,7 +28,7 @@ export function overviewHtml(progress, cards = 2) {
   const games = OVERVIEW_GAMES.map(([n]) => gameSkills(progress, n));
   const open = games.find(g => g.cards === cards) || games[0];
   let h = '<div class="v3 v3-embed"><div class="v3-page">';
-  h += '<div class="v3-headline"><h1>Pre-flop ranges</h1><p>Test your ability to play different ranges.</p></div>';
+  h += '<div class="v3-headline"><h1>Pre-flop ranges</h1></div>';
   h += '<div class="v3-areas">';
   for (const g of games) {
     const on = g.cards === open.cards;
@@ -42,7 +42,7 @@ export function overviewHtml(progress, cards = 2) {
   // ranges by position come later (#249).
   const next = nextSkill(open);
   h += '<div class="v3-track">';
-  h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">Your ranges</span><span>${MASTERY}+ earns a spade</span></div>`;
+  h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">Your ranges</span></div>`;
   h += '<div class="v3-skillrow v3-trackrow">';
   for (const s of open.skills) {
     const state = s.status === 'mastered' ? 'won' : 'open';
@@ -57,7 +57,6 @@ export function overviewHtml(progress, cards = 2) {
     h += `<div class="v3-track-go"><span>Every ${esc(open.name)} range mastered. Tap one to keep practising.</span></div>`;
   }
   h += '</section>';
-  h += '<aside class="v3-later"><b>Coming later</b><span>Opening ranges by position, for each game and number of players.</span></aside>';
   return h + '</div></div></div>';
 }
 

@@ -1286,7 +1286,7 @@ function clubListHtml() {
   }
   h += '</div><div class="cl-club-acts">';
   const named = myName() || tableName();
-  h += '<form class="cl-act-card" data-joinclub><span class="cl-act-title">Join a club</span><span class="cl-act-desc">Paste an invite link.</span>';
+  h += '<form class="cl-act-card" data-joinclub><span class="cl-act-title">Join a club</span>';
   h += `<span class="cl-act-row"><input class="pl-text" name="link" aria-label="Invite link" placeholder="Invite link" autocomplete="off" spellcheck="false"><button class="btn-small" type="submit">Ask to join</button></span>`;
   if (named) h += `<span class="cl-act-desc">As ${esc(named)}.</span>`;
   h += '</form>';
@@ -1404,7 +1404,7 @@ function notice(text, go = 'play') {
 // Since V3 (#225), a card beside Join a club on the list.
 function createHtml() {
   if (club || isRemote()) return '';
-  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Members, chips and tables that last. Your first club is a free 14-day trial: 2 tables and 1 tournament a day. To keep a club going, ask ducy.</span>';
+  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Free for 14 days: 2 tables and 1 tournament a day.</span>';
   h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || '')}">`;
   h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create a club'}</button></span>`;
   if (alwaysFailed) {

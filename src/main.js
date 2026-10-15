@@ -675,7 +675,7 @@ function renderSide() {
     : rangeName(s) || 'Range');
   let h = '<span class="eq-side-title">Who’s ahead</span>';
   const rows = seats.map((s, i) => [s, i]).filter(([s]) => s);
-  if (rows.length < 2) h += '<p class="eq-side-empty">Add two hands, or ranges, to see who’s ahead.</p>';
+  if (rows.length < 2) h += '<p class="eq-side-empty">Tap a seat to add a hand or a range.</p>';
   else {
     h += '<div class="eq-bars">';
     for (const [s, i] of rows) {
@@ -685,7 +685,6 @@ function renderSide() {
     }
     h += '</div>';
   }
-  h += `<p class="eq-side-hint">Tap a seat to add a hand or a range. Up to ${g().max} players.</p>`;
   side.innerHTML = h;
 }
 

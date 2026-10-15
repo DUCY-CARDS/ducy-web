@@ -207,8 +207,7 @@ function renderJoin() {
   const link = linked();
   const name = knownName();
   // V3 (#225): a cream form like Start a game's.
-  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Join a game</h1>';
-  h += '<p>A code or a link from a friend.</p></div>';
+  let h = '<div class="pl-wrap"><div class="pl-head"><h1>Join a game</h1></div>';
   if (!relayUrl()) {
     joinRoot.innerHTML = h + '<p class="pl-meta">Games with other people need ducy’s relay, which isn’t set up here.</p></div>';
     joinRoot.hidden = false;

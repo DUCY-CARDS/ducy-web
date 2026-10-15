@@ -418,13 +418,12 @@ function botsSetupHtml() {
   fillBots();
   // V3 (#225): Start a game's cream form, with the game and Sit down up
   // front and choosing opponents folded away.
-  let h = '<div class="pl-head"><h1>Play the Regulars</h1>';
-  h += '<p>Play immediately against the Regulars.</p></div>';
+  let h = '<div class="pl-head"><h1>Play the Regulars</h1></div>';
   h += '<div class="pl-setup sg-form rg-form">';
   h += `<div class="sg-field"><span class="sg-label">Game</span><div class="sg-chips">${GAMES.map(g => `<button type="button" class="sg-chip${setup.game === g.id ? ' on' : ''}" data-pgame="${g.id}" aria-pressed="${setup.game === g.id}">${g.label}</button>`).join('')}</div></div>`;
   // Not for the bomb pot game: every hand is one there.
   if (!gameOf(setup.game).bomb) h += bombField(!!setup.bomb, bombEvery(setup.bombEvery), 'data-bomb', 'pl-bombevery');
-  h += `<div class="rg-go"><button class="tr-start sg-open" data-act="sitregulars">Sit down</button><span class="rg-note">${REGULARS_SEATS} Regulars, picked at random.</span></div>`;
+  h += `<div class="rg-go"><button class="tr-start sg-open" data-act="sitregulars">Sit down</button></div>`;
   // Choosing who you play is the advanced option, folded away.
   h += `<details class="tf-more"${setup.moreOpen ? ' open' : ''}><summary data-more>Advanced: choose your opponents</summary><div class="cl-more">`;
   h += optsRow('Opponents', [1, 2, 3, 4, 5, 6, 7, 8].map(n => optBtn(setup.count === n, 'data-count', n, n)));
@@ -745,9 +744,7 @@ function friendsSetupHtml() {
   if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
   h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
-  h += '<span>Once the table is open, share the code or the link.</span>';
-  h += '<div class="sg-code" aria-hidden="true">····-····</div>';
-  h += '<span class="sg-note">Nothing is kept once everyone leaves.</span></aside></div>';
+  h += '<div class="sg-code" aria-hidden="true">····-····</div></aside></div>';
   return h;
 }
 
