@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { breakdown, chipsHtml, pay, payFrom, seatChips, stacks } from '../src/chips.js';
+import { breakdown, chipsHtml, handChips, pay, payFrom, seatChips, stacks } from '../src/chips.js';
 
 // Amounts are in hundredths: $1 is 100.
 const $ = d => d * 100;
@@ -84,4 +84,29 @@ test('at most `max` stacks of up to 20, biggest chips first', () => {
   assert.deepEqual(stacks($(484), $(2), 5).map(s => s.color), ['green', 'red', 'red', 'white', 'white']);
   assert.match(chipsHtml($(500), $(5)), /ch-green/);
   assert.equal(chipsHtml(0, $(5)), '');
+});
+
+test('the chips bet are the chips in the pot: greens stay green', () => {
+  // Blinds 1/2, both $400 deep (40 white, 37 red, 7 green). Seat 0 raises
+  // to $50, seat 1 calls, the flop comes.
+  const events = [
+    {type: 'small_blind', seat: 0, amount: $(1)},
+    {type: 'big_blind', seat: 1, amount: $(2)},
+    {type: 'raise', seat: 0, to: $(50)},
+    {type: 'call', seat: 1, amount: $(48)},
+  ];
+  const before = handChips([{stack: $(350), street_bet: $(50)}, {stack: $(350), street_bet: $(50)}], events, $(2));
+  // The raise is a green, four reds and the white blind plus four more.
+  assert.deepEqual(counts({chips: before.bets[0]}), {green: 1, red: 4, white: 5});
+  assert.equal(total({chips: before.stacks[0], rest: 0}), $(350));
+  const flop = [...events, {type: 'board', street: 'flop', cards: ['2c', '7d', '9h']}];
+  const after = handChips([{stack: $(350), street_bet: 0}, {stack: $(350), street_bet: 0}], flop, $(2));
+  // Both greens are in the pot, not coloured up into a black.
+  assert.equal(counts({chips: after.pot}).green, 2);
+  assert.equal(counts({chips: after.pot}).black, undefined);
+  assert.equal(total({chips: after.pot, rest: 0}), $(100));
+  assert.deepEqual(after.bets, [[], []]);
+  // And amounts that don't add up give no chips (the page then draws from
+  // amounts).
+  assert.equal(handChips([{stack: $(350), street_bet: $(40)}, {stack: $(350), street_bet: $(50)}], events, $(2)), null);
 });
