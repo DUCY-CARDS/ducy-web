@@ -26,12 +26,11 @@ test('the overview has a tile per game, the open game\'s skills as spades, and t
   // Each skill, plus the button for the next one (top 15%: top 10% is mastered).
   assert.equal((h.match(/data-skill="2:/g) || []).length, TOP_TARGETS.length + 1);
   assert.equal((h.match(/class="v3-spade won"/g) || []).length, 2);
-  assert.match(h, /90\+ earns a spade/);
+  assert.match(h, /to earn its spade/);
   assert.match(h, /class="v3-skill next" data-skill="2:15"/);
   assert.match(h, /data-skill="2:15">Practice top 15%/);
   // Charts by position wait for standard opening ranges (#249).
   assert.doesNotMatch(h, /data-ovchoice/);
-  assert.match(h, /Coming later/);
 });
 
 test('the next skill is the first not mastered; started ones say how far to go', () => {

@@ -157,30 +157,29 @@ function homePage() {
   h += '<div class="v3-hero-text"><span class="v3-word">DUCY</span><h1>Pull up a chair.</h1></div></section>';
   h += '<div class="v3-doors">';
   h += '<a class="v3-door v3-door-study" href="#study"><span class="v3-door-head"><span class="v3-door-name">Study</span><span aria-hidden="true">→</span></span>';
-  h += `<span class="v3-door-art">${rangeChart()}</span><span class="v3-door-text">Analyze your game, train, and get feedback as you play.</span></a>`;
+  h += `<span class="v3-door-art">${rangeChart()}</span></a>`;
   h += '<a class="v3-door v3-door-play" href="#lobby"><span class="v3-door-head"><span class="v3-door-name">Play</span><span aria-hidden="true">→</span></span>';
-  h += `<span class="v3-door-art">${miniTable(['player-01', 'player-02', 'player-03', 'player-04', 'player-05'])}</span><span class="v3-door-text">Play against your friends or join a private club.</span></a>`;
+  h += `<span class="v3-door-art">${miniTable(['player-01', 'player-02', 'player-03', 'player-04', 'player-05'])}</span></a>`;
   return h + '</div></div>';
 }
 
 function studyPage(d) {
   let h = '<div class="v3-page">' + head('Study', null, 'study');
   h += '<div class="v3-games"><span class="v3-label">Games</span><span class="v3-chip">Hold’em</span><span class="v3-chip">Omaha · 4, 5 or 6 cards</span><span class="v3-chip">Omaha 8-or-better · 4, 5 or 6 cards</span></div>';
-  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#equity"><span class="v3-tile-text"><span class="v3-tile-name">Equity</span><span>Any hands, any board, any game.</span></span>';
+  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#equity"><span class="v3-tile-text"><span class="v3-tile-name">Equity</span></span>';
   h += '<span class="v3-bars" aria-hidden="true"><span style="height:46%"></span><span style="height:54%"></span></span></a>';
   h += '<div class="v3-tiles">';
   const pct = d.skills ? Math.round(100 * d.mastered / d.skills) : 0;
   h += `<a class="v3-tile v3-tile-cream" href="#trainer"><span class="v3-ring" style="--pct:${pct}%" aria-hidden="true"><span>${d.mastered}</span></span>`;
-  h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><span>Test your ability to play different ranges.</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
+  h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
   h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Heads-up training</span>';
-  h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gto')}" alt=""></span>`;
-  h += '<span>Take on the GTO bot, and see how you do.</span></a>';
+  h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gto')}" alt=""></span></a>`;
   return h + '</div></div>';
 }
 
 function challengePage(d) {
   let h = '<div class="v3-page">' + head('Heads-up training', {href: '#study', label: 'Study'}, 'study');
-  h += '<h2 class="v3-h2">The GTO bot</h2><p class="v3-note">100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
+  h += '<p class="v3-note">Against the GTO bot, 100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
   for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
     h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><img class="v3-tile-av" src="${avatarUrl('gto')}" alt=""><span class="v3-tile-name">${g.name}</span>`;
     if (g.hands) h += `<span class="v3-record${g.bb100 < 0 ? ' down' : ''}">${bbText(g.bb100)}</span><span class="v3-dim">${g.hands} hands</span>`;
@@ -192,17 +191,17 @@ function challengePage(d) {
 
 function lobbyPage(d) {
   let h = '<div class="v3-page">' + head('Play', null, 'play');
-  h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span><span>A game for tonight.</span></span>';
+  h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
   h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form></div>';
   h += '<div class="v3-tiles">';
   h += '<a class="v3-tile v3-tile-cream" href="#clubs"><span class="v3-tile-name">Private clubs</span><span class="v3-members" aria-hidden="true">';
   for (const id of ['player-06', 'player-07', 'player-08', 'player-09', 'player-10']) h += `<img src="${avatarUrl(id)}" alt="">`;
-  h += '</span><span>Your clubs, chips and history.</span></a>';
-  h += `<a class="v3-tile v3-tile-red" href="#practice"><span class="v3-tile-name">Play the Regulars</span>${miniTable(['doug_poker', 'milk_king', 'phil_bigmouth', 'nik_airbag', 'jen_silly'])}<span>Play immediately against the Regulars.</span></a>`;
+  h += '</span></a>';
+  h += `<a class="v3-tile v3-tile-red" href="#practice"><span class="v3-tile-name">Play the Regulars</span>${miniTable(['doug_poker', 'milk_king', 'phil_bigmouth', 'nik_airbag', 'jen_silly'])}</a>`;
   h += '</div>';
   // The heads-up challenge: one Regular at a time, up the ladder.
-  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span><span>Best of three. Win to climb, lose to drop.</span></span>';
+  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span></span>';
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
