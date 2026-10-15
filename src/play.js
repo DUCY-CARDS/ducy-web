@@ -25,7 +25,7 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { chipsHtml as chipPile } from './chips.js';
+import { chipsHtml as chipPile, rowHtml as chipRow, seatChips } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
@@ -1966,7 +1966,8 @@ function seatPos(i, n) {
 // it's drawn: 2:1, or 2:3 on a phone (style.css, .pl-felt.crowded).
 const CROWDED = 8;
 // How far a seat's bet sits from the seat toward the middle of the felt.
-const BET_REACH = 0.5;
+const BET_REACH = 0.6;
+const BET_REACH_PHONE = 0.35;
 const HERO_ROOM = 1.3;
 const crowdedCache = {};
 function crowdedPos(n) {
@@ -2270,8 +2271,11 @@ function renderTable() {
   // Chips (chips.js): the pot as a pile in the middle, bets in front of the
   // seats, and each stack beside its seat on wider screens. The amounts stay
   // as numbers too.
+  // The pot is what's been gathered: this street's bets are still in front
+  // of the players until the betting closes.
   const bb = num(s.big_blind ?? setup.bb);
-  h += `<div class="pl-pot">${chipPile(num(s.pot), bb, 6, 'ch-pot')}<span class="pl-amt">Pot ${c(s.pot)}</span></div></div>`;
+  const gathered = num(s.pot) - s.seats.reduce((t, x) => t + num(x.street_bet), 0);
+  h += gathered > 0 ? `<div class="pl-pot">${chipPile(gathered, bb, 6, 'ch-pot', true)}<span class="pl-amt">Pot ${c(gathered)}</span></div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
@@ -2292,7 +2296,9 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipPile(num(seat.stack), bb, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
+    // Its bet is paid out of its own chips (chips.js seatChips).
+    const chips = seatChips(num(seat.stack), num(seat.street_bet), bb);
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -2307,10 +2313,12 @@ function renderTable() {
     if (setup.hud) h += hudHtml(seatId(i));
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
-    // The bet on the felt, part of the way from the seat to the middle.
+    // The bet on the felt, part of the way from the seat to the middle (less
+    // of the way on phones, whose felt is narrow: style.css).
     if (num(seat.street_bet) > 0) {
-      const bx = p.x + (50 - p.x) * BET_REACH, by = p.y + (46 - p.y) * BET_REACH;
-      h += `<div class="pl-bet" style="left:${bx}%;top:${by}%">${chipPile(num(seat.street_bet), bb, 3, 'ch-bet')}<span class="pl-amt">${c(seat.street_bet)}</span></div>`;
+      const at = reach => [p.x + (50 - p.x) * reach, p.y + (46 - p.y) * reach];
+      const [bx, by] = at(BET_REACH), [px, py] = at(BET_REACH_PHONE);
+      h += `<div class="pl-bet" style="--bx:${bx}%;--by:${by}%;--px:${px}%;--py:${py}%">${chipRow(chips.bet, 4, 'ch-bet')}<span class="pl-amt">${c(seat.street_bet)}</span></div>`;
     }
   });
   h += '</div>';
