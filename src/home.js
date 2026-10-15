@@ -2,7 +2,7 @@
 //   #        the landing page: Study or Play, nothing else
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
 //            Challenge the Regulars
-//   #challenge  Challenge the Regulars: climb the ladder, or the GTO bot
+//   #challenge  Challenge the Regulars: the heads-up challenge, or the GTO bot
 //   #lobby   Play, tables with other players: friends, private clubs and the
 //            Regulars
 // The pages behind them (#equity, #trainer, #ladder, #practice, #host,
@@ -24,7 +24,7 @@ export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Challenge the R
 const CRUMBS = {
   equity: ['study', 'Equity'],
   trainer: ['study', 'Pre-flop ranges'],
-  ladder: ['challenge', 'Climb the ladder'],
+  ladder: ['challenge', 'Heads-up challenge'],
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
@@ -174,13 +174,13 @@ function studyPage(d) {
   h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><span>Test your ability to play different ranges.</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
   h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Challenge the Regulars</span>';
   h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gus_bluffsen')}" alt=""></span>`;
-  h += `<span>Climb the ladder or take on the GTO bot.</span><b>Rung ${d.rung} of ${d.rungs}</b></a>`;
+  h += `<span>Take the heads-up challenge or the GTO bot.</span><b>Rung ${d.rung} of ${d.rungs}</b></a>`;
   return h + '</div></div>';
 }
 
 function challengePage(d) {
   let h = '<div class="v3-page">' + head('Challenge the Regulars', {href: '#study', label: 'Study'}, 'study');
-  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Climb the ladder</span><span>Best of three. Win to climb, lose to drop.</span></span>';
+  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span><span>Best of three. Win to climb, lose to drop.</span></span>';
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
