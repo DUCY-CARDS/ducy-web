@@ -50,6 +50,8 @@ const snapshot = state => ({state, botToAct: table.botToAct()});
 const GTO_CACHE = 'ducy-gto';
 const GTO_PLO_CACHE = 'ducy-gto-plo';
 const GTO_PLO6_CACHE = 'ducy-gto-plo6';
+// Hold'em blueprints trained at other depths (#251) have their own too.
+const GTO_DEPTHS_CACHE = 'ducy-gto-depths';
 const gtoLoaded = {};
 
 async function cachedBytes(cacheName, url) {
@@ -84,6 +86,41 @@ async function loadGtoModel(manifestUrl, cacheName, load) {
     for (const req of await cache.keys()) if (!req.url.startsWith(base.href)) await cache.delete(req);
   } catch {}
   return true;
+}
+
+// The Hold'em GTO bot's blueprints for other depths, from depths.json next
+// to its manifest ([{bb, dir, blueprint}]), each added with loadGtoDepth so
+// the bot plays a hand with the one trained nearest its depth. Needs a
+// ducy-wasm with loadGtoDepth; a missing list or a blueprint that fails to
+// load is skipped, and the bot plays those depths with the main blueprint.
+// Returns the depths loaded.
+async function loadGtoDepths(manifestUrl) {
+  if (typeof wasm.loadGtoDepth !== 'function') return [];
+  const listUrl = new URL('depths.json', manifestUrl).href;
+  let list;
+  try {
+    const res = await fetch(listUrl, {cache: 'no-cache'});
+    if (!res.ok) return [];
+    list = await res.json();
+  } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  const urls = list.map(d => new URL(`${d.dir}/${d.blueprint}`, listUrl).href);
+  const key = urls.join(' ');
+  if (gtoLoaded[GTO_DEPTHS_CACHE]?.key === key) return gtoLoaded[GTO_DEPTHS_CACHE].bbs;
+  const bbs = [];
+  for (const [i, d] of list.entries()) {
+    try {
+      wasm.loadGtoDepth(await cachedBytes(GTO_DEPTHS_CACHE, urls[i]), BigInt(d.bb));
+      bbs.push(d.bb);
+    } catch (e) { console.warn(e); }
+  }
+  gtoLoaded[GTO_DEPTHS_CACHE] = {key, bbs};
+  // Drop blueprints no longer listed from the cache.
+  try {
+    const cache = await caches.open(GTO_DEPTHS_CACHE);
+    for (const req of await cache.keys()) if (!urls.includes(req.url)) await cache.delete(req);
+  } catch {}
+  return bbs;
 }
 
 const ops = {
@@ -134,7 +171,15 @@ const ops = {
   act: (kind, amount) => snapshot(table.act(kind, BigInt(amount))),
   // All-in with cards to come: run it twice (yes) or once; the bots go along.
   runTwice: yes => snapshot(table.runTwice(!!yes)),
-  loadGto: manifestUrl => loadGtoModel(manifestUrl, GTO_CACHE, loadGto),
+  // Then its other depths. A new main model clears them in the engine, so
+  // they're loaded again.
+  loadGto: async manifestUrl => {
+    const before = gtoLoaded[GTO_CACHE];
+    await loadGtoModel(manifestUrl, GTO_CACHE, loadGto);
+    if (gtoLoaded[GTO_CACHE] !== before) delete gtoLoaded[GTO_DEPTHS_CACHE];
+    await loadGtoDepths(manifestUrl);
+    return true;
+  },
   // The PLO GTO bot ("gto-plo" at a plo4 table) came later; an older
   // ducy-wasm doesn't have it. Its blueprint is for a depth of `bb` big blinds.
   gtoPloSupported: () => typeof wasm.loadGtoPlo === 'function',

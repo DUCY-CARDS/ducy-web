@@ -80,3 +80,11 @@ jobs:
             gh release download "$TAG" -R allenpiscitello/ducy -p cards.bin -p blueprint.bin -D gto-model
             scripts/upload-gto.sh gto-model/cards.bin gto-model/blueprint.bin "$TAG" "$TARGET" "$MANIFEST"
           done
+      # The Hold'em GTO bot's blueprints for other depths: the newest
+      # gto-depth-hunl-<N>bb-<name> release for each depth, listed in
+      # gto/depths.json (scripts/upload-gto-depths.sh).
+      - name: Publish the GTO bot's other depths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
+        run: scripts/upload-gto-depths.sh "$TARGET"
