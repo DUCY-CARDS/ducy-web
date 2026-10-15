@@ -8,8 +8,8 @@ const store = (items = {}) => ({ getItem: k => (k in items ? items[k] : null), s
 test('every older page has a breadcrumb back to Study or Play', () => {
   assert.deepEqual(crumbFor('equity'), [{href: '#study', label: 'Study'}, {href: null, label: 'Equity'}]);
   assert.deepEqual(crumbFor('trainer').map(c => c.label), ['Study', 'Pre-flop ranges']);
-  assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Study', 'Challenge the Regulars', 'Heads-up challenge']);
-  assert.deepEqual(crumbFor('ladder')[1].href, '#challenge');
+  assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Play', 'Heads-up challenge']);
+  assert.deepEqual(crumbFor('ladder')[0].href, '#lobby');
   for (const p of ['host', 'join', 'clubs', 'practice']) assert.equal(crumbFor(p)[0].href, '#lobby', p);
   assert.deepEqual(crumbFor('nowhere'), []);
 });
@@ -50,8 +50,8 @@ test('each hub links where it should', () => {
   const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
   // After the spade home and any way back: Study or Play.
   assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge']);
-  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice']);
+  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#codedoug', '#gto-plo4', '#gto-plo6']);
+  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice', '#ladder']);
   assert.equal(HUBS.length, 4);
 });
 
@@ -76,13 +76,18 @@ test('your record against the GTO bot is what it lost, per 100 hands', () => {
 test('the Study page shows progress', () => {
   const h = hubHtml('study', {mastered: 3, skills: 28, rung: 5, rungs: 20});
   assert.match(h, /3 of 28 skills mastered/);
-  assert.match(h, /Rung 5 of 20/);
   assert.match(h, /--pct:11%/);
 });
 
+test('the Play page shows the heads-up challenge and your rung', () => {
+  const h = hubHtml('lobby', {mastered: 3, skills: 28, rung: 5, rungs: 20});
+  assert.match(h, /Heads-up challenge/);
+  assert.match(h, /Rung 5 of 20/);
+});
+
 test('every page but the landing page can cross between Study and Play', () => {
-  for (const p of ['study', 'challenge', 'equity', 'trainer', 'ladder']) assert.equal(sideOf(p), 'study', p);
-  for (const p of ['lobby', 'practice', 'host', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
+  for (const p of ['study', 'challenge', 'equity', 'trainer']) assert.equal(sideOf(p), 'study', p);
+  for (const p of ['lobby', 'practice', 'ladder', 'host', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
   assert.equal(sideOf('play', 'clubs'), 'play');
   assert.equal(sideOf('home'), '');
   assert.match(sideSwitch('play'), /href="#study">Study<\/a><a href="#lobby" aria-current="true">Play/);

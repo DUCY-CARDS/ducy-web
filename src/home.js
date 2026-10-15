@@ -2,9 +2,9 @@
 //   #        the landing page: Study or Play, nothing else
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
 //            Challenge the Regulars
-//   #challenge  Challenge the Regulars: the heads-up challenge, or the GTO bot
-//   #lobby   Play, tables with other players: friends, private clubs and the
-//            Regulars
+//   #challenge  Challenge the Regulars: the GTO bot
+//   #lobby   Play: friends, private clubs, the Regulars and the heads-up
+//            challenge
 // The pages behind them (#equity, #trainer, #ladder, #practice, #host,
 // #join, #clubs) are the ones there were before V3; each shows where it is
 // with a breadcrumb back to Study or Play (`crumbFor`). Pure: the page
@@ -24,7 +24,7 @@ export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Challenge the R
 const CRUMBS = {
   equity: ['study', 'Equity'],
   trainer: ['study', 'Pre-flop ranges'],
-  ladder: ['challenge', 'Heads-up challenge'],
+  ladder: ['lobby', 'Heads-up challenge'],
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
@@ -174,16 +174,12 @@ function studyPage(d) {
   h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><span>Test your ability to play different ranges.</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
   h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Challenge the Regulars</span>';
   h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gus_bluffsen')}" alt=""></span>`;
-  h += `<span>Take the heads-up challenge or the GTO bot.</span><b>Rung ${d.rung} of ${d.rungs}</b></a>`;
+  h += '<span>Take on the GTO bot, and see how you do.</span></a>';
   return h + '</div></div>';
 }
 
 function challengePage(d) {
   let h = '<div class="v3-page">' + head('Challenge the Regulars', {href: '#study', label: 'Study'}, 'study');
-  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span><span>Best of three. Win to climb, lose to drop.</span></span>';
-  h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
-  for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
-  h += '</span></a>';
   h += '<h2 class="v3-h2">The GTO bot</h2><p class="v3-note">100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
   for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
     h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><span class="v3-tile-name">${g.name}</span>`;
@@ -194,7 +190,7 @@ function challengePage(d) {
   return h + '</div></div>';
 }
 
-function lobbyPage() {
+function lobbyPage(d) {
   let h = '<div class="v3-page">' + head('Play', null, 'play');
   h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span><span>A game for tonight.</span></span>';
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
@@ -204,14 +200,20 @@ function lobbyPage() {
   for (const id of ['player-06', 'player-07', 'player-08', 'player-09', 'player-10']) h += `<img src="${avatarUrl(id)}" alt="">`;
   h += '</span><span>Your clubs, chips and history.</span></a>';
   h += `<a class="v3-tile v3-tile-red" href="#practice"><span class="v3-tile-name">Play the Regulars</span>${miniTable(['doug_poker', 'milk_king', 'phil_bigmouth', 'nik_airbag', 'jen_silly'])}<span>Play immediately against the Regulars.</span></a>`;
-  return h + '</div></div>';
+  h += '</div>';
+  // The heads-up challenge: one Regular at a time, up the ladder.
+  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span><span>Best of three. Win to climb, lose to drop.</span></span>';
+  h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
+  for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
+  h += '</span></a>';
+  return h + '</div>';
 }
 
 /** The html of hub `name` (one of HUBS), with `d` from hubData. */
 export function hubHtml(name, d) {
   if (name === 'study') return studyPage(d);
   if (name === 'challenge') return challengePage(d);
-  if (name === 'lobby') return lobbyPage();
+  if (name === 'lobby') return lobbyPage(d);
   return homePage();
 }
 
