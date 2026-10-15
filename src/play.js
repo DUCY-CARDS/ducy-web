@@ -31,8 +31,9 @@ import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
-  BLINDS, START_BB, STAKES_EVERY, WINS_TO_TAKE, answerStakes, finishGame, gameBlinds, keepGame,
-  loadProgress, newProgress, pausedGame, opponentOf, rungsFor, saveProgress, stakesOffer, startGame,
+  START_BB, START_CHIPS, STAKES_EVERY, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
+  finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
+  rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
 import { addHand, lessonsByHand, lessonsShare } from './ladder-review.js';
 import { SPADE_PATH } from './home.js';
@@ -462,13 +463,22 @@ const mysteryAvatar = '<span class="ld-av none" aria-hidden="true">?</span>';
 const ladderRevealed = (p, rungs, i, level) =>
   i < level || !!p.record[rungs[i]] || (i === level && (p.wins + p.losses > 0 || !!pausedGame(p)));
 
+// Where a finished game left you: the rung, its bot and your chips.
+// `short`: the series ended for want of a buy-in for the next game.
+function ladderAfter(p, short) {
+  const rungs = ladderRungs();
+  return {next: opponentOf(p, rungs), level: levelOf(p, rungs), chips: p.chips, short: !!short};
+}
+
 // What a finished game or series means, in a sentence.
-function ladderOutcomeText(won, outcome, opp, next) {
+function ladderOutcomeText(won, outcome, opp, after) {
   const who = esc(botInfo(opp).name);
   if (outcome === 'game') return won ? `You beat ${who} in this game.` : `${who} took this game.`;
-  if (outcome === 'up') return `You won the series against ${who}. On to the next rung.`;
+  if (outcome === 'up') return `You won the series against ${who}. On to the next rung, at double the stakes, with ${c(after.chips)}.`;
   if (outcome === 'champion') return `You beat ${who}, the champion. You’re at the top of the ladder!`;
-  if (outcome === 'down') return `${who} won the series. You drop a rung, to ${esc(botInfo(next).name)}.`;
+  const lost = after.short ? `${who} took this game, and you can’t cover another at these stakes.` : `${who} won the series.`;
+  if (outcome === 'down') return `${lost} With ${c(after.chips)}, you drop to rung ${after.level + 1}, ${esc(botInfo(after.next).name)}.`;
+  if (outcome === 'bust') return `${lost} You’re out of buy-ins, so you start over at the bottom with ${c(START_CHIPS)}.`;
   return `${who} won the series. Win two games to climb.`;
 }
 
@@ -488,7 +498,7 @@ function ladderHtml() {
   const level = Math.min(p.level, rungs.length - 1);
   const opp = rungs[level];
   const info = botInfo(opp);
-  let h = `<div class="pl-head"><h1>Climb the ladder</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, lose to drop.</p></div>`;
+  let h = `<div class="pl-head"><h1>Climb the ladder</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, at double the stakes. Your chips carry over; lose and you drop to the rung you can pay for.</p></div>`;
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
   h += ladderLastReviewHtml();
   // The next series.
@@ -505,14 +515,17 @@ function ladderHtml() {
   if (record) h += `<span class="ld-before">Before: ${record.won} won, ${record.lost} lost</span>`;
   h += '</div>';
   const paused = pausedGame(p);
+  const buyIn = buyInAt(level);
+  const games = Math.floor(p.chips / buyIn);
+  h += `<p class="ld-desc ld-chips">Your chips: <b>${c(chipsNow(p))}</b>${paused ? '' : `, enough for ${games} game${games === 1 ? '' : 's'} at these stakes`}</p>`;
   if (paused) {
-    const raised = gameBlinds(p)[1] !== BLINDS[1] ? `, blinds ${blindsText(gameBlinds(p))}` : '';
+    const raised = gameBlinds(p)[1] !== blindsAt(level)[1] ? `, blinds ${blindsText(gameBlinds(p))}` : '';
     h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}${raised}.</p>`;
   }
   if (setupNote) h += `<p class="ld-desc">${esc(setupNote)}</p>`;
   const play = paused ? `Resume game ${game}` : game === 1 ? 'Start the series' : `Play game ${game}`;
   h += `<div class="ld-go"><button class="tr-start" data-act="ladder-play">${play}</button>`;
-  h += `<span class="ld-rules">Hold’em, ${START_BB} big blinds each, blinds ${blindsText(BLINDS)}, no rebuys. Every ${STAKES_EVERY} hands, they may offer to double the blinds.</span></div>`;
+  h += `<span class="ld-rules">Hold’em, ${c(buyIn)} buy-in each (${START_BB} big blinds), blinds ${blindsText(blindsAt(level))}, no rebuys. Every ${STAKES_EVERY} hands, they may offer to double the blinds.</span></div>`;
   h += '</section>';
   // Every rung, easiest first: a filled spade for each one beaten.
   h += '<ol class="ld-rungs" aria-label="The ladder, easiest first">';
@@ -522,7 +535,7 @@ function ladderHtml() {
     const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : 'Ahead';
     const shown = ladderRevealed(p, rungs, i, level);
     const name = shown ? esc(botInfo(id).name) : '???';
-    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''} title="${name}: ${tag}${r ? ` (${r.won}–${r.lost})` : ''}">`;
+    h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''} title="${name}: ${tag}${r ? ` (${r.won}–${r.lost})` : ''}, blinds ${blindsText(blindsAt(i))}">`;
     h += `<svg class="ld-spade" viewBox="0 0 32 32" width="18" height="18" aria-hidden="true"><path d="${SPADE_PATH}"/></svg>`;
     h += `${shown ? ladderAvatar(id) : mysteryAvatar}<span class="ld-num">${i + 1}</span><span class="ld-name">${name}</span></li>`;
   }
@@ -541,7 +554,7 @@ async function startLadderGame() {
   const opp = rungs[rung];
   if (!await prepareGto([opp])) { render(); return; }
   ladderNote = '';
-  ladderProgress = startGame(ladderProgress);
+  ladderProgress = startGame(ladderProgress, rungs);
   saveProgress(ladderProgress);
   const {stacks, hands} = ladderProgress.game;
   // Left with no chips behind (all-in when the page closed): that game is lost.
@@ -549,7 +562,7 @@ async function startLadderGame() {
     const r = finishGame(ladderProgress, rungs, stacks[0] > 0);
     ladderProgress = r.progress;
     saveProgress(ladderProgress);
-    ladderNote = ladderOutcomeText(stacks[0] > 0, r.outcome, opp, opponentOf(ladderProgress, rungs));
+    ladderNote = ladderOutcomeText(stacks[0] > 0, r.outcome, opp, ladderAfter(ladderProgress, r.short));
     render();
     return;
   }
@@ -559,7 +572,7 @@ async function startLadderGame() {
   // The game's blinds, raised or not; the buy-in is only a floor here (the
   // stacks are set), so it's the starting one.
   const [sb, bb] = gameBlinds(ladderProgress);
-  await sitDown({bots: [opp], game: 'nlhe', buyIn: Math.max(START_BB * BLINDS[1], bb), sb, bb, gto: false, stacks, reviewAll: reviewer});
+  await sitDown({bots: [opp], game: 'nlhe', buyIn: Math.max(buyInAt(rung), bb), sb, bb, gto: false, stacks, reviewAll: reviewer});
 }
 
 // The GTO bot's strategy, which ladder hands are graded against (#284):
@@ -660,7 +673,7 @@ function ladderCheck() {
     ladderProgress = {...ladderProgress, lastReview: {at: ladder.at, opp: ladder.opp, won: mine > 0, hands, ...review}};
   }
   saveProgress(ladderProgress);
-  ladder.over = {won: mine > 0, outcome: r.outcome, next: opponentOf(ladderProgress, rungs)};
+  ladder.over = {won: mine > 0, outcome: r.outcome, after: ladderAfter(ladderProgress, r.short)};
 }
 
 // Left before the game was over: it's paused with the chips as they stand (a
@@ -672,7 +685,7 @@ function ladderLeave() {
     const g = pausedGame(ladderProgress);
     ladderNote = g ? `Game paused: you have ${c(g.stacks[0])}, ${esc(botInfo(ladder.opp).name)} ${c(g.stacks[1])}. Pick it up any time.` : '';
   } else if (ladder.over.outcome !== 'game') {
-    ladderNote = ladderOutcomeText(ladder.over.won, ladder.over.outcome, ladder.opp, ladder.over.next);
+    ladderNote = ladderOutcomeText(ladder.over.won, ladder.over.outcome, ladder.opp, ladder.over.after);
   }
   ladder = null;
 }
@@ -690,8 +703,8 @@ function ladderBarHtml() {
 function ladderOverHtml() {
   const o = ladder.over;
   const p = ladderProgress;
-  let text = ladderOutcomeText(o.won, o.outcome, ladder.opp, o.next);
-  if (o.outcome === 'game') text += ` Series: you ${p.wins} – ${p.losses}.`;
+  let text = ladderOutcomeText(o.won, o.outcome, ladder.opp, o.after);
+  if (o.outcome === 'game') text += ` Series: you ${p.wins} – ${p.losses}. Your chips: ${c(p.chips)}.`;
   const label = o.outcome === 'game' ? `Play game ${p.wins + p.losses + 1}` : 'Back to the ladder';
   return {status: `<span class="pl-result ld-over ${o.won ? 'won' : 'lost'}">${text}</span>`, button: `<button class="tr-start" data-act="ladder-next">${label}</button>`};
 }
