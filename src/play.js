@@ -26,7 +26,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { handText, handWords } from './hand-words.js';
-import { BOT_AVATARS, PLAYER_AVATARS, avatarUrl } from './avatars.js';
+import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
@@ -453,8 +453,8 @@ function botsSetupHtml() {
 
 const ladderRungs = () => rungsFor(personalities.map(p => p.id), gtoAvailable);
 const botInfo = id => (id === GTO.id ? GTO : personalities.find(p => p.id === id)) || {id, name: id, description: ''};
-const ladderAvatar = id => (BOT_AVATARS.has(id)
-  ? `<span class="ld-av"><img src="${avatarUrl(id)}" alt=""></span>`
+const ladderAvatar = id => (botAvatar(id)
+  ? `<span class="ld-av"><img src="${avatarUrl(botAvatar(id))}" alt=""></span>`
   : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
 const blindsText = ([sb, bb]) => `${chipText(sb)}/${chipText(bb)}`;
 const mysteryAvatar = '<span class="ld-av none" aria-hidden="true">?</span>';
@@ -1992,10 +1992,10 @@ function crowdedPos(n) {
 }
 
 // A seat's avatar: yours as picked in Player settings, a bot's main look by
-// its personality id. Anyone else (the GTO bot, other people at a friends or
-// club table) gets the first letter of their name.
+// its personality id (the GTO bot: the robot). Anyone else (other people at a
+// friends or club table) gets the first letter of their name.
 function avatarHtml(i) {
-  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' && BOT_AVATARS.has(seatId(i)) ? seatId(i) : '';
+  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' ? botAvatar(seatId(i)) : '';
   if (id) return `<div class="pl-av"><img src="${avatarUrl(id)}" alt=""></div>`;
   const letter = [...String(state.seats[i].name || '?').trim()][0] || '?';
   return `<div class="pl-av none" aria-hidden="true">${esc(letter.toUpperCase())}</div>`;

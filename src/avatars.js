@@ -24,6 +24,10 @@ export const BOT_AVATARS = new Set([
   'tommy_sweeden',
 ]);
 
+// A bot's avatar id, or '' if it has none: the GTO bots (Hold'em and both
+// Omahas) share the robot.
+export const botAvatar = id => (String(id).startsWith('gto') ? 'gto' : BOT_AVATARS.has(id) ? id : '');
+
 export const PLAYER_AVATARS = [
   {id: 'player-01', label: 'Hoodie'},
   {id: 'player-02', label: 'Silver fox'},
