@@ -25,6 +25,7 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
+import { chipsHtml as chipPile, rowHtml as chipRow, seatChips } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
@@ -1965,6 +1966,9 @@ function seatPos(i, n) {
 // the seats are spaced evenly by distance round the felt's edge instead, as
 // it's drawn: 2:1, or 2:3 on a phone (style.css, .pl-felt.crowded).
 const CROWDED = 8;
+// How far a seat's bet sits from the seat toward the middle of the felt.
+const BET_REACH = 0.6;
+const BET_REACH_PHONE = 0.35;
 const HERO_ROOM = 1.3;
 const crowdedCache = {};
 function crowdedPos(n) {
@@ -2265,7 +2269,16 @@ function renderTable() {
   // Run twice: the second board, each pot split between the two.
   // (Mid-runout it shows empty too, while its first cards are coming.)
   if (s.second_board?.length || (peeling && s.peelNext?.[0] === 2)) h += `<div class="pl-board pl-board2" title="${bombHand(s) ? 'Board 2' : 'The second run'}">${[0, 1, 2, 3, 4].map(i => (s.second_board[i] ? cardHtml(s.second_board[i]) : slot(2, i))).join('')}</div>`;
-  h += `<div class="pl-pot">Pot ${c(s.pot)}</div></div>`;
+  // Chips (chips.js): the pot as a pile in the middle, bets in front of the
+  // seats, and each stack beside its seat on wider screens. The amounts stay
+  // as numbers too.
+  // The pot is what's been gathered: this street's bets are still in front
+  // of the players until the betting closes.
+  const bb = num(s.big_blind ?? setup.bb);
+  const gathered = num(s.pot) - s.seats.reduce((t, x) => t + num(x.street_bet), 0);
+  // The total, bets out included, under it while there are bets out.
+  const total = num(s.pot) > gathered ? `<span class="pl-total">Total ${c(s.pot)}</span>` : '';
+  h += gathered > 0 || total ? `<div class="pl-pot">${chipPile(gathered, bb, 6, 'ch-pot', true)}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
@@ -2286,7 +2299,9 @@ function renderTable() {
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
     h += avatarHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div>`;
+    // Its bet is paid out of its own chips (chips.js seatChips).
+    const chips = seatChips(num(seat.stack), num(seat.street_bet), bb);
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -2299,9 +2314,15 @@ function renderTable() {
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (i === 0) h += liveBadgeHtml();
     if (setup.hud) h += hudHtml(seatId(i));
-    if (num(seat.street_bet) > 0) h += `<div class="pl-bet">${c(seat.street_bet)}</div>`;
     if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
+    // The bet on the felt, part of the way from the seat to the middle (less
+    // of the way on phones, whose felt is narrow: style.css).
+    if (num(seat.street_bet) > 0) {
+      const at = reach => [p.x + (50 - p.x) * reach, p.y + (46 - p.y) * reach];
+      const [bx, by] = at(BET_REACH), [px, py] = at(BET_REACH_PHONE);
+      h += `<div class="pl-bet" style="--bx:${bx}%;--by:${by}%;--px:${px}%;--py:${py}%">${chipRow(chips.bet, 4, 'ch-bet')}<span class="pl-amt">${c(seat.street_bet)}</span></div>`;
+    }
   });
   h += '</div>';
   h += summaryHtml();
