@@ -12,10 +12,12 @@ export const PERSONAS = {
   doug_poker: {tone: 'cool', talk: 0.3},
   jonny_slow: {tone: 'friendly', talk: 0.25},
   mister_cheating: {tone: 'needle', talk: 0.5},
-  milk_king: {tone: 'chatty', talk: 0.6},
+  // The whale is always nice: happy to gamble, happy to lose.
+  milk_king: {tone: 'friendly', talk: 0.6},
   phil_bigmouth: {tone: 'needle', talk: 0.8},
   rampart: {tone: 'needle', talk: 0.5},
-  danny_smallball: {tone: 'friendly', talk: 0.3},
+  // Friendly, until he loses a pot: then he tilts and cusses you out.
+  danny_smallball: {tone: 'friendly', talk: 0.3, tilt: true},
   chris_moneybags: {tone: 'chatty', talk: 0.5},
   robin_jane_lewd: {tone: 'chatty', talk: 0.5},
   gus_bluffsen: {tone: 'needle', talk: 0.5},
@@ -23,7 +25,7 @@ export const PERSONAS = {
   michael_miserable: {tone: 'grump', talk: 0.5},
   brad_owned: {tone: 'grump', talk: 0.4},
   nik_airbag: {tone: 'needle', talk: 0.7},
-  bungleman: {tone: 'friendly', talk: 0.5},
+  bungleman: {tone: 'needle', talk: 0.6},
   tom_collins: {tone: 'cool', talk: 0.4},
   the_mathematician: {tone: 'math', talk: 0.4},
   andrew_favorable: {tone: 'friendly', talk: 0.4},
@@ -169,6 +171,15 @@ export const LINES = {
   },
 };
 
+// A tilting player's lines when he's losing (a persona with `tilt`): angry,
+// and he cusses, with the words bleeped.
+const LOSING = new Set(['lostToYou', 'bigLoss', 'gameLost']);
+export const TILT_LINES = {
+  lostToYou: ['Are you kidding me?! @#$%!', 'Unbelievable. You called with THAT?', 'Oh, come ON. #@$%ing river.', 'Every. Single. Time. @#$%.', 'Learn to fold, you @#$%.'],
+  bigLoss: ['@#$%! Rigged.', 'Damn it. DAMN it.', 'I can’t believe this @#$%.'],
+  gameLost: ['@#$% this. Lucky @#$%. Rematch.', 'You sucked out all game. GG, I guess.', 'Unreal. @#$%ing unreal.'],
+};
+
 // Moments a bot always speaks at (when the chat is on), however quiet: they
 // open and close a heads-up challenge game, and answer when you talk.
 const ALWAYS = new Set(['gameWon', 'gameLost']);
@@ -188,7 +199,8 @@ export function speaks(id, moment, {headsUp = false, ladder = false, rng = Math.
 
 // A line for `moment` in the bot's tone (null if there's none).
 export function lineFor(id, moment, rng = Math.random) {
-  const lines = LINES[personaOf(id).tone]?.[moment];
+  const persona = personaOf(id);
+  const lines = (persona.tilt && LOSING.has(moment) && TILT_LINES[moment]) || LINES[persona.tone]?.[moment];
   if (!lines?.length) return null;
   return lines[Math.floor(rng() * lines.length)];
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LINES, PERSONAS, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
+import { LINES, PERSONAS, TILT_LINES, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
 
 const MOMENTS = ['greet', 'wonFromYou', 'lostToYou', 'bigWin', 'bigLoss', 'stakes', 'gameWon', 'gameLost', 'idle', 'hello', 'luck', 'nice', 'thanks', 'laugh', 'gg', 'other'];
 
@@ -16,9 +16,22 @@ test('some Regulars are nice and some trash talk', () => {
   assert.ok(tones.has('friendly') && tones.has('needle'));
   assert.equal(personaOf('phil_bigmouth').tone, 'needle');
   assert.equal(personaOf('jen_silly').tone, 'friendly');
+  assert.equal(personaOf('bungleman').tone, 'needle');
+  assert.equal(personaOf('milk_king').tone, 'friendly');
+  assert.equal(personaOf('andrew_favorable').tone, 'friendly');
   // Every GTO bot is the robot; an unknown bot talks like a friendly one.
   assert.equal(personaOf('gto-plo6').tone, 'robot');
   assert.equal(personaOf('someone_new').tone, 'friendly');
+});
+
+test('Danny is friendly, until he loses a pot', () => {
+  assert.ok(LINES.friendly.greet.includes(lineFor('danny_smallball', 'greet', () => 0)));
+  assert.ok(LINES.friendly.wonFromYou.includes(lineFor('danny_smallball', 'wonFromYou', () => 0)));
+  for (const m of ['lostToYou', 'bigLoss', 'gameLost']) {
+    assert.ok(TILT_LINES[m].includes(lineFor('danny_smallball', m, () => 0)), m);
+  }
+  // Nobody else tilts.
+  assert.ok(LINES.friendly.lostToYou.includes(lineFor('jen_silly', 'lostToYou', () => 0)));
 });
 
 test('lines come from the bot’s own tone', () => {
