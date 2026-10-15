@@ -19,9 +19,10 @@ test('host and player derive the same key; sealed updates open on the other side
   const {hk, pk} = await pair();
   const box = await seal(hk, update);
   assert.deepEqual(await open(pk, box), update);
-  // The ciphertext doesn't show the cards.
-  assert.ok(!JSON.stringify(box).includes('As'));
-  assert.ok(!JSON.stringify(box).includes('cards'));
+  // The ciphertext doesn't show the cards. (Quoted: the base64 ciphertext
+  // is random letters, so a bare "As" turns up in it now and then.)
+  assert.ok(!JSON.stringify(box).includes('"As"'));
+  assert.ok(!JSON.stringify(box).includes('"cards"'));
 });
 
 test('every update gets a fresh IV, so equal updates look different', async () => {

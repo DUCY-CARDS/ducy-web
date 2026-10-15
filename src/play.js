@@ -30,6 +30,7 @@ import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
+import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
@@ -631,6 +632,7 @@ function ladderAddReview(g, data, hand) {
 function ladderOfferCheck() {
   if (!ladder || ladder.over || ladder.offer || peeling || !state?.complete || !num(state.hand_number)) return;
   ladder.offer = stakesOffer(ladderProgress);
+  if (ladder.offer) botSpeak(1, 'stakes', {force: true, delay: 400});
 }
 
 // Your answer: accepted, the blinds double from the next hand.
@@ -678,6 +680,8 @@ function ladderCheck() {
   }
   saveProgress(ladderProgress);
   ladder.over = {won: mine > 0, outcome: r.outcome, after: ladderAfter(ladderProgress, r.short)};
+  // The bot has the last word: from its side, you winning is its loss.
+  botSpeak(1, mine > 0 ? 'gameLost' : 'gameWon', {force: true, delay: 1200});
 }
 
 // Left before the game was over: it's paused with the chips as they stand (a
@@ -941,6 +945,7 @@ function show(snap) {
   const hn = num(snap.state.hand_number);
   if (handHook && snap.state.complete && hn && hn !== hookedHand) { hookedHand = hn; handHook(snap.state); }
   recordStats();
+  botChatAfterHand();
   startReview();
   ladderCheck();
   ladderReviewHand();
@@ -1119,7 +1124,14 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
   tableBombs = snap && bombs && await call('setBombPots', bombs, bb) ? bombs : 0;
   // Before the bot can act: it may fold the first hand straight away.
   if (snap && reviewAll && ladder) ladder.reviewing = await call('setReviewAll', true);
-  if (snap) show(snap);
+  resetChat();
+  botSay = {};
+  botSpoke = {};
+  botChatHand = 0;
+  if (snap) {
+    show(snap);
+    botChatGreet();
+  }
 }
 
 async function nextHand() {
@@ -1307,6 +1319,13 @@ async function sendChat() {
     postChat({from: chatName(setup.name), text, at: Date.now()});
     return;
   }
+  // At a bot table it stays here, and a bot may answer.
+  if (mode === 'solo') {
+    box.value = '';
+    addChatLine({from: chatName(setup.name || 'You'), text, at: Date.now()});
+    botChatReply(text);
+    return;
+  }
   // A guest's goes to the host, which sends it back to everyone, us too.
   if (!e2eGuest?.aes) { chatNote = 'Not connected to the table yet.'; syncChat(); return; }
   box.value = '';
@@ -1314,8 +1333,82 @@ async function sendChat() {
   syncChat();
 }
 
-// Chat is for friends tables: the host and players who joined with the code.
-const chatTable = () => mode === 'host' || (mode === 'guest' && joinedByCode && !watching);
+// Chat is for friends tables (the host and players who joined with the code),
+// and bot tables, where the bots talk (bot-chat.js).
+const chatTable = () => mode === 'host' || (mode === 'guest' && joinedByCode && !watching) || (mode === 'solo' && botChatOn());
+
+// Bot talk (bot-chat.js): what each bot seat is saying (shown over the seat
+// for SAY_MS, and in the chat), the hand each last spoke after, and the last
+// hand talked about.
+const SAY_MS = 5000;
+let botSay = {};
+let botSpoke = {};
+let botChatHand = 0;
+const botChatOn = () => setup.botChat !== false;
+const botSeats = () => (state?.seats || []).map((s, i) => i).filter(i => i > 0 && !state.seats[i].empty && !state.seats[i].sitting_out);
+const headsUpTable = () => botSeats().length === 1;
+
+// A bot seat says something about `moment`, after `delay` ms: if the chat's
+// on, it has a line for it, and (unless `force`) it feels like talking and
+// hasn't just spoken.
+function botSpeak(seat, moment, {force = false, delay = 800} = {}) {
+  if (!botChatOn() || mode !== 'solo' || !state?.seats?.[seat]) return;
+  const id = seatId(seat);
+  const hand = num(state.hand_number);
+  const gap = headsUpTable() ? 1 : 3;
+  if (!force) {
+    if (botSpoke[seat] != null && hand - botSpoke[seat] < gap) return;
+    if (!speaks(id, moment, {headsUp: headsUpTable(), ladder: !!ladder})) return;
+  }
+  const text = lineFor(id, moment);
+  if (!text) return;
+  botSpoke[seat] = hand;
+  const table = tableBots.join();
+  setTimeout(() => {
+    // Gone from the table meanwhile, or another table now.
+    if (mode !== 'solo' || tableBots.join() !== table || !state?.seats?.[seat]) return;
+    botSay = {...botSay, [seat]: {text, until: Date.now() + SAY_MS}};
+    addChatLine({from: state.seats[seat].name, text, at: Date.now()});
+    render();
+    setTimeout(() => {
+      if (!(botSay[seat]?.until <= Date.now())) return; // a newer line
+      botSay = Object.fromEntries(Object.entries(botSay).filter(([k]) => +k !== seat));
+      render();
+    }, SAY_MS + 50);
+  }, delay);
+}
+
+// After each hand: maybe a word about it from the bot it concerned; heads-up,
+// now and then, a word anyway.
+function botChatAfterHand() {
+  if (mode !== 'solo' || !state?.complete) return;
+  const hn = num(state.hand_number);
+  if (!hn || hn === botChatHand) return;
+  botChatHand = hn;
+  // A challenge game's last hand: the bot speaks to the game instead (ladderCheck).
+  if (ladder && state.seats.some(s => !s.empty && !num(s.stack))) return;
+  const said = handMoments(state.seats, num(state.big_blind ?? setup.bb));
+  for (const {seat, moment} of said) botSpeak(seat, moment);
+  if (!said.length && headsUpTable()) botSpeak(botSeats()[0], 'idle');
+}
+
+// Sitting down: the bots say hello (heads-up always in a challenge game).
+function botChatGreet() {
+  botSeats().forEach((seat, k) => botSpeak(seat, 'greet', {delay: 900 + k * 700}));
+}
+
+// You said something: a bot answers (heads-up, your opponent; otherwise one
+// you named, or one at random).
+function botChatReply(text) {
+  const seats = botSeats();
+  if (!seats.length) return;
+  const lower = text.toLowerCase();
+  const named = seats.find(i => lower.includes(String(state.seats[i].name).toLowerCase().split(' ')[0]));
+  const seat = named ?? seats[Math.floor(Math.random() * seats.length)];
+  const moment = replyMoment(text);
+  if (!speaks(seatId(seat), moment, {headsUp: headsUpTable(), ladder: !!ladder})) return;
+  botSpeak(seat, moment, {force: true, delay: 1200 + Math.random() * 1200});
+}
 
 function resetChat() {
   chat = [];
@@ -1335,7 +1428,8 @@ let chatEl = null;
 let chatShown = null; // the messages the panel shows
 
 function syncChat() {
-  const on = open && seated && !!state && view === 'play' && chatTable();
+  // The heads-up challenge's table is on its own tab; its bot talks too.
+  const on = open && seated && !!state && (view === 'play' || (view === 'ladder' && !!ladder)) && chatTable();
   document.body.classList.toggle('pl-chat-on', on);
   document.body.classList.toggle('pl-chat-shut', setup.chat === false);
   if (!on) { if (chatEl) chatEl.hidden = true; return; }
@@ -2254,6 +2348,7 @@ function renderTable() {
   h += item('stats', 'Stats table', statsShown());
   if (!watching) h += item('sounds', 'Alerts', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
+  if (mode === 'solo') h += item('botchat', 'Bot chat', botChatOn(), 'The bots talk at the table, and answer when you chat');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   if (mode === 'guest') h += promoLineHtml();
@@ -2324,6 +2419,13 @@ function renderTable() {
       h += `<div class="pl-bet" style="--bx:${bx}%;--by:${by}%;--px:${px}%;--py:${py}%">${chipRow(chips.bet, 4, 'ch-bet')}<span class="pl-amt">${c(seat.street_bet)}</span></div>`;
     }
   });
+  // What the bots just said (bot-chat.js), over their seats for a few
+  // seconds: on the felt above every seat, never faded with a fold.
+  for (const [i, say] of Object.entries(botSay)) {
+    if (!(say.until > Date.now()) || !s.seats[i]) continue;
+    const p = seatPos(+i, n);
+    h += `<div class="pl-say" role="status" style="left:${p.x}%;top:${p.y}%">${esc(say.text)}</div>`;
+  }
   h += '</div>';
   h += summaryHtml();
   h += controlsHtml();
@@ -3019,6 +3121,7 @@ function onClick(e) {
   }
   else if (el.dataset.act === 'sounds') { setup.sounds = !setup.sounds; saveSetup(); render(); }
   else if (el.dataset.act === 'gamesounds') { setup.gameSounds = !setup.gameSounds; saveSetup(); render(); }
+  else if (el.dataset.act === 'botchat') { setup.botChat = !botChatOn(); if (!setup.botChat) botSay = {}; saveSetup(); render(); }
   else if (el.dataset.act === 'review') { setup.review = !setup.review; saveSetup(); startReview(); render(); }
   else if (el.dataset.act === 'live') { setup.live = !setup.live; saveSetup(); render(); }
   else if (el.dataset.act === 'stats') { statsOpen = !statsShown(); render(); }
