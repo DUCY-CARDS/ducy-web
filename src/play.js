@@ -31,7 +31,7 @@ import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
-  START_BB, START_CHIPS, STAKES_EVERY, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
+  START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
   rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
@@ -498,7 +498,7 @@ function ladderHtml() {
   const level = Math.min(p.level, rungs.length - 1);
   const opp = rungs[level];
   const info = botInfo(opp);
-  let h = `<div class="pl-head"><h1>Heads-up challenge</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb, at double the stakes. Your chips carry over; lose and you drop to the rung you can pay for.</p></div>`;
+  let h = `<div class="pl-head"><h1>Heads-up challenge</h1><p>Best of three. Win ${WINS_TO_TAKE} to climb.</p></div>`;
   if (ladderNote) h += `<p class="pl-desc ld-note">${ladderNote}</p>`;
   h += ladderLastReviewHtml();
   // The next series.
@@ -517,7 +517,7 @@ function ladderHtml() {
   const paused = pausedGame(p);
   const buyIn = buyInAt(level);
   const games = Math.floor(p.chips / buyIn);
-  h += `<p class="ld-desc ld-chips">Your chips: <b>${c(chipsNow(p))}</b>${paused ? '' : `, enough for ${games} game${games === 1 ? '' : 's'} at these stakes`}</p>`;
+  h += `<p class="ld-desc ld-chips">Your chips: <b>${c(chipsNow(p))}</b>${paused ? '' : ` (${games} buy-in${games === 1 ? '' : 's'})`}</p>`;
   if (paused) {
     const raised = gameBlinds(p)[1] !== blindsAt(level)[1] ? `, blinds ${blindsText(gameBlinds(p))}` : '';
     h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}${raised}.</p>`;
@@ -525,7 +525,7 @@ function ladderHtml() {
   if (setupNote) h += `<p class="ld-desc">${esc(setupNote)}</p>`;
   const play = paused ? `Resume game ${game}` : game === 1 ? 'Start the series' : `Play game ${game}`;
   h += `<div class="ld-go"><button class="tr-start" data-act="ladder-play">${play}</button>`;
-  h += `<span class="ld-rules">Hold’em, ${c(buyIn)} buy-in each (${START_BB} big blinds), blinds ${blindsText(blindsAt(level))}, no rebuys. Every ${STAKES_EVERY} hands, they may offer to double the blinds.</span></div>`;
+  h += `<span class="ld-rules">Blinds ${blindsText(blindsAt(level))} · ${c(buyIn)} buy-in</span></div>`;
   h += '</section>';
   // Every rung, easiest first: a filled spade for each one beaten.
   h += '<ol class="ld-rungs" aria-label="The ladder, easiest first">';
