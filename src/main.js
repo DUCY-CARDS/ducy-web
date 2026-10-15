@@ -1824,7 +1824,7 @@ function loadFromHash() {
 }
 
 // Modes: V3's front pages (home.js, #225: the landing page, Study, Play and
-// Challenge the Regulars), the equity calculator (#equity, or its hand in the
+// Heads-up training), the equity calculator (#equity, or its hand in the
 // address), the range trainer at #trainer, and the playing section
 // (play-section.js, #138), whose tabs are #play (or #practice), #ladder,
 // #join, #host and #clubs. Each page below the front pages shows a

@@ -1,8 +1,8 @@
 // V3's front pages (#225): the landing page and the two places it leads.
 //   #        the landing page: Study or Play, nothing else
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
-//            Challenge the Regulars
-//   #challenge  Challenge the Regulars: the GTO bot
+//            Heads-up training
+//   #challenge  Heads-up training: the GTO bot
 //   #lobby   Play: friends, private clubs, the Regulars and the heads-up
 //            challenge
 // The pages behind them (#equity, #trainer, #ladder, #practice, #host,
@@ -18,7 +18,7 @@ import { avatarUrl } from './avatars.js';
 export const HUBS = ['home', 'study', 'challenge', 'lobby'];
 
 // The window title of each hub ("Study · DUCY"); the landing page has none.
-export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Challenge the Regulars', lobby: 'Play'};
+export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Heads-up training', lobby: 'Play'};
 
 // Where each older page sits in V3, and what it's called there.
 const CRUMBS = {
@@ -30,7 +30,7 @@ const CRUMBS = {
   join: ['lobby', 'Join a game'],
   clubs: ['lobby', 'Private clubs'],
 };
-const PARENTS = {study: ['home', 'Study'], challenge: ['study', 'Challenge the Regulars'], lobby: ['home', 'Play']};
+const PARENTS = {study: ['home', 'Study'], challenge: ['study', 'Heads-up training'], lobby: ['home', 'Play']};
 
 /**
  * The breadcrumb for page `p`: [{href, label}], from the hub above it to the
@@ -172,14 +172,14 @@ function studyPage(d) {
   const pct = d.skills ? Math.round(100 * d.mastered / d.skills) : 0;
   h += `<a class="v3-tile v3-tile-cream" href="#trainer"><span class="v3-ring" style="--pct:${pct}%" aria-hidden="true"><span>${d.mastered}</span></span>`;
   h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><span>Test your ability to play different ranges.</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
-  h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Challenge the Regulars</span>';
+  h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Heads-up training</span>';
   h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gus_bluffsen')}" alt=""></span>`;
   h += '<span>Take on the GTO bot, and see how you do.</span></a>';
   return h + '</div></div>';
 }
 
 function challengePage(d) {
-  let h = '<div class="v3-page">' + head('Challenge the Regulars', {href: '#study', label: 'Study'}, 'study');
+  let h = '<div class="v3-page">' + head('Heads-up training', {href: '#study', label: 'Study'}, 'study');
   h += '<h2 class="v3-h2">The GTO bot</h2><p class="v3-note">100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
   for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
     h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><span class="v3-tile-name">${g.name}</span>`;

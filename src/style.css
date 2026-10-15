@@ -1583,7 +1583,7 @@ body.mode-v3 :is(.topbar, .sub-tabs, .toolbar, .table-wrap, .eq-layout, .trainer
 .v3-seat-3 { left: 22%; bottom: 0; }
 .v3-seat-4 { right: 22%; bottom: 0; }
 
-/* Study, Play and Challenge the Regulars: tiles */
+/* Study, Play and Heads-up training: tiles */
 .v3-games { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .v3-label { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--v3-cream-dim); }
 .v3-chip { background: var(--v3-cream); color: var(--v3-felt); border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 14px; }
