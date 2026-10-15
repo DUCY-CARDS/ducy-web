@@ -100,7 +100,9 @@ function render() {
   const p = tablePrefs();
   const row = (label, value, act) => `<div class="ps-row"><span>${label}</span>${act ? `<button type="button" class="ps-val" data-ps="${act}">${value}</button>` : `<b>${value}</b>`}</div>`;
   h += '<div class="ps-sections"><section class="ps-section"><span class="ps-section-title">At the table</span>';
-  h += row('Auto-deal', p.autoDeal ? 'On' : 'Off', 'pref-autoDeal');
+  // Against the bots the next hand always comes on its own; this is for
+  // tables of people.
+  h += row('Auto-deal with friends', p.autoDeal ? 'On' : 'Off', 'pref-autoDeal');
   h += row('Run it twice', {ask: 'Ask', twice: 'Always', once: 'Never'}[p.runTwice], 'pref-runTwice');
   // Alerts (your turn, 5 seconds left) apart from the game's own sounds.
   h += row('Alerts', p.sounds ? 'On' : 'Off', 'pref-sounds');
