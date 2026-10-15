@@ -516,8 +516,7 @@ function ladderHtml() {
   h += '</div>';
   const paused = pausedGame(p);
   const buyIn = buyInAt(level);
-  const games = Math.floor(p.chips / buyIn);
-  h += `<p class="ld-desc ld-chips">Your chips: <b>${c(chipsNow(p))}</b>${paused ? '' : ` (${games} buy-in${games === 1 ? '' : 's'})`}</p>`;
+  h += `<p class="ld-desc ld-chips">Your chips: <b>${c(chipsNow(p))}</b></p>`;
   if (paused) {
     const raised = gameBlinds(p)[1] !== blindsAt(level)[1] ? `, blinds ${blindsText(gameBlinds(p))}` : '';
     h += `<p class="ld-desc ld-paused">Paused: you ${c(paused.stacks[0])}, ${them} ${c(paused.stacks[1])}${raised}.</p>`;
