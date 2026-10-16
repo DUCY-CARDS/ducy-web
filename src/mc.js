@@ -1,7 +1,7 @@
 // Monte Carlo sampling kernels, shared by the main thread and mc-worker.js.
 // Everything here works on plain job data (no DOM or page state), so a job can
 // be posted to a worker as-is. Cards use the engine's "As" format.
-import { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame } from '../wasm/ducy_wasm.js';
+import { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRange } from '../wasm/ducy_wasm.js';
 
 // Samples per engine call.
 const PER_CALL = 1000;
@@ -42,6 +42,37 @@ export function rangeExactCost(job) {
   } finally {
     game.free();
   }
+}
+
+// The last bomb pot game built, for its job: reused while the same job runs.
+let bombPot = {key: null, game: null};
+
+function bombPotGame(job) {
+  const key = JSON.stringify(job);
+  if (bombPot.key === key) return bombPot.game;
+  if (bombPot.game) bombPot.game.free();
+  bombPot = {key: null, game: null};
+  const game = new OmahaBombPotGame(job.numBoards, job.cardsPer);
+  try {
+    for (const h of job.hands) game.add_player(h.join(' '));
+    job.allBoardCards.forEach((bc, bi) => setBoard(game, bc, bi));
+    addDead(game, job.dead);
+    // Seats holding an Omaha range: dealt a hand from it each sample.
+    for (const {seat, text} of job.rangeSeats || []) {
+      const range = new OmahaRange(job.cardsPer);
+      try {
+        range.add(text);
+        game.set_seat_range(seat, range);
+      } finally {
+        range.free();
+      }
+    }
+  } catch (err) {
+    game.free();
+    throw err;
+  }
+  bombPot = {key, game};
+  return game;
 }
 
 export function newState(job) {
@@ -89,24 +120,19 @@ export function runChunk(job, st, deadline, maxSamples) {
       game.free();
     }
   } else if (job.type === 'bombpot') {
-    const game = new OmahaBombPotGame(job.numBoards, job.cardsPer);
-    try {
-      for (const h of job.hands) game.add_player(h.join(' '));
-      job.allBoardCards.forEach((bc, bi) => setBoard(game, bc, bi));
-      addDead(game, job.dead);
-      while (more()) {
-        const r = game.sample(PER_CALL, job.randomIndices);
-        for (let fi = 0; fi < st.totals.length; fi++) {
-          st.totals[fi] += r.equity_sum[fi];
-          st.scoops[fi] += r.scoops[fi];
-          st.scooped[fi] += r.scooped[fi];
-          for (let bi = 0; bi < job.numBoards; bi++) st.boardWins[bi][fi] += r.board_wins[bi][fi];
-        }
-        st.done += r.samples;
-        st.weight += r.samples;
+    // Built once per job and kept across chunks: preparing a narrow range
+    // (AAxx) can take longer than a chunk.
+    const game = bombPotGame(job);
+    while (more()) {
+      const r = game.sample(PER_CALL, job.randomIndices);
+      for (let fi = 0; fi < st.totals.length; fi++) {
+        st.totals[fi] += r.equity_sum[fi];
+        st.scoops[fi] += r.scoops[fi];
+        st.scooped[fi] += r.scooped[fi];
+        for (let bi = 0; bi < job.numBoards; bi++) st.boardWins[bi][fi] += r.board_wins[bi][fi];
       }
-    } finally {
-      game.free();
+      st.done += r.samples;
+      st.weight += r.samples;
     }
   } else if (job.type === 'orange') {
     // Omaha shorthand ranges: known hands first, then one player per range.
