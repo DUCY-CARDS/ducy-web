@@ -88,3 +88,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
         run: scripts/upload-gto-depths.sh "$TARGET"
+      # The six-handed GTO bot's preflop strategy: the newest gto-sixmax-<name>
+      # release, pointed at by gto/sixmax-current.json (scripts/upload-gto-sixmax.sh).
+      - name: Publish the six-handed GTO bot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ secrets.SSH_DEPLOY_TARGET }}
+        run: scripts/upload-gto-sixmax.sh "$TARGET"
