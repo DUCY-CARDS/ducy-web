@@ -2,14 +2,14 @@
 // Amounts are in hundredths, like the rest of the page (100 is $1).
 //
 // The smallest chip in play is the largest one not above the big blind, and
-// the game's preferred chip, the one players bet with, is the next one up
-// (red at 1/2, green at 2/5). A seat keeps a stack of the smallest chip for
-// blinds and change and two stacks of the preferred chip, and each bigger
-// chip then takes as much as fits until the seat would need more than SHOWN
-// stacks. Past that, the rest goes on one mixed stack, coloured up only as
-// far as it takes to fit ($10,000 at 1/2 is mostly yellow). What bigger
-// chips can't pay stays in smaller ones, so the chips always add up;
-// anything under $1 is left over (no fractional chips). It's worked out
+// the stack chip is the biggest worth at most 12.5 big blinds (green at 1/2
+// and 2/5, black at 5/10). A seat has up to two stacks of the stack chip
+// first; what's above that goes to the bigger chips, each taking as much as
+// fits until the seat would need more than SHOWN stacks, then the rest on
+// one mixed stack, coloured up only as far as it takes to fit. What's left
+// under the next chip up is change in the smaller chips, biggest first:
+// $1,047 at 1/2 is two stacks of green, 9 red and 2 white. Anything under
+// the smallest chip is left over (no fractional chips). It's worked out
 // fresh from the amount each time, so winning a pot colours up on its own.
 
 export const CHIPS = [
@@ -28,7 +28,9 @@ export const CHIPS = [
   {value: 100000000, color: 'green-1m'},
 ];
 export const STACK = 20;
-// Stacks of the preferred chip a seat keeps.
+// The stack chip is the biggest one worth at most this many big blinds.
+const STACK_CHIP_BB = 12.5;
+// Stacks of the stack chip a seat has at most, before bigger chips.
 const PREFERRED_STACKS = 2;
 // Stacks a seat shows at most.
 export const SHOWN = 5;
@@ -38,34 +40,44 @@ const stacksOf = count => Math.ceil(count / STACK);
 // [{value, color, count}], biggest chip first, and the `rest` under $1.
 export function breakdown(amount, bigBlind) {
   const whole = Math.floor(Math.max(0, amount) / 100) * 100;
-  let left = whole;
   const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= Math.max(100, bigBlind)));
+  // The stack chip: up to two stacks of it come first.
+  const main = Math.min(CHIPS.length - 1, Math.max(first + 1, CHIPS.findLastIndex(c => c.value <= STACK_CHIP_BB * Math.max(100, bigBlind))));
+  const mainCount = Math.min(PREFERRED_STACKS * STACK, Math.floor(whole / CHIPS[main].value));
+  const afterMain = whole - mainCount * CHIPS[main].value;
+  // Whole multiples of the next chip up go to the bigger chips; the rest
+  // is change in the smaller ones.
+  const nextUp = CHIPS[main + 1]?.value;
+  const big = nextUp ? Math.floor(afterMain / nextUp) * nextUp : 0;
+  const small = afterMain - big;
+  const change = main > first ? pay(small, main - 1).chips.filter(c => CHIPS.findIndex(x => x.value === c.value) >= first) : [];
+  // The bigger chips fit beside the stack chip's stacks and the change's.
+  const bigger = biggerChips(big, main + 1, stacksOf(mainCount) + change.reduce((n, c) => n + stacksOf(c.count), 0));
+  const paid = [...bigger.chips, ...(mainCount ? [{...CHIPS[main], count: mainCount}] : []), ...change];
+  const counted = paid.reduce((t, c) => t + c.value * c.count, 0);
+  // Amounts under the smallest chip in play (a $3 bet with $5 chips) aren't
+  // chips either: they go with the rest.
+  return {chips: paid, rest: Math.max(0, amount) - counted};
+}
+
+// `amount` (whole multiples of CHIPS[start]) in chips from CHIPS[start] up,
+// beside `used` stacks: each takes as much as fits until the seat would
+// need more than SHOWN stacks, then the rest goes on one mixed stack.
+// Biggest chip first.
+function biggerChips(amount, start, used) {
+  let left = amount;
   const out = [];
-  let used = 0;
-  for (let i = first; left > 0 && i < CHIPS.length; i++) {
+  for (let i = start; left > 0 && i < CHIPS.length; i++) {
     const {value, color} = CHIPS[i];
     const next = CHIPS[i + 1]?.value;
     const all = left / value;
-    let count = all; // the top chip: as many as it takes
+    let count = all;
     if (next) {
-      // Smaller chips below this one can't pay a remainder of it: only
-      // amounts of whole chips reach here, since the first chip is the
-      // smallest in play and leftovers under it go to `rest`.
       const must = (left % next) / value;
       const per = next / value;
-      // A stack of the smallest chip, two of the preferred one; a bigger
-      // chip takes everything if it fits, else what fits beside a stack
-      // kept for the chips above it.
-      const cap = i === first ? STACK
-        : i === first + 1 ? PREFERRED_STACKS * STACK
-        : stacksOf(all) <= SHOWN - used ? all
-        : Math.max(0, SHOWN - used - 1) * STACK;
+      const cap = stacksOf(all) <= SHOWN - used ? all : Math.max(0, SHOWN - used - 1) * STACK;
       count = Math.min(all, must + Math.max(0, Math.floor((cap - must) / per) * per));
-      if (i > first + 1 && used + stacksOf(count) + (count < all ? 1 : 0) > SHOWN) {
-        // Full: the rest on one mixed stack of `loose` chips (toStacks).
-        // What's left is a whole number of this chip, so they're never
-        // smaller than it, and they colour up only as far as it takes to
-        // fit one stack: $800 left is eight blacks, not a purple.
+      if (used + stacksOf(count) + (count < all ? 1 : 0) > SHOWN) {
         let top = i;
         while (top < CHIPS.length - 1 && pay(left, top).chips.reduce((n, c) => n + c.count, 0) > STACK) top++;
         out.push(...pay(left, top).chips.reverse().map(c => ({...c, loose: true})));
@@ -78,9 +90,7 @@ export function breakdown(amount, bigBlind) {
     used += stacksOf(count);
     left -= count * value;
   }
-  // Amounts under the smallest chip in play (a $3 bet with $5 chips) aren't
-  // chips either: they go with the rest.
-  return {chips: out.reverse(), rest: Math.max(0, amount) - (whole - left)};
+  return {chips: out.reverse()};
 }
 
 // A bet (or the pot) paid the way players bet: the highest-valued chips
