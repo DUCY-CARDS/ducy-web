@@ -6,7 +6,8 @@
 //        state | setStack(seat, chips) | setBot(seat, id, chips, seed) |
 //        setTopUp(on) | setRules(game, sb, bb) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
-//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) | review |
+//        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) |
+//        gto6Supported | loadGto6(manifestUrl) | review |
 //        reviewDecision | setReviewAll(on) | reviewNew
 // Every table op returns {state, botToAct}. newHand(true) puts every stack
 // back to the buy-in first (GTO training plays every hand at 100 BB).
@@ -52,6 +53,8 @@ const GTO_PLO_CACHE = 'ducy-gto-plo';
 const GTO_PLO6_CACHE = 'ducy-gto-plo6';
 // Hold'em blueprints trained at other depths (#251) have their own too.
 const GTO_DEPTHS_CACHE = 'ducy-gto-depths';
+// The six-handed bot's preflop strategy (#245).
+const GTO6_CACHE = 'ducy-gto6';
 const gtoLoaded = {};
 
 async function cachedBytes(cacheName, url) {
@@ -188,6 +191,23 @@ const ops = {
   // takes its six-card model only in a ducy-wasm that has gtoPlo6Loaded.
   gtoPlo6Supported: () => typeof wasm.gtoPlo6Loaded === 'function',
   loadGtoPlo6: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO6_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
+  // The six-handed GTO bot ("gto6", ducy #245): a preflop strategy, from a
+  // manifest {dir, strategy}. An older ducy-wasm doesn't have it.
+  gto6Supported: () => typeof wasm.loadGto6 === 'function',
+  loadGto6: async manifestUrl => {
+    const res = await fetch(manifestUrl, {cache: 'no-cache'});
+    if (!res.ok) throw new Error(`no six-handed GTO bot here (${res.status})`);
+    const m = await res.json();
+    const url = new URL(`${m.dir}/${m.strategy}`, manifestUrl).href;
+    if (gtoLoaded[GTO6_CACHE] === url) return true;
+    wasm.loadGto6(await cachedBytes(GTO6_CACHE, url));
+    gtoLoaded[GTO6_CACHE] = url;
+    try {
+      const cache = await caches.open(GTO6_CACHE);
+      for (const req of await cache.keys()) if (req.url !== url) await cache.delete(req);
+    } catch {}
+    return true;
+  },
   hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
     host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
     return host.state(now('host')); // deal once the players are in

@@ -135,7 +135,16 @@ const GTO_PLOS = {
     supported: 'gtoPlo6Supported', load: 'loadGtoPlo6', available: false, ready: false,
   },
 };
-const GTO_IDS = [GTO.id, ...Object.values(GTO_PLOS).map(p => p.bot.id)];
+// The six-handed GTO bot (ducy #245): a preflop strategy solved for six-handed
+// No-limit Hold'em against the Regulars, offered at six-handed bot tables
+// only. Hosted at gto/ by scripts/upload-gto-sixmax.sh.
+const GTO6_MANIFEST = new URL('gto/sixmax-current.json', document.baseURI).href;
+const GTO6 = {id: 'gto6', name: 'GTO', description: 'Plays a preflop strategy solved for six-handed tables, 100 big blinds deep, and solid poker after the flop.'};
+// The table size it plays: you and five bots.
+const GTO6_BOTS = 5;
+let gto6Available = false;
+let gto6Ready = false;
+const GTO_IDS = [GTO.id, GTO6.id, ...Object.values(GTO_PLOS).map(p => p.bot.id)];
 let setupNote = '';
 let seated = false; // a table is in play
 let botToAct = false;
@@ -353,9 +362,11 @@ const nameOf = seat => (state ? state.seats[seat].name : '');
 
 // ---- setup ----
 
-// The GTO bots play heads-up only: one No-limit Hold'em, the others PLO4 and
-// PLO6. The one for the game picked, or null.
+// The GTO bots: heads-up ones for No-limit Hold'em, PLO4 and PLO6, and a
+// six-handed one for No-limit Hold'em. The one for the game and table size
+// picked, or null.
 function gtoBot() {
+  if (setup.count === GTO6_BOTS && setup.game === 'nlhe' && gto6Available) return GTO6;
   if (setup.count !== 1) return null;
   if (setup.game === 'nlhe' && gtoAvailable) return GTO;
   const plo = GTO_PLOS[setup.game];
@@ -447,8 +458,9 @@ function botsSetupHtml() {
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   const gtoGames = [gtoAvailable && 'Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
   const gamesText = gtoGames.length > 1 ? `${gtoGames.slice(0, -1).join(', ')} or ${gtoGames.at(-1)}` : gtoGames[0];
-  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent) to face the GTO bot.</p>`;
-  if (gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
+  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent)${gto6Available ? ', or six-handed Hold’em (5 opponents),' : ''} to face the GTO bot.</p>`;
+  if (gtoBot() === GTO6 && setup.bots.includes(GTO6.id) && setup.buyIn !== 100 * setup.bb) h += '<p class="pl-desc">The six-handed GTO bot’s preflop is solved for 100 BB stacks: at other depths it plays solid poker instead.</p>';
+  if (setup.count === 1 && gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down with these</button></div>';
   h += '</div></details>';
@@ -460,7 +472,7 @@ function botsSetupHtml() {
 // ---- the ladder (#212) ----
 
 const ladderRungs = () => rungsFor(personalities.map(p => p.id), gtoAvailable);
-const botInfo = id => (id === GTO.id ? GTO : personalities.find(p => p.id === id)) || {id, name: id, description: ''};
+const botInfo = id => (id === GTO.id ? GTO : id === GTO6.id ? GTO6 : personalities.find(p => p.id === id)) || {id, name: id, description: ''};
 const ladderAvatar = id => (botAvatar(id)
   ? `<span class="ld-av"><img src="${avatarUrl(botAvatar(id))}" alt=""></span>`
   : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
@@ -983,6 +995,18 @@ function togglePrefold() {
 
 // Downloads (the first time) and loads the GTO bot's files in the worker.
 async function prepareGto(bots = setup.bots) {
+  if (bots.includes(GTO6.id) && !gto6Ready) {
+    root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about 2 MB the first time, then it’s kept on this device)…</p></div>';
+    try { navigator.storage?.persist?.(); } catch {}
+    try {
+      await call('loadGto6', GTO6_MANIFEST);
+      gto6Ready = true;
+    } catch (e) {
+      console.warn(e);
+      setupNote = 'The GTO bot couldn’t be loaded. Try again, or pick another opponent.';
+      return false;
+    }
+  }
   const plo = Object.values(GTO_PLOS).find(p => bots.includes(p.bot.id));
   if (plo ? plo.ready : (gtoReady || !bots.includes(GTO.id))) return true;
   root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
@@ -3342,6 +3366,7 @@ export async function openPlay(el, shortcut, v = 'play') {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
     try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
+    try { gto6Available = await call('gto6Supported') && (await fetch(GTO6_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
     for (const plo of Object.values(GTO_PLOS)) {
       try { plo.available = await call(plo.supported) && (await fetch(plo.manifest, {cache: 'no-cache'})).ok; } catch {}
     }
