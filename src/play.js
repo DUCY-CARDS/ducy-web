@@ -2242,7 +2242,7 @@ function summaryLine(s) {
   return line;
 }
 
-const smallCard = c => `<span class="pl-sc s-${c[1]}${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0] === 'T' ? '10' : c[0]}${SUITS[c[1]]}</span>`;
+const smallCard = c => `<span class="pl-sc s-${c[1]}${c[1] === 'h' || c[1] === 'd' ? ' r' : ''}">${c[0]}${SUITS[c[1]]}</span>`;
 
 function summaryBody(s) {
   const who = i => (i === 0 && !watching ? 'You' : esc(s.seats[i]?.name || `Seat ${i}`));
