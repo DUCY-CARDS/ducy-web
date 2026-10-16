@@ -111,6 +111,19 @@ export function saveProgress(p, storage = globalThis.localStorage) {
 export const levelOf = (p, rungs) => Math.max(0, Math.min(rungs.length - 1, p.level));
 export const opponentOf = (p, rungs) => rungs[levelOf(p, rungs)];
 
+// Whether rung i's bot shows on the ladder. It goes by the rung, not the
+// bot, so when the bots are re-ranked a bot you've played that moves up into
+// a rung you haven't reached is hidden again, and whoever moves into a rung
+// you have reached shows:
+//   - rungs below yours, and up to your best (you've been there);
+//   - your own rung once you've been above it, its series is under way, or
+//     you've played its bot before.
+export function rungShown(p, rungs, i) {
+  const level = levelOf(p, rungs);
+  if (i === level) return i < p.best || !!p.record[rungs[i]] || p.wins + p.losses > 0 || !!pausedGame(p);
+  return i < level || i <= p.best;
+}
+
 // A game is starting, or resuming where it was left: a fresh one at your
 // rung's stakes, each player buying in.
 export function startGame(p, rungs) {
