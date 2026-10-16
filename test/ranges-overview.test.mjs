@@ -31,6 +31,9 @@ test('the overview has a tile per game, the open game\'s skills as spades, and t
   assert.match(h, /data-skill="2:15">Practice top 15%/);
   // Charts by position wait for standard opening ranges (#249).
   assert.doesNotMatch(h, /data-ovchoice/);
+  // Every other option is behind Custom range, and only there.
+  assert.equal((h.match(/data-act="custom"/g) || []).length, 1);
+  assert.doesNotMatch(h, /data-drill|data-total|data-opct|data-ocards/);
 });
 
 test('the next skill is the first not mastered; started ones say how far to go', () => {
