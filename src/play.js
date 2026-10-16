@@ -1369,7 +1369,7 @@ function botSpeak(seat, moment, {force = false, delay = 800} = {}) {
   setTimeout(() => {
     // Gone from the table meanwhile, or another table now.
     if (mode !== 'solo' || tableBots.join() !== table || !state?.seats?.[seat]) return;
-    botSay = {...botSay, [seat]: {text, until: Date.now() + SAY_MS}};
+    botSay = {...botSay, [seat]: {text, until: Date.now() + SAY_MS, fresh: true}};
     addChatLine({from: state.seats[seat].name, text, at: Date.now()});
     render();
     setTimeout(() => {
@@ -2431,7 +2431,10 @@ function renderTable() {
   for (const [i, say] of Object.entries(botSay)) {
     if (!(say.until > Date.now()) || !s.seats[i]) continue;
     const p = seatPos(+i, n);
-    h += `<div class="pl-say" role="status" style="left:${p.x}%;top:${p.y}%">${esc(say.text)}</div>`;
+    // The table is redrawn on every action: only the first drawing of a
+    // line fades in, or it would flash each time.
+    h += `<div class="pl-say${say.fresh ? ' fresh' : ''}" role="status" style="left:${p.x}%;top:${p.y}%">${esc(say.text)}</div>`;
+    say.fresh = false;
   }
   h += '</div>';
   h += summaryHtml();
