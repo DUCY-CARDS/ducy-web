@@ -51,6 +51,7 @@ import {
 } from './club-agents.js';
 import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
 import { lobbyBody, sayInLobby } from './club-lobby.js';
+import { addService, checkRequest, revokeService, runRequest, ServiceError, updateService } from './club-services.js';
 import { chatLimiter } from './table-chat.js';
 import { handRecord } from './hand-replay.js';
 import {
@@ -510,6 +511,11 @@ export function createClubServer({
     },
     // The host's line in the lobby chat.
     lobby_say: ({text}) => lobbySay(club.ownerId || club.hostId, text),
+    // Services (club-services.js): outside servers that give chips within
+    // limits. Only an always-on club has them: its room answers their requests.
+    service_add: async args => { const s = await addService(club, args || {}); changed(); return s.id; },
+    service_update: ({id, ...args}) => { updateService(club, String(id), args); changed(); },
+    service_revoke: ({id}) => { revokeService(club, String(id)); changed(); },
     settings: values => {
       for (const [k, v] of Object.entries(values)) {
         if (!SETTINGS[k]?.(v)) throw new Error(`Not a valid ${k}.`);
@@ -595,8 +601,33 @@ export function createClubServer({
     return OPS[op](args);
   }
 
+  // A service's signed request (club-services.js), from the relay's HTTP
+  // endpoint. Resolves to {status, body}: the answer to send back. Requests
+  // are taken one at a time, so two can't both spend the same budget.
+  let serviceQueue = Promise.resolve();
+  function serviceRequest(env) {
+    const run = async () => {
+      const before = JSON.stringify([club.services, club.serviceRefused]);
+      try {
+        const s = await checkRequest(club, env);
+        const {value, member} = runRequest(club, s, env.body);
+        changed();
+        if (member) accountTo(member);
+        return {status: 200, body: {ok: true, value}};
+      } catch (e) {
+        // A refusal still counts against the service, and is saved.
+        if (JSON.stringify([club.services, club.serviceRefused]) !== before) changed();
+        if (e instanceof ServiceError) return {status: e.status, body: {ok: false, error: e.message}};
+        return {status: 409, body: {ok: false, error: e.message || String(e)}};
+      }
+    };
+    const p = serviceQueue.then(run);
+    serviceQueue = p.catch(() => {});
+    return p;
+  }
+
   return {
-    club, verifier, online,
+    club, verifier, online, serviceRequest,
     // The relay accepted this as the club's host: it says again who's
     // connected, and the tables start (only once: a second tab, refused by
     // the relay, never runs them).

@@ -125,6 +125,58 @@ when someone seated reconnects (`test/club-alarms.test.mjs`), so a club with
 no one connected sets no alarms; only a pending backup (at most one, 5
 minutes after the last change) wakes it.
 
+## Club services: outside servers that give chips
+
+An always-on club's owner can let a server of theirs (a league, a rewards
+scheme) give members chips without them, within limits
+(`src/club-services.js`, `src/service-client.js`, `relay/src/service-http.js`).
+
+**Proving who it is:** a service has its own signing key, made on its own
+server. The private key never leaves it; the club keeps only the public
+key. A request is a signed message, like a member's:
+- **Only once:** each request's sequence number is the time it was signed.
+  The room refuses one more than 5 minutes off its clock, or one it has
+  already seen, so a copied request can't be sent again.
+- **Nothing to steal from the relay:** the relay holds only public keys, so
+  even its stored data can't be used to give chips.
+
+**Limits, set by the owner** on the club's Settings page:
+- **Permissions:** give chips, take them back (off by default), see the
+  member list.
+- **A budget:** the most it can ever give, until the owner adds more. A
+  stolen key can lose at most that.
+- **Caps:** the most in one give and in a day, and an optional end date.
+- **Revoke:** forgets the key at once; the next request is refused.
+
+Every give and take is in the club's ledger and History under the
+service's name; refused requests are counted on its card.
+
+**Setting one up**, on the service's server (Node 20 or later, from a
+checkout of this repo):
+
+```sh
+node tools/ducy-service.mjs init                 # makes ducy-service-key.json (mode 600)
+# give the club's owner the "ducy-service:1:…" line it prints; they add it
+# under Settings → Services and check the service ID matches
+node tools/ducy-service.mjs status  --club ABCD-EFGH
+node tools/ducy-service.mjs members --club ABCD-EFGH
+node tools/ducy-service.mjs give <member id> 500 "League week 3" --club ABCD-EFGH --key week3-ann
+```
+
+With `DUCY_SERVICE_PASSWORD` set, the key file is locked with it. `--key`
+names the payment: sent again (after a timeout, say), it returns the first
+result instead of paying twice. Amounts are in chips. From code, use
+`serviceClient` in `src/service-client.js`.
+
+**The HTTP endpoint:** `POST /club/<code>/service` with the signed message
+as JSON. Answers `{ok: true, value}`, or `{ok: false, error}` with 400
+(malformed), 401 (not a service of this club, revoked, expired, stale or
+already seen), 403 (not allowed, over a limit, or the club is paused), 404
+(no such club or member), 409 (refused, e.g. not enough chips) or 429 (more
+than 5 a second to the club). A request with an `Origin` header is refused:
+services are servers, so no web page can use a service's key through
+someone's browser.
+
 ## Local development
 
 ```sh
