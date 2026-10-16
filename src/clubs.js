@@ -35,6 +35,8 @@ import {
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
 import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
+import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
+import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import { accountOf, settle } from './club-agents.js';
@@ -371,6 +373,38 @@ function memberHelpHtml(m, hostHere) {
   return h + '</div>';
 }
 
+// ---- the lobby (club-lobby.js) ----
+
+// Who's online and the lobby chat: `online` [{name, role, table}], `chat`
+// [{name, text, at, host}]. `form` is the club code for a member's page,
+// or 'host' for the club you run; `canSend` whether the club is reachable.
+function lobbyHtml(online, chat, form, canSend) {
+  let h = `<h2>Lobby</h2><div class="cl-side-card cl-lobby"><span class="pl-meta">Online now (${online.length})</span><ul class="cl-lobby-who">`;
+  for (const x of online) {
+    // "Host" needs no tag, and the host isn't waiting for a game.
+    const tag = x.role === 'host' ? (x.name === 'Host' ? '' : 'host') : x.role;
+    const at = x.table ? `at ${esc(x.table)}` : x.role === 'host' ? '' : 'waiting';
+    h += `<li><span class="cl-lobby-dot" aria-hidden="true"></span><b>${esc(x.name)}</b>${tag ? ` <span class="pl-meta">${tag}</span>` : ''}${at ? `<span class="pl-meta cl-lobby-at">${at}</span>` : ''}</li>`;
+  }
+  h += '</ul>';
+  h += chat.length
+    ? `<ul class="cl-lobby-log">${chat.map(x => `<li><span class="pl-meta">${clock(x.at)}</span> <b${x.host ? ' class="cl-lobby-host"' : ''}>${esc(x.name)}</b> ${esc(x.text)}</li>`).join('')}</ul>`
+    : '<p class="pl-meta">No one’s said anything yet. Waiting for a game? Say so here.</p>';
+  h += `<form class="cl-lobby-form" data-lobbyform="${esc(form)}"><input class="pl-text" name="text" maxlength="${CHAT_MAX}" autocomplete="off" placeholder="Say something" aria-label="Lobby chat"${canSend ? '' : ' disabled'}>`;
+  h += `<button class="btn-small primary" type="submit"${canSend ? '' : ' disabled title="Can’t reach the club right now"'}>Send</button></form>`;
+  return h + '</div>';
+}
+
+// The lobby on the page of the club you run: its online list made here
+// from who's connected (an always-on club's room says, in its view).
+function hostLobbyHtml() {
+  const remote = isRemote();
+  const ids = new Set(remote ? owner.view?.online || [] : server?.online || []);
+  const list = onlineList(club, ids, !remote && hostOnline);
+  const chat = (club.lobby || []).filter(x => Date.now() - x.at < LOBBY_MAX_AGE_MS);
+  return lobbyHtml(list, chat, 'host', remote ? owner.online : !!hostNet);
+}
+
 // The open help requests, for the host (`code` null) or an assistant of
 // club `code`: who, when, from which table, with a reply and Mark handled.
 function helpListHtml(list, code = null, dis = '') {
@@ -588,6 +622,18 @@ function onSubmit(e) {
     sendToHost(code, {type: 'help_ask', club: code, text: hf.elements.text.value, table: at});
     helpForm = null;
     render();
+    return;
+  }
+  // A line in the lobby chat: a member's, or the host's.
+  const lf = e.target.closest('form[data-lobbyform]');
+  if (lf) {
+    e.preventDefault();
+    const text = cleanChat(lf.elements.text.value);
+    if (!text) return;
+    const code = lf.dataset.lobbyform;
+    lf.elements.text.value = '';
+    if (code === 'host') hostAct('lobby_say', {text});
+    else sendToHost(code, {type: 'lobby_say', club: code, text});
     return;
   }
   // Your name in one club (#185).
@@ -1182,7 +1228,14 @@ function render() {
   // A club name being typed (#185) survives the redraw.
   const nameTyping = root.querySelector('form[data-nameform] input');
   const nameKept = nameTyping && {v: nameTyping.value, focus: document.activeElement === nameTyping};
+  // And a lobby chat line being typed.
+  const lobbyTyping = root.querySelector('form[data-lobbyform] input');
+  const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   root.innerHTML = h;
+  const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
+  if (lobbyInput) { lobbyInput.value = lobbyKept.v; if (lobbyKept.focus) lobbyInput.focus({preventScroll: true}); }
+  // The lobby chat shows its newest lines.
+  for (const log of root.querySelectorAll('.cl-lobby-log')) log.scrollTop = log.scrollHeight;
   if (window.scrollY !== y) window.scrollTo(0, y);
   // Tabs that scroll sideways (a phone): the open one in view.
   for (const bar of root.querySelectorAll('.cl-dash-tabs')) {
@@ -1611,7 +1664,7 @@ function manageSideHtml(pending, asking, helpReqs, members) {
   h += row('history', 'History', '');
   h += row('settings', 'Settings', '');
   h += `<button type="button" class="cl-side-row" data-cl="copy"><span>Invite link</span><b>${copied ? 'Copied' : 'Copy'}</b></button>`;
-  return h + '</div><span class="pl-meta">Only you and your game assistants see Manage.</span></aside>';
+  return h + '</div><span class="pl-meta">Only you and your game assistants see Manage.</span>' + hostLobbyHtml() + '</aside>';
 }
 
 // The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
@@ -1908,7 +1961,9 @@ function memberHomeHtml(m, manage = '') {
   h += row('chips', 'Chips history', m.entries?.length || 0);
   h += row('history', 'Your hands', '');
   h += '</div>';
-  h += memberHelpHtml(m, hostHere) + clubNameHtml(m);
+  h += memberHelpHtml(m, hostHere);
+  if (m.lobby) h += lobbyHtml(m.lobby.online, m.lobby.chat, m.code, hostHere);
+  h += clubNameHtml(m);
   h += `<button class="link-btn cl-forget" data-cl="forget" data-code="${code}">Forget this club</button>`;
   return h + '</aside></div>';
 }
