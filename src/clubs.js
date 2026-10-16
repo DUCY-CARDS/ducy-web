@@ -47,6 +47,7 @@ import { getTable } from './table-store.js';
 import { celebrateAtTable, joinTableVia, showFairCheck, tableName } from './play.js';
 import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { hostPromosHtml, memberPromosHtml, promosPartHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
+import { readServiceForm, servicesHtml } from './club-services-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -666,6 +667,17 @@ function onSubmit(e) {
   }
   const bf = e.target.closest('form[data-clform="backup"]');
   if (bf) { e.preventDefault(); submitBackup(bf); return; }
+  const sf = e.target.closest('form[data-clform="service"]');
+  if (sf) {
+    e.preventDefault();
+    let args;
+    try { args = readServiceForm(sf); } catch (err) { serviceNote = err.message; render(); return; }
+    const id = sf.dataset.id;
+    (id ? owner.run('service_update', {id, ...args}) : owner.run('service_add', args))
+      .then(() => { serviceForm = null; serviceNote = ''; render(); })
+      .catch(err => { serviceNote = err.message; render(); });
+    return;
+  }
   const gf = e.target.closest('form[data-agentform]');
   if (gf) {
     e.preventDefault();
@@ -1506,6 +1518,8 @@ async function submitBackup(f) {
   render();
 }
 let backupNote = '', backupForm = false; // the Settings tab's backup form
+// The Settings tab's service form: null, 'new', or a service's id; and what's wrong with it.
+let serviceForm = null, serviceNote = '';
 
 // Saves the club's backup (#152): your player ID, which owns the club, locked
 // with `password`, with the club's code and name. Restoring it (Player
@@ -1617,12 +1631,12 @@ function hostHtml() {
     h += handsHtml(club.code, 'host', 'Hands at your tables');
     if (club.log?.length) {
       // Filtered by who did it (#190).
-      const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || (id === club.hostId ? 'You' : id)]);
+      const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || club.services?.[id]?.name || (id === club.hostId || id === club.ownerId ? 'You' : id)]);
       // Big chip moves stand out (#190): a full buy-in at the biggest open table or more.
       const big = bigMove(club);
       const bigCount = club.log.filter(l => isBigMove(l, big)).length;
       const shown = club.log.filter(l => (!activityBy || l.by === activityBy) && (!activityBig || isBigMove(l, big)));
-      h += `<details class="cl-history" data-keep="activity"><summary>Assistant and agent activity (${club.log.length})${bigCount ? ` · <span class="cl-big">${bigCount} big</span>` : ''}</summary>`;
+      h += `<details class="cl-history" data-keep="activity"><summary>Activity (${club.log.length})${bigCount ? ` · <span class="cl-big">${bigCount} big</span>` : ''}</summary>`;
       const filters = [];
       if (who.length > 1) filters.push(`<select class="pl-text" data-activity="1" aria-label="Whose activity"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
       if (big != null) filters.push(`<label class="pl-meta"><input type="checkbox" data-activitybig="1"${activityBig ? ' checked' : ''}> Only chip moves of ${chips(big)} or more</label>`);
@@ -1801,6 +1815,8 @@ function settingsHtml() {
   h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
   h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div><span class="pl-desc">How long the hands at your tables are kept for the history.</span></div>`;
+  // Outside servers that give chips (club-services.js): an always-on club's room answers them.
+  if (remote) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
   h += '<h3>Backup</h3>';
   if (remote) {
     h += '<p class="pl-desc">A file, locked with a password, that lets you run the club again from any browser if this one loses it.</p>';
@@ -2286,6 +2302,16 @@ async function onClick(e) {
   else if (act === 'atab') { setAdminTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'backup') { backupForm = true; backupNote = ''; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
   else if (act === 'backup-cancel') { backupForm = false; render(); }
+  else if (act === 'service-add' || act === 'service-edit') {
+    serviceForm = act === 'service-add' ? 'new' : b.dataset.id;
+    serviceNote = '';
+    render();
+    root.querySelector('form[data-clform=service] input')?.focus();
+  } else if (act === 'service-cancel') { serviceForm = null; serviceNote = ''; render(); }
+  else if (act === 'service-revoke') {
+    const s = club.services?.[b.dataset.id];
+    if (confirm(`Revoke ${s?.name || 'this service'}? Its key stops working at once; adding it again takes its service line.`)) hostAct('service_revoke', {id: b.dataset.id});
+  }
   // After creating a club: Skip asks once more, warning it can't be recovered.
   else if (act === 'wiz-skip') setWizard('skip');
   else if (act === 'wiz-back') setWizard('backup');

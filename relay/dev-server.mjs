@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { createClub, importClub, openClub } from './src/club-room.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
+import { serviceHttp, serviceInRoom } from './src/service-http.js';
 
 // The engine for always-on clubs (#93), loaded on first use from the site's
 // wasm build (../wasm, as the Worker bundles it).
@@ -172,11 +173,32 @@ async function admin(req, res, url) {
   }
 }
 
+// A service's request (POST /club/<code>/service), as in the Worker.
+async function service(req, res, code) {
+  let raw = '';
+  for await (const chunk of req) { raw += chunk; if (raw.length > 64 * 1024) break; }
+  const request = new Request('http://localhost' + req.url, {method: req.method, headers: req.headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : raw});
+  const answer = await serviceHttp(request, code, async env => {
+    const room = rooms.get(code);
+    const club = room ? await clubOf(room, code) : null;
+    const st = club ? await reg.status(code) : null;
+    if (st?.blocked) return Response.json({ok: false, error: st.blocked}, {status: 403});
+    // One at a time with the room's other messages.
+    let out;
+    await inRoom(room || {chain: Promise.resolve()}, async () => { out = await serviceInRoom(room || {}, club, env); });
+    return Response.json(out.body, {status: out.status});
+  });
+  res.writeHead(answer.status, {'content-type': 'application/json'});
+  res.end(await answer.text());
+}
+
 // Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
 // GET /usage and /admin/…, as the Worker answers them; everything else is WebSockets.
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
+  const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
+  if (svc) return service(req, res, decodeURIComponent(svc[1]));
   if (req.url !== '/usage') { res.writeHead(404); res.end('ducy relay'); return; }
   res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': '*'});
   res.end(JSON.stringify(await reg.usage()));

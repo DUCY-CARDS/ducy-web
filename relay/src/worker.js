@@ -34,11 +34,20 @@
 //   POST /admin/grant   {id, note, maxClubs, limits}   lets a player create clubs
 //   POST /admin/revoke  {id}
 //   POST /admin/club/<code> {suspended, limits, plan, expires}
+//
+// Services (src/club-services.js, service-http.js): an always-on club's
+// outside servers send
+//   POST /club/<code>/service   a signed envelope (identity.js), as JSON
+// and get {ok, value} or {ok: false, error}, with 400 (malformed), 401 (not
+// a service of the club, revoked, expired, stale or replayed), 403 (not
+// allowed, over a limit, or the club is paused), 404 (no such club or
+// member), 409 (refused, e.g. not enough chips) or 429 (too fast).
 
 import { createClub, importClub, openClub } from './club-room.js';
 import { limitsFrom, registry } from './registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
+import { serviceHttp, serviceInRoom } from './service-http.js';
 import { initSync, MultiTable } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -138,6 +147,11 @@ export default {
       const origin = req.headers.get('Origin');
       const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
       return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
+    }
+    const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
+    if (svc) {
+      const code = decodeURIComponent(svc[1]);
+      return serviceHttp(req, code, env2 => roomOf(env, code).fetch(`https://room/service/${encodeURIComponent(code)}`, {method: 'POST', body: JSON.stringify(env2)}));
     }
     const m = url.pathname.match(/^\/room\/([^/]+)$/);
     if (!m) return new Response('ducy relay', {status: 404});
@@ -420,6 +434,15 @@ export class Room {
     // /room/<code> WebSockets alone.
     const adm = url.pathname.match(/^\/admin\/(refresh|info)\//);
     if (adm) return this.adminRequest(adm[1], code);
+    // A service's request, from the Worker (serviceHttp checked its shape).
+    if (url.pathname.startsWith('/service/')) {
+      const club = await this.club(code).catch(() => null);
+      const st = club ? await this.status(code) : null;
+      if (st?.blocked) return Response.json({ok: false, error: st.blocked}, {status: 403});
+      const env = await req.json().catch(() => null);
+      const out = await serviceInRoom(this, club, env);
+      return Response.json(out.body, {status: out.status});
+    }
     const role = url.searchParams.get('role');
     const id = url.searchParams.get('id') || '';
     const queue = url.searchParams.get('queue') === '1';
