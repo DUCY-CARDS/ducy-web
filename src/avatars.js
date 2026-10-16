@@ -22,6 +22,7 @@ export const BOT_AVATARS = new Set([
   'the_mathematician',
   'andrew_favorable',
   'tommy_sweeden',
+  'bart_handsome',
 ]);
 
 // A bot's avatar id, or '' if it has none: the GTO bots (Hold'em and both

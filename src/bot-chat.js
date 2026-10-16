@@ -30,6 +30,8 @@ export const PERSONAS = {
   the_mathematician: {tone: 'math', talk: 0.4},
   andrew_favorable: {tone: 'friendly', talk: 0.4},
   tommy_sweeden: {tone: 'cool', talk: 0.2},
+  // The live-poker coach: every hand is a lesson for his audience.
+  bart_handsome: {tone: 'coach', talk: 0.6},
   gto: {tone: 'robot', talk: 0.3},
 };
 const DEFAULT = {tone: 'friendly', talk: 0.3};
@@ -150,6 +152,24 @@ export const LINES = {
     laugh: ['Ha. Probably.'],
     gg: ['GG. Fine sample.'],
     other: ['Possibly.', 'The numbers agree.', 'Hm, interesting.'],
+  },
+  coach: {
+    greet: ['Welcome to the stream, er, table.', 'Let’s crush some live poker.', 'Good luck. I’ll be taking notes.'],
+    wonFromYou: ['Classic population spot.', 'Gotta size up against these guys.', 'Value town. Population never folds there.', 'That one’s going in the video.'],
+    lostToYou: ['Okay, that’s a hero call. I’ll allow it.', 'Sigh. Live players never have it… except when they do.', 'Nice hand. Unusual line, but nice hand.'],
+    bigWin: ['That’s how you play a big pot.', 'Textbook.'],
+    bigLoss: ['Big bet, big hand. Every time.', 'Should’ve folded. Population is never bluffing there.'],
+    stakes: ['Let’s move up. That’s where the money is.', 'These blinds are for beginners. Double it?'],
+    gameWon: ['GG. Remember: don’t pay off the river raise.', 'Great hand for the video. GG.'],
+    gameLost: ['GG. I’ll break this one down on the show.', 'Well played. Ran into the top of your range.'],
+    idle: ['Folding this is fine.', 'If you’re watching, note the sizing.', 'Live tip: they always have it on the river.'],
+    hello: ['Hey! Big fan of the content?', 'Welcome, welcome.'],
+    luck: ['Luck’s short-term. Good luck though.', 'You too. Play solid.'],
+    nice: ['Thanks. Just standard.', 'Appreciate it. Sizing was key.'],
+    thanks: ['Any time. Subscribe for more.', 'Happy to help.'],
+    laugh: ['Ha. Classic.', 'Haha, love it.'],
+    gg: ['GG. Good session.', 'GG, great hands.'],
+    other: ['Good question. Depends on population.', 'Interesting. Let me think about that for the show.', 'Mm, could be.'],
   },
   robot: {
     greet: ['Hello. Strategy loaded.', 'Greetings, human. Good luck.', 'Beep. Ready to play.'],

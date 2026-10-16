@@ -35,7 +35,8 @@ export const START_CHIPS = 2 * buyInAt(0);
 // the champion. Measured after the bots learned to play every stack depth
 // (ducy #255). Its win rate in bb/100 (± 95%) against each, from the bottom:
 //   rampart 58 ± 24, nik_airbag 36 ± 24, milk_king 36 ± 21,
-//   bungleman 28 ± 19, jonny_slow 24 ± 9, chris_moneybags 18 ± 16,
+//   bungleman 28 ± 19, jonny_slow 24 ± 9, bart_handsome 20 ± 19 (added
+//   later, same measurement), chris_moneybags 18 ± 16,
 //   jen_silly 17 ± 14, brad_owned 15 ± 8, mister_cheating 14 ± 24,
 //   phil_bigmouth 6 ± 13, tom_collins 5 ± 17, danny_smallball 3 ± 11,
 //   andrew_favorable 2 ± 14, robin_jane_lewd 2 ± 17, michael_miserable 2 ± 15,
@@ -45,7 +46,7 @@ export const START_CHIPS = 2 * buyInAt(0);
 // measured order, except Doug Poker stays at the top, where he was chosen
 // to be.
 export const ORDER = [
-  'rampart', 'nik_airbag', 'milk_king', 'bungleman', 'jonny_slow', 'chris_moneybags', 'jen_silly',
+  'rampart', 'nik_airbag', 'milk_king', 'bungleman', 'jonny_slow', 'bart_handsome', 'chris_moneybags', 'jen_silly',
   'brad_owned', 'mister_cheating', 'phil_bigmouth', 'tom_collins', 'danny_smallball', 'andrew_favorable',
   'robin_jane_lewd', 'michael_miserable', 'the_mathematician', 'tommy_sweeden', 'gus_bluffsen', 'doug_poker',
 ];
