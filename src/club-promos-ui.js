@@ -13,7 +13,7 @@ const chips = n => esc(chipText(n));
 const SUIT = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const cardsHtml = cards => `<span class="cl-promo-cards">${(cards || []).map(c => {
   const s = String(c).at(-1).toLowerCase();
-  return `<span class="cl-promo-card${s === 'h' || s === 'd' ? ' red' : ''}">${esc(String(c).slice(0, -1).replace('T', '10'))}${SUIT[s] || ''}</span>`;
+  return `<span class="cl-promo-card${s === 'h' || s === 'd' ? ' red' : ''}">${esc(String(c).slice(0, -1))}${SUIT[s] || ''}</span>`;
 }).join('')}</span>`;
 const gameLabel = id => GAMES.find(g => g.id === id)?.label || id;
 // A hand's name mid-sentence ("quad kings", "a royal flush"), and a tier's
