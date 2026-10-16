@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   BLINDS, CHAMPION, ORDER, STAKES_EVERY, START_BB, START_CHIPS, answerStakes, blindsAt, buyInAt,
   chipsNow, dropTo, finishGame, gameBlinds, keepGame, loadProgress, newProgress, opponentOf,
-  pausedGame, rungsFor, saveProgress, stakesOffer, startGame, tableChipsAt,
+  pausedGame, rungShown, rungsFor, saveProgress, stakesOffer, startGame, tableChipsAt,
 } from '../src/ladder.js';
 
 const RUNGS = ['a', 'b', 'c', 'd'];
@@ -256,4 +256,25 @@ test('progress from before chips carried over keeps its rung, with two buy-ins',
   assert.deepEqual(raised.game, {stacks: [212000, 108000], blinds: [800, 1600], hands: 120, offerAt: 200});
   assert.deepEqual(startGame(raised, RUNGS).game, raised.game);
   assert.deepEqual(stakesOffer(keepGame(raised, 212000, 200)), [1600, 3200]);
+});
+
+test('which rungs show goes by the rung: re-ranked bots hide above you and show where you have been', () => {
+  const shown = (p, rungs) => rungs.map((_, i) => rungShown(p, rungs, i));
+  // On rung 2 (c), best rung 3 (d) before; you've played a, b, d and e.
+  const p = {...newProgress(), level: 2, best: 3, record: {a: {won: 1, lost: 0}, b: {won: 1, lost: 0}, d: {won: 0, lost: 1}, e: {won: 0, lost: 1}}};
+  assert.deepEqual(shown(p, ['a', 'b', 'c', 'd', 'e', 'f']), [true, true, true, true, false, false],
+    'below you and up to your best; e, played once, is above anything you reached');
+  // The bots are re-ranked: e moves down to rung 3, which you've reached, and
+  // d moves up to rung 5, which you haven't.
+  assert.deepEqual(shown(p, ['a', 'b', 'c', 'e', 'f', 'd']), [true, true, true, true, false, false],
+    'e shows on a rung you reached, d hides on one you didn’t');
+  // A new bot moved into a rung below you shows.
+  assert.equal(rungShown(p, ['a', 'z', 'c', 'd'], 1), true);
+  // Your own rung, never reached before: hidden until its series starts or
+  // its bot is one you've played.
+  const fresh = {...newProgress(), level: 1, best: 1, record: {a: {won: 1, lost: 0}}};
+  assert.equal(rungShown(fresh, ['a', 'b', 'c'], 1), false);
+  assert.equal(rungShown({...fresh, wins: 1}, ['a', 'b', 'c'], 1), true);
+  assert.equal(rungShown(fresh, ['b', 'a', 'c'], 1), true, 'a, played before, moved to your rung');
+  assert.equal(rungShown(fresh, ['a', 'b', 'c'], 2), false);
 });

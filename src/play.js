@@ -35,7 +35,7 @@ import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regular
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
-  rungsFor, saveProgress, stakesOffer, startGame,
+  rungShown, rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
 import { addHand, lessonsByHand, lessonsShare } from './ladder-review.js';
 import { SPADE_PATH } from './home.js';
@@ -466,10 +466,6 @@ const ladderAvatar = id => (botAvatar(id)
   : `<span class="ld-av none" aria-hidden="true">${esc([...botInfo(id).name][0] || '?')}</span>`);
 const blindsText = ([sb, bb]) => `${chipText(sb)}/${chipText(bb)}`;
 const mysteryAvatar = '<span class="ld-av none" aria-hidden="true">?</span>';
-// A rung's bot stays hidden until you've played them: rungs below you,
-// bots you've had a series against, and the current one once its series is under way.
-const ladderRevealed = (p, rungs, i, level) =>
-  i < level || !!p.record[rungs[i]] || (i === level && (p.wins + p.losses > 0 || !!pausedGame(p)));
 
 // Where a finished game left you: the rung, its bot and your chips.
 // `short`: the series ended for want of a buy-in for the next game.
@@ -511,7 +507,7 @@ function ladderHtml() {
   h += ladderLastReviewHtml();
   // The next series.
   const record = p.record[opp];
-  const known = ladderRevealed(p, rungs, level, level);
+  const known = rungShown(p, rungs, level);
   const game = p.wins + p.losses + 1;
   const them = known ? esc(info.name) : 'Them';
   h += '<section class="ld-next">';
@@ -540,7 +536,7 @@ function ladderHtml() {
     const id = rungs[i], r = p.record[id];
     const cls = i === level ? 'here' : i < level ? 'below' : i <= p.best ? 'reached' : 'ahead';
     const tag = i === level ? 'You’re here' : i < level ? 'Beaten' : i <= p.best ? 'Reached before' : 'Ahead';
-    const shown = ladderRevealed(p, rungs, i, level);
+    const shown = rungShown(p, rungs, i);
     const name = shown ? esc(botInfo(id).name) : '???';
     h += `<li class="ld-rung ${cls}"${i === level ? ' aria-current="step"' : ''} title="${name}: ${tag}${r ? ` (${r.won}–${r.lost})` : ''}, blinds ${blindsText(blindsAt(i))}">`;
     h += `<svg class="ld-spade" viewBox="0 0 32 32" width="18" height="18" aria-hidden="true"><path d="${SPADE_PATH}"/></svg>`;
