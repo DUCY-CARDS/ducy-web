@@ -1170,8 +1170,12 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 /* A bet sits on the felt between its seat and the middle (play.js places it). */
 .pl-bet { position: absolute; left: var(--bx); top: var(--by); transform: translate(-50%, -50%); z-index: 2; display: flex; align-items: flex-end; gap: 3px; pointer-events: none; }
 .pl-bet > .pl-amt { font-family: var(--font-data); font-size: 11px; font-weight: 700; color: #1a1a1a; background: #e8c95a; border-radius: 999px; padding: 0 7px; }
-/* Beside the name plate, so it never covers hole cards. */
-.pl-button { position: absolute; right: -8px; bottom: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+/* On the felt beside the name plate, on its chips' side: below the chips, or
+   above them along the bottom rail (play.js buttonHtml). */
+.pl-button { position: absolute; top: calc(100% + 6px); z-index: 2; pointer-events: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #222; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+.pl-button.b-right { left: calc(100% + 30px); }
+.pl-button.b-left { right: calc(100% + 30px); }
+.pl-button.b-up { top: auto; bottom: calc(100% + 10px); }
 
 .pl-controls {
   display: grid; grid-template-columns: repeat(3, 170px);
@@ -1280,6 +1284,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
      just their amounts. Bets sit nearer their seats, clear of the board. */
   .pl-felt .ch-row { display: none; }
   .pl-bet { left: var(--px); top: var(--py); }
+  /* No chips here: just off the plate's top corner, clear of its bet. */
+  .pl-button, .pl-button.b-up { top: -14px; bottom: auto; }
+  .pl-button.b-right { left: calc(100% + 2px); }
+  .pl-button.b-left { right: calc(100% + 2px); }
   .pl-plate { min-width: 76px; padding: 2px 4px; }
   .pl-plate b { max-width: 78px; font-size: 10px; }
   .pl-card { width: 28px; height: 40px; font-size: 12px; }

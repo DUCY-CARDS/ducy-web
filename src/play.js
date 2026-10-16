@@ -2065,6 +2065,12 @@ const CROWDED = 8;
 // How far a seat's bet sits from the seat toward the middle of the felt.
 const BET_REACH = 0.6;
 const BET_REACH_PHONE = 0.35;
+// The dealer button sits on the felt on the same side of its seat as the
+// seat's chips: below them, or above them for seats along the bottom rail
+// (style.css). Goes inside the name plate.
+function buttonHtml(p) {
+  return `<div class="pl-button ${p.x > 50 ? 'b-left' : 'b-right'}${p.y > 75 ? ' b-up' : ''}">D</div>`;
+}
 const HERO_ROOM = 1.3;
 const crowdedCache = {};
 function crowdedPos(n) {
@@ -2384,9 +2390,7 @@ function renderTable() {
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
-      h += `<div class="pl-seat empty" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>Empty seat</b></div>`;
-      if (s.button === i) h += '<div class="pl-button">D</div>';
-      h += '</div>';
+      h += `<div class="pl-seat empty" style="left:${p.x}%;top:${p.y}%" data-seat="${i}"><div class="pl-plate"><b>Empty seat</b>${s.button === i ? buttonHtml(p) : ''}</div></div>`;
       return;
     }
     if (seat.sitting_out) {
@@ -2403,7 +2407,7 @@ function renderTable() {
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
     const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}</div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -2416,7 +2420,6 @@ function renderTable() {
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (i === 0) h += liveBadgeHtml();
     if (setup.hud) h += hudHtml(seatId(i));
-    if (s.button === i) h += '<div class="pl-button">D</div>';
     h += '</div>';
     // The bet on the felt, part of the way from the seat to the middle (less
     // of the way on phones, whose felt is narrow: style.css).
