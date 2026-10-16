@@ -268,8 +268,9 @@ function runEquityCalc() {
   if (filled.length < 2) return;
 
   if (filled.some(si => seats[si].mode === 'orange')) {
-    if (curG === 'nlhe' || isBombPot()) return;
-    runOmahaRangeEquity(filled);
+    if (curG === 'nlhe') return;
+    if (isBombPot()) runBombPotEquity(filled);
+    else runOmahaRangeEquity(filled);
     return;
   }
 
@@ -323,7 +324,8 @@ function runEquityCalc() {
 }
 
 function runBombPotEquity(filled) {
-  const hasRandom = filled.some(si => seats[si].mode === 'random');
+  // Random hands and ranges are both dealt per sample.
+  const hasRandom = filled.some(si => seats[si].mode === 'random' || seats[si].mode === 'orange');
   const allBoardCards = boards.map(b => b.filter(c => c));
   const totalBoardNeeded = allBoardCards.reduce((sum, bc) => sum + (5 - bc.length), 0);
   const needsMC = totalBoardNeeded > 0 || hasRandom;
@@ -370,15 +372,17 @@ function runBombPotEquity(filled) {
   showCalcOverlay(true);
 
   const randomIndices = [];
+  const rangeSeats = [];
   const hands = [];
   for (let fi = 0; fi < filled.length; fi++) {
     const s = seats[filled[fi]];
     if (s.mode === 'random') randomIndices.push(fi);
+    else if (s.mode === 'orange') rangeSeats.push({seat: fi, text: s.text});
     else hands.push(s.cards.map(cardToWasm));
   }
   const job = {
     type: 'bombpot', numPlayers: filled.length, numBoards, cardsPer: g().cards,
-    hands, randomIndices, allBoardCards: allBoardCards.map(bc => bc.map(cardToWasm)),
+    hands, randomIndices, rangeSeats, allBoardCards: allBoardCards.map(bc => bc.map(cardToWasm)),
     dead: deadCards.map(cardToWasm),
   };
 
@@ -776,6 +780,7 @@ function openSeatModePicker(seatIdx) {
   h += '<div class="seat-mode-picker">';
   h += `<button class="seat-mode-btn" data-smode="cards" data-si="${seatIdx}">Pick cards</button>`;
   h += `<button class="seat-mode-btn" data-smode="random" data-si="${seatIdx}">Any hand</button>`;
+  h += `<button class="seat-mode-btn" data-smode="orange" data-si="${seatIdx}">A range</button>`;
   h += '</div>';
   showModal(h);
 }
@@ -813,7 +818,8 @@ function openCardPicker(seatIdx, cardIdx) {
   // Exact cards first (range-selection design, #244): someone wants a
   // number fast. A standard range is a tap below them, anything else is
   // Custom range.
-  const ranges = isHoldem || !isBombPot();
+  // Every game takes ranges, bomb pots (PLO4 shorthand) included.
+  const ranges = true;
   let h = `<div class="modal-header"><span>Player ${seatIdx+1}</span><button class="modal-x" data-done aria-label="Close">×</button></div>`;
 
   h += '<div class="picker-hand">';
@@ -863,7 +869,7 @@ function openOmahaRangePicker(seatIdx) {
   const s = seats[seatIdx];
   const text = s && s.mode === 'orange' ? s.text : '';
   target = {type: 'hand', seat: seatIdx, seatMode: 'orange'};
-  const game = `${curG.includes('hl') ? 'Omaha 8-or-better' : 'Omaha'} ${g().cards}`;
+  const game = isBombPot() ? 'Bomb pot' : `${curG.includes('hl') ? 'Omaha 8-or-better' : 'Omaha'} ${g().cards}`;
   let h = `<div class="modal-header"><span>Player ${seatIdx + 1} · range · ${game}</span>`;
   h += '<span class="eq-head-acts"><button class="link-btn" data-mt="cards">‹ Exact cards</button><button class="modal-x" data-done aria-label="Close">×</button></span></div>';
   h += '<div class="range-picker">';
@@ -1280,6 +1286,10 @@ document.getElementById('mbg').addEventListener('click', e => {
       seats[si] = {mode:'random'};
       closeModal();
       dirty(); render();
+    } else if (smode.dataset.smode === 'orange') {
+      seats[si] = {mode:'orange', text: ''};
+      dirty(); render();
+      openOmahaRangePicker(si);
     } else {
       seats[si] = {mode:'cards', cards: new Array(g().cards).fill(null)};
       dirty(); render();
@@ -1302,7 +1312,7 @@ document.getElementById('mbg').addEventListener('click', e => {
   }
 
   const mt = e.target.closest('[data-mt]');
-  if (mt && target && target.type === 'hand' && !isBombPot()) {
+  if (mt && target && target.type === 'hand') {
     const mode = mt.dataset.mt;
     if (mode === 'range') {
       if (curG === 'nlhe') openRangePicker(target.seat);
