@@ -1,16 +1,16 @@
 // Chips on the table: an amount drawn as casino chips in stacks of 20.
 // Amounts are in hundredths, like the rest of the page (100 is $1).
 //
-// The smallest chip in play is the largest one not above the big blind. Each
-// chip holds up to MAX_STACKS stacks, and anything beyond colours up into the
-// next chip (the top chip holds as many as it takes), so a stack is a few
-// stacks of each of a few colours, as players keep them. A deep stack that
-// would still take more than SHOWN stacks keeps one stack each of the
-// three smallest chips in play and the rest in the biggest chips ($10,000
-// at 1/2 is mostly yellow). What bigger chips can't pay stays in smaller
-// ones, so the chips always add up; anything under $1 is left over (no
-// fractional chips). It's worked out fresh from the amount each time, so
-// winning a pot colours up on its own.
+// The smallest chip in play is the largest one not above the big blind, and
+// the game's preferred chip, the one players bet with, is the next one up
+// (red at 1/2, green at 2/5). A seat keeps a stack of the smallest chip for
+// blinds and change and two stacks of the preferred chip, and each bigger
+// chip then takes as much as fits until the seat would need more than SHOWN
+// stacks. Past that, the rest goes on one mixed stack, coloured up only as
+// far as it takes to fit ($10,000 at 1/2 is mostly yellow). What bigger
+// chips can't pay stays in smaller ones, so the chips always add up;
+// anything under $1 is left over (no fractional chips). It's worked out
+// fresh from the amount each time, so winning a pot colours up on its own.
 
 export const CHIPS = [
   {value: 100, color: 'white'},
@@ -28,53 +28,55 @@ export const CHIPS = [
   {value: 100000000, color: 'green-1m'},
 ];
 export const STACK = 20;
-const MAX_STACKS = 2;
-// Stacks a seat shows at most, and a deep stack's working chips.
+// Stacks of the preferred chip a seat keeps.
+const PREFERRED_STACKS = 2;
+// Stacks a seat shows at most.
 export const SHOWN = 5;
-const DEEP_TIERS = 3;
 
-const stackCount = chips => chips.reduce((n, c) => n + Math.ceil(c.count / STACK), 0);
+const stacksOf = count => Math.ceil(count / STACK);
 
 // [{value, color, count}], biggest chip first, and the `rest` under $1.
 export function breakdown(amount, bigBlind) {
-  const usual = fill(amount, bigBlind, MAX_STACKS * STACK, Infinity);
-  return stackCount(usual.chips) <= SHOWN ? usual : fill(amount, bigBlind, STACK, DEEP_TIERS);
-}
-
-// The smallest `tiers` chips in play each hold up to `cap`; whatever's left
-// after them is paid in the biggest chips (as `pay` does).
-function fill(amount, bigBlind, cap, tiers) {
   const whole = Math.floor(Math.max(0, amount) / 100) * 100;
   let left = whole;
   const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= Math.max(100, bigBlind)));
-  let i = first;
   const out = [];
-  while (left > 0 && i < CHIPS.length) {
+  let used = 0;
+  for (let i = first; left > 0 && i < CHIPS.length; i++) {
     const {value, color} = CHIPS[i];
     const next = CHIPS[i + 1]?.value;
-    if (i - first >= tiers) {
-      // The rest in the biggest chips: what's left is a whole number of
-      // this chip, so they're never smaller than it. They're `loose`, a few
-      // of each, and go on one mixed stack (toStacks).
-      out.push(...pay(left).chips.reverse().map(c => ({...c, loose: true})));
-      left = 0;
-      break;
-    }
-    let count;
-    if (!next) count = left / value; // the top chip: as many as it takes
-    else {
+    const all = left / value;
+    let count = all; // the top chip: as many as it takes
+    if (next) {
       // Smaller chips below this one can't pay a remainder of it: only
       // amounts of whole chips reach here, since the first chip is the
       // smallest in play and leftovers under it go to `rest`.
       const must = (left % next) / value;
       const per = next / value;
-      const room = Math.max(0, Math.floor((cap - must) / per) * per);
-      count = Math.min(left / value, must + room);
+      // A stack of the smallest chip, two of the preferred one; a bigger
+      // chip takes everything if it fits, else what fits beside a stack
+      // kept for the chips above it.
+      const cap = i === first ? STACK
+        : i === first + 1 ? PREFERRED_STACKS * STACK
+        : stacksOf(all) <= SHOWN - used ? all
+        : Math.max(0, SHOWN - used - 1) * STACK;
+      count = Math.min(all, must + Math.max(0, Math.floor((cap - must) / per) * per));
+      if (i > first + 1 && used + stacksOf(count) + (count < all ? 1 : 0) > SHOWN) {
+        // Full: the rest on one mixed stack of `loose` chips (toStacks).
+        // What's left is a whole number of this chip, so they're never
+        // smaller than it, and they colour up only as far as it takes to
+        // fit one stack: $800 left is eight blacks, not a purple.
+        let top = i;
+        while (top < CHIPS.length - 1 && pay(left, top).chips.reduce((n, c) => n + c.count, 0) > STACK) top++;
+        out.push(...pay(left, top).chips.reverse().map(c => ({...c, loose: true})));
+        left = 0;
+        break;
+      }
     }
     count = Math.floor(count);
     if (count) out.push({value, color, count});
+    used += stacksOf(count);
     left -= count * value;
-    i++;
   }
   // Amounts under the smallest chip in play (a $3 bet with $5 chips) aren't
   // chips either: they go with the rest.
@@ -83,12 +85,13 @@ function fill(amount, bigBlind, cap, tiers) {
 
 // A bet (or the pot) paid the way players bet: the highest-valued chips
 // first, so $11 is two reds and a white. [{value, color, count}], biggest
-// first, and the `rest` under $1.
-export function pay(amount) {
+// first, and the `rest` under $1. `top` is the index of the biggest chip to
+// use (all of them by default).
+export function pay(amount, top = CHIPS.length - 1) {
   let left = Math.floor(Math.max(0, amount) / 100) * 100;
   const rest = Math.max(0, amount) - left;
   const chips = [];
-  for (const {value, color} of [...CHIPS].reverse()) {
+  for (const {value, color} of CHIPS.slice(0, top + 1).reverse()) {
     const count = Math.floor(left / value);
     if (count) chips.push({value, color, count});
     left -= count * value;
