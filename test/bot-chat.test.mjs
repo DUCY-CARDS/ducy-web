@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LINES, PERSONAS, TILT_LINES, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
+import { LINES, PERSONAS, SWEDISH_TILT_LINES, TILT_LINES, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
 
 const MOMENTS = ['greet', 'wonFromYou', 'lostToYou', 'bigWin', 'bigLoss', 'stakes', 'gameWon', 'gameLost', 'idle', 'hello', 'luck', 'nice', 'thanks', 'laugh', 'gg', 'other'];
 
@@ -32,6 +32,17 @@ test('Danny is friendly, until he loses a pot', () => {
   }
   // Nobody else tilts.
   assert.ok(LINES.friendly.lostToYou.includes(lineFor('jen_silly', 'lostToYou', () => 0)));
+});
+
+test('Tommy is cool, until he loses a pot: then Kuksugare', () => {
+  assert.ok(LINES.cool.greet.includes(lineFor('tommy_sweeden', 'greet', () => 0)));
+  assert.ok(LINES.cool.wonFromYou.includes(lineFor('tommy_sweeden', 'wonFromYou', () => 0)));
+  for (const m of ['lostToYou', 'bigLoss', 'gameLost']) {
+    for (const line of SWEDISH_TILT_LINES[m]) assert.match(line, /Kuksugare/, m);
+    for (let i = 0; i < 4; i++) {
+      assert.match(lineFor('tommy_sweeden', m, () => i / 4), /Kuksugare/, m);
+    }
+  }
 });
 
 test('lines come from the bot’s own tone', () => {

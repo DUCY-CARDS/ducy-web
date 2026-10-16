@@ -29,7 +29,8 @@ export const PERSONAS = {
   tom_collins: {tone: 'cool', talk: 0.4},
   the_mathematician: {tone: 'math', talk: 0.4},
   andrew_favorable: {tone: 'friendly', talk: 0.4},
-  tommy_sweeden: {tone: 'cool', talk: 0.2},
+  // Cool and quiet, until he loses a pot: then he steams, in Swedish.
+  tommy_sweeden: {tone: 'cool', talk: 0.2, tilt: 'swedish'},
   // The live-poker coach: every hand is a lesson for his audience.
   bart_handsome: {tone: 'coach', talk: 0.6},
   gto: {tone: 'robot', talk: 0.3},
@@ -199,6 +200,13 @@ export const TILT_LINES = {
   bigLoss: ['@#$%! Rigged.', 'Damn it. DAMN it.', 'I can’t believe this @#$%.'],
   gameLost: ['@#$% this. Lucky @#$%. Rematch.', 'You sucked out all game. GG, I guess.', 'Unreal. @#$%ing unreal.'],
 };
+// Tommy Sweeden's (`tilt: 'swedish'`): he steams in Swedish.
+export const SWEDISH_TILT_LINES = {
+  lostToYou: ['Kuksugare!', 'Kuksugare. Every time.', 'You called with that? Kuksugare.', 'Kuksugare! Nice river.'],
+  bigLoss: ['Kuksugare!', 'Kuksugare… unbelievable.'],
+  gameLost: ['Kuksugare. Rematch.', 'Kuksugare! GG, I guess.'],
+};
+const TILTS = {true: TILT_LINES, swedish: SWEDISH_TILT_LINES};
 
 // Moments a bot always speaks at (when the chat is on), however quiet: they
 // open and close a heads-up challenge game, and answer when you talk.
@@ -220,7 +228,8 @@ export function speaks(id, moment, {headsUp = false, ladder = false, rng = Math.
 // A line for `moment` in the bot's tone (null if there's none).
 export function lineFor(id, moment, rng = Math.random) {
   const persona = personaOf(id);
-  const lines = (persona.tilt && LOSING.has(moment) && TILT_LINES[moment]) || LINES[persona.tone]?.[moment];
+  const tilt = persona.tilt && LOSING.has(moment) && TILTS[persona.tilt]?.[moment];
+  const lines = tilt || LINES[persona.tone]?.[moment];
   if (!lines?.length) return null;
   return lines[Math.floor(rng() * lines.length)];
 }
