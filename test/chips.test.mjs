@@ -13,43 +13,51 @@ test('the chips always add up to the amount', () => {
   }
 });
 
-test('the stack chip is green at 1/2 and 2/5, black at 5/10', () => {
-  assert.deepEqual(counts(breakdown($(500), $(5))), {green: 20});
-  assert.deepEqual(counts(breakdown($(1000), $(10))), {black: 10});
+test('up to $500 at 1/2 is all reds, the favored chip, and whites only for odd dollars', () => {
+  for (const d of [40, 100, 200, 250, 400, 500]) assert.deepEqual(counts(breakdown($(d), $(2))), {red: d / 5}, `$${d}`);
+  assert.deepEqual(counts(breakdown($(389), $(2))), {red: 77, white: 4});
+  assert.deepEqual(counts(breakdown($(57), $(2))), {red: 11, white: 2});
 });
 
-test('two stacks of the stack chip first, change in smaller chips, bigger chips above', () => {
-  // $1,047 at 1/2: two stacks of green, 9 red and 2 white.
-  assert.deepEqual(counts(breakdown($(1047), $(2))), {green: 40, red: 9, white: 2});
-  assert.deepEqual(counts(breakdown($(400), $(2))), {green: 16});
-  assert.deepEqual(counts(breakdown($(484), $(2))), {green: 19, red: 1, white: 4});
-  // Past two stacks of green, blacks.
-  assert.deepEqual(counts(breakdown($(2000), $(2))), {black: 10, green: 40});
-  assert.deepEqual(counts(breakdown($(2047), $(2))), {black: 10, green: 40, red: 9, white: 2});
+test('past five stacks of reds, a stack of reds at a time becomes greens', () => {
+  assert.deepEqual(counts(breakdown($(750), $(2))), {green: 14, red: 80});
+  assert.deepEqual(counts(breakdown($(1500), $(2))), {green: 52, red: 40});
+  assert.deepEqual(counts(breakdown($(2000), $(2))), {green: 76, red: 20});
+  // The whites' stack counts: two stacks of reds and two of greens.
+  assert.deepEqual(counts(breakdown($(1047), $(2))), {green: 34, red: 39, white: 2});
+  assert.deepEqual(counts(breakdown($(484), $(2))), {green: 8, red: 56, white: 4});
 });
 
-test('a deep stack: bigger chips fill up to five stacks, the rest on one stack of big ones', () => {
-  assert.deepEqual(counts(breakdown($(5000), $(2))), {black: 40, green: 40});
-  assert.deepEqual(counts(breakdown($(10000), $(2))), {black: 40, green: 40, purple: 10});
-  assert.deepEqual(counts(breakdown($(30000), $(2))), {black: 40, green: 40, pink: 5});
-  // Five stacks would not hold it beside the change: the rest colours up
-  // only as far as it takes to fit one stack.
-  const deep = breakdown($(6789), $(2));
-  assert.deepEqual(counts(deep), {purple: 11, black: 2, green: 40, red: 17, white: 4});
-  assert.ok(deep.chips.filter(c => c.loose).map(c => c.color).join() === 'purple,black');
-  // Tournament chips: $100k blue, $500k red and $1M green, past the $25k orange.
-  const t = counts(breakdown($(27_500_000), $(100_000)));
-  assert.deepEqual(t, {'green-1m': 27, 'red-500k': 1});
-  assert.equal(total(breakdown($(27_500_000), $(100_000))), $(27_500_000));
+test('when reds and greens can’t fit, blacks come in, then bigger chips', () => {
+  assert.deepEqual(counts(breakdown($(2047), $(2))), {black: 18, red: 49, white: 2});
+  assert.deepEqual(counts(breakdown($(3000), $(2))), {black: 27, red: 60});
+  assert.deepEqual(counts(breakdown($(5000), $(2))), {black: 48, red: 40});
+  assert.deepEqual(counts(breakdown($(10000), $(2))), {purple: 19, green: 8, red: 60});
+  // A seat always keeps at least a full stack of the favored chip.
+  for (const d of [2000, 10000, 12345, 30000, 33333]) assert.ok(counts(breakdown($(d), $(2))).red >= 20, `$${d}`);
 });
 
-test('small amounts: the biggest chips that pay them, and cents are left over', () => {
-  assert.deepEqual(counts(breakdown($(57), $(2))), {green: 2, red: 1, white: 2});
+test('the favored chip at other stakes: red at 2/5, green at 5/10', () => {
+  assert.deepEqual(counts(breakdown($(500), $(5))), {red: 100});
+  assert.deepEqual(counts(breakdown($(1000), $(5))), {green: 28, red: 60});
+  assert.deepEqual(counts(breakdown($(1000), $(10))), {green: 40});
+  // Cents, and amounts under the smallest chip in play, are left over.
   const b = breakdown(1250, 50);
-  assert.deepEqual(counts(b), {red: 2, white: 2});
+  assert.deepEqual(counts(b), {white: 12});
   assert.equal(b.rest, 50);
-  // Under the smallest chip in play: no chips at all.
   assert.deepEqual(breakdown($(3), $(5)).chips, []);
+});
+
+test('a seat shows at most five stacks; one too big for that puts the rest on a mixed stack', () => {
+  for (const d of [484, 1047, 2047, 6789, 10000, 33333]) {
+    assert.ok(stacks($(d), $(2), 9).length <= 5, `$${d}`);
+  }
+  // Tournament chips: $100k blue, $500k red and $1M green, past the $25k orange.
+  const t = breakdown($(27_500_000), $(100_000));
+  assert.equal(total(t), $(27_500_000));
+  const huge = breakdown($(900_000_000), $(2));
+  assert.equal(total(huge), $(900_000_000));
+  assert.ok(huge.chips.some(c => c.loose), 'a mixed stack');
 });
 
 test('a bet is paid with the highest-valued chips first', () => {
@@ -60,11 +68,11 @@ test('a bet is paid with the highest-valued chips first', () => {
 });
 
 test('a player bets with chips they have, and the stack shows what is left', () => {
-  // $400 at 1/2 is 16 greens: an $11 bet breaks one, two reds and a white
-  // go in, and the change (two reds, four whites) stays.
+  // $400 at 1/2 is 80 reds: an $11 bet breaks one, two reds and a white go
+  // in, and four whites of change stay.
   const s = seatChips($(389), $(11), $(2));
   assert.deepEqual(counts({chips: s.bet}), {red: 2, white: 1});
-  assert.deepEqual(counts({chips: s.stack}), {green: 15, red: 2, white: 4});
+  assert.deepEqual(counts({chips: s.stack}), {red: 77, white: 4});
   // With only reds, a $7 bet breaks one: a red and two whites go in, and
   // three whites come back to the stack.
   const broke = payFrom($(7), [{value: 500, color: 'red', count: 4}]);
@@ -83,21 +91,21 @@ test('a player bets with chips they have, and the stack shows what is left', () 
 });
 
 test('at most `max` stacks of up to 20, biggest chips first', () => {
-  const row = stacks($(6789), $(2), 5);
+  const row = stacks($(33333), $(2), 5);
   assert.equal(row.length, 5);
   assert.ok(row.every(s => (s.mix ? s.mix.reduce((n, m) => n + m.count, 0) : s.count) <= 20));
   // A deep stack's loose big chips share one stack, the highest on top.
-  assert.deepEqual(row[0], {mix: [{color: 'purple', count: 11}, {color: 'black', count: 2}]});
-  assert.deepEqual(row.slice(1).map(s => s.color), ['green', 'green', 'red', 'white']);
-  assert.match(chipsHtml($(6789), $(2)), /ch-mix/);
-  assert.deepEqual(stacks($(10000), $(2), 5).map(s => s.color), ['purple', 'black', 'black', 'green', 'green']);
-  assert.deepEqual(stacks($(1047), $(2), 5).map(s => s.color), ['green', 'green', 'red', 'white']);
-  assert.match(chipsHtml($(500), $(5)), /ch-green/);
+  assert.deepEqual(row[0], {mix: [{color: 'pink', count: 6}, {color: 'yellow', count: 3}, {color: 'green', count: 2}]});
+  assert.deepEqual(row.slice(1).map(s => s.color), ['red', 'red', 'red', 'white']);
+  assert.match(chipsHtml($(33333), $(2)), /ch-mix/);
+  assert.deepEqual(stacks($(10000), $(2), 5).map(s => s.color), ['purple', 'green', 'red', 'red', 'red']);
+  assert.deepEqual(stacks($(1047), $(2), 5).map(s => s.color), ['green', 'green', 'red', 'red', 'white']);
+  assert.match(chipsHtml($(500), $(5)), /ch-red/);
   assert.equal(chipsHtml(0, $(5)), '');
 });
 
-test('the chips bet are the chips in the pot: greens stay green', () => {
-  // Blinds 1/2, both $400 deep (16 greens each). Seat 0 raises
+test('the chips bet are the chips in the pot: reds stay red', () => {
+  // Blinds 1/2, both $400 deep (80 reds each). Seat 0 raises
   // to $50, seat 1 calls, the flop comes.
   const events = [
     {type: 'small_blind', seat: 0, amount: $(1)},
@@ -106,14 +114,14 @@ test('the chips bet are the chips in the pot: greens stay green', () => {
     {type: 'call', seat: 1, amount: $(48)},
   ];
   const before = handChips([{stack: $(350), street_bet: $(50)}, {stack: $(350), street_bet: $(50)}], events, $(2));
-  // The raise is a green, four reds and the white blind plus four more.
-  assert.deepEqual(counts({chips: before.bets[0]}), {green: 1, red: 4, white: 5});
+  // The raise is nine reds and the white blind plus four more.
+  assert.deepEqual(counts({chips: before.bets[0]}), {red: 9, white: 5});
   assert.equal(total({chips: before.stacks[0], rest: 0}), $(350));
   const flop = [...events, {type: 'board', street: 'flop', cards: ['2c', '7d', '9h']}];
   const after = handChips([{stack: $(350), street_bet: 0}, {stack: $(350), street_bet: 0}], flop, $(2));
-  // Both greens are in the pot, not coloured up into a black.
-  assert.equal(counts({chips: after.pot}).green, 2);
-  assert.equal(counts({chips: after.pot}).black, undefined);
+  // All 18 reds are in the pot, not coloured up into greens.
+  assert.equal(counts({chips: after.pot}).red, 18);
+  assert.equal(counts({chips: after.pot}).green, undefined);
   assert.equal(total({chips: after.pot, rest: 0}), $(100));
   assert.deepEqual(after.bets, [[], []]);
   // And amounts that don't add up give no chips (the page then draws from

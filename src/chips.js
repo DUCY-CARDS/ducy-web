@@ -1,16 +1,19 @@
 // Chips on the table: an amount drawn as casino chips in stacks of 20.
 // Amounts are in hundredths, like the rest of the page (100 is $1).
 //
-// The smallest chip in play is the largest one not above the big blind, and
-// the stack chip is the biggest worth at most 12.5 big blinds (green at 1/2
-// and 2/5, black at 5/10). A seat has up to two stacks of the stack chip
-// first; what's above that goes to the bigger chips, each taking as much as
-// fits until the seat would need more than SHOWN stacks, then the rest on
-// one mixed stack, coloured up only as far as it takes to fit. What's left
-// under the next chip up is change in the smaller chips, biggest first:
-// $1,047 at 1/2 is two stacks of green, 9 red and 2 white. Anything under
-// the smallest chip is left over (no fractional chips). It's worked out
-// fresh from the amount each time, so winning a pot colours up on its own.
+// Each game has a favored chip, the one players bet with: the smallest worth
+// at least the big blind (red at 1/2 and 2/5, green at 5/10). Chips smaller
+// than it (whites at 1/2) are only for what it can't pay, the odd dollars.
+// The rest is as many of the favored chip as possible, at least a full
+// stack, with all the stacks (the whites' too) at most SHOWN: when that
+// isn't enough, a stack of it is traded for the next chip up, then another,
+// until it fits ($750 at 1/2 is 80 reds and 14 greens, $2,000 is 20 reds and
+// 76 greens); when reds and greens can't fit, blacks come in, and so on up,
+// as few bigger chips as it takes ($2,047 is 49 reds, 18 blacks and 2
+// whites). An amount too big for SHOWN stacks of any chips puts the rest on
+// one mixed stack, coloured up only as far as it takes to fit. Anything under the smallest chip in play
+// is left over (no fractional chips). It's worked out fresh from the amount
+// each time, so winning a pot colours up on its own.
 
 export const CHIPS = [
   {value: 100, color: 'white'},
@@ -28,10 +31,6 @@ export const CHIPS = [
   {value: 100000000, color: 'green-1m'},
 ];
 export const STACK = 20;
-// The stack chip is the biggest one worth at most this many big blinds.
-const STACK_CHIP_BB = 12.5;
-// Stacks of the stack chip a seat has at most, before bigger chips.
-const PREFERRED_STACKS = 2;
 // Stacks a seat shows at most.
 export const SHOWN = 5;
 
@@ -40,25 +39,51 @@ const stacksOf = count => Math.ceil(count / STACK);
 // [{value, color, count}], biggest chip first, and the `rest` under $1.
 export function breakdown(amount, bigBlind) {
   const whole = Math.floor(Math.max(0, amount) / 100) * 100;
-  const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= Math.max(100, bigBlind)));
-  // The stack chip: up to two stacks of it come first.
-  const main = Math.min(CHIPS.length - 1, Math.max(first + 1, CHIPS.findLastIndex(c => c.value <= STACK_CHIP_BB * Math.max(100, bigBlind))));
-  const mainCount = Math.min(PREFERRED_STACKS * STACK, Math.floor(whole / CHIPS[main].value));
-  const afterMain = whole - mainCount * CHIPS[main].value;
-  // Whole multiples of the next chip up go to the bigger chips; the rest
-  // is change in the smaller ones.
-  const nextUp = CHIPS[main + 1]?.value;
-  const big = nextUp ? Math.floor(afterMain / nextUp) * nextUp : 0;
-  const small = afterMain - big;
-  const change = main > first ? pay(small, main - 1).chips.filter(c => CHIPS.findIndex(x => x.value === c.value) >= first) : [];
-  // The bigger chips fit beside the stack chip's stacks and the change's.
-  const bigger = biggerChips(big, main + 1, stacksOf(mainCount) + change.reduce((n, c) => n + stacksOf(c.count), 0));
-  const paid = [...bigger.chips, ...(mainCount ? [{...CHIPS[main], count: mainCount}] : []), ...change];
+  const bb = Math.max(100, bigBlind);
+  // The smallest chip in play, and the favored one.
+  const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= bb));
+  const fav = Math.max(first, CHIPS.findIndex(c => c.value >= bb));
+  // What the favored chip can't pay, in the smaller chips in play.
+  const odd = whole % CHIPS[fav].value;
+  const small = fav > first ? pay(odd, fav - 1).chips : [];
+  const main = whole - small.reduce((t, c) => t + c.value * c.count, 0);
+  // The small chips' stacks count too. Bigger chips come in one at a time:
+  // reds alone, then with greens, then blacks too, and so on.
+  const room = SHOWN - small.reduce((n, c) => n + stacksOf(c.count), 0);
+  let big = null;
+  for (let top = fav; !big && top < CHIPS.length; top++) big = fill(main, fav, room, top);
+  big ||= biggerChips(main, fav, SHOWN - room).chips;
+  const paid = [...big, ...small];
   const counted = paid.reduce((t, c) => t + c.value * c.count, 0);
   // Amounts under the smallest chip in play (a $3 bet with $5 chips) aren't
   // chips either: they go with the rest.
   return {chips: paid, rest: Math.max(0, amount) - counted};
 }
+
+// `amount` in at most `stacks` stacks of chips from CHIPS[i] to CHIPS[top],
+// as many of the smallest as possible: the most stacks of CHIPS[i] that
+// leave an amount the bigger chips can pay in the stacks left, and within
+// those, the most chips. Biggest chip first, or null if it can't be done.
+function fill(amount, i, stacks, top, favOf = i) {
+  if (amount === 0) return [];
+  if (i > top || stacks === 0) return null;
+  const {value, color} = CHIPS[i];
+  const next = i < top ? CHIPS[i + 1].value : 0;
+  // At least a full stack of the favored chip, when there's that much.
+  const least = i === favOf ? Math.min(STACK, Math.floor(amount / value)) : 1;
+  for (let s = stacks; s >= 1; s--) {
+    for (let c = Math.min(s * STACK, Math.floor(amount / value)); c > (s - 1) * STACK && c >= least; c--) {
+      const left = amount - c * value;
+      if (left === 0) return [{value, color, count: c}];
+      if (!next || left % next !== 0) continue;
+      const rest = fill(left, i + 1, stacks - s, top, favOf);
+      if (rest) return [...rest, {value, color, count: c}];
+    }
+  }
+  // None of this chip: never the favored one (a seat always has some to bet).
+  return i > favOf && next && amount % next === 0 ? fill(amount, i + 1, stacks, top, favOf) : null;
+}
+
 
 // `amount` (whole multiples of CHIPS[start]) in chips from CHIPS[start] up,
 // beside `used` stacks: each takes as much as fits until the seat would
