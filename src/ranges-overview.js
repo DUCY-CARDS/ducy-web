@@ -57,6 +57,8 @@ export function overviewHtml(progress, cards = 2) {
     h += `<div class="v3-track-go"><span>Every ${esc(open.name)} range mastered. Tap one to keep practising.</span></div>`;
   }
   h += '</section>';
+  // Every other option (#244): only behind Custom range.
+  h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Any game and cutoff, one kind of hand, the test’s length, Hold’em charts or your own ranges.</span></div>';
   return h + '</div></div></div>';
 }
 

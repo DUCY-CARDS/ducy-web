@@ -37,7 +37,7 @@ let open = false;
 // drill: a hand kind (tag) to practise on its own, or null for all hands.
 // The first screen is the overview (ranges-overview.js, V3 #225); ovCards is
 // the game it has open.
-let st = {screen: 'overview', ovCards: 2, game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: '', drill: null};
+let st = {screen: 'overview', ovCards: 2, game: 'holdem', choice: 'preset:open-btn', total: 50, omaha: {cards: 4, pct: 20}, lookup: '', drill: null, custom: false};
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
@@ -194,7 +194,36 @@ function handCountAndStart() {
   return h + '</div><button class="tr-start" data-act="start">Start</button>';
 }
 
+// A skill picked from the overview: just Practice and Start test. Drills for
+// weak spots show once practice has found some; every other option is under
+// Custom range on the overview (st.custom).
+function renderSkill() {
+  const {cards, pct} = st.omaha;
+  const all = loadProgress();
+  const base = practiceKey(cards, pct), rec = all[base];
+  st.drill = null;
+  let h = '<div class="tr-wrap tr-skill-page">';
+  h += '<div class="tr-head"><button type="button" class="link-btn tr-back" data-act="overview">‹ All skills</button>';
+  h += `<h1>${gameName(cards)} · top ${pct}%</h1>`;
+  h += `<p>Decide for each random hand whether it’s in the top ${pct}% of ${handsName(cards)}.</p></div>`;
+  h += '<div class="tr-mode tr-skill-main">';
+  h += `<div class="tr-mode-row"><div><b>Practice</b><span>Adapts to you and explains mistakes.</span></div>${levelChip(rec)}</div>`;
+  h += '<button class="tr-start" data-act="practice">Practice</button>';
+  h += `<div class="tr-mode-row"><div><b>Test</b><span>${st.total} hands, no feedback until the end.</span></div></div>`;
+  h += '<button class="tr-start secondary" data-act="start">Start test</button>';
+  h += '</div>';
+  const weak = weakestKinds(rec, drillTags(cards, pct)).filter(w => w.acc < 0.9).slice(0, 3);
+  if (weak.length) {
+    h += '<div class="tr-mode"><div class="tr-group">Work on weak spots</div><div class="tr-drills">';
+    for (const w of weak) h += `<button class="tr-drill weak" data-drill-start="${w.tag}" title="${esc(labelsFor(cards)[w.tag])}">${esc(shortLabel(cards, w.tag))} <em>${Math.round(w.acc * 100)}%</em></button>`;
+    h += '</div></div>';
+  }
+  h += '</div>';
+  root.innerHTML = h;
+}
+
 function renderOmahaSetup() {
+  if (!st.custom) { renderSkill(); return; }
   const {cards, pct} = st.omaha;
   let h = '<div class="tr-wrap">';
   h += '<div class="tr-head"><button type="button" class="link-btn tr-back" data-act="overview">‹ All skills</button><h1>Pre-flop ranges</h1>';
@@ -1174,8 +1203,8 @@ function onClick(e) {
   if (el.dataset.skill) {
     const [cards, pct] = el.dataset.skill.split(':').map(Number);
     st.omaha.cards = cards; st.omaha.pct = pct; st.drill = null;
-    // From the overview, a skill opens its practice screen.
-    if (st.screen === 'overview') { st.game = 'omaha'; st.screen = 'setup'; }
+    // From the overview, a skill opens its own screen: Practice or Start test.
+    if (st.screen === 'overview') { st.game = 'omaha'; st.screen = 'setup'; st.custom = false; }
     render();
   }
   else if (el.dataset.drill != null) { st.drill = el.dataset.drill || null; render(); }
@@ -1217,6 +1246,12 @@ function onClick(e) {
   else if (el.dataset.act === 'delete') deleteEdit();
   else if (el.dataset.act === 'quit' || el.dataset.act === 'setup') { st.screen = 'setup'; render(); }
   else if (el.dataset.act === 'overview') { st.screen = 'overview'; st.edit = null; render(); }
+  // The overview's Custom range: every option (any game and cutoff, drills,
+  // test length, Hold'em charts and your own ranges).
+  else if (el.dataset.act === 'custom') {
+    st.custom = true; st.game = 'omaha'; st.omaha.cards = st.ovCards; st.drill = null; st.edit = null; st.screen = 'setup';
+    render();
+  }
 }
 
 function onKey(e) {
