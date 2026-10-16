@@ -23,6 +23,7 @@
 //   {type: 'role_reply', club, accept}   answer to an assistant offer (#62)
 //   {type: 'admin_cmd', club, cmd}       an assistant's command (club-roles.js)
 //   {type: 'help_ask', club, text, table}   ask the host and assistants for help (#192)
+//   {type: 'lobby_say', club, text}      a line in the lobby chat (club-lobby.js)
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
@@ -36,6 +37,8 @@
 //   {type: 'host_key', club, key}        the host's session key for table updates
 //   {type: 'help', club, staff, mine}    who's around to help, and your latest
 //                                        help requests (club-help.js, #192)
+//   {type: 'lobby', club, online, chat}  who's online, and the lobby chat
+//                                        (club-lobby.js)
 // Join and hello carry the player's session key ({key}). Table updates go
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
@@ -43,6 +46,7 @@
 import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
+import { readLobby } from './club-lobby.js';
 
 export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
@@ -175,6 +179,13 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (typeof body.text !== 'string' || !body.text.trim()) return {replies: [], changed: false, reason: 'bad help request'};
     return {replies: [], changed: false, help: {from: id, text: body.text, table: typeof body.table === 'string' ? body.table : ''}};
   }
+  // A line in the lobby chat (club-lobby.js): the caller records it and
+  // sends the lobby to everyone online (club-server.js).
+  if (body.type === 'lobby_say') {
+    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
+    if (typeof body.text !== 'string' || !body.text.trim()) return {replies: [], changed: false, reason: 'bad lobby message'};
+    return {replies: [], changed: false, lobby: {from: id, text: body.text}};
+  }
   if (body.type === 'chip_request' || body.type === 'cancel_request') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     try {
@@ -273,6 +284,11 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     mem.staff = Array.isArray(b.staff) ? b.staff : [];
     mem.help = Array.isArray(b.mine) ? b.mine : [];
+    return true;
+  }
+  if (b.type === 'lobby') {
+    mem.hostSeq = env.seq;
+    mem.lobby = readLobby(b);
     return true;
   }
   if (b.type === 'tourneys') {

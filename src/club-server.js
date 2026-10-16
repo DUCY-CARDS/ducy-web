@@ -50,6 +50,8 @@ import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
 } from './club-agents.js';
 import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
+import { lobbyBody, sayInLobby } from './club-lobby.js';
+import { chatLimiter } from './table-chat.js';
 import { handRecord } from './hand-replay.js';
 import {
   approveAward, editPromo, newPromo, nextSettle, processHand, promosAdmin, promosBody, setPromoStatus, settlePeriods, voidAward,
@@ -183,6 +185,28 @@ export function createClubServer({
   }
   const tourneyLive = () => tourneyHost?.live() || {};
 
+  // The lobby (club-lobby.js): who's online and the chat, to every member
+  // online, at most every 300 ms. The host's page draws it from the club.
+  const lobbyLimit = chatLimiter();
+  let lobbyTimer = null;
+  function broadcastLobby() {
+    if (lobbyTimer) return;
+    lobbyTimer = setTimeout(() => {
+      lobbyTimer = null;
+      const body = lobbyBody(club, online, hostInTab);
+      for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
+      sendOwnerView();
+      onChange();
+    }, 300);
+  }
+  // `from` (a member, or the host) says `text` in the lobby.
+  function lobbySay(from, text) {
+    if (!lobbyLimit.allow(from)) throw new Error('Slow down a little.');
+    sayInLobby(club, from, text);
+    changed();
+    broadcastLobby();
+  }
+
   // The tournaments' lobby (#77) to every member online. Live standings
   // alone go out at most every few seconds.
   function broadcastTourneys() {
@@ -292,6 +316,8 @@ export function createClubServer({
 
   function broadcastTables() {
     if (!tableHost) return;
+    // Who's at which table shows in the lobby.
+    broadcastLobby();
     const body = tablesBody(club, seatedCounts());
     for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
   }
@@ -377,9 +403,10 @@ export function createClubServer({
   // A message from the relay: a member connecting or leaving, or their signed message.
   async function message(msg) {
     if (!msg || !msg.from) return;
-    if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); if (isStaff(msg.from)) broadcastHelp(); return; }
+    if (msg.event === 'open') { online.add(msg.from); tableHost?.presence(msg.from); if (isStaff(msg.from)) broadcastHelp(); broadcastLobby(); return; }
     if (msg.event === 'close') {
       online.delete(msg.from);
+      broadcastLobby();
       if (isStaff(msg.from)) broadcastHelp();
       if (msg.from === club.ownerId) unwatch();
       tableHost?.disconnected(msg.from);
@@ -413,6 +440,10 @@ export function createClubServer({
       sendHelp(msg.from);
       return;
     }
+    if (r.lobby && r.lobby.from === msg.from) {
+      try { lobbySay(msg.from, r.lobby.text); } catch (e) { console.warn('club: lobby message refused:', e.message); }
+      return;
+    }
     const m = club.members[msg.from];
     if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
@@ -426,6 +457,8 @@ export function createClubServer({
       sendHelp(msg.from);
       if (m.agent) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: m.agent, creditLimit: m.creditLimit || 0}});
       if (isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
+      // A new name shows in the lobby too.
+      broadcastLobby();
     }
     if (r.changed || r.replies.length) changed();
   }
@@ -438,6 +471,7 @@ export function createClubServer({
     for (const r of [rep].flat()) await sendToPlayer(r);
     // A new member gets the tables straight away.
     if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesBody(club, seatedCounts())});
+    broadcastLobby();
   }
 
   // A chip change for member `id`; then they get their updated account.
@@ -474,6 +508,8 @@ export function createClubServer({
       changed();
       if (online.has(h.from)) sendHelp(h.from);
     },
+    // The host's line in the lobby chat.
+    lobby_say: ({text}) => lobbySay(club.ownerId || club.hostId, text),
     settings: values => {
       for (const [k, v] of Object.entries(values)) {
         if (!SETTINGS[k]?.(v)) throw new Error(`Not a valid ${k}.`);
