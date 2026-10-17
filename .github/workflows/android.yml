@@ -31,6 +31,17 @@ jobs:
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
           npx cap add android
 
+      # The spade icon and splash (app/assets/*.svg) as PNGs, then every
+      # size Android needs, launcher and adaptive icons included.
+      - name: Icon and splash
+        working-directory: app
+        run: |
+          sudo apt-get install -y -qq librsvg2-bin >/dev/null
+          for f in icon-only icon-foreground icon-background splash; do rsvg-convert "assets/$f.svg" -o "assets/$f.png"; done
+          cp assets/splash.png assets/splash-dark.png
+          npx --yes @capacitor/assets@3 generate --android \
+            --iconBackgroundColor '#16191e' --splashBackgroundColor '#1f3d31' --splashBackgroundColorDark '#1f3d31'
+
       - name: Build the debug APK
         working-directory: app/android
         run: ./gradlew --no-daemon assembleDebug
