@@ -99,99 +99,99 @@ function settle(spots) {
 function cellHtml(mix, i) {
   const hand = cellHand(i);
   const on = focus === i ? ' on' : '';
-  if (!mix) return `<button class="ch-cell none${on}" data-cell="${i}" title="${hand}: too few hands to say"><span class="ch-hand">${hand}</span></button>`;
+  if (!mix) return `<button class="pfc-cell none${on}" data-cell="${i}" title="${hand}: too few hands to say"><span class="pfc-hand">${hand}</span></button>`;
   // Stacked from the left: all-in, raise, call, fold.
   let x = 0;
   const parts = [3, 2, 1, 0].map(a => {
     const w = mix[a];
-    const s = w > 0 ? `<span class="ch-part a${a}" style="left:${x}%;width:${w}%"></span>` : '';
+    const s = w > 0 ? `<span class="pfc-part a${a}" style="left:${x}%;width:${w}%"></span>` : '';
     x += w;
     return s;
   }).join('');
-  return `<button class="ch-cell${on}" data-cell="${i}" title="${hand}"><span class="ch-bars">${parts}</span><span class="ch-hand">${hand}</span></button>`;
+  return `<button class="pfc-cell${on}" data-cell="${i}" title="${hand}"><span class="pfc-bars">${parts}</span><span class="pfc-hand">${hand}</span></button>`;
 }
 
 function legendHtml(spot, verbs) {
-  let h = '<div class="ch-legend">';
-  for (const a of [2, 3, 1, 0]) h += `<span class="ch-key"><span class="ch-swatch a${a}"></span>${verbs[a]} <b>${spot.overall[a].toFixed(1)}%</b></span>`;
+  let h = '<div class="pfc-legend">';
+  for (const a of [2, 3, 1, 0]) h += `<span class="pfc-key"><span class="pfc-swatch a${a}"></span>${verbs[a]} <b>${spot.overall[a].toFixed(1)}%</b></span>`;
   return h + '</div>';
 }
 
 function render() {
   if (!open || !root) return;
   if (!index) {
-    root.innerHTML = '<div class="ch-wrap"><p class="ch-note">Loading the charts…</p></div>';
+    root.innerHTML = '<div class="pfc-wrap"><p class="pfc-note">Loading the charts…</p></div>';
     return;
   }
   const spots = spotsFor(pick.who, pick.bb);
   const spot = settle(spots);
   const regs = regulars();
   const whoName = pick.who === 'ducybot' ? 'Ducybot' : regs.find(r => r.id === pick.who)?.name || pick.who;
-  let h = '<div class="ch-wrap">';
-  h += '<div class="ch-head"><h1>Pre-flop charts</h1><p>Six-handed No-limit Hold’em. Ducybot’s are his GTO strategy; each Regular’s is how they actually play, recorded from their hands.</p></div>';
+  let h = '<div class="pfc-wrap">';
+  h += '<div class="pfc-head"><h1>Pre-flop charts</h1><p>Six-handed No-limit Hold’em. Ducybot’s are his GTO strategy; each Regular’s is how they actually play, recorded from their hands.</p></div>';
   // Who.
-  h += '<div class="ch-row"><span class="ch-label">Whose</span><div class="ch-who">';
+  h += '<div class="pfc-row"><span class="pfc-label">Whose</span><div class="pfc-who">';
   const who = [{id: 'ducybot', name: 'Ducybot', av: 'gto'}, ...regs.map(r => ({...r, av: botAvatar(r.id)}))];
   for (const w of who) {
     const av = w.av ? `<img src="${avatarUrl(w.av)}" alt="">` : '';
-    h += `<button class="ch-person${pick.who === w.id ? ' on' : ''}" data-who="${esc(w.id)}">${av}<span>${esc(w.name)}</span></button>`;
+    h += `<button class="pfc-person${pick.who === w.id ? ' on' : ''}" data-who="${esc(w.id)}">${av}<span>${esc(w.name)}</span></button>`;
   }
   h += '</div></div>';
   // Depth.
   const depths = depthsFor(pick.who);
   if (depths.length > 1) {
-    h += '<div class="ch-row"><span class="ch-label">Stacks</span><div class="pl-opts">';
+    h += '<div class="pfc-row"><span class="pfc-label">Stacks</span><div class="pl-opts">';
     for (const bb of depths) h += `<button class="cc-btn${pick.bb === bb ? ' on' : ''}" data-bb="${bb}">${bb} BB</button>`;
     h += '</div></div>';
   }
   if (spots === null) {
-    h += '<p class="ch-note">Loading…</p></div>';
+    h += '<p class="pfc-note">Loading…</p></div>';
     root.innerHTML = h;
     return;
   }
   if (!spot) {
-    h += `<p class="ch-note">No charts for ${esc(whoName)} at ${pick.bb} BB yet.</p></div>`;
+    h += `<p class="pfc-note">No charts for ${esc(whoName)} at ${pick.bb} BB yet.</p></div>`;
     root.innerHTML = h;
     return;
   }
   // Spot: kind, then position, then who it's against.
   const kinds = KINDS.filter(k => spots.some(s => s.kind === k.kind));
-  h += '<div class="ch-row"><span class="ch-label">Spot</span><div class="pl-opts">';
+  h += '<div class="pfc-row"><span class="pfc-label">Spot</span><div class="pl-opts">';
   for (const k of kinds) h += `<button class="cc-btn${pick.kind === k.kind ? ' on' : ''}" data-kind="${k.kind}">${k.label}</button>`;
   h += '</div></div>';
   const ofKind = spots.filter(s => s.kind === pick.kind);
   const heroes = POSITION_ORDER.filter(p => ofKind.some(s => s.hero === p));
   if (heroes.length > 1) {
-    h += `<div class="ch-row"><span class="ch-label">${pick.kind === 'vs-3bet' ? 'You opened' : 'You’re'}</span><div class="pl-opts">`;
+    h += `<div class="pfc-row"><span class="pfc-label">${pick.kind === 'vs-3bet' ? 'You opened' : 'You’re'}</span><div class="pl-opts">`;
     for (const p of heroes) h += `<button class="cc-btn${pick.hero === p ? ' on' : ''}" data-hero="${p}">${p}</button>`;
     h += '</div></div>';
   }
   const villains = POSITION_ORDER.filter(p => ofKind.some(s => s.hero === pick.hero && s.villain === p));
   if (villains.length > 1) {
-    h += `<div class="ch-row"><span class="ch-label">${pick.kind === 'vs-3bet' ? '3-bet by' : 'Against'}</span><div class="pl-opts">`;
+    h += `<div class="pfc-row"><span class="pfc-label">${pick.kind === 'vs-3bet' ? '3-bet by' : 'Against'}</span><div class="pl-opts">`;
     for (const p of villains) h += `<button class="cc-btn${pick.villain === p ? ' on' : ''}" data-villain="${p}">${p}</button>`;
     h += '</div></div>';
   }
   const verbs = VERBS[spot.kind] || ACTION_NAMES;
   const kind = KINDS.find(k => k.kind === spot.kind);
-  h += `<div class="ch-title"><b>${esc(whoName)}</b> · ${esc(kind.text(spot))} · ${pick.bb} BB</div>`;
+  h += `<div class="pfc-title"><b>${esc(whoName)}</b> · ${esc(kind.text(spot))} · ${pick.bb} BB</div>`;
   h += legendHtml(spot, verbs);
   if (pick.who !== 'ducybot') {
     // The same spot GTO, to compare.
     const gto = load(fileFor('ducybot', pick.bb))?.spots?.find(s => s.id === spot.id);
     const sample = spot.hands ? `${Number(spot.hands).toLocaleString()} hands recorded. ` : '';
-    h += `<p class="ch-note">${sample}${gto ? `Ducybot here: ${[2, 3, 1].filter(a => gto.overall[a] >= 0.5).map(a => `${verbs[a].toLowerCase()} ${gto.overall[a].toFixed(1)}%`).join(', ')}.` : ''}</p>`;
+    h += `<p class="pfc-note">${sample}${gto ? `Ducybot here: ${[2, 3, 1].filter(a => gto.overall[a] >= 0.5).map(a => `${verbs[a].toLowerCase()} ${gto.overall[a].toFixed(1)}%`).join(', ')}.` : ''}</p>`;
   }
-  h += '<div class="ch-grid" role="grid">';
+  h += '<div class="pfc-grid" role="grid">';
   spot.cells.forEach((mix, i) => { h += cellHtml(mix, i); });
   h += '</div>';
   if (focus != null) {
     const mix = spot.cells[focus];
-    h += `<div class="ch-detail"><b>${cellHand(focus)}</b> `;
+    h += `<div class="pfc-detail"><b>${cellHand(focus)}</b> `;
     h += mix ? [2, 3, 1, 0].filter(a => mix[a] > 0).map(a => `${verbs[a]} ${mix[a]}%`).join(' · ') : 'too few hands to say';
     h += '</div>';
-  } else h += '<p class="ch-note">Tap a hand for its exact mix.</p>';
-  if (note) h += `<p class="ch-note">${esc(note)}</p>`;
+  } else h += '<p class="pfc-note">Tap a hand for its exact mix.</p>';
+  if (note) h += `<p class="pfc-note">${esc(note)}</p>`;
   h += '</div>';
   root.innerHTML = h;
 }
