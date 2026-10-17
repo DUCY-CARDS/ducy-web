@@ -179,7 +179,7 @@ function studyPage(d) {
 
 function challengePage(d) {
   let h = '<div class="v3-page">' + head('Heads-up training', {href: '#study', label: 'Study'}, 'study');
-  h += '<p class="v3-note">Against the GTO bot, 100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
+  h += '<p class="v3-note">Against Ducybot, 100 big blinds every hand.</p><div class="v3-tiles v3-tiles-3">';
   for (const g of d.gto || GTO_GAMES.map(x => ({...x, hands: 0, bb100: null}))) {
     h += `<a class="v3-tile v3-tile-dark" href="#${g.hash}"><img class="v3-tile-av" src="${avatarUrl('gto')}" alt=""><span class="v3-tile-name">${g.name}</span>`;
     if (g.hands) h += `<span class="v3-record${g.bb100 < 0 ? ' down' : ''}">${bbText(g.bb100)}</span><span class="v3-dim">${g.hands} hands</span>`;

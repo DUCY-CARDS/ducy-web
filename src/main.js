@@ -960,7 +960,7 @@ function presetsHtml(sel) {
     }
     h += '</div>';
   }
-  h += '<div class="presets-foot">6-max: overall frequencies match published solver figures; hands are approximate. Heads-up: straight from ducy’s GTO bot, each hand in the range of the action it takes most often. Hover a preset to see its hands and notes.</div>';
+  h += '<div class="presets-foot">6-max: overall frequencies match published solver figures; hands are approximate. Heads-up: straight from Ducybot, ducy’s GTO bot, each hand in the range of the action it takes most often. Hover a preset to see its hands and notes.</div>';
   h += '</details>';
   return h;
 }

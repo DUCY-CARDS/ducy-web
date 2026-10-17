@@ -117,7 +117,9 @@ let personalities = [];
 // files are hosted at gto/ (see scripts/upload-gto.sh); it's offered when
 // they're there.
 const GTO_MANIFEST = new URL('gto/current.json', document.baseURI).href;
-const GTO = {id: 'gto', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
+// The name every GTO bot plays under (ducy-wasm seats them as it too).
+const BOT_NAME = 'Ducybot';
+const GTO = {id: 'gto', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
 let gtoAvailable = false;
 let gtoReady = false;
 // The PLO GTO bots, for heads-up PLO4 and PLO6 the same way, keyed by game:
@@ -125,12 +127,12 @@ let gtoReady = false;
 // offered when it's there and the engine can play it.
 const GTO_PLOS = {
   plo4: {
-    bot: {id: 'gto-plo', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
+    bot: {id: 'gto-plo', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
     supported: 'gtoPloSupported', load: 'loadGtoPlo', available: false, ready: false,
   },
   plo6: {
-    bot: {id: 'gto-plo6', name: 'GTO', description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
+    bot: {id: 'gto-plo6', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 6', manifest: new URL('gto/plo6-current.json', document.baseURI).href,
     supported: 'gtoPlo6Supported', load: 'loadGtoPlo6', available: false, ready: false,
   },
@@ -139,7 +141,7 @@ const GTO_PLOS = {
 // No-limit Hold'em against the Regulars, offered at six-handed bot tables
 // only. Hosted at gto/ by scripts/upload-gto-sixmax.sh.
 const GTO6_MANIFEST = new URL('gto/sixmax-current.json', document.baseURI).href;
-const GTO6 = {id: 'gto6', name: 'GTO', description: 'Plays a preflop strategy solved for six-handed tables, 100 big blinds deep, and solid poker after the flop.'};
+const GTO6 = {id: 'gto6', name: BOT_NAME, description: 'Plays a preflop strategy solved for six-handed tables, 100 big blinds deep, and solid poker after the flop.'};
 // The table size it plays: you and five bots.
 const GTO6_BOTS = 5;
 let gto6Available = false;
@@ -458,9 +460,9 @@ function botsSetupHtml() {
   h += optsRow('Buy-in', [50, 100, 200].map(bbs => optBtn(setup.buyIn === bbs * setup.bb, 'data-buyin', bbs, `${bbs} BB`)));
   const gtoGames = [gtoAvailable && 'Hold’em', ...Object.values(GTO_PLOS).map(p => p.available && p.label)].filter(Boolean);
   const gamesText = gtoGames.length > 1 ? `${gtoGames.slice(0, -1).join(', ')} or ${gtoGames.at(-1)}` : gtoGames[0];
-  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent)${gto6Available ? ', or six-handed Hold’em (5 opponents),' : ''} to face the GTO bot.</p>`;
-  if (gtoBot() === GTO6 && setup.bots.includes(GTO6.id) && setup.buyIn !== 100 * setup.bb) h += '<p class="pl-desc">The six-handed GTO bot’s preflop is solved for 100 BB stacks: at other depths it plays solid poker instead.</p>';
-  if (setup.count === 1 && gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">GTO training: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
+  if (gtoGames.length && !gtoBot()) h += `<p class="pl-desc">Play heads-up ${gamesText} (1 opponent)${gto6Available ? ', or six-handed Hold’em (5 opponents),' : ''} to face Ducybot.</p>`;
+  if (gtoBot() === GTO6 && setup.bots.includes(GTO6.id) && setup.buyIn !== 100 * setup.bb) h += '<p class="pl-desc">Ducybot’s six-handed preflop is solved for 100 BB stacks: at other depths it plays solid poker instead.</p>';
+  if (setup.count === 1 && gtoBot() && setup.bots[0] === gtoBot().id) h += `<p class="pl-desc">Training against Ducybot: you both start every hand with ${GTO_BUY_IN_BB} BB, whatever the buy-in${setup.game === 'nlhe' ? ', and your decisions are reviewed after each hand' : ''}.</p>`;
   h += '<div class="pl-actions"><button class="btn-small" data-act="shuffle">Random opponents</button>';
   h += '<button class="tr-start" data-act="sit">Sit down with these</button></div>';
   h += '</div></details>';
@@ -996,20 +998,20 @@ function togglePrefold() {
 // Downloads (the first time) and loads the GTO bot's files in the worker.
 async function prepareGto(bots = setup.bots) {
   if (bots.includes(GTO6.id) && !gto6Ready) {
-    root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about 2 MB the first time, then it’s kept on this device)…</p></div>';
+    root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading Ducybot (about 2 MB the first time, then it’s kept on this device)…</p></div>';
     try { navigator.storage?.persist?.(); } catch {}
     try {
       await call('loadGto6', GTO6_MANIFEST);
       gto6Ready = true;
     } catch (e) {
       console.warn(e);
-      setupNote = 'The GTO bot couldn’t be loaded. Try again, or pick another opponent.';
+      setupNote = 'Ducybot couldn’t be loaded. Try again, or pick another opponent.';
       return false;
     }
   }
   const plo = Object.values(GTO_PLOS).find(p => bots.includes(p.bot.id));
   if (plo ? plo.ready : (gtoReady || !bots.includes(GTO.id))) return true;
-  root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading the GTO bot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
+  root.innerHTML = `<div class="pl-wrap"><p class="pl-meta">Loading Ducybot (about ${plo ? 2 : 3} MB the first time, then it’s kept on this device)…</p></div>`;
   try { navigator.storage?.persist?.(); } catch {}
   try {
     if (plo) {
@@ -1022,7 +1024,7 @@ async function prepareGto(bots = setup.bots) {
     return true;
   } catch (e) {
     console.warn(e);
-    setupNote = 'The GTO bot couldn’t be loaded. Try again, or pick another opponent.';
+    setupNote = 'Ducybot couldn’t be loaded. Try again, or pick another opponent.';
     return false;
   }
 }
@@ -2369,8 +2371,8 @@ function renderTable() {
   if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="Wait before the next hand"><span>Wait before dealing</span><b>${setup.dealSecs}s</b></button>`;
   if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
   if (reviewTable() && mode === 'solo') {
-    h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against the GTO bot as soon as you make it');
-    h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against the GTO bot after each hand');
+    h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against Ducybot as soon as you make it');
+    h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against Ducybot after each hand');
   }
   h += item('hud', 'Stats on seats', !!setup.hud);
   h += item('stats', 'Stats table', statsShown());
@@ -2904,7 +2906,7 @@ function decisionHtml(d, i, key = 'rev') {
   h += `<span class="pl-rev-street">${STREET[d.street] || esc(d.street)}${d.board ? ` <span class="pl-rev-board">${esc(boardText(d.board))}</span>` : ''}</span>`;
   h += `<span class="pl-rev-act">${esc(d.action)}</span>`;
   if (flagged && d.grade !== 'deviation' && d.best) h += `<span class="pl-rev-best">best: ${esc(d.best)}</span>`;
-  else if (flagged || isVariant(d)) h += `<span class="pl-rev-best">GTO: ${esc(d.main)}</span>`;
+  else if (flagged || isVariant(d)) h += `<span class="pl-rev-best">Ducybot: ${esc(d.main)}</span>`;
   else h += '<span class="pl-rev-best"></span>';
   const cost = d.bb_lost > 0 ? `−${bbText(d.bb_lost)} bb` : '';
   const label = isVariant(d) ? 'Fine (mixed)' : GRADE_LABEL[d.grade] || d.grade;
@@ -2922,7 +2924,7 @@ function decisionHtml(d, i, key = 'rev') {
     const rows = mixRows(d.gto);
     if (rows.length) {
       const values = rows.some(r => r.ev != null);
-      h += '<table class="pl-rev-mix"><thead><tr><th>Play</th><th>GTO plays it</th>';
+      h += '<table class="pl-rev-mix"><thead><tr><th>Play</th><th>Ducybot plays it</th>';
       if (values) h += `<th>Value (bb)${d.stderr > 0 ? ` <span class="pl-meta">± ${bbText(d.stderr)}</span>` : ''}</th>`;
       h += '</tr></thead><tbody>';
       for (const r of rows) {
@@ -2957,7 +2959,7 @@ function reviewHtml() {
   h += `${lost}<span class="pl-meta">Result ${r.result > 0 ? '+' : ''}${bbText(r.result)} bb (luck included)</span></div>`;
   h += `<ul class="pl-rev-list">${r.decisions.map((d, i) => decisionHtml(d, i)).join('')}</ul>`;
   if (r.note) h += `<p class="pl-meta">${esc(r.note[0].toUpperCase() + r.note.slice(1))}.</p>`;
-  h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s own strategy, which is strong but not perfect, using the range it could hold, not its actual cards. Preflop plays are compared with its mix only.</p>';
+  h += '<p class="pl-meta pl-rev-caveat">Graded against Ducybot’s own strategy, which is strong but not perfect, using the range it could hold, not its actual cards. Preflop plays are compared with its mix only.</p>';
   return h + '</div>';
 }
 
@@ -2981,7 +2983,7 @@ function ladderLessonsHtml(rv, pending, hands) {
   const missed = hands > t.hands ? ` of ${hands}` : '';
   h += `<p class="pl-meta">${t.hands}${missed} hands reviewed · ${n(t.decisions, 'decision', 'decisions')} · ${n(t.blunders, 'blunder', 'blunders')} · ${n(t.mistakes, 'mistake', 'mistakes')} · ${n(t.inaccuracies, 'inaccuracy', 'inaccuracies')} · ${t.deviations} off-strategy preflop</p>`;
   const lessons = rv.lessons || [];
-  if (!lessons.length) return h + '<p class="pl-meta">Nothing stood out: every decision was one the GTO bot makes, or close to it.</p></div>';
+  if (!lessons.length) return h + '<p class="pl-meta">Nothing stood out: every decision was one Ducybot makes, or close to it.</p></div>';
   h += `<p class="ld-review-lead">${lessons.length === 1 ? 'The decision' : `The ${lessons.length} decisions`} that cost the most${all > 0 && shown < all ? ` (${bbText(shown)} of the ${bbText(all)} bb)` : ''}:</p>`;
   h += '<ol class="ld-lessons">';
   for (const x of lessonsByHand(lessons)) {
@@ -2992,7 +2994,7 @@ function ladderLessonsHtml(rv, pending, hands) {
     h += '</li>';
   }
   h += '</ol>';
-  h += '<p class="pl-meta pl-rev-caveat">Graded against the GTO bot’s strategy at 100 BB, using the range it could hold, not the cards your opponent had. Against a Regular the best play can differ: a strategy built to exploit their style may win more. Preflop plays are compared with the bot’s mix only.</p>';
+  h += '<p class="pl-meta pl-rev-caveat">Graded against Ducybot’s strategy at 100 BB, using the range it could hold, not the cards your opponent had. Against a Regular the best play can differ: a strategy built to exploit their style may win more. Preflop plays are compared with the bot’s mix only.</p>';
   return h + '</div>';
 }
 
@@ -3063,7 +3065,7 @@ function liveBadgeHtml() {
 function reviewTotalsHtml() {
   const all = setup.statsScope === 'all';
   const t = all ? allReview : sessionReview;
-  let h = '<div class="pl-rev-totals"><b>GTO review</b> ';
+  let h = '<div class="pl-rev-totals"><b>Ducybot review</b> ';
   if (!t.hands) return h + '<span class="pl-meta">no reviewed hands yet</span></div>';
   const p = per100(t);
   h += `<span>${t.hands} hands · ${t.decisions} decisions · ${bbText(t.bbLost)} bb lost (${bbText(p)} per 100 hands)</span> `;
@@ -3377,7 +3379,7 @@ export async function openPlay(el, shortcut, v = 'play') {
     setup.buyIn = 100 * setup.bb;
     const bot = gtoBot();
     if (bot) { setup.bots = [bot.id]; startTable(); return; }
-    setupNote = 'The GTO bot isn’t available right now.';
+    setupNote = 'Ducybot isn’t available right now.';
   }
   render();
   pace();
