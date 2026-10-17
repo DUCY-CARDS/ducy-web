@@ -3,6 +3,7 @@ RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
 AddType application/wasm .wasm
+AddType application/manifest+json .webmanifest
 
 # Revalidate on every load so a deploy never mixes old and new JS/WASM
 # (and so gto/current.json picks up a newly published model)

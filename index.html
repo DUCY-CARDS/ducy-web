@@ -10,6 +10,14 @@
   <meta property="og:image" content="apple-touch-icon.png">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <!-- Installable: Add to Home Screen on iPhone, Install app on Android.
+       Opened from the home screen, it runs full screen like an app. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1d3a2c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="DUCY">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <!-- Before any stylesheet arrives: just the felt until main.js opens the
        first page (style.css has the rest, and a fallback reveal). -->
   <style>body.booting { background: #1d3a2c; } body.booting > * { visibility: hidden; }</style>
