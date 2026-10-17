@@ -33,6 +33,19 @@ test('every listed chart file has whole spots: 169 cells, each mix adding up', (
     const utg = d.spots.find(s => s.id === 'open-UTG');
     assert.ok(utg.cells[0][0] <= 1, `${bb} BB: UTG folds AA ${utg.cells[0][0]}%`);
   }
+  for (const bb of index.ducybotHu || []) {
+    const d = read(`ducybot-hu-${bb}.json`);
+    assert.equal(d.bb, bb);
+    assert.equal(d.format, 'hu');
+    assert.ok(d.spots.length >= 5, `heads-up ${bb} BB has its spots`);
+    for (const s of d.spots) {
+      assert.equal(s.cells.length, 169, s.id);
+      for (const c of s.cells) assert.ok(Math.abs(c.reduce((a, b) => a + b, 0) - 100) <= 3, `${s.id}: ${c}`);
+    }
+    // The button never folds aces.
+    const btn = d.spots.find(s => s.id === 'hu-open-BTN');
+    assert.ok(btn.cells[0][0] <= 1, `heads-up ${bb} BB: the button folds AA ${btn.cells[0][0]}%`);
+  }
   for (const bb of index.regulars) {
     const d = read(`regulars-${bb}.json`);
     assert.ok(d.bots.length >= 10);
