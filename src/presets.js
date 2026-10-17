@@ -35,7 +35,7 @@ export const PRESET_FORMAT = '6max-100bb-cash';
 // The button is the small blind and acts first preflop; it opens to 2.5 big
 // blinds, a 3-bet is to 3×, a 4-bet to 2.3×, and the next raise is all-in.
 const HU_FORMAT = 'hu-100bb-cash';
-const huNote = (pct, more = '') => `ducy’s GTO bot, heads-up at 100 bb: ${pct}% of all hands, mixing included.${more ? ' ' + more : ''}`;
+const huNote = (pct, more = '') => `Ducybot, heads-up at 100 bb: ${pct}% of all hands, mixing included.${more ? ' ' + more : ''}`;
 const HU_GTO = [
   {id: 'hu-btn-open', hero: 'BTN', name: 'HU BTN open', context: 'Heads-up on the button, first to act',
     value: '33+, A2s+, K5s+, Q8s+, J7s+, T7s+, 96s+, 85s+, 74s+, 63s+, 53s+, 42s+, A7o+, KTo+, K8o-K7o, K4o, Q8o-Q4o, J7o-J4o, T7o-T5o, 96o-95o, 85o, 74o, 64o, 43o',
@@ -119,7 +119,7 @@ export const PRESET_GROUPS = [
   {spot: 'open', label: 'Open (raise first in)'},
   {spot: '3bet', label: '3-bet'},
   {spot: '4bet', label: '4-bet'},
-  {spot: 'hu', label: 'Heads-up GTO (ducy’s GTO bot)'},
+  {spot: 'hu', label: 'Heads-up GTO (Ducybot)'},
   {spot: 'other', label: 'Other'},
 ];
 
