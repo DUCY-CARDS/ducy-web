@@ -1,0 +1,62 @@
+name: Android test APK
+
+# A debug APK of the Capacitor shell in app/ (it opens https://ducy.cards),
+# uploaded as the run's artifact "ducy-android-debug".
+on:
+  workflow_dispatch:
+  push:
+    branches: [pr/android-apk]
+    paths: [app/**, .github/workflows/android.yml]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # The Android SDK comes with the runner ($ANDROID_HOME).
+      - name: Capacitor and the Android project
+        working-directory: app
+        run: |
+          npm init -y >/dev/null
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npx cap add android
+
+      # The spade icon and splash (app/assets/*.svg) as PNGs, then every
+      # size Android needs, launcher and adaptive icons included.
+      - name: Icon and splash
+        working-directory: app
+        run: |
+          sudo apt-get install -y -qq librsvg2-bin >/dev/null
+          for f in icon-only icon-foreground icon-background splash; do rsvg-convert "assets/$f.svg" -o "assets/$f.png"; done
+          cp assets/splash.png assets/splash-dark.png
+          npx --yes @capacitor/assets@3 generate --android \
+            --iconBackgroundColor '#16191e' --splashBackgroundColor '#1f3d31' --splashBackgroundColorDark '#1f3d31'
+          # Android 8 and later draw the adaptive icon: make sure it's the
+          # spade's layers, not the template's.
+          for f in ic_launcher ic_launcher_round; do
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
+              '  <background android:drawable="@mipmap/ic_launcher_background"/>' \
+              '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
+              '</adaptive-icon>' > android/app/src/main/res/mipmap-anydpi-v26/$f.xml
+          done
+          rm -f android/app/src/main/res/drawable/ic_launcher_background.xml android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+
+      - name: Build the debug APK
+        working-directory: app/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ducy-android-debug
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
