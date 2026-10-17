@@ -1,0 +1,12 @@
+{
+  "appId": "cards.ducy.app",
+  "appName": "Ducy",
+  "webDir": "www",
+  "server": {
+    "url": "https://ducy.cards",
+    "cleartext": false
+  },
+  "android": {
+    "backgroundColor": "#1f3d31"
+  }
+}
