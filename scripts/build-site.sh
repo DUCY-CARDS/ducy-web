@@ -37,6 +37,8 @@ cp favicon.svg apple-touch-icon.png icon-192.png icon-512.png manifest.webmanife
 # The super admin's page (#265): self-contained, unlinked, and useless
 # without the relay's ADMIN_TOKEN.
 cp admin.html "$OUT/"
+# The pre-flop charts' data (charts.js): Ducybot's and the Regulars', as JSON.
+cp -r charts "$OUT/"
 
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     -e "s#src=\"src/main.js\"#src=\"v/$VERSION/src/main.js\"#" \

@@ -5,6 +5,7 @@ import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
+import { openCharts, closeCharts, chartsOpen } from './charts.js';
 import { closeSection, openSection, readJoin, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
 import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub } from './home.js';
@@ -1766,14 +1767,14 @@ function stateToHash() {
 }
 
 function syncHash() {
-  if (trainerOpen() || sectionOpen() || hubOpen()) return;
+  if (trainerOpen() || chartsOpen() || sectionOpen() || hubOpen()) return;
   const h = stateToHash();
   if (location.hash !== h) history.replaceState(null, '', h);
 }
 
 function loadFromHash() {
   const h = location.hash.slice(1);
-  if (['trainer', 'codedoug', 'equity', 'practice'].includes(h) || h in SHORTCUTS || HUBS.includes(h) || TABS.includes(h.split('/')[0])) return;
+  if (['trainer', 'charts', 'codedoug', 'equity', 'practice'].includes(h) || h in SHORTCUTS || HUBS.includes(h) || TABS.includes(h.split('/')[0])) return;
   if (!h) return;
   const params = {};
   for (const part of h.split('&')) {
@@ -1841,18 +1842,21 @@ function loadFromHash() {
 // up before the WASM load below. `shortcut` opens the bot table straight into
 // a preset game (see openPlay).
 function setMode(mode, shortcut) {
-  const hub = HUBS.includes(mode), trainer = mode === 'trainer', section = TABS.includes(mode);
+  const hub = HUBS.includes(mode), trainer = mode === 'trainer', charts = mode === 'charts', section = TABS.includes(mode);
   document.body.classList.toggle('mode-v3', hub);
   document.body.classList.toggle('mode-trainer', trainer);
+  document.body.classList.toggle('mode-charts', charts);
   document.body.classList.toggle('mode-play', section);
   if (trainer) openTrainer(document.getElementById('trainer'));
   else closeTrainer();
+  if (charts) openCharts(document.getElementById('charts'));
+  else closeCharts();
   if (hub) {
     setTitleSection(HUB_TITLES[mode]);
     openHub(document.getElementById('v3'), mode, joinFromLobby);
   } else closeHub();
   // The playing section titles and shows its own breadcrumb.
-  if (!section && !hub) { setTitleSection(trainer ? 'Pre-flop ranges' : 'Equity'); showNav(mode); }
+  if (!section && !hub) { setTitleSection(trainer ? 'Pre-flop ranges' : charts ? 'Pre-flop charts' : 'Equity'); showNav(mode); }
   if (section) openSection(mode, shortcut);
   else closeSection();
 }
@@ -1893,7 +1897,7 @@ function hashMode() {
   const h = location.hash.slice(1).split('/')[0];
   if (!h) return 'home';
   if (h === 'practice') return 'play';
-  return h === 'trainer' || h === 'equity' || HUBS.includes(h) || TABS.includes(h) ? h : '';
+  return h === 'trainer' || h === 'charts' || h === 'equity' || HUBS.includes(h) || TABS.includes(h) ? h : '';
 }
 
 window.addEventListener('hashchange', () => {

@@ -17,7 +17,7 @@ AddType application/manifest+json .webmanifest
   </FilesMatch>
 </IfModule>
 
-# Compress the model files (6 MB becomes under 3 MB)
+# Compress the model files (6 MB becomes under 3 MB) and the chart data
 <IfModule mod_deflate.c>
-  AddOutputFilter DEFLATE bin
+  AddOutputFilter DEFLATE bin json
 </IfModule>
