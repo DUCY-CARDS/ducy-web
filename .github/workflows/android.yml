@@ -23,8 +23,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
-
+      # The Android SDK comes with the runner ($ANDROID_HOME).
       - name: Capacitor and the Android project
         working-directory: app
         run: |
