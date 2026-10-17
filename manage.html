@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en" class="four-color">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Club manager · DUCY</title>
+  <meta name="description" content="Run your DUCY poker club: tables, members, chips, promotions and settings.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="theme-color" content="#1d3a2c">
+  <!-- The club manager (manage.js): running a club, apart from the player
+       app (index.html). Same look and stylesheet. -->
+  <style>body.booting { background: #1d3a2c; } body.booting > * { visibility: hidden; }</style>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&family=Alfa+Slab+One&family=Work+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body class="booting mode-manage">
+  <div class="topbar">
+    <a class="wordmark" href="./" aria-label="DUCY, the player app"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-2-.3 2.6-1.2 4.4-2.8 5.8h8c-1.6-1.4-2.5-3.2-2.8-5.8.8 1.2 2.2 2 3.9 2 2.6 0 4.9-2 4.9-5 0-5.1-6.8-9-10-13.2z"/></svg>DUCY</a>
+    <span class="mg-badge">Club manager</span>
+  </div>
+  <main class="clubs mg-main" id="clubs"></main>
+  <script type="module" src="src/manage.js"></script>
+</body>
+</html>

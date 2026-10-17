@@ -1997,3 +1997,11 @@ body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .pfc-swatch.a0 { box-shadow: inset 0 0 0 1px var(--border); }
 .pfc-detail { font-size: 14px; color: var(--fg); }
 .pfc-detail b { color: var(--fg-strong); margin-right: 6px; font-family: var(--font-data); }
+
+/* The club manager (manage.html, manage.js): running a club, a page apart
+   from the player app. Its badge in the top bar, and the clubs part shown on
+   its own. On the player app, the cards that send you there. */
+.mg-badge { margin-left: 10px; padding: 2px 10px; border-radius: 999px; background: var(--teal); color: #fff; font: 600 12px var(--font-ui); letter-spacing: 0.02em; }
+body.mode-manage .mg-main { display: block; }
+body.mode-manage .mg-main .cl-wrap { max-width: 1100px; margin: 0 auto; }
+.cl-elsewhere { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
