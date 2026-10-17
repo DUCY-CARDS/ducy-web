@@ -49,7 +49,7 @@ test('each hub links where it should', () => {
   const d = hubData(store());
   const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
   // After the spade home and any way back: Study or Play.
-  assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge']);
+  assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge', '#charts']);
   assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#codedoug', '#gto-plo4', '#gto-plo6']);
   assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice', '#ladder']);
   assert.equal(HUBS.length, 4);

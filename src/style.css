@@ -1960,3 +1960,40 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .pl-promo-line.celebrate { background: #f3e7c9; color: #1d3a2c; font-weight: 600; box-shadow: 0 0 0 2px #d9a441; animation: pl-promo-pop 0.6s ease-out; }
 @keyframes pl-promo-pop { 0% { transform: scale(0.85); opacity: 0; } 60% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .pl-promo-line.celebrate { animation: none; } }
+
+/* Pre-flop charts (#charts, charts.js): a 13 × 13 grid of hands, each cell
+   split into how often the hand folds, calls, raises and goes all-in. */
+.charts { display: none; }
+body.mode-charts .charts { display: block; }
+body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
+.ch-wrap { max-width: 880px; margin: 0 auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+.ch-head h1 { font-family: var(--font-display); font-size: 34px; font-weight: 400; line-height: 1.05; color: var(--fg-strong); }
+.ch-head p { font-size: 14px; color: var(--fg-muted); margin-top: 6px; max-width: 62ch; line-height: 1.45; }
+.ch-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ch-label { font-size: 12px; font-weight: 600; color: var(--fg-muted); min-width: 72px; }
+.ch-who { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; max-width: 100%; flex: 1; min-width: 0; }
+.ch-person { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--fg-muted); font: 600 11px var(--font-ui); cursor: pointer; flex: 0 0 76px; }
+.ch-person img { width: 40px; height: 40px; border-radius: 50%; background: var(--bg-inset); }
+.ch-person span { text-align: center; line-height: 1.2; }
+.ch-person.on { border-color: var(--teal); color: var(--fg-strong); background: var(--teal-faint); }
+.ch-title { font-size: 15px; color: var(--fg); }
+.ch-title b { color: var(--fg-strong); }
+.ch-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--fg); }
+.ch-key { display: inline-flex; align-items: center; gap: 6px; }
+.ch-swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.ch-note { font-size: 13px; color: var(--fg-muted); margin: 0; }
+.ch-grid { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 2px; width: 100%; max-width: 640px; }
+.ch-cell { position: relative; aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; background: #3a4a42; overflow: hidden; cursor: pointer; }
+.ch-cell.none { background: repeating-linear-gradient(45deg, #2a3a32 0 4px, #33443b 4px 8px); }
+.ch-cell.on { outline: 2px solid var(--fg-strong); outline-offset: -2px; }
+.ch-bars, .ch-part { position: absolute; top: 0; bottom: 0; }
+.ch-bars { left: 0; right: 0; }
+.ch-hand { position: absolute; inset: 0; display: grid; place-items: center; font: 600 clamp(7px, 1.7vw, 12px) var(--font-data); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+/* fold, call, raise, all-in */
+:is(.ch-part, .ch-swatch).a0 { background: #3a4a42; }
+:is(.ch-part, .ch-swatch).a1 { background: #2f8a55; }
+:is(.ch-part, .ch-swatch).a2 { background: #c9472f; }
+:is(.ch-part, .ch-swatch).a3 { background: #7d1d14; }
+.ch-swatch.a0 { box-shadow: inset 0 0 0 1px var(--border); }
+.ch-detail { font-size: 14px; color: var(--fg); }
+.ch-detail b { color: var(--fg-strong); margin-right: 6px; font-family: var(--font-data); }

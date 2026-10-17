@@ -24,6 +24,7 @@ export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Heads-up traini
 const CRUMBS = {
   equity: ['study', 'Equity'],
   trainer: ['study', 'Pre-flop ranges'],
+  charts: ['study', 'Pre-flop charts'],
   ladder: ['lobby', 'Heads-up challenge'],
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
@@ -174,7 +175,11 @@ function studyPage(d) {
   h += `<span class="v3-tile-text"><span class="v3-tile-name">Pre-flop ranges</span><b>${d.mastered} of ${d.skills} skills mastered</b></span></a>`;
   h += '<a class="v3-tile v3-tile-red" href="#challenge"><span class="v3-tile-name">Heads-up training</span>';
   h += `<span class="v3-versus" aria-hidden="true"><img src="${avatarUrl('player-01')}" alt=""><b>vs</b><img src="${avatarUrl('gto')}" alt=""></span></a>`;
-  return h + '</div></div>';
+  h += '</div>';
+  // Ducybot's GTO charts and the Regulars' own, side by side (charts.js).
+  h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#charts"><span class="v3-tile-text"><span class="v3-tile-name">Pre-flop charts</span><b>Ducybot’s GTO ranges, and how each Regular really plays</b></span>';
+  h += `<span class="v3-door-art">${rangeChart()}</span></a>`;
+  return h + '</div>';
 }
 
 function challengePage(d) {
