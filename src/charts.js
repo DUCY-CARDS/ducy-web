@@ -3,10 +3,13 @@
 // is a 13 × 13 grid of hands, every cell split into how often that hand
 // folds, calls, raises and goes all-in.
 //
+// Ducybot's heads-up charts are here too, at every depth he has a model for.
+//
 // The data are static JSON files next to the page (charts/, from ducy-gto's
-// sixmax_charts and sixmax_field --per-bot):
-//   charts/index.json             {ducybot: [depths], regulars: [depths]}
+// sixmax_charts, hu_charts and sixmax_field --per-bot):
+//   charts/index.json             {ducybot: [depths], ducybotHu: [depths], regulars: [depths]}
 //   charts/ducybot-<bb>.json      {bb, actions, spots: [{id, kind, hero, villain, overall, cells}]}
+//   charts/ducybot-hu-<bb>.json   the same, heads-up
 //   charts/regulars-<bb>.json     {bb, actions, bots: [{id, name, spots: [... and hands]}]}
 // cells: 169 × [fold, call, raise, all-in] percentages in chart order (rows
 // from aces down, pairs on the diagonal, suited above it, offsuit below), or
@@ -18,18 +21,23 @@ const RANKS = 'AKQJT98765432';
 const ACTION_NAMES = ['Fold', 'Call', 'Raise', 'All-in'];
 const POSITION_ORDER = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
 const KINDS = [
-  {kind: 'open', label: 'Open', text: s => `${s.hero}, everyone before folded`},
+  {kind: 'open', label: 'Open', text: s => (s.id.startsWith('hu-') ? `${s.hero}, first to act` : `${s.hero}, everyone before folded`)},
   {kind: 'vs-open', label: 'Facing an open', text: s => `${s.hero} facing a ${s.villain} open`},
   {kind: 'vs-3bet', label: 'Facing a 3-bet', text: s => `${s.hero} opened, ${s.villain} 3-bet`},
+  {kind: 'vs-4bet', label: 'Facing a 4-bet', text: s => `${s.hero} 3-bet, ${s.villain} 4-bet`},
   {kind: 'vs-limp', label: 'Facing a limp', text: s => `${s.hero} after the ${s.villain} limps`},
+  {kind: 'vs-iso', label: 'Limped, then raised', text: s => `${s.hero} limped, ${s.villain} raised`},
 ];
 // What "call" and "raise" mean at each kind of spot.
 const VERBS = {
   open: ['Fold', 'Limp', 'Raise', 'All-in'],
   'vs-open': ['Fold', 'Call', '3-bet', 'All-in'],
   'vs-3bet': ['Fold', 'Call', '4-bet', 'All-in'],
+  'vs-4bet': ['Fold', 'Call', '5-bet', 'All-in'],
   'vs-limp': ['Fold', 'Check', 'Raise', 'All-in'],
+  'vs-iso': ['Fold', 'Call', '3-bet', 'All-in'],
 };
+const TABLES = [{table: '6max', label: '6-max'}, {table: 'hu', label: 'Heads-up'}];
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
@@ -44,8 +52,9 @@ let root = null;
 let open = false;
 let index = null; // charts/index.json, once loaded
 const files = new Map(); // url → parsed JSON (or a promise of it)
-// What's picked: who ('ducybot' or a Regular's id), depth, spot kind, hero, villain.
-const pick = {who: 'ducybot', bb: 100, kind: 'open', hero: 'UTG', villain: null};
+// What's picked: who ('ducybot' or a Regular's id), the table ('6max', or
+// 'hu' for Ducybot heads-up), depth, spot kind, hero, villain.
+const pick = {who: 'ducybot', table: '6max', bb: 100, kind: 'open', hero: 'UTG', villain: null};
 let focus = null; // the cell whose mix shows in detail
 let note = '';
 
@@ -61,8 +70,10 @@ function load(name) {
   return v instanceof Promise ? undefined : v;
 }
 
-const depthsFor = who => (who === 'ducybot' ? index?.ducybot : index?.regulars) || [];
-const fileFor = (who, bb) => (who === 'ducybot' ? `ducybot-${bb}.json` : `regulars-${bb}.json`);
+// Heads-up is Ducybot's only: the Regulars are recorded six-handed.
+const tableOf = who => (who === 'ducybot' ? pick.table : '6max');
+const depthsFor = (who, table = tableOf(who)) => (who !== 'ducybot' ? index?.regulars : table === 'hu' ? index?.ducybotHu : index?.ducybot) || [];
+const fileFor = (who, bb, table = tableOf(who)) => (who !== 'ducybot' ? `regulars-${bb}.json` : table === 'hu' ? `ducybot-hu-${bb}.json` : `ducybot-${bb}.json`);
 
 // The spots for who's picked at this depth (null while loading).
 function spotsFor(who, bb) {
@@ -82,10 +93,8 @@ function regulars() {
   return [];
 }
 
-// Keeps the pick valid: a depth this source has, and a spot it has.
+// Keeps the spot valid for the spots there are (render settles the depth).
 function settle(spots) {
-  const depths = depthsFor(pick.who);
-  if (depths.length && !depths.includes(pick.bb)) pick.bb = depths.reduce((a, b) => (Math.abs(b - 100) < Math.abs(a - 100) ? b : a));
   if (!spots?.length) return null;
   const ofKind = spots.filter(s => s.kind === pick.kind);
   if (!ofKind.length) { pick.kind = spots[0].kind; return settle(spots); }
@@ -123,12 +132,17 @@ function render() {
     root.innerHTML = '<div class="pfc-wrap"><p class="pfc-note">Loading the charts…</p></div>';
     return;
   }
+  // A table and depth there are charts for, before loading them.
+  if (pick.who === 'ducybot' && !depthsFor('ducybot').length) pick.table = TABLES.find(t => depthsFor('ducybot', t.table).length)?.table || '6max';
+  const depthList = depthsFor(pick.who);
+  if (depthList.length && !depthList.includes(pick.bb)) pick.bb = depthList.reduce((a, b) => (Math.abs(b - 100) < Math.abs(a - 100) ? b : a));
   const spots = spotsFor(pick.who, pick.bb);
   const spot = settle(spots);
   const regs = regulars();
+  const hu = tableOf(pick.who) === 'hu';
   const whoName = pick.who === 'ducybot' ? 'Ducybot' : regs.find(r => r.id === pick.who)?.name || pick.who;
   let h = '<div class="pfc-wrap">';
-  h += '<div class="pfc-head"><h1>Pre-flop charts</h1><p>Six-handed No-limit Hold’em. Ducybot’s are his GTO strategy; each Regular’s is how they actually play, recorded from their hands.</p></div>';
+  h += '<div class="pfc-head"><h1>Pre-flop charts</h1><p>No-limit Hold’em. Ducybot’s are his GTO strategy, six-handed and heads-up; each Regular’s is how they actually play six-handed, recorded from their hands.</p></div>';
   // Who.
   h += '<div class="pfc-row"><span class="pfc-label">Whose</span><div class="pfc-who">';
   const who = [{id: 'ducybot', name: 'Ducybot', av: 'gto'}, ...regs.map(r => ({...r, av: botAvatar(r.id)}))];
@@ -137,6 +151,13 @@ function render() {
     h += `<button class="pfc-person${pick.who === w.id ? ' on' : ''}" data-who="${esc(w.id)}">${av}<span>${esc(w.name)}</span></button>`;
   }
   h += '</div></div>';
+  // Table: six-handed or heads-up (Ducybot only).
+  const tables = pick.who === 'ducybot' ? TABLES.filter(t => depthsFor('ducybot', t.table).length) : [];
+  if (tables.length > 1) {
+    h += '<div class="pfc-row"><span class="pfc-label">Table</span><div class="pl-opts">';
+    for (const t of tables) h += `<button class="cc-btn${pick.table === t.table ? ' on' : ''}" data-table="${t.table}">${t.label}</button>`;
+    h += '</div></div>';
+  }
   // Depth.
   const depths = depthsFor(pick.who);
   if (depths.length > 1) {
@@ -174,11 +195,11 @@ function render() {
   }
   const verbs = VERBS[spot.kind] || ACTION_NAMES;
   const kind = KINDS.find(k => k.kind === spot.kind);
-  h += `<div class="pfc-title"><b>${esc(whoName)}</b> · ${esc(kind.text(spot))} · ${pick.bb} BB</div>`;
+  h += `<div class="pfc-title"><b>${esc(whoName)}</b>${hu ? ' · Heads-up' : ''} · ${esc(kind.text(spot))} · ${pick.bb} BB</div>`;
   h += legendHtml(spot, verbs);
   if (pick.who !== 'ducybot') {
     // The same spot GTO, to compare.
-    const gto = load(fileFor('ducybot', pick.bb))?.spots?.find(s => s.id === spot.id);
+    const gto = load(fileFor('ducybot', pick.bb, '6max'))?.spots?.find(s => s.id === spot.id);
     const sample = spot.hands ? `${Number(spot.hands).toLocaleString()} hands recorded. ` : '';
     h += `<p class="pfc-note">${sample}${gto ? `Ducybot here: ${[2, 3, 1].filter(a => gto.overall[a] >= 0.5).map(a => `${verbs[a].toLowerCase()} ${gto.overall[a].toFixed(1)}%`).join(', ')}.` : ''}</p>`;
   }
@@ -201,6 +222,7 @@ function onClick(e) {
   if (!b) return;
   const d = b.dataset;
   if (d.who) { pick.who = d.who; focus = null; }
+  else if (d.table) { pick.table = d.table; focus = null; }
   else if (d.bb) pick.bb = +d.bb;
   else if (d.kind) { pick.kind = d.kind; pick.villain = null; focus = null; }
   else if (d.hero) { pick.hero = d.hero; pick.villain = null; }
