@@ -154,7 +154,7 @@ function miniTable(ids) {
 
 function homePage() {
   let h = '<div class="v3-page v3-landing">';
-  h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}<img class="v3-peek" src="${avatarUrl('the_mathematician')}" alt=""></div>`;
+  h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}<img class="v3-peek" src="${avatarUrl('gto')}" alt=""></div>`;
   h += '<div class="v3-hero-text"><span class="v3-word">DUCY</span><h1>Pull up a chair.</h1></div></section>';
   h += '<div class="v3-doors">';
   h += '<a class="v3-door v3-door-study" href="#study"><span class="v3-door-head"><span class="v3-door-name">Study</span><span aria-hidden="true">→</span></span>';
