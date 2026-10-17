@@ -4,14 +4,15 @@
 // Each game has a favored chip, the one players bet with: the smallest worth
 // at least the big blind (red at 1/2 and 2/5, green at 5/10). Chips smaller
 // than it (whites at 1/2) are only for what it can't pay, the odd dollars.
-// The rest is as many of the favored chip as possible, at least a full
-// stack, with all the stacks (the whites' too) at most SHOWN: when that
-// isn't enough, a stack of it is traded for the next chip up, then another,
-// until it fits ($750 at 1/2 is 80 reds and 14 greens, $2,000 is 20 reds and
-// 76 greens); when reds and greens can't fit, blacks come in, and so on up,
-// as few bigger chips as it takes ($2,047 is 49 reds, 18 blacks and 2
-// whites). An amount too big for SHOWN stacks of any chips puts the rest on
-// one mixed stack, coloured up only as far as it takes to fit. Anything under the smallest chip in play
+// Of the favored chip there's one stack at most, as full as it can be while
+// the next chip up pays the rest; that next chip (greens at 1/2) takes as
+// many as it needs, with all the stacks (the whites' too) at most SHOWN
+// ($750 at 1/2 is 20 reds and 26 greens, $1,047 is 2 whites, 19 reds and
+// 38 greens, $2,000 is 20 reds and 76 greens). When they can't fit, blacks
+// come in, and so on up, as few bigger chips as it takes ($2,047 is 2
+// whites, 19 reds, 38 greens and 10 blacks). An amount too big for SHOWN
+// stacks of any chips puts the rest on one mixed stack, coloured up only as
+// far as it takes to fit. Anything under the smallest chip in play
 // is left over (no fractional chips). It's worked out fresh from the amount
 // each time, so winning a pot colours up on its own.
 
@@ -47,13 +48,23 @@ export function breakdown(amount, bigBlind) {
   const odd = whole % CHIPS[fav].value;
   const small = fav > first ? pay(odd, fav - 1).chips : [];
   const main = whole - small.reduce((t, c) => t + c.value * c.count, 0);
-  // The small chips' stacks count too. Bigger chips come in one at a time:
-  // reds alone, then with greens, then blacks too, and so on.
-  const room = SHOWN - small.reduce((n, c) => n + stacksOf(c.count), 0);
-  let big = null;
-  for (let top = fav; !big && top < CHIPS.length; top++) big = fill(main, fav, room, top);
-  big ||= biggerChips(main, fav, SHOWN - room).chips;
-  const paid = [...big, ...small];
+  // One stack of the favored chip at most: as many as fit in it that leave
+  // an amount the next chip up pays.
+  const {value, color} = CHIPS[fav];
+  const up = CHIPS[fav + 1]?.value;
+  let count = Math.min(STACK, Math.floor(main / value));
+  while (up && count > 0 && (main - count * value) % up !== 0) count--;
+  if (!up) count = main / value;
+  const favored = count ? [{value, color, count}] : [];
+  const rest = main - count * value;
+  // The rest in the next chip up, as many as it takes, with all the stacks
+  // (the small chips' and the favored one's too) at most SHOWN; then the
+  // chips above it come in one at a time, as few as it takes.
+  const room = SHOWN - [...small, ...favored].reduce((n, c) => n + stacksOf(c.count), 0);
+  let big = rest ? null : [];
+  for (let top = fav + 1; !big && top < CHIPS.length; top++) big = fill(rest, fav + 1, room, top);
+  big ||= biggerChips(rest, fav + 1, SHOWN - room).chips;
+  const paid = [...big, ...favored, ...small];
   const counted = paid.reduce((t, c) => t + c.value * c.count, 0);
   // Amounts under the smallest chip in play (a $3 bet with $5 chips) aren't
   // chips either: they go with the rest.
