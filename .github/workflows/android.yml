@@ -41,6 +41,16 @@ jobs:
           cp assets/splash.png assets/splash-dark.png
           npx --yes @capacitor/assets@3 generate --android \
             --iconBackgroundColor '#16191e' --splashBackgroundColor '#1f3d31' --splashBackgroundColorDark '#1f3d31'
+          # Android 8 and later draw the adaptive icon: make sure it's the
+          # spade's layers, not the template's.
+          for f in ic_launcher ic_launcher_round; do
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
+              '  <background android:drawable="@mipmap/ic_launcher_background"/>' \
+              '  <foreground android:drawable="@mipmap/ic_launcher_foreground"/>' \
+              '</adaptive-icon>' > android/app/src/main/res/mipmap-anydpi-v26/$f.xml
+          done
+          rm -f android/app/src/main/res/drawable/ic_launcher_background.xml android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
 
       - name: Build the debug APK
         working-directory: app/android
