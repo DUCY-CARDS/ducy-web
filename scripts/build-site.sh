@@ -2,7 +2,8 @@
 # Assemble the deployable site into OUT_DIR with every asset under
 # v/<version>/, so a page only ever loads files from a single release.
 #
-#   OUT_DIR/index.html, admin.html, favicon.svg, apple-touch-icon.png, .htaccess
+#   OUT_DIR/index.html, admin.html, favicon.svg, apple-touch-icon.png, icon-192.png,
+#     icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #
@@ -32,7 +33,7 @@ mkdir -p "$REL/src" "$REL/wasm"
 cp src/*.js src/*.css "$REL/src/"
 cp -r src/avatars "$REL/src/"
 cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
-cp favicon.svg apple-touch-icon.png .htaccess "$OUT/"
+cp favicon.svg apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest .htaccess "$OUT/"
 # The super admin's page (#265): self-contained, unlinked, and useless
 # without the relay's ADMIN_TOKEN.
 cp admin.html "$OUT/"

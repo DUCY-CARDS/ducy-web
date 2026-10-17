@@ -1,0 +1,14 @@
+{
+  "name": "DUCY: Poker Games and Training",
+  "short_name": "DUCY",
+  "description": "Play poker with friends and in private clubs, practise against Ducybot and personality bots, drill your ranges, and calculate equity.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1d3a2c",
+  "theme_color": "#1d3a2c",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
