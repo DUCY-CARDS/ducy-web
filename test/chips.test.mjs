@@ -28,6 +28,12 @@ test('past five stacks of reds, a stack of reds at a time becomes greens', () =>
   assert.deepEqual(counts(breakdown($(484), $(2))), {green: 8, red: 56, white: 4});
 });
 
+test('at 2/5 odd dollars are whites too, not a mixed stack of big chips', () => {
+  assert.deepEqual(counts(breakdown($(1003), $(5))), {green: 32, red: 40, white: 3});
+  assert.deepEqual(counts(breakdown($(1047), $(5))), counts(breakdown($(1047), $(2))));
+  for (const d of [1003, 1047, 2503]) assert.ok(!breakdown($(d), $(5)).chips.some(c => c.loose), `$${d}`);
+});
+
 test('when reds and greens can’t fit, blacks come in, then bigger chips', () => {
   assert.deepEqual(counts(breakdown($(2047), $(2))), {black: 18, red: 49, white: 2});
   assert.deepEqual(counts(breakdown($(3000), $(2))), {black: 27, red: 60});
@@ -45,7 +51,8 @@ test('the favored chip at other stakes: red at 2/5, green at 5/10', () => {
   const b = breakdown(1250, 50);
   assert.deepEqual(counts(b), {white: 12});
   assert.equal(b.rest, 50);
-  assert.deepEqual(breakdown($(3), $(5)).chips, []);
+  // Odd dollars are whites at 2/5 as well.
+  assert.deepEqual(counts(breakdown($(3), $(5))), {white: 3});
 });
 
 test('a seat shows at most five stacks; one too big for that puts the rest on a mixed stack', () => {
