@@ -1,13 +1,20 @@
-// Bankroll Quest's lobby (#303): your bankroll, the clock and the goal; the
-// room you're in and its tables, with who's sitting there; the other rooms,
-// a trip away; and the end of a run. Pure: it builds the page from the quest
-// (quest.js) and the rooms (quest-rooms.js), and play.js handles the
-// buttons (data-qopen to open a table, data-qsit to sit down there with the
-// amount you typed, data-qgo to travel, data-qnew to start a new run).
+// Bankroll Quest's lobby (#303): your bankroll, the clock and the goal; where
+// to start a run; the trip while you travel; the room you're in, its games
+// and their waitlists, and your place on them; the other rooms by city, a
+// trip away; study while you travel or wait; and the end of a run. Pure: it
+// builds the page from the quest (quest.js), the rooms (quest-rooms.js) and
+// the lists (quest-waitlist.js), and play.js handles the buttons:
+// data-qstart (start in a region), data-qlist / data-qunlist (a waitlist),
+// data-qopen (take a seat you've been called to), data-qpass, data-qsit (sit
+// down with the amount you typed), data-qgo (travel), data-qans (a study
+// answer) and data-qnew (a new run). Countdowns carry data-qcount (the real
+// time they end, in ms) for play.js to tick.
 
-import { GOAL, START_BANKROLL, buyInRange, canSit, clockText, gameMinutes, status } from './quest.js';
-import { GAMES, ROOMS, TRAVEL_MINUTES, cheapestBuyIn, lobby, roomById } from './quest-rooms.js';
-import { WHALES, lineupFor, stacksAt } from './quest-lineup.js';
+import { CALL_MINUTES, GOAL, QUEST_SPEED, START_BANKROLL, buyInRange, canSit, clockText, gameMinutes, listStatus, status } from './quest.js';
+import { GAMES, REGIONS, ROOMS, cheapestBuyIn, cityOf, regionOf, roomById, travelMinutes } from './quest-rooms.js';
+import { listsNow } from './quest-waitlist.js';
+import { question } from './quest-study.js';
+import { lineupFor, stacksAt } from './quest-lineup.js';
 import { FAMILY_NAMES, personOf } from './quest-people.js';
 import { TAG_NAMES, accuracyText, tagOf } from './quest-reads.js';
 import { bankrollChart, bankrollSeries, biggestPots, byStakes, durationText, hallOfRecords, withRegulars } from './quest-stats.js';
@@ -42,25 +49,6 @@ export function buyInAsk(q, blinds, room) {
 export const faceOf = id => botAvatar(id) || personOf(id)?.avatar || '';
 /** A seat's name: a Regular's (from `names`) or a generic player's. */
 export const nameOfBot = (id, names = x => x) => personOf(id)?.name || names(id);
-
-function tableHtml(q, room, game, id, minutes, names, have, generic) {
-  const blinds = game.blinds;
-  const afford = canSit(q, blinds, room);
-  const who = lineupFor(q.seed, id, game.stakes, minutes, have, {generic});
-  const whale = who.find(w => WHALES.includes(w));
-  const {min, max} = buyInRange(blinds, room);
-  let h = `<li class="qt-table${afford ? '' : ' qt-off'}">`;
-  h += `<div class="qt-top"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(GAMES[game.game]?.name || GAMES.nlhe.name)} · 6-max</span>`;
-  h += `<span class="qt-faces">${who.map(w => (faceOf(w) ? `<img src="${avatarUrl(faceOf(w))}" alt="${esc(nameOfBot(w, names))}" title="${esc(nameOfBot(w, names))}">` : '')).join('')}</span></div>`;
-  if (whale) h += `<p class="qt-note">${esc(names(whale))} is playing here.</p>`;
-  // Players you've tagged, so you can find them again.
-  const known = who.filter(w => tagOf(q, w) && tagOf(q, w) !== 'unsure');
-  if (known.length) h += `<p class="qt-note">${known.map(w => `${esc(nameOfBot(w, names))} (${esc(TAG_NAMES[tagOf(q, w)].toLowerCase())})`).join(', ')}</p>`;
-  h += `<p class="qt-meta">Buy-in ${money(min)}–${money(max)}</p>`;
-  if (afford) h += `<button class="cc-btn qt-open-btn" data-qopen="${esc(id)}">Open table</button>`;
-  else h += `<p class="qt-note">Needs ${money(min)} to sit down.</p>`;
-  return h + '</li>';
-}
 
 // An open table (like walking up to it): who's there and the chips in front
 // of each, and how much you want to buy in for. play.js handles data-qsit
@@ -105,7 +93,7 @@ function openTableHtml(q, room, game, id, minutes, names, have, amount, generic)
  * `generic` whether the engine seats generic players; `review` the last
  * session's reads (quest-reads.js `reviewReads` rows).
  */
-export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null} = {}) {
+export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null, study = null} = {}) {
   const minutes = gameMinutes(q, now);
   const st = status(q, cheapestBuyIn());
   const room = currentRoom(q);
@@ -129,26 +117,138 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
     h += `<button class="tr-start" data-qnew="broke">Start again with ${money(START_BANKROLL)}</button></section>`;
     return h + statsHtml(q, names) + runsHtml(q);
   }
-  const rooms = lobby(q.seed, minutes);
+  // A new run: choose where to put down roots.
+  if (!q.room && !q.trip) return h + regionPickerHtml() + statsHtml(q, names) + runsHtml(q);
+  // On the road: the trip takes real time, and you can study on the way.
+  if (q.trip) return h + travelHtml(q, now, minutes, study) + statsHtml(q, names) + runsHtml(q);
+  const rooms = listsNow(q.seed, minutes);
   const here = rooms.find(r => r.room.id === room.id);
-  h += `<section class="qt-room"><h2>${esc(room.name)}</h2><p class="qt-meta">${esc(room.kind)}</p>`;
+  const mine = listStatus(q, now);
+  const city = cityOf(room);
+  h += `<section class="qt-room"><h2>${esc(room.name)}</h2><p class="qt-meta">${esc(room.kind)}${city ? ` · ${esc(city.name)}, ${esc(city.region.name)}` : ''}</p>`;
+  // Your seat is ready: take it before the floor gives it away.
+  for (const l of mine.filter(x => x.called)) {
+    const game = here?.games.find(g => g.key === l.key);
+    if (!game) continue;
+    h += `<div class="qw-called"><b>Your seat is ready: ${esc(gameLabel(game))}.</b><span class="qt-meta">Take it within <b data-qcount="${realAt(now, minutes, l.callAt + CALL_MINUTES)}">${esc(clock(realAt(now, minutes, l.callAt + CALL_MINUTES) - now))}</b>, or it goes to the next name.</span>`;
+    h += `<div class="qt-open-acts"><button class="tr-start" data-qopen="${esc(game.ids[0])}">Take the seat</button><button class="cc-btn" data-qpass="${esc(l.key)}">Pass</button></div></div>`;
+  }
   if (!here?.games.length) h += '<p class="pl-desc">Nothing’s running here right now. Come back later, or try another room.</p>';
   else {
-    h += '<ul class="qt-tables">';
-    for (const game of here.games) for (const id of game.ids) h += tableHtml(q, room, game, id, minutes, names, have, generic);
+    h += '<ul class="qw-games">';
+    for (const game of here.games) h += gameRowHtml(q, room, game, mine.find(l => l.key === game.key), now, minutes);
     h += '</ul>';
   }
   h += '</section>';
-  h += '<section class="qt-rooms"><h2>Other rooms</h2><ul>';
-  for (const r of rooms.filter(x => x.room.id !== room.id)) {
-    const games = r.games.map(g => `${g.stakes}${g.game && g.game !== 'nlhe' ? ` ${GAMES[g.game]?.short || g.game}` : ''}${g.tables > 1 ? ` ×${g.tables}` : ''}`).join(' · ') || 'Quiet right now';
-    h += `<li class="qt-other"><span class="qt-other-name"><b>${esc(r.room.name)}</b><span class="qt-meta">${esc(r.room.kind)} · ${esc(games)}</span></span>`;
-    h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}">Go there · ${TRAVEL_MINUTES} min</button></li>`;
-  }
-  h += '</ul></section>';
+  // Waiting for a seat: study while you wait.
+  if (mine.some(l => !l.called)) h += studyHtml(q, study, 'while you wait');
+  h += otherRoomsHtml(rooms, room);
   const opened = open && here?.games.find(g => g.ids.includes(open));
   if (opened) h += openTableHtml(q, room, opened, open, minutes, names, have, amount, generic);
   return h + statsHtml(q, names) + runsHtml(q);
+}
+
+const gameLabel = g => `${g.stakes} ${GAMES[g.game]?.name || GAMES.nlhe.name}`;
+// Real time (ms) when the clock reaches game minute `at`.
+const realAt = (now, minutes, at) => Math.round(now + ((at - minutes) * 60000) / QUEST_SPEED);
+/** A real-time countdown, "1:05", or "1:29:40" from an hour up. */
+export const clock = ms => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const mmss = `${String(Math.floor(s / 60) % 60).padStart(s >= 3600 ? 2 : 1, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mmss}` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const ordinal = n => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
+// Game minutes as real time, roughly: "about 2 min", "under a minute".
+const realWait = gm => {
+  const s = (gm * 60) / QUEST_SPEED;
+  return s < 60 ? 'under a minute' : `about ${Math.round(s / 60)} min`;
+};
+
+// Where to start a run: one card a region, with its small town.
+function regionPickerHtml() {
+  let h = '<section class="qt-room"><h2>Where do you want to start?</h2><p class="pl-desc">Every run starts in a small town with a few small games. Build your bankroll there, then move up to the cities.</p><ul class="qw-regions">';
+  for (const r of REGIONS) {
+    const town = r.cities.find(c => c.small);
+    h += `<li class="qw-region"><b class="qt-stakes">${esc(r.name)}</b><span class="qt-note">${esc(r.blurb)}</span><span class="qt-meta">Start in ${esc(town.name)}</span>`;
+    h += `<button class="tr-start" data-qstart="${esc(r.id)}">Start in ${esc(r.name)}</button></li>`;
+  }
+  return h + '</ul></section>';
+}
+
+// On the road: where to, how long is left (in real time), and study.
+function travelHtml(q, now, minutes, study) {
+  const t = q.trip;
+  const to = roomById(t.to);
+  const from = roomById(t.from);
+  const city = cityOf(to);
+  const far = from && regionOf(from)?.id !== regionOf(to)?.id;
+  const how = far ? 'Flying' : from && from.city === to.city ? 'Across town' : 'On the road';
+  const start = realAt(now, minutes, t.start);
+  const end = realAt(now, minutes, t.end);
+  let h = `<section class="qw-trip" aria-live="polite"><span class="qt-label">${esc(how)}</span><h2>${esc(to.name)}</h2>`;
+  h += `<p class="qt-meta">${esc(city ? `${city.name}, ${city.region.name}` : '')}</p>`;
+  h += `<div class="qw-road" aria-hidden="true"><span class="qw-car${far ? ' qw-plane' : ''}" data-qmove="${start},${end}" style="left:${(100 * Math.min(1, Math.max(0, (now - start) / Math.max(1, end - start)))).toFixed(1)}%"></span></div>`;
+  h += `<p class="qw-left">Arriving in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(t.end))}</p>`;
+  // A long trip runs on the game clock, not this page.
+  if (t.end - t.start > 30) h += '<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page, and you’ll be there when the clock gets there.</p>';
+  h += '</section>';
+  return h + studyHtml(q, study, 'on the way');
+}
+
+// A game in the room you're in: its tables, who's on the list, and your place.
+function gameRowHtml(q, room, game, mine, now, minutes) {
+  const afford = canSit(q, game.blinds, room);
+  const {min, max} = buyInRange(game.blinds, room);
+  let h = `<li class="qw-game${afford ? '' : ' qt-off'}"><div class="qt-top"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(GAMES[game.game]?.name || GAMES.nlhe.name)} · ${plural(game.tables, 'table')}</span></div>`;
+  const shown = game.waiting.slice(0, 3).join(', ');
+  const more = game.waiting.length > 3 ? ` and ${game.waiting.length - 3} more` : '';
+  h += `<p class="qt-note">${game.waiting.length ? `Waiting: ${esc(shown)}${esc(more)}` : 'No one waiting'}</p>`;
+  h += `<p class="qt-meta">Buy-in ${money(min)}–${money(max)}</p>`;
+  if (mine?.called) h += '<p class="qw-you">Your seat is ready.</p>';
+  else if (mine) {
+    const at = realAt(now, minutes, mine.callAt);
+    h += `<p class="qw-you">You’re ${mine.ahead ? `${ordinal(mine.ahead + 1)} on the list` : 'next'} · called in <b data-qcount="${at}">${esc(clock(at - now))}</b></p>`;
+    h += `<button class="cc-btn qt-open-btn" data-qunlist="${esc(game.key)}">Take my name off</button>`;
+  } else if (afford) h += `<button class="cc-btn qt-open-btn" data-qlist="${esc(game.key)}">Put my name down · ${esc(realWait((game.waiting.length + 1) * game.gap))}</button>`;
+  else h += `<p class="qt-note">Needs ${money(min)} to sit down.</p>`;
+  return h + '</li>';
+}
+
+// The other rooms, by city: their games and lists, and how far.
+function otherRoomsHtml(rooms, room) {
+  const here = regionOf(room);
+  const order = [here, ...REGIONS.filter(r => r.id !== here?.id)].filter(Boolean);
+  let h = '<section class="qt-rooms"><h2>Other rooms</h2>';
+  for (const region of order) {
+    const list = rooms.filter(x => x.room.id !== room.id && regionOf(x.room)?.id === region.id);
+    if (!list.length) continue;
+    h += `<h3 class="qw-region-name">${esc(region.name)}</h3><ul>`;
+    for (const r of list) {
+      const city = cityOf(r.room);
+      const games = r.games.map(g => `${g.stakes}${g.game !== 'nlhe' ? ` ${GAMES[g.game]?.short || g.game}` : ''} (${g.waiting.length ? `${g.waiting.length} waiting` : 'no list'})`).join(' · ') || 'Quiet right now';
+      const mins = travelMinutes(room, r.room);
+      h += `<li class="qt-other"><span class="qt-other-name"><b>${esc(r.room.name)}</b><span class="qt-meta">${esc(city?.name || '')} · ${esc(r.room.kind)}</span><span class="qt-meta">${esc(games)}</span></span>`;
+      h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}">Go there · ${clock((mins * 60000) / QUEST_SPEED)}</button></li>`;
+    }
+    h += '</ul>';
+  }
+  return h + '</section>';
+}
+
+// A study question while travelling or waiting (quest-study.js), with how the
+// last one went. play.js handles data-qans.
+function studyHtml(q, study, when) {
+  const s = q.study || {n: 0, right: 0};
+  const qn = question(q.seed, s.n);
+  let h = `<section class="qw-study"><h2>Study ${esc(when)}</h2>`;
+  if (study?.last) h += `<p class="${study.last.right ? 'qw-right' : 'qw-wrong'}">${study.last.right ? 'Right.' : 'Not quite.'} ${esc(study.last.why)}</p>`;
+  h += `<p class="qw-q">${esc(qn.text)}</p><div class="qw-choices">`;
+  qn.choices.forEach((c, i) => { h += `<button class="cc-btn" data-qans="${i}">${esc(c)}</button>`; });
+  h += '</div>';
+  if (s.n) h += `<p class="qt-meta">${s.right} of ${s.n} right so far</p>`;
+  h += '<p class="qt-meta">Or study the <a href="#charts">pre-flop charts</a> or the <a href="#trainer">ranges trainer</a>; the clock keeps running.</p>';
+  return h + '</section>';
 }
 
 // The hall of records: wins (fastest first), then the best peaks.

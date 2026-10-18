@@ -1,5 +1,6 @@
-// Bankroll Quest's card rooms and their schedules (#301): made-up rooms,
-// defined as data, whose games come and go with the hour and the day. The
+// Bankroll Quest's card rooms and their schedules (#301): made-up rooms in
+// three regions (Texas, Los Angeles, Florida), defined as data, whose games
+// come and go with the hour and the day. The
 // world is built from the quest's seed, so it's the same on every reload and
 // different from someone else's. Times are game minutes (quest.js).
 
@@ -23,13 +24,32 @@ export const gameOf = g => g.game || 'nlhe';
 // from before Omaha keep their Hold'em tables.
 const gameKey = g => (gameOf(g) === 'nlhe' ? g.stakes : `${gameOf(g)} ${g.stakes}`);
 
+// Where the rooms are: regions you can put down roots in, each with a small
+// town (where a run starts, with a few small games) and bigger cities.
+export const REGIONS = [
+  {
+    id: 'tx', name: 'Texas', blurb: 'Small-town card rooms, then the clubs of Austin and Houston.',
+    cities: [{id: 'mesquite', name: 'Mesquite Flats', small: true}, {id: 'austin', name: 'Austin'}, {id: 'houston', name: 'Houston'}],
+  },
+  {
+    id: 'la', name: 'Los Angeles', blurb: 'A desert card club first, then LA’s big rooms and the Ivory Room.',
+    cities: [{id: 'cactus', name: 'Cactus Wells', small: true}, {id: 'losangeles', name: 'Los Angeles'}],
+  },
+  {
+    id: 'fl', name: 'Florida', blurb: 'A quiet key, then the casinos of Miami.',
+    cities: [{id: 'palmetto', name: 'Palmetto Key', small: true}, {id: 'miami', name: 'Miami'}],
+  },
+];
+
 // Each room spreads some games at some stakes (Hold'em unless `game` says
 // otherwise): `tables` is how many run at its busiest, `chance` (when below
 // 1) how often the game runs at all in an hour that could have it, and
-// `when` the hours (and days) a big game can start.
+// `when` the hours (and days) a big game can start. `city` is where it is.
+// Room ids have no dashes: a table id starts with its room's.
 export const ROOMS = [
   {
     id: 'deuce',
+    city: 'austin',
     name: 'Deuce Street Card Room',
     kind: 'A busy local room',
     games: [
@@ -41,6 +61,7 @@ export const ROOMS = [
   },
   {
     id: 'harbor',
+    city: 'miami',
     name: 'Copper Harbor Casino',
     kind: 'A mid-size casino',
     games: [
@@ -53,6 +74,7 @@ export const ROOMS = [
   },
   {
     id: 'ivory',
+    city: 'losangeles',
     name: 'The Ivory Room',
     kind: 'An elite room',
     minBuyIn: 50,
@@ -64,10 +86,90 @@ export const ROOMS = [
       {stakes: '25/50', game: 'plo4', tables: 1, chance: 0.4, when: 'evenings'},
     ],
   },
+  // The small towns: a run starts here, with a few small games.
+  {
+    id: 'mesquite',
+    city: 'mesquite',
+    name: 'Mesquite Flats Card Room',
+    kind: 'A small-town card room',
+    games: [
+      {stakes: '1/2', tables: 2},
+      {stakes: '2/5', tables: 1, chance: 0.3},
+      {stakes: '1/2', game: 'plo4', tables: 1, chance: 0.25},
+    ],
+  },
+  {
+    id: 'cactus',
+    city: 'cactus',
+    name: 'Cactus Wells Card Club',
+    kind: 'A small-town card club',
+    games: [
+      {stakes: '1/2', tables: 2},
+      {stakes: '2/5', tables: 1, chance: 0.3},
+    ],
+  },
+  {
+    id: 'palmetto',
+    city: 'palmetto',
+    name: 'Palmetto Key Poker Room',
+    kind: 'A small-town poker room',
+    games: [
+      {stakes: '1/2', tables: 2},
+      {stakes: '1/2', game: 'plo4', tables: 1, chance: 0.4},
+    ],
+  },
+  // More rooms in the cities.
+  {
+    id: 'bayou',
+    city: 'houston',
+    name: 'Bayou City Poker Club',
+    kind: 'A big city club',
+    games: [
+      {stakes: '2/5', tables: 3},
+      {stakes: '5/10', tables: 2},
+      {stakes: '10/20', tables: 1, chance: 0.5},
+      {stakes: '25/50', tables: 1, chance: 0.3, when: 'evenings'},
+      {stakes: '5/10', game: 'plo4', tables: 1, chance: 0.4},
+    ],
+  },
+  {
+    id: 'sunset',
+    city: 'losangeles',
+    name: 'Sunset Grove Card Club',
+    kind: 'A huge card club',
+    games: [
+      {stakes: '1/2', tables: 5},
+      {stakes: '2/5', tables: 3},
+      {stakes: '5/10', tables: 2},
+      {stakes: '2/5', game: 'plo4', tables: 1},
+    ],
+  },
 ];
 
-// Game minutes it takes to get from one room to another.
-export const TRAVEL_MINUTES = 30;
+// Game minutes to get from one room to another: across town, to another
+// city in the region (2 hours), or to another region (6 hours). The clock
+// runs four times real time, so that's 1½, 30 and 90 real minutes. A trip
+// can't be skipped, but it runs on the game clock: you can play elsewhere,
+// study or close the page, and you're there when the clock says so.
+export const TRAVEL = {town: 6, region: 120, far: 360};
+
+const cityById = id => REGIONS.flatMap(r => r.cities.map(c => ({...c, region: r}))).find(c => c.id === id) || null;
+/** A room's city: {id, name, small, region}. */
+export const cityOf = room => cityById(room?.city);
+/** A room's region. */
+export const regionOf = room => cityOf(room)?.region || null;
+/** The room a run starts in, in region `regionId`: its small town's. */
+export const startRoom = regionId => {
+  const town = REGIONS.find(r => r.id === regionId)?.cities.find(c => c.small);
+  return ROOMS.find(r => r.city === town?.id) || null;
+};
+
+/** Game minutes from room `from` to room `to` (both rooms). */
+export function travelMinutes(from, to) {
+  if (!from || !to || from.id === to.id) return 0;
+  if (from.city === to.city) return TRAVEL.town;
+  return regionOf(from)?.id === regionOf(to)?.id ? TRAVEL.region : TRAVEL.far;
+}
 // Big games run in blocks of this many game hours once they start.
 const BLOCK_HOURS = 4;
 

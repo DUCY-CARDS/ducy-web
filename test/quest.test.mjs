@@ -4,7 +4,7 @@ import {
   AWAY_CAP_DAYS, GOAL, QUEST_SPEED, START_BANKROLL, buyInRange, canSit, clockText, dayHour, gameMinutes,
   leave, loadQuest, newQuest, saveQuest, setStack, sitDown, spendMinutes, status, syncClock, topUp, topUpChoices,
 } from '../src/quest.js';
-import { ROOMS, STAKES, TRAVEL_MINUTES, activity, cheapestBuyIn, lobby, roomById, tablesRunning } from '../src/quest-rooms.js';
+import { ROOMS, STAKES, activity, cheapestBuyIn, lobby, roomById, tablesRunning } from '../src/quest-rooms.js';
 
 const MIN = 60000;
 const memory = () => {
@@ -24,7 +24,7 @@ test('the clock runs four times real time, and an absence counts for at most a w
   assert.equal(gameMinutes(s, 20 * MIN), gameMinutes(q, 20 * MIN));
   assert.equal(QUEST_SPEED, 4);
   // Travelling spends game time at once.
-  assert.equal(gameMinutes(spendMinutes(q, TRAVEL_MINUTES, 0), 0), start + TRAVEL_MINUTES);
+  assert.equal(gameMinutes(spendMinutes(q, 30, 0), 0), start + 30);
 });
 
 test('the clock reads as a day and a time', () => {

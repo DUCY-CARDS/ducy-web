@@ -2068,6 +2068,40 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
   .qt-other { flex-direction: column; align-items: flex-start; }
 }
 
+/* Bankroll challenge: where to start, the trip, the games and their
+   waitlists, a seat ready, and study while you travel or wait (quest-ui.js). */
+.qw-regions, .qw-games { list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.qw-region, .qw-game { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.qw-region .tr-start { align-self: flex-start; }
+.qw-game.qt-off { opacity: 0.55; }
+.qw-you { margin: 0; font-size: 13px; font-weight: 600; color: var(--amber); }
+.qw-you b, .qw-called b[data-qcount], .qw-left b { font-variant-numeric: tabular-nums; }
+.qw-called { margin-top: 12px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 3px 0 #0f2219; }
+.qw-called .qt-meta { color: #5a6b5f; }
+.qw-called .cc-btn { color: #1d3a2c; border-color: rgba(29,58,44,0.35); background: transparent; }
+.qw-region-name { font: 600 12px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); margin: 14px 0 0; }
+.qw-trip { margin-top: 14px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 3px 0 #0f2219; }
+.qw-trip h2 { font-family: var(--font-display); font-weight: 400; font-size: 28px; margin: 0; }
+.qw-trip .qt-meta { color: #5a6b5f; margin: 0; }
+.qw-road { position: relative; height: 34px; margin: 10px 14px 4px; border-bottom: 3px dashed rgba(29,58,44,0.35); }
+.qw-car { position: absolute; bottom: 2px; width: 28px; height: 14px; margin-left: -14px; border-radius: 6px 9px 3px 3px; background: #c9472f; transition: left 1s linear; }
+.qw-car::before, .qw-car::after { content: ''; position: absolute; bottom: -5px; width: 8px; height: 8px; border-radius: 50%; background: #1d3a2c; }
+.qw-car::before { left: 3px; }
+.qw-car::after { right: 3px; }
+.qw-car.qw-plane { bottom: 14px; height: 8px; border-radius: 4px 10px 10px 4px; background: #1d3a2c; }
+.qw-car.qw-plane::before { left: 9px; bottom: -6px; width: 6px; height: 14px; border-radius: 2px; background: #1d3a2c; }
+.qw-car.qw-plane::after { display: none; }
+@media (prefers-reduced-motion: reduce) { .qw-car { transition: none; } }
+.qw-left { margin: 0; font-size: 15px; }
+.qw-study { margin-top: 14px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.qw-study h2 { font-family: var(--font-display); font-weight: 400; font-size: 20px; color: var(--fg-strong); margin: 0; }
+.qw-q { margin: 0; color: var(--fg-strong); max-width: 62ch; }
+.qw-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.qw-choices .cc-btn { font-family: var(--font-ui); font-size: 14px; padding: 6px 14px; }
+.qw-right, .qw-wrong { margin: 0; font-size: 13px; padding: 6px 10px; border-radius: 8px; max-width: 62ch; }
+.qw-right { background: var(--green-faint, rgba(60,140,90,0.15)); color: var(--fg-strong); }
+.qw-wrong { background: var(--amber-faint); color: var(--fg-strong); }
+
 /* Bankroll challenge: the run's stats (quest-stats.js), the session's reads
    and the read menu at a table (quest-reads.js, #304, #306). */
 .qt-stats h2, .qt-review h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; color: var(--fg-strong); margin: 18px 0 8px; }

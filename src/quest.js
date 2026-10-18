@@ -25,7 +25,8 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // A new quest: the starting bankroll, the clock anchored at `now` (real
 // milliseconds), and the seed its world is built from.
 export function newQuest(now = Date.now(), seed = (Math.random() * 2 ** 32) >>> 0) {
-  return {v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, best: START_BANKROLL, history: [], runs: []};
+  // No room yet: a run starts by choosing where to put down roots (startIn).
+  return {v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, trip: null, lists: [], best: START_BANKROLL, history: [], runs: []};
 }
 
 // Game minutes at real time `now`: the anchor plus QUEST_SPEED times the
@@ -41,7 +42,7 @@ export function syncClock(q, now = Date.now()) {
   return {...q, clock: {real: now, game: gameMinutes(q, now)}};
 }
 
-// Spends game time without real time passing (travelling between rooms).
+// Spends game time without real time passing.
 export function spendMinutes(q, minutes, now = Date.now()) {
   const s = syncClock(q, now);
   return {...s, clock: {real: now, game: s.clock.game + minutes}};
@@ -77,8 +78,9 @@ export function sitDown(q, table, amount, room) {
   if (q.seat || q.bankroll < min) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
   const game = table.game || 'nlhe';
+  // Sitting down takes your name off every list.
   return {
-    ...q, bankroll: q.bankroll - chips, room: table.room,
+    ...q, bankroll: q.bankroll - chips, room: table.room, lists: [],
     seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || []},
   };
 }
@@ -168,11 +170,78 @@ export function status(q, cheapest) {
   return 'playing';
 }
 
-// Goes to room `roomId`, which takes `minutes` of game time (none to the
-// room you're in). Not while seated.
+// Starts a run in region `regionId`'s small town (`roomId`, its room): where
+// you put down roots. Only before you're anywhere.
+export function startIn(q, regionId, roomId) {
+  if (q.room || q.trip) return q;
+  return {...q, home: regionId, room: roomId};
+}
+
+// Sets off for room `roomId`, a trip of `minutes` game minutes. The trip takes
+// real time (the clock runs four times real time, so six game minutes is a
+// minute and a half): you're on the road until it's over, and you can't skip
+// it. Your places on waitlists are given up. Not while seated, already on
+// the road, or to the room you're in.
 export function travel(q, roomId, minutes, now = Date.now()) {
-  if (q.seat || q.room === roomId) return q;
-  return {...spendMinutes(q, minutes, now), room: roomId};
+  if (q.seat || q.trip || q.room === roomId) return q;
+  const at = gameMinutes(q, now);
+  return {...q, trip: {from: q.room, to: roomId, start: at, end: at + minutes}, lists: []};
+}
+
+// The trip over, if it is: you're in the room you were going to.
+export function arrive(q, now = Date.now()) {
+  if (!q.trip || gameMinutes(q, now) < q.trip.end) return q;
+  return {...q, room: q.trip.to, trip: null};
+}
+
+// ---- Waitlists ----
+// Every game has a list of players waiting for a seat; you join it in the
+// room you're in and wait your turn (study while you wait). When your name
+// is called you have CALL_MINUTES to take the seat, or you lose it.
+export const CALL_MINUTES = 8;
+
+// Puts your name on a game's list in this room: `game` is {key, stakes,
+// game}, `ahead` the players waiting before you and `gap` the game minutes
+// between seats opening. Your name is called when they've all been seated.
+export function joinList(q, game, ahead, gap, now = Date.now()) {
+  if (q.seat || q.trip || !q.room || (q.lists || []).some(l => l.key === game.key)) return q;
+  const at = gameMinutes(q, now);
+  const entry = {key: game.key, stakes: game.stakes, game: game.game || 'nlhe', room: q.room, joined: at, gap, callAt: at + (ahead + 1) * gap};
+  return {...q, lists: [...(q.lists || []), entry]};
+}
+
+/** Takes your name off a game's list. */
+export const leaveList = (q, key) => ({...q, lists: (q.lists || []).filter(l => l.key !== key)});
+
+/**
+ * Where you stand on your lists at real time `now`: [{...entry, called,
+ * ahead, wait}]: `called` once your seat is ready, `ahead` the players still
+ * before you, `wait` game minutes until you're called (or, called, left to
+ * take the seat). Lists in other rooms, and calls not taken in time, drop off.
+ */
+export function listStatus(q, now = Date.now()) {
+  const at = gameMinutes(q, now);
+  return (q.lists || [])
+    .filter(l => l.room === q.room && at < l.callAt + CALL_MINUTES)
+    .map(l => {
+      const called = at >= l.callAt;
+      return {...l, called, ahead: called ? 0 : Math.max(0, Math.ceil((l.callAt - at) / l.gap) - 1), wait: called ? l.callAt + CALL_MINUTES - at : l.callAt - at};
+    });
+}
+
+/** Calls that ran out (you didn't take the seat in time): the lists without them. */
+export function dropMissed(q, now = Date.now()) {
+  const at = gameMinutes(q, now);
+  const kept = (q.lists || []).filter(l => l.room === q.room && at < l.callAt + CALL_MINUTES);
+  return kept.length === (q.lists || []).length ? q : {...q, lists: kept};
+}
+
+// ---- Study ----
+// Questions answered while travelling or waiting (quest-study.js): how many,
+// and how many right.
+export function recordStudy(q, right) {
+  const s = q.study || {n: 0, right: 0};
+  return {...q, study: {n: s.n + 1, right: s.right + (right ? 1 : 0)}};
 }
 
 // The record of a run that's ended: its peak, sessions and how long it ran.
@@ -187,9 +256,11 @@ export const runRecord = (q, now = Date.now(), result = 'broke') => ({
 export function newRun(q, now = Date.now(), result = 'broke') {
   const fresh = newQuest(now, q.seed);
   const clock = syncClock(q, now).clock;
+  // You start again where you are; after a trip, where it was going.
+  const room = q.trip ? q.trip.to : q.room;
   return {
-    ...fresh, clock, started: clock.game, room: q.room, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
-    reads: q.reads || {}, readStats: q.readStats, people: q.people || {},
+    ...fresh, clock, started: clock.game, room, home: q.home, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
+    reads: q.reads || {}, readStats: q.readStats, people: q.people || {}, study: q.study,
   };
 }
 
@@ -204,7 +275,7 @@ export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
   if (!q || q.v !== 1 || !Number.isFinite(q.bankroll) || !q.clock) return null;
   q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : [], runs: Array.isArray(q.runs) ? q.runs : []};
   if (q.seat) q = leave(q, now);
-  return syncClock(q, now);
+  return arrive(syncClock(q, now), now);
 }
 
 export function saveQuest(q, storage = globalThis.localStorage) {

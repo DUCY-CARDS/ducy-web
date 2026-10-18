@@ -2,8 +2,8 @@
 // runs ending, and the page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { START_BANKROLL, newQuest, newRun, sitDown, leave, travel, gameMinutes } from '../src/quest.js';
-import { ROOMS, STAKES, TRAVEL_MINUTES, lobby } from '../src/quest-rooms.js';
+import { START_BANKROLL, newQuest, newRun, sitDown, leave, travel, arrive, gameMinutes } from '../src/quest.js';
+import { REGIONS, ROOMS, STAKES, TRAVEL, lobby, roomById, travelMinutes } from '../src/quest-rooms.js';
 import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, lineupStacks, poolFor, replacementPool, stacksAt } from '../src/quest-lineup.js';
 import { buyInAsk, currentRoom, goalProgress, questLobbyHtml } from '../src/quest-ui.js';
 import { betweenHands, startBank } from '../src/regulars.js';
@@ -65,14 +65,24 @@ test('line-ups come from the stakes’ pool, whales only in big games', () => {
   assert.ok(replacementPool('50/100').every(id => POOLS.high.includes(id)));
 });
 
-test('travelling takes game time; a run that ends starts again at $1,000 and is remembered', () => {
-  let q = newQuest(T0, 3);
-  const t = travel(q, 'harbor', TRAVEL_MINUTES, T0);
-  assert.equal(t.room, 'harbor');
-  assert.equal(gameMinutes(t, T0), gameMinutes(q, T0) + TRAVEL_MINUTES);
+test('a trip takes real time: you are on the road until it ends; a run that ends starts again', () => {
+  let q = {...newQuest(T0, 3), room: 'deuce'};
+  const mins = travelMinutes(roomById('deuce'), roomById('harbor'));
+  assert.equal(mins, TRAVEL.far, 'Austin to Miami is another region');
+  const t = travel(q, 'harbor', mins, T0);
+  // The clock doesn't jump: you're on the road, still not there.
+  assert.equal(gameMinutes(t, T0), gameMinutes(q, T0));
+  assert.equal(t.room, 'deuce');
+  assert.equal(arrive(t, T0 + 60000).room, 'deuce', 'a minute in, still on the road');
+  // At four times real time, 6 game hours is 90 real minutes.
+  const there = arrive(t, T0 + (mins / 4) * 60000);
+  assert.equal(there.room, 'harbor');
+  assert.equal(there.trip, null);
+  // No second trip while on the road.
+  assert.equal(travel(t, 'ivory', 24, T0), t);
   // Not while seated.
   const seated = sitDown(q, {id: 'deuce-1/2-1', room: 'deuce', stakes: STAKES['1/2']}, 20000);
-  assert.equal(travel(seated, 'harbor', TRAVEL_MINUTES, T0), seated);
+  assert.equal(travel(seated, 'harbor', mins, T0), seated);
   q = leave({...seated, seat: {...seated.seat, stack: 0}}, T0);
   assert.equal(q.bankroll, START_BANKROLL - 20000);
   const next = newRun({...q, best: 150000}, T0, 'broke');
@@ -82,16 +92,21 @@ test('travelling takes game time; a run that ends starts again at $1,000 and is 
   assert.deepEqual(next.runs.map(r => [r.result, r.peak, r.sessions]), [['broke', 150000, 1]]);
 });
 
-test('the lobby: bankroll, clock, goal; affordable tables and buy-ins; other rooms', () => {
-  const q = newQuest(T0, 5);
+test('the lobby: bankroll, clock, goal; games and their lists; buy-ins; other rooms', () => {
+  // A new run starts by choosing where to put down roots.
+  const fresh = newQuest(T0, 5);
+  const pick = questLobbyHtml(fresh, T0);
+  for (const r of REGIONS) assert.match(pick, new RegExp(`data-qstart="${r.id}"`));
+  const q = {...fresh, room: 'deuce'};
   assert.equal(goalProgress(START_BANKROLL), 0);
   assert.ok(Math.abs(goalProgress(START_BANKROLL * 1000) - 1) < 1e-9);
   assert.ok(Math.abs(goalProgress(START_BANKROLL * Math.sqrt(1000)) - 0.5) < 1e-9, 'halfway at $31,623');
-  assert.equal(currentRoom(q).id, ROOMS[0].id);
+  assert.equal(currentRoom(q).id, 'deuce');
   const html = questLobbyHtml(q, T0);
   assert.match(html, /\$1,000/);
   assert.match(html, /Fri 6:00 pm/);
   assert.match(html, new RegExp(ROOMS[0].name));
+  assert.match(html, /Austin, Texas/);
   for (const r of ROOMS.slice(1)) assert.match(html, new RegExp(`data-qgo="${r.id}"`));
   // The buy-in you're asked for: the room's range, as far as the bankroll
   // goes, starting at 100 BB. $1,000 covers 200 BB at 2/5 but not at 5/10.
@@ -101,11 +116,11 @@ test('the lobby: bankroll, clock, goal; affordable tables and buy-ins; other roo
   assert.equal(buyInAsk({...q, bankroll: 5000}, STAKES['1/2'], room), null);
   // Broke: the run is over, with a way to start again.
   assert.match(questLobbyHtml({...q, bankroll: 100}, T0), /data-qnew="broke"/);
-  // The lobby reflects the schedule: every table running is listed, to open.
+  // The lobby lists the games running, each with its waitlist to join; no
+  // table opens until your name is called.
   const here = lobby(q.seed, gameMinutes(q, T0)).find(r => r.room.id === room.id);
-  for (const g of here.games) for (const id of g.ids) assert.match(html, new RegExp(`data-qopen="${id}"`));
-  // No buy-in is chosen on the card: you open the table and say how much.
-  assert.doesNotMatch(html, /data-qsit/);
+  for (const g of here.games) assert.match(html, new RegExp(`data-qlist="${g.game} ${g.stakes}"`));
+  assert.doesNotMatch(html, /data-qopen|data-qsit/);
   const g = here.games[0], id = g.ids[0];
   const open = questLobbyHtml(q, T0, {open: id});
   assert.match(open, /How much do you want to buy in for\?/);
@@ -192,6 +207,6 @@ test('the lobby names an Omaha table’s game', () => {
   }
   assert.ok(at != null);
   const html = questLobbyHtml(q, T0 + (at - q.clock.game) / 4 * 60000);
-  assert.match(html, /Pot-limit Omaha · 6-max/);
-  assert.match(html, /data-qopen="harbor-plo4-/);
+  assert.match(html, /Pot-limit Omaha · \d+ tables?/);
+  assert.match(html, /data-qlist="plo4 2\/5"/);
 });
