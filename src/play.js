@@ -52,6 +52,7 @@ import { clock as questCountdown, currentRoom, faceOf, hoursText as questHours, 
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import { SCENARIOS, answerStake, confront as questConfront, markRead as questMarkRead, maybeAskStake, owedBy, post as questPost, resolveStakes } from './quest-scenarios.js';
+import { TEST_SPOTS, answerSettle, answerTest, finishTest, makeTest, maybeBackerOffer, passMark, scoreTest, settleBacking, testHand } from './quest-backer.js';
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
@@ -1122,7 +1123,7 @@ function questNow() {
   else if (now - quest.clock.real > 30_000) quest = syncClock(quest, now);
   // A trip that's over, a night that's over, seats you were called to and
   // didn't take, and stakes whose week is up (quest-scenarios.js).
-  const q = resolveStakes(questDropMissed(questWake(questArrive(quest))), gameMinutes(quest));
+  const q = settleBacking(resolveStakes(questDropMissed(questWake(questArrive(quest))), gameMinutes(quest)), gameMinutes(quest));
   if (q !== quest) {
     if (q.room !== quest.room) questStudy = null;
     quest = q;
@@ -1141,6 +1142,7 @@ function questLobbyPage() {
   const html = questLobbyHtml(q, Date.now(), {
     names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount,
     generic: genericPlayers, review: questReview, study: questStudy,
+    backerTest: questTestView(q), testResult: questTestResult, mastered: questTrainerMastered(),
   });
   // The inbox's news has been shown: it's read now (offers stay until answered).
   const read = questMarkRead(q);
@@ -1233,6 +1235,8 @@ function questStandUp() {
   if (before) {
     const minutes = gameMinutes(quest);
     quest = maybeAskStake(quest, people, before.stakes, minutes, id => isReg(quest.seed, ROOMS.map(r => r.id), id), quest.history.length);
+    // A backer may get in touch too (#356), if you can prove you know your ranges.
+    quest = maybeBackerOffer(quest, before.stakes, minutes, quest.history.length);
     for (const p of people) {
       if (!owedBy(quest, p.id)) continue;
       const name = personOf(p.id)?.name || 'Someone';
@@ -1443,12 +1447,73 @@ function questScenario(msgId, answer) {
   const msg = (q.inbox || []).find(m => m.id === msgId);
   if (!msg?.offer || msg.offer.answered) return;
   if (msg.offer.kind === 'stake') quest = answerStake(q, msgId, answer, minutes);
+  else if (msg.offer.kind === 'backer-settle') quest = answerSettle(q, msgId, answer, minutes);
+  else if (msg.offer.kind === 'backer' && answer === 'test') { questStartTest(msgId); return; }
+  else if (msg.offer.kind === 'backer') quest = {...q, inbox: q.inbox.map(m => (m.id === msgId ? {...m, read: true, offer: {...m.offer, answered: 'declined'}} : m))};
   else {
     const done = {...q, inbox: q.inbox.map(m => (m.id === msgId ? {...m, read: true, offer: {...m.offer, answered: answer}} : m))};
     quest = answer === 'confront' ? questConfront(done, msg.offer.id, minutes) : done;
   }
   saveQuest(quest);
   render();
+}
+
+// A backer's test (#356, quest-backer.js): hands from Ducybot's charts, the
+// same files as Pre-flop ranges. The test in progress is kept with the
+// quest (a reload picks it up); the last result shows in the lobby.
+let questCharts = null; // {file: data} once loaded
+let questTestResult = null; // the last test's score, for the lobby
+async function questLoadCharts() {
+  if (questCharts) return questCharts;
+  const files = await Promise.all(TEST_SPOTS.map(t => fetch(new URL(`charts/${t.file}`, document.baseURI).href, {cache: 'no-cache'}).then(r => (r.ok ? r.json() : null)).catch(() => null)));
+  if (files.some(f => !f)) return null;
+  questCharts = Object.fromEntries(TEST_SPOTS.map((t, i) => [t.file, files[i]]));
+  return questCharts;
+}
+
+// 6-max spots mastered in Pre-flop ranges (fixed hands, any depth): they
+// lower the mark a backer asks for. The test is 6-max only, so heads-up doesn't count.
+function questTrainerMastered() {
+  try {
+    const p = JSON.parse(localStorage.getItem('ducyTrainerProgress') || '{}');
+    const ids = new Set(Object.entries(p).filter(([k, r]) => /^chart:6max:.+:fixed$/.test(k) && Math.max(r?.best || 0, r?.score || 0) >= 90).map(([k]) => k.split(':')[3]));
+    return ids.size;
+  } catch { return 0; }
+}
+
+async function questStartTest(msgId) {
+  const charts = await questLoadCharts();
+  if (!charts) { questNote = 'The test couldn’t load. Try again in a moment.'; render(); return; }
+  const test = makeTest(questNow(), charts, msgId);
+  quest = {...questNow(), backerTest: test};
+  questTestResult = null;
+  saveQuest(quest);
+  render();
+}
+
+// One answer in the test; the last one finishes it.
+function questTestAnswer(k) {
+  const q = questNow();
+  if (!q.backerTest || !questCharts) return;
+  const test = answerTest(q.backerTest, k);
+  if (test.answers.length < test.hands.length) { quest = {...q, backerTest: test}; saveQuest(quest); render(); return; }
+  const mastered = questTrainerMastered();
+  const mark = passMark(q, mastered);
+  const score = scoreTest(questCharts, test);
+  quest = {...finishTest({...q, backerTest: null}, questCharts, test, mastered, gameMinutes(q)), backerTest: null};
+  questTestResult = {...score, mark, passed: score.pct >= mark, cut: quest.backing?.share};
+  saveQuest(quest);
+  render();
+}
+
+// What the lobby shows of a test in progress (quest-ui.js), or null.
+function questTestView(q) {
+  const t = q.backerTest;
+  if (!t) return null;
+  if (!questCharts) { questLoadCharts().then(() => render()); return {loading: true}; }
+  const n = t.answers.length;
+  const msg = (q.inbox || []).find(m => m.id === t.msgId);
+  return {...testHand(questCharts, t.hands[n]), n, of: t.hands.length, name: msg?.offer?.name || 'The backer', mark: passMark(q, questTrainerMastered())};
 }
 
 function questNewRun(result) {
@@ -3625,9 +3690,11 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome],[data-qsc]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome],[data-qsc],[data-qbt],[data-qbtdone]');
   if (q && !q.disabled) {
     if (q.dataset.qsc) { const [msg, answer] = q.dataset.qsc.split(':'); questScenario(msg, answer); }
+    else if (q.dataset.qbt != null) questTestAnswer(+q.dataset.qbt);
+    else if (q.dataset.qbtdone) { questTestResult = null; render(); }
     else if (q.dataset.qstart) questStart(q.dataset.qstart);
     else if (q.dataset.qsleep) questSleep(q.dataset.qsleep);
     else if (q.dataset.qgohome) questGoHome();

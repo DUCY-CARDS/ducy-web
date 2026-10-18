@@ -21,6 +21,7 @@ import { FAMILY_NAMES, personOf } from './quest-people.js';
 import { TAG_NAMES, accuracyText, tagOf } from './quest-reads.js';
 import { bankrollChart, bankrollSeries, biggestPots, byStakes, durationText, hallOfRecords, withRegulars } from './quest-stats.js';
 import { halfOf, openOffers, stakingTotals, unread } from './quest-scenarios.js';
+import { BACKER, NEVER, horseRep, passMark } from './quest-backer.js';
 import { chipInput, chipText } from './chip-format.js';
 import { avatarUrl, botAvatar } from './avatars.js';
 
@@ -96,7 +97,7 @@ function openTableHtml(q, room, game, id, minutes, names, have, amount, generic)
  * `generic` whether the engine seats generic players; `review` the last
  * session's reads (quest-reads.js `reviewReads` rows).
  */
-export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null, study = null} = {}) {
+export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null, study = null, backerTest = null, testResult = null, mastered = 0} = {}) {
   const minutes = gameMinutes(q, now);
   const st = status(q, cheapestBuyIn());
   const room = currentRoom(q);
@@ -112,7 +113,11 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   h += `<span class="qt-meta">Best ${money(q.best)} · ${q.history.length} session${q.history.length === 1 ? '' : 's'}</span></div>`;
   h += '</section>';
   if (note) h += `<p class="pl-desc">${esc(note)}</p>`;
-  h += inboxHtml(q, minutes);
+  // A backer's test in progress takes the lobby until it's done (#356).
+  if (backerTest) return h + testHtml(backerTest);
+  if (testResult) h += testResultHtml(testResult);
+  h += backingHtml(q, minutes);
+  h += inboxHtml(q, minutes, mastered);
   if (review?.length) h += reviewHtml(review);
   if (st === 'won') {
     h += `<section class="qt-end"><h2>A million.</h2><p>You turned ${money(START_BANKROLL)} into ${money(q.bankroll)} in ${q.history.length} sessions and ${(q.hands || 0).toLocaleString('en-US')} hands, over ${esc(durationText(runMinutes))} of game time.</p>`;
@@ -317,7 +322,7 @@ function studyHtml(q, study, when) {
 // then the newest news, unread ones marked. play.js handles data-qsc
 // ("<message id>:<answer>") and marks them read once shown.
 const INBOX_SHOWN = 5;
-function inboxHtml(q, minutes) {
+function inboxHtml(q, minutes, mastered = 0) {
   const all = q.inbox || [];
   if (!all.length) return '';
   const offers = openOffers(q, minutes);
@@ -333,13 +338,57 @@ function inboxHtml(q, minutes) {
       h += `<button class="cc-btn" data-qsc="${m.id}:more">Ask for ${Math.round(Math.min(0.8, m.offer.share + 0.15) * 100)}% of the profit</button>`;
       h += `<button class="cc-btn" data-qsc="${m.id}:less">Offer ${money(halfOf(m.offer.amount))} instead</button>`;
       h += `<button class="cc-btn" data-qsc="${m.id}:decline">No thanks</button>`;
+    } else if (m.offer.kind === 'backer') {
+      h += `<button class="tr-start" data-qsc="${m.id}:test">Take the test</button><button class="cc-btn" data-qsc="${m.id}:decline">No thanks</button>`;
+    } else if (m.offer.kind === 'backer-settle') {
+      h += m.offer.owed ? `<button class="tr-start" data-qsc="${m.id}:pay">Pay ${money(Math.min(m.offer.owed, q.bankroll))}</button><button class="cc-btn" data-qsc="${m.id}:stiff">Keep it</button>`
+        : `<button class="tr-start" data-qsc="${m.id}:pay">Tell them</button>`;
     } else {
       h += `<button class="tr-start" data-qsc="${m.id}:confront">Ask about the money</button><button class="cc-btn" data-qsc="${m.id}:letgo">Let it go</button>`;
     }
-    h += `</div><span class="qt-meta">${esc(clockText(m.at))} · answer by ${esc(clockText(m.offer.expires))}</span></li>`;
+    h += '</div>';
+    if (m.offer.kind === 'backer') {
+      const mark = passMark(q, mastered);
+      h += `<span class="qt-meta">${BACKER.hands} hands from Ducybot’s ranges: get ${mark}% right. ${mastered ? `Your ${mastered} mastered 6-max spot${mastered === 1 ? '' : 's'} in Pre-flop ranges lowered the mark.` : 'Mastering 6-max spots in <a href="#trainer">Pre-flop ranges</a> lowers the mark.'}${horseRep(q) < 0 ? ' Your name with backers raised it.' : ''}</span>`;
+    }
+    h += m.offer.expires >= NEVER ? '</li>' : `<span class="qt-meta">${esc(clockText(m.at))} · answer by ${esc(clockText(m.offer.expires))}</span></li>`;
   }
   for (const m of news) h += `<li class="${m.read ? '' : 'qs-unread'}"><p>${esc(m.text)}</p><span class="qt-meta">${esc(clockText(m.at))}</span></li>`;
   return h + '</ul></section>';
+}
+
+// A backer's test (#356): the hand, its spot and question, and the actions.
+// play.js handles data-qbt (the action's index). No feedback until the end.
+function testHtml(t) {
+  if (t.loading) return '<section class="qb-test"><p class="pl-desc">Dealing the test…</p></section>';
+  let h = `<section class="qb-test" aria-live="polite"><span class="qt-label">${esc(t.name)}’s 6-max test · hand ${t.n + 1} of ${t.of} · ${t.mark}% to pass</span>`;
+  h += `<h2>${esc(t.title)}</h2><p class="qb-ask">${esc(t.question)}</p>`;
+  h += `<div class="qb-cards">${t.cards.map(c => `<span class="qb-card${'hd'.includes(c[1]) ? ' r' : ''}">${esc(c[0])}${{s: '♠', h: '♥', d: '♦', c: '♣'}[c[1]]}</span>`).join('')}</div>`;
+  h += `<div class="qt-open-acts">${t.actions.map((a, k) => `<button class="${k === 0 ? 'cc-btn' : 'tr-start'}" data-qbt="${k}">${esc(a)}</button>`).join('')}</div>`;
+  return h + '<p class="qt-meta">Pick what Ducybot would do most often. You’ll see how you did at the end.</p></section>';
+}
+
+// How the last test went, with the hands missed.
+function testResultHtml(r) {
+  let h = `<section class="qb-result ${r.passed ? 'qr-right' : 'qr-wrong'}"><h2>${r.passed ? 'Passed' : 'Not this time'}: ${r.right} of ${r.of} (${r.pct}%)</h2>`;
+  h += `<p class="qt-meta">You needed ${r.mark}%.</p>`;
+  if (r.passed && r.cut != null) h += `<p>You scored ${r.pct}%: they’ll take ${Math.round(r.cut * 100)}% of the profit.</p>`;
+  if (r.misses.length) {
+    h += '<ul>';
+    for (const m of r.misses.slice(0, 6)) {
+      const top = m.mix.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]).filter(([p]) => p >= 3).map(([p, i]) => `${m.verbs[i]} ${Math.round(p)}%`).join(' · ');
+      h += `<li>${esc(m.hand.cards.join(' '))} · ${esc(m.hand.id.replace(/^hu-/, 'heads-up ').replace(/-/g, ' '))}: you chose ${esc(m.verbs[m.k] || '?')}; Ducybot: ${esc(top)}</li>`;
+    }
+    h += '</ul>';
+  }
+  return h + '<button class="cc-btn" data-qbtdone="1">Done</button></section>';
+}
+
+// Who's backing you, until when.
+function backingHtml(q, minutes) {
+  const b = q.backing;
+  if (!b || b.due) return '';
+  return `<p class="qb-backed">${esc(b.name)} is backing you: ${money(b.amount)} to play ${b.stakes[0] / 100}/${b.stakes[1] / 100} until ${esc(clockText(b.end))}. Then they get their money back and ${Math.round(b.share * 100)}% of your profit.</p>`;
 }
 
 // The hall of records: wins (fastest first), then the best peaks.
