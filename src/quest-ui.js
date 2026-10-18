@@ -2,19 +2,17 @@
 // room you're in and its tables, with who's sitting there; the other rooms,
 // a trip away; and the end of a run. Pure: it builds the page from the quest
 // (quest.js) and the rooms (quest-rooms.js), and play.js handles the
-// buttons (data-qsit / data-qbb to sit down, data-qgo to travel, data-qnew to
-// start a new run).
+// buttons (data-qopen to open a table, data-qsit to sit down there with the
+// amount you typed, data-qgo to travel, data-qnew to start a new run).
 
 import { GOAL, START_BANKROLL, buyInRange, canSit, clockText, gameMinutes, status } from './quest.js';
-import { ROOMS, STAKES, TRAVEL_MINUTES, cheapestBuyIn, lobby, roomById } from './quest-rooms.js';
-import { WHALES, lineupFor } from './quest-lineup.js';
-import { chipText } from './chip-format.js';
+import { ROOMS, TRAVEL_MINUTES, cheapestBuyIn, lobby, roomById } from './quest-rooms.js';
+import { WHALES, lineupFor, stacksAt } from './quest-lineup.js';
+import { chipInput, chipText } from './chip-format.js';
 import { avatarUrl, botAvatar } from './avatars.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const money = n => `$${chipText(n)}`;
-// The buy-ins offered, in big blinds, within the room's range.
-const BUY_INS = [40, 100, 200];
 
 /** How far along the road from $1,000 to $1,000,000, 0 to 1 (by multiples). */
 export function goalProgress(bankroll) {
@@ -25,13 +23,16 @@ export function goalProgress(bankroll) {
 /** The room the quest is in (the first one to start with). */
 export const currentRoom = q => roomById(q.room) || ROOMS[0];
 
-/** A table's buy-in choices, in chips: [{bb, chips, ok}] within the room's range and what you can afford. */
-export function buyInChoices(q, stakes, room) {
-  const blinds = STAKES[stakes];
+/**
+ * Sitting down at a table, in chips: the room's range, what your bankroll
+ * lets you take within it, and where the amount starts (100 BB, or as near
+ * as you can). Null when the bankroll can't cover the minimum.
+ */
+export function buyInAsk(q, blinds, room) {
   const {min, max} = buyInRange(blinds, room);
-  const bbs = [...new Set([Math.round(min / blinds[1]), ...BUY_INS, Math.round(max / blinds[1])])]
-    .filter(bb => bb * blinds[1] >= min && bb * blinds[1] <= max).sort((a, b) => a - b);
-  return bbs.map(bb => ({bb, chips: bb * blinds[1], ok: bb * blinds[1] <= q.bankroll}));
+  const most = Math.min(max, q.bankroll);
+  if (most < min) return null;
+  return {min, max, most, start: Math.max(min, Math.min(most, 100 * blinds[1]))};
 }
 
 function tableHtml(q, room, game, id, minutes, names, have) {
@@ -39,25 +40,57 @@ function tableHtml(q, room, game, id, minutes, names, have) {
   const afford = canSit(q, blinds, room);
   const who = lineupFor(q.seed, id, game.stakes, minutes, have);
   const whale = who.find(w => WHALES.includes(w));
+  const {min, max} = buyInRange(blinds, room);
   let h = `<li class="qt-table${afford ? '' : ' qt-off'}">`;
   h += `<div class="qt-top"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">No-limit Hold’em · 6-max</span>`;
   h += `<span class="qt-faces" aria-hidden="true">${who.map(w => (botAvatar(w) ? `<img src="${avatarUrl(botAvatar(w))}" alt="">` : '')).join('')}</span></div>`;
   if (whale) h += `<p class="qt-note">${esc(names(whale))} is playing here.</p>`;
-  if (afford) {
-    h += '<div class="qt-buyins">';
-    for (const c of buyInChoices(q, game.stakes, room)) {
-      h += `<button class="cc-btn" data-qsit="${esc(id)}" data-qbb="${c.bb}"${c.ok ? '' : ' disabled'}>${c.bb} BB · ${money(c.chips)}</button>`;
-    }
-    h += '</div>';
-  } else h += `<p class="qt-note">Needs ${money(buyInRange(blinds, room).min)} to sit down.</p>`;
+  h += `<p class="qt-meta">Buy-in ${money(min)}–${money(max)}</p>`;
+  if (afford) h += `<button class="cc-btn qt-open-btn" data-qopen="${esc(id)}">Open table</button>`;
+  else h += `<p class="qt-note">Needs ${money(min)} to sit down.</p>`;
   return h + '</li>';
+}
+
+// An open table (like walking up to it): who's there and the chips in front
+// of each, and how much you want to buy in for. play.js handles data-qsit
+// (reads #qt-amt), data-qamt (sets it) and data-qclose.
+function openTableHtml(q, room, game, id, minutes, names, have, amount) {
+  const blinds = game.blinds;
+  const who = lineupFor(q.seed, id, game.stakes, minutes, have);
+  const stacks = stacksAt(q.seed, id, who, blinds, room, minutes);
+  const ask = buyInAsk(q, blinds, room);
+  let h = '<div class="qt-open-bg" data-qclose="1"></div>';
+  h += `<section class="qt-open" role="dialog" aria-label="${esc(game.stakes)} at ${esc(room.name)}">`;
+  h += `<div class="qt-open-head"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(room.name)} · No-limit Hold’em · 6-max</span></div>`;
+  h += '<ul class="qt-seats">';
+  who.forEach((w, i) => {
+    const face = botAvatar(w) ? `<img src="${avatarUrl(botAvatar(w))}" alt="">` : '<span class="qt-noface"></span>';
+    h += `<li>${face}<span class="qt-seat-name">${esc(names(w))}</span><b class="qt-seat-chips">${money(stacks[i])}</b></li>`;
+  });
+  h += '</ul>';
+  if (!ask) {
+    h += `<p class="qt-note">Your bankroll doesn’t cover the ${money(buyInRange(blinds, room).min)} minimum here.</p>`;
+    return h + '<div class="qt-open-acts"><button class="cc-btn" data-qclose="1">Back to the lobby</button></div></section>';
+  }
+  const quick = [['Min', ask.min], ['100 BB', 100 * blinds[1]], [ask.most < ask.max ? 'All your bankroll' : 'Max', ask.most]]
+    .filter(([, v], i, all) => v >= ask.min && v <= ask.most && all.findIndex(([, x]) => x === v) === i);
+  h += '<div class="qt-buyin">';
+  h += `<label class="qt-label" for="qt-amt">How much do you want to buy in for?</label>`;
+  h += `<div class="qt-buyin-row"><span class="qt-dollar">$</span><input class="pl-text" type="number" id="qt-amt" inputmode="decimal" min="${chipInput(ask.min)}" max="${chipInput(ask.most)}" step="1" value="${chipInput(amount > 0 ? Math.max(ask.min, Math.min(ask.most, amount)) : ask.start)}">`;
+  h += quick.map(([label, v]) => `<button class="cc-btn" data-qamt="${chipInput(v)}">${esc(label)}</button>`).join('');
+  h += '</div>';
+  h += `<span class="qt-meta">Buy-in ${money(ask.min)}–${money(ask.max)} · your bankroll ${money(q.bankroll)}</span>`;
+  h += '</div>';
+  h += `<div class="qt-open-acts"><button class="tr-start" data-qsit="${esc(id)}">Sit down</button><button class="cc-btn" data-qclose="1">Back to the lobby</button></div>`;
+  return h + '</section>';
 }
 
 /**
  * The lobby. `names(id)` gives a Regular's name; `have` the personality ids
- * this engine has (or null); `note` a line to show (e.g. after leaving).
+ * this engine has (or null); `note` a line to show (e.g. after leaving);
+ * `open` the id of the table you've opened, to choose your buy-in.
  */
-export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = ''} = {}) {
+export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0} = {}) {
   const minutes = gameMinutes(q, now);
   const st = status(q, cheapestBuyIn());
   const room = currentRoom(q);
@@ -96,6 +129,8 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
     h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}">Go there · ${TRAVEL_MINUTES} min</button></li>`;
   }
   h += '</ul></section>';
+  const opened = open && here?.games.find(g => g.ids.includes(open));
+  if (opened) h += openTableHtml(q, room, opened, open, minutes, names, have, amount);
   return h + runsHtml(q);
 }
 
