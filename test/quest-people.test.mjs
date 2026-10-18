@@ -214,10 +214,10 @@ test('stats: hands and big pots by session, milestones once, the run’s records
 
 test('the lobby shows generic players’ faces and names, and the run’s stats', async () => {
   const { questLobbyHtml } = await import('../src/quest-ui.js');
-  let q = newQuest(T0, 9);
-  const html = questLobbyHtml(q, T0, {generic: true});
-  // Some generic player's name is on a face in the lobby.
-  assert.match(html, /title="[A-Z][a-z]+ [A-Z]\."/);
+  let q = {...newQuest(T0, 9), room: 'deuce'};
+  // At the table your name is called to, the generic players show by name.
+  const html = questLobbyHtml(q, T0, {generic: true, open: 'deuce-1/2-1'});
+  assert.match(html, /class="qt-seat-name">[A-Z][a-z]+ [A-Z]\./);
   q = leave(recordHand(sitDown(q, {id: 'deuce-1/2-1', room: 'deuce', stakes: STAKES['1/2']}, 20000), 25000), T0);
   const after = questLobbyHtml(q, T0, {generic: true, review: [{id: botIdOf('rock', 3), name: 'Dave R.', family: 'rock', tag: 'maniac', right: false, guess: null}]});
   assert.match(after, /class="qs-chart"/);

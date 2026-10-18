@@ -36,11 +36,14 @@ import { nextBigBlind } from './leave-bb.js';
 import {
   checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
-  topUpChoices as questTopUpChoicesFor, travel as questTravel,
+  topUpChoices as questTopUpChoicesFor, travel as questTravel, arrive as questArrive, startIn as questStartIn,
+  joinList as questJoinList, leaveList as questLeaveList, dropMissed as questDropMissed, recordStudy as questRecordStudy,
 } from './quest.js';
-import { ROOMS, STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
+import { ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes } from './quest-rooms.js';
+import { listsNow as questListsNow } from './quest-waitlist.js';
+import { question as questQuestion } from './quest-study.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { currentRoom, faceOf, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { clock as questCountdown, currentRoom, faceOf, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import {
@@ -1100,6 +1103,13 @@ function questNow() {
     quest = loadQuest() || newQuest();
     saveQuest(quest);
   }
+  // A trip that's over, and seats you were called to and didn't take.
+  const q = questDropMissed(questArrive(quest));
+  if (q !== quest) {
+    if (q.room !== quest.room) questStudy = null;
+    quest = q;
+    saveQuest(quest);
+  }
   return quest;
 }
 
@@ -1108,9 +1118,11 @@ function questLobbyPage() {
   clearTimeout(questTimer);
   // The clock moves four times real time: the tables change as it does.
   questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
+  // Countdowns (a trip, your place on a list) tick once the page is drawn.
+  setTimeout(questTick, 0);
   return questLobbyHtml(q, Date.now(), {
     names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount,
-    generic: genericPlayers, review: questReview,
+    generic: genericPlayers, review: questReview, study: questStudy,
   });
 }
 
@@ -1264,11 +1276,81 @@ function questReadsHtml() {
   return h;
 }
 
+// Sets off for another room: the trip takes real time (quest-ui.js shows it,
+// with study on the way), and you can't skip it.
 function questGo(roomId) {
-  quest = questTravel(questNow(), roomId, TRAVEL_MINUTES);
+  const q = questNow();
+  quest = questTravel(q, roomId, questTravelMinutes(currentRoom(q), questRoomById(roomId)));
+  saveQuest(quest);
+  questNote = '';
+  questOpen = null;
+  render();
+}
+
+// A new run's first choice: the region to put down roots in.
+function questStart(regionId) {
+  const room = questStartRoom(regionId);
+  if (!room) return;
+  quest = questStartIn(questNow(), regionId, room.id);
+  saveQuest(quest);
+  render();
+}
+
+// Puts your name on a game's list in the room you're in, behind whoever is
+// waiting now.
+function questList(key) {
+  const q = questNow();
+  const minutes = gameMinutes(q);
+  const game = questListsNow(q.seed, minutes).find(r => r.room.id === q.room)?.games.find(g => g.key === key);
+  if (!game) return;
+  quest = questJoinList(q, game, game.waiting.length, game.gap);
   saveQuest(quest);
   questNote = '';
   render();
+}
+
+// Takes your name off a list, or passes on a seat you were called to.
+function questUnlist(key) {
+  quest = questLeaveList(questNow(), key);
+  saveQuest(quest);
+  render();
+}
+
+// A study answer (quest-study.js): right or not, and why, then the next question.
+let questStudy = null; // {last: {right, why}}
+function questAnswer(i) {
+  const q = questNow();
+  const asked = questQuestion(q.seed, q.study?.n || 0);
+  const right = i === asked.answer;
+  questStudy = {last: {right, why: asked.why}};
+  quest = questRecordStudy(q, right);
+  saveQuest(quest);
+  render();
+}
+
+// Ticks the lobby's countdowns (data-qcount, the real time each ends) every
+// second, and moves the car or plane along; redraws when one runs out (the
+// trip's over, your name's called, a seat's gone).
+let questTicker = null;
+function questTick() {
+  clearInterval(questTicker);
+  questTicker = null;
+  if (!root?.querySelector('[data-qcount]')) return;
+  questTicker = setInterval(() => {
+    if (!open || view !== 'quest' || seated) { clearInterval(questTicker); questTicker = null; return; }
+    const now = Date.now();
+    let done = false;
+    for (const el of root.querySelectorAll('[data-qcount]')) {
+      const left = +el.dataset.qcount - now;
+      el.textContent = questCountdown(left);
+      if (left <= 0) done = true;
+    }
+    for (const el of root.querySelectorAll('[data-qmove]')) {
+      const [a, b] = el.dataset.qmove.split(',').map(Number);
+      el.style.left = `${(100 * Math.min(1, Math.max(0, (now - a) / Math.max(1, b - a)))).toFixed(1)}%`;
+    }
+    if (done) { clearInterval(questTicker); questTicker = null; render(); }
+  }, 1000);
 }
 
 function questNewRun(result) {
@@ -3425,9 +3507,13 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans]');
   if (q && !q.disabled) {
-    if (q.dataset.qopen) { questOpen = q.dataset.qopen; questAmount = 0; questNote = ''; render(); root.querySelector('#qt-amt')?.focus(); }
+    if (q.dataset.qstart) questStart(q.dataset.qstart);
+    else if (q.dataset.qlist) questList(q.dataset.qlist);
+    else if (q.dataset.qunlist || q.dataset.qpass) questUnlist(q.dataset.qunlist || q.dataset.qpass);
+    else if (q.dataset.qans) questAnswer(+q.dataset.qans);
+    else if (q.dataset.qopen) { questOpen = q.dataset.qopen; questAmount = 0; questNote = ''; render(); root.querySelector('#qt-amt')?.focus(); }
     else if (q.dataset.qclose) { questOpen = null; render(); }
     else if (q.dataset.qamt) {
       const amt = root.querySelector('#qt-amt');

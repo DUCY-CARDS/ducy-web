@@ -15,7 +15,7 @@
 // the running game's stacks.
 
 import { ORDER } from './ladder.js';
-import { ROOMS, lobby, roll } from './quest-rooms.js';
+import { ROOMS, lobby, regionOf, roll } from './quest-rooms.js';
 import { buyInRange } from './quest.js';
 import { personOf, roster, tourist, touristShare } from './quest-people.js';
 
@@ -185,9 +185,10 @@ export function roomLineups(seed, roomId, minutes, have = null) {
   const out = new Map();
   if (!here) return out;
   // The regs in the building this block: most of the home roster, and a few
-  // from the other rooms.
+  // from the region's other rooms.
   const regs = [];
-  for (const room of ROOMS) {
+  const region = regionOf(here.room)?.id;
+  for (const room of ROOMS.filter(r => regionOf(r)?.id === region)) {
     for (const r of roster(seed, room.id)) {
       const chance = room.id === roomId ? AT_HOME : VISITING;
       if (roll(seed, r.id, roomId, 'here', block) < chance) regs.push(r);
@@ -224,7 +225,8 @@ export function roomLineups(seed, roomId, minutes, have = null) {
     for (let i = 0; list.length < n && i < n * 8; i++) {
       const r = roll(seed, t.id, key, block, i);
       let who = null;
-      if (t.low && r < REGULAR_AT_LOW) who = softRegular(t.stakes, `${t.id}|${key}|reg|${i}`);
+      // At most two named Regulars at a low-stakes table.
+      if (t.low && r < REGULAR_AT_LOW && list.filter(x => !personOf(x)).length < 2) who = softRegular(t.stakes, `${t.id}|${key}|reg|${i}`);
       else if (r < (t.low ? share : share / 2)) who = nextTourist();
       else who = nextReg(t.low ? 'low' : 'mid', `${t.id}|${key}|${i}`) || nextTourist();
       if (who && free(who)) take(who, list);
