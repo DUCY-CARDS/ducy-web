@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { cellHand } from '../src/charts.js';
+import { cellHand, sizedVerbs, facingText } from '../src/charts.js';
 
 const read = name => JSON.parse(readFileSync(new URL(`../charts/${name}`, import.meta.url), 'utf8'));
 
@@ -51,4 +51,24 @@ test('every listed chart file has whole spots: 169 cells, each mix adding up', (
     assert.ok(d.bots.length >= 10);
     for (const b of d.bots) for (const s of b.spots) assert.equal(s.cells.length, 169, `${b.id} ${s.id}`);
   }
+});
+
+test('heads-up charts say how much Ducybot raises, and what he faces', () => {
+  const index = read('index.json');
+  for (const bb of index.ducybotHu) {
+    const d = read(`ducybot-hu-${bb}.json`);
+    const open = d.spots.find(s => s.id === 'hu-open-BTN');
+    assert.ok(open.sizes.length >= 1 || bb <= 10, `heads-up ${bb} BB: the open has a size`);
+    for (const s of d.spots) {
+      assert.ok(Array.isArray(s.sizes), s.id);
+      for (const z of s.sizes) assert.ok(z.to > 1 && z.to < bb, `${s.id}: raise to ${z.to}`);
+      if (s.kind === 'vs-open' || s.kind === 'vs-3bet') assert.ok(s.facing > 1, `${s.id} faces a raise`);
+    }
+  }
+  const verbs = ['Fold', 'Call', '3-bet', 'All-in'];
+  assert.deepEqual(sizedVerbs({sizes: [{to: 7.5, pct: 14}]}, verbs), ['Fold', 'Call', '3-bet to 7.5 BB', 'All-in']);
+  assert.equal(sizedVerbs({sizes: [{to: 7.5}, {to: 10}]}, verbs)[2], '3-bet to 7.5 or 10 BB');
+  assert.deepEqual(sizedVerbs({}, verbs), verbs);
+  assert.equal(facingText({facing: 2.5}), ' to 2.5 BB');
+  assert.equal(facingText({facing: null}), '');
 });

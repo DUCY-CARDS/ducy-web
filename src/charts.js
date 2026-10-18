@@ -9,7 +9,10 @@
 // sixmax_charts, hu_charts and sixmax_field --per-bot):
 //   charts/index.json             {ducybot: [depths], ducybotHu: [depths], regulars: [depths]}
 //   charts/ducybot-<bb>.json      {bb, actions, spots: [{id, kind, hero, villain, overall, cells}]}
-//   charts/ducybot-hu-<bb>.json   the same, heads-up
+//   charts/ducybot-hu-<bb>.json   the same, heads-up, and per spot `facing`
+//                                 (the raise faced, in BB), `sizes` ([{to,
+//                                 pct}], raise sizes in BB) and, with more
+//                                 than one size, `sizeCells`
 //   charts/regulars-<bb>.json     {bb, actions, bots: [{id, name, spots: [... and hands]}]}
 // cells: 169 × [fold, call, raise, all-in] percentages in chart order (rows
 // from aces down, pairs on the diagonal, suited above it, offsuit below), or
@@ -38,6 +41,23 @@ const VERBS = {
   'vs-iso': ['Fold', 'Call', '3-bet', 'All-in'],
 };
 const TABLES = [{table: '6max', label: '6-max'}, {table: 'hu', label: 'Heads-up'}];
+
+/** Big blinds as written in a chart: 2.5, 7.5, 3. */
+export const bbText = x => String(+Number(x).toFixed(1));
+
+/**
+ * The action names for a spot, with its raise size when the chart gives one
+ * (`sizes`, heads-up): "Raise to 2.5 BB", "3-bet to 7.5 or 10 BB".
+ */
+export function sizedVerbs(spot, verbs) {
+  const sizes = (spot.sizes || []).map(s => s.to);
+  if (!sizes.length) return verbs;
+  const to = sizes.length === 1 ? bbText(sizes[0]) : `${sizes.slice(0, -1).map(bbText).join(', ')} or ${bbText(sizes[sizes.length - 1])}`;
+  return verbs.map((v, a) => (a === 2 ? `${v} to ${to} BB` : v));
+}
+
+/** The raise the hero faces, as words for the chart's title: " to 2.5 BB". */
+export const facingText = spot => (spot.facing ? ` to ${bbText(spot.facing)} BB` : '');
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
@@ -193,9 +213,9 @@ function render() {
     for (const p of villains) h += `<button class="cc-btn${pick.villain === p ? ' on' : ''}" data-villain="${p}">${p}</button>`;
     h += '</div></div>';
   }
-  const verbs = VERBS[spot.kind] || ACTION_NAMES;
+  const verbs = sizedVerbs(spot, VERBS[spot.kind] || ACTION_NAMES);
   const kind = KINDS.find(k => k.kind === spot.kind);
-  h += `<div class="pfc-title"><b>${esc(whoName)}</b>${hu ? ' · Heads-up' : ''} · ${esc(kind.text(spot))} · ${pick.bb} BB</div>`;
+  h += `<div class="pfc-title"><b>${esc(whoName)}</b>${hu ? ' · Heads-up' : ''} · ${esc(kind.text(spot) + facingText(spot))} · ${pick.bb} BB</div>`;
   h += legendHtml(spot, verbs);
   if (pick.who !== 'ducybot') {
     // The same spot GTO, to compare.
@@ -209,7 +229,12 @@ function render() {
   if (focus != null) {
     const mix = spot.cells[focus];
     h += `<div class="pfc-detail"><b>${cellHand(focus)}</b> `;
-    h += mix ? [2, 3, 1, 0].filter(a => mix[a] > 0).map(a => `${verbs[a]} ${mix[a]}%`).join(' · ') : 'too few hands to say';
+    // With more than one raise size, the raise split by size.
+    const split = spot.sizeCells?.[focus];
+    const raise = split && spot.sizes.length > 1
+      ? spot.sizes.map((s, k) => [s.to, split[k]]).filter(([, p]) => p > 0).map(([to, p]) => `${VERBS[spot.kind]?.[2] || 'Raise'} to ${bbText(to)} BB ${p}%`).join(' · ')
+      : null;
+    h += mix ? [2, 3, 1, 0].filter(a => mix[a] > 0).map(a => (a === 2 && raise ? raise : `${verbs[a]} ${mix[a]}%`)).join(' · ') : 'too few hands to say';
     h += '</div>';
   } else h += '<p class="pfc-note">Tap a hand for its exact mix.</p>';
   if (note) h += `<p class="pfc-note">${esc(note)}</p>`;
