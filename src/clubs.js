@@ -77,6 +77,18 @@ let server = null; // runs the hosted club (club-server.js)
 // its latest view from the relay, and host actions go there as commands.
 let owner = null;
 const isRemote = () => !!owner?.record;
+// Which page this runs on: 'play', the player app (index.html), where you
+// join clubs and play at their tables; or 'manage', the club manager
+// (manage.html, manage.js), where you run a club or help run one. Running a
+// club lives only on the manager: the player app neither hosts a club run
+// in the browser nor opens an always-on club's owner connection, and links
+// to the manager instead.
+let mode = 'play';
+export function setClubsMode(m) {
+  mode = m === 'manage' ? 'manage' : 'play';
+}
+const managerHref = hash => `manage.html${hash ? `#${hash}` : ''}`;
+const playerHref = hash => `./${hash ? `#${hash}` : ''}`;
 // Why the last create failed (the relay down or full), and the name it was
 // for: the form says so and offers to try again. New clubs are always on
 // (#152); a club run in a browser is still opened and moved as before.
@@ -1281,6 +1293,7 @@ function render() {
 // The current tab's part, or '' when it has nothing to show.
 function viewHtml() {
   let msg = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
+  if (mode === 'manage') return msg + managerHtml();
   // Seated at a club table and looking elsewhere: the way back (#187).
   if (seatedAt && view !== 'play') {
     const mem = memberships.find(x => x.code === seatedAt.code);
@@ -1299,10 +1312,55 @@ function viewHtml() {
   const own = club || isRemote();
   if (own && wizard?.code === myClubCode()) return msg + wizardHtml();
   const at = shownClub();
-  if (at === 'own' && own) return msg + hostHtml() + footHtml();
+  if (at === 'own' && own) return msg + runHereHtml() + footHtml();
   const mem = at && memberships.find(m => m.code === at && m.status === 'member');
-  if (mem) return msg + memberHomeHtml(mem, helps(mem) ? manageHtml(mem) : '') + footHtml();
+  if (mem) return msg + memberHomeHtml(mem, helps(mem) ? helpHereHtml(mem) : '') + footHtml();
   return msg + clubListHtml() + footHtml();
+}
+
+// The player app's word on the club you run: running it is on the club
+// manager.
+function runHereHtml() {
+  const name = club?.name || owner?.record?.name || 'Your club';
+  let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(name)}</h1></div>`;
+  h += '<section class="cl-card cl-elsewhere"><p class="pl-desc">You run this club. Its tables, members, chips and settings are on the club manager, a page of its own.</p>';
+  h += `<a class="tr-start" href="${managerHref('clubs/own')}">Open the club manager</a></section>`;
+  return h;
+}
+
+// For a club you help run, on the player app: your staff tools are on the
+// club manager.
+function helpHereHtml(m) {
+  const what = m.role === 'assistant' ? 'game assistant' : 'agent';
+  return `<section class="cl-card cl-elsewhere"><p class="pl-desc">You’re a ${what} here: your tools are on the club manager.</p><a class="btn-small primary" href="${managerHref(clubHash(m.code))}">Open the club manager</a></section>`;
+}
+
+// The club manager (manage.html): the club you run, a club you help run, or
+// the list of both with starting a club.
+function managerHtml() {
+  const own = club || isRemote();
+  if (own && wizard?.code === myClubCode()) return wizardHtml();
+  const at = shownClub();
+  if (at === 'own' && own) return hostHtml() + footHtml();
+  const helped = memberships.filter(helps);
+  const mem = at && helped.find(m => m.code === at);
+  if (mem) {
+    let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(mem.name || mem.code)}</h1>`;
+    h += `<a class="link-btn" href="${playerHref(clubHash(mem.code))}">Play at this club ›</a></div>`;
+    return h + manageHtml(mem) + footHtml();
+  }
+  const card = c => `<a class="cl-club cream" href="#${c.href}"><span class="cl-club-text"><span class="cl-club-name">${esc(c.name)}</span><span class="cl-club-who">${esc(c.who)}</span></span>${c.waiting ? `<span class="cl-pill hot">${c.waiting} need${c.waiting === 1 ? 's' : ''} you</span>` : ''}<span class="cl-club-go">Manage →</span></a>`;
+  let h = '<div class="pl-head"><h1>Club manager</h1></div>';
+  h += `<p class="pl-desc">Run your club, or help run one. Playing at clubs and joining them is in <a href="${playerHref('clubs')}">the ducy app</a>.</p>`;
+  h += '<div class="cl-clubs">';
+  if (own) {
+    const members = club?.members ? membersByStatus(club, 'member').length : 0;
+    h += card({href: 'clubs/own', name: club?.name || owner.record.name, who: `You run this club${members ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}`, waiting: hostWaiting()});
+  }
+  for (const m of helped) h += card({href: clubHash(m.code), name: m.name || m.code, who: m.role === 'assistant' ? 'Game assistant' : 'Agent', waiting: helperWaiting(m)});
+  h += '</div>';
+  if (!own) h += `<div class="cl-club-acts">${createHtml()}</div>`;
+  return h + footHtml();
 }
 
 // Which club the address shows (#225): 'own' for the one you run (#clubs/own,
@@ -1332,7 +1390,7 @@ export function clubCrumb() {
 function clubListHtml() {
   const own = club || isRemote();
   const card = c => {
-    let h = `<a class="cl-club${c.cream ? ' cream' : ''}" href="#${c.href}"><span class="cl-club-text"><span class="cl-club-name">${esc(c.name)}</span><span class="cl-club-who">${esc(c.who)}</span></span>`;
+    let h = `<a class="cl-club${c.cream ? ' cream' : ''}" href="${c.url || `#${c.href}`}"><span class="cl-club-text"><span class="cl-club-name">${esc(c.name)}</span><span class="cl-club-who">${esc(c.who)}</span></span>`;
     if (c.tables) h += `<span class="cl-pill">${c.tables} table${c.tables === 1 ? '' : 's'} open</span>`;
     else if (c.quiet) h += '<span class="cl-club-quiet">Quiet</span>';
     if (c.waiting) h += `<span class="cl-pill hot">${c.waiting} need${c.waiting === 1 ? 's' : ''} you</span>`;
@@ -1341,7 +1399,8 @@ function clubListHtml() {
   let h = '<div class="pl-head"><h1>Private clubs</h1></div><div class="cl-clubs">';
   if (own) {
     const members = club ? membersByStatus(club, 'member').length : 0;
-    h += card({href: 'clubs/own', cream: true, name: club?.name || owner.record.name, who: `You run this club${club ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}`, tables: club ? openTables(club).length : 0, waiting: hostWaiting(), quiet: !!club});
+    // Running it is on the club manager.
+    h += card({url: managerHref('clubs/own'), cream: true, name: club?.name || owner.record.name, who: `You run this club${club ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}`, tables: club ? openTables(club).length : 0, waiting: hostWaiting(), quiet: !!club, go: 'Club manager'});
   }
   for (const m of memberships) {
     if (m.status === 'member') {
@@ -1355,7 +1414,8 @@ function clubListHtml() {
   h += `<span class="cl-act-row"><input class="pl-text" name="link" aria-label="Invite link" placeholder="Invite link" autocomplete="off" spellcheck="false"><button class="btn-small" type="submit">Ask to join</button></span>`;
   if (named) h += `<span class="cl-act-desc">As ${esc(named)}.</span>`;
   h += '</form>';
-  if (!own) h += createHtml();
+  // Starting and running a club are on the club manager.
+  if (!own) h += `<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Clubs are started and run on the club manager, a page of its own.</span><span class="cl-act-row"><a class="tr-start" href="${managerHref('clubs')}">Open the club manager</a></span></section>`;
   return h + '</div>';
 }
 
@@ -2521,9 +2581,13 @@ function disconnectAll() {
 
 function reconnectAll() {
   if (!me) return;
-  startHosting();
-  owner?.start();
-  for (const m of memberships) connectMembership(m);
+  // The club you run, on the club manager only; there, too, the clubs you
+  // help run (their staff views come over your member connection).
+  if (mode === 'manage') {
+    startHosting();
+    owner?.start();
+  }
+  for (const m of memberships) if (mode === 'play' || helps(m)) connectMembership(m);
   render();
 }
 
@@ -2599,10 +2663,12 @@ export function startClubs() {
       onChange: () => { if (isRemote()) club = owner.club; render(); },
       onNote: t => { note = t; render(); },
     });
-    // Finds the always-on club's record, from IndexedDB if need be.
-    await owner.start();
-    // A club backup was just restored (Player settings): reopen its club.
-    const restored = load(RESTORE_CLUB_KEY, null);
+    // Finds the always-on club's record, from IndexedDB if need be, and
+    // (on the club manager) connects to it.
+    if (mode === 'manage') await owner.start();
+    // A club backup was just restored (Player settings): reopen its club,
+    // on the club manager.
+    const restored = mode === 'manage' && load(RESTORE_CLUB_KEY, null);
     if (restored) {
       try { localStorage.removeItem(RESTORE_CLUB_KEY); } catch {}
       if (!isRemote() && !club && restored.code) await attachAlwaysOn(restored.code);
@@ -2668,6 +2734,11 @@ export async function openClubs(el, v = 'clubs') {
 export function showClubPlayers() {
   // The club you run, else the first you help run with something waiting.
   const helped = memberships.find(m => helps(m) && helperWaiting(m));
+  // On the player app, they're answered on the club manager.
+  if (mode === 'play') {
+    location.href = managerHref(club || isRemote() ? 'clubs/players' : helped ? clubHash(helped.code) : 'clubs');
+    return;
+  }
   if (!club && !isRemote() && helped) { location.hash = clubHash(helped.code); return; }
   setDash('players');
   location.hash = 'clubs/players';
