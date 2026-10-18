@@ -81,14 +81,33 @@ function regularsLineup(seed, tableId, stakes, minutes, have, taken = new Set())
   return picked;
 }
 
-// A running game's stacks: how long the players have been in their sessions
-// at most, in game hours, besides the time into the block.
-const SESSION_HOURS = 4;
-// A winning or losing rate in big blinds an hour from strength: the
-// strongest Regular wins about this much, the weakest loses it.
-const EDGE_BB_HOUR = 6;
-// How much a stack swings in an hour, in big blinds (a whale swings double).
-const SWING_BB_HOUR = 55;
+// A running game's stacks, fitted to a hand-by-hand simulation of live
+// 6-max tables (#301 follow-up): six players of mixed skill (from -6 to +12
+// bb/100, 90-115 bb/100 standard deviation), pots from small to stacks-off,
+// losers topping up when under half a buy-in, winners keeping everything,
+// sessions of a median 4 hours with 1 in 20 running 12 to 36. Sampled every
+// half hour, about 43% of seats sat over the max buy-in, 8% over 2x, 2% over
+// 3x, 0.2% over 5x and 0.01% over 10x, mostly players who'd been there a
+// long time: after 12 hours, 27% over 2x and 1% over 5x.
+//
+// How long a player you walk up to has been sitting, from the simulation:
+// the share in each 2-hour band, and the rest 12 hours or more.
+const SEATED_HOURS = [[2, 0.29], [4, 0.20], [6, 0.13], [8, 0.09], [10, 0.064], [12, 0.048]];
+// Past 12 hours: an exponential tail (mean 7 hours), to at most 36.
+const LONG_TAIL_HOURS = 7;
+// Their stack over what they bought in for is log-normal, its log with a
+// mean and spread that grow with the hours: fitted to the simulation's share
+// over 2x, 3x and 5x the max buy-in at 5, 9 and 18 hours.
+const logMean = h => 0.25 * Math.log(1 + h) - 0.37;
+const logSpread = h => 0.07 + 0.13 * Math.sqrt(h);
+// Stronger players sit deeper (the simulation's sharks were over 2x three
+// times as often as its tourists): this much on the log per unit strength.
+const STRENGTH_LEAN = 0.31;
+// A whale's stack swings wider, and leans toward losing.
+const WHALE_SPREAD = 1.4;
+const WHALE_LEAN = -0.1;
+// No one sits with more than this many max buy-ins.
+const STACK_CAP = 12;
 
 // A standard normal draw from two rolls.
 const normal = (u, v) => Math.sqrt(-2 * Math.log(1 - u)) * Math.cos(2 * Math.PI * v);
@@ -130,14 +149,26 @@ export function buyInFor(seed, tableId, id, blinds, room, minutes) {
   return Math.max(min, Math.min(max, 100 * bb));
 }
 
+/** How long a player has been sitting, in hours, from a roll `u` in [0, 1). */
+export function seatedHours(u, v) {
+  let below = 0;
+  for (const [upTo, share] of SEATED_HOURS) {
+    if (u < below + share) return upTo - 2 + 2 * (u - below) / share;
+    below += share;
+  }
+  return Math.min(36, 12 + LONG_TAIL_HOURS * -Math.log(1 - v));
+}
+
 /**
  * What each of `ids` (as from lineupFor) has in front of them when you walk
  * up to table `tableId`, a game already running, and what they buy in for
- * when they top up: [{stack, buyIn}] in chips, the same through the
- * line-up's block. Each has played up to SESSION_HOURS plus the time into the
- * block, winning or losing at a rate from their strength with a big swing,
- * so stacks spread out: a winner can sit well over the maximum buy-in, and
- * one who lost over half a buy-in has topped up. Whole big blinds.
+ * when they top up: [{stack, buyIn}] in chips, the same line-up through its
+ * block. Each has been sitting a while (seatedHours, plus the time into the
+ * block), and their stack has grown or shrunk from their buy-in as the
+ * simulation above has stacks do: most sit within a buy-in or two of where
+ * they started, some winners at 2-3x the max buy-in, and now and then one
+ * who's been there all day at 5-10x. One who lost over half a buy-in has
+ * topped up. Whole big blinds.
  */
 export function lineupStacks(seed, tableId, ids, blinds, room, minutes) {
   const {max} = buyInRange(blinds, room);
@@ -150,15 +181,17 @@ export function lineupStacks(seed, tableId, ids, blinds, room, minutes) {
     const buyIn = buyInFor(seed, tableId, id, blinds, room, minutes);
     const strength = strengthOf(id);
     const whale = WHALES.includes(id);
-    const hours = into + 0.25 + r('hours') * SESSION_HOURS;
-    const edge = whale ? -3 * EDGE_BB_HOUR : (2 * strength - 1) * EDGE_BB_HOUR;
-    const swing = (whale ? 2 : 1) * SWING_BB_HOUR;
-    const net = (edge * hours + swing * Math.sqrt(hours) * normal(r('u'), r('v'))) * bb;
-    let stack = buyIn + net;
+    const hours = seatedHours(r('hours'), r('tail')) + into;
+    const mean = logMean(hours) + STRENGTH_LEAN * (strength - 0.5) + (whale ? WHALE_LEAN : 0);
+    const spread = logSpread(hours) * (whale ? WHALE_SPREAD : 1);
+    const ratio = Math.exp(mean + spread * normal(r('u'), r('v')));
+    // A winner wins other players' chips, so even a short buyer's winnings
+    // grow with the table's stacks: between their buy-in and the max.
+    let stack = ratio >= 1 ? buyIn + (ratio - 1) * (buyIn + max) / 2 : buyIn * ratio;
     // Lost over half of it: they topped up (as regulars.js has them do
     // between hands), and have played some of that too.
     if (stack < buyIn / 2) stack = buyIn * (0.5 + 0.6 * r('reload'));
-    stack = Math.min(stack, 6 * max);
+    stack = Math.min(stack, STACK_CAP * max);
     return {stack: Math.max(bb, Math.round(stack / bb) * bb), buyIn};
   });
 }
