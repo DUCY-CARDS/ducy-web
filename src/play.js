@@ -1111,8 +1111,10 @@ function questNow() {
   }
   // Back from a hidden tab: time away only finishes a trip or a night. Here,
   // the clock's anchor stays fresh, so later time away is told apart.
+  // (At a table only a finished hand moves it: the clock waits for play.)
   const now = Date.now();
-  if (now - quest.clock.real > QUEST_AWAY_MS) quest = questResume(quest, now);
+  if (quest.seat) { /* questHand keeps it */ }
+  else if (now - quest.clock.real > QUEST_AWAY_MS) quest = questResume(quest, now);
   else if (now - quest.clock.real > 30_000) quest = syncClock(quest, now);
   // A trip that's over, a night that's over, and seats you were called to
   // and didn't take.
@@ -3806,7 +3808,7 @@ function onVisibility() {
   // The Bankroll challenge's clock: leaving marks where it stopped; coming
   // back moves it on only for a trip or a night under way (quest.js resume).
   if (!quest) return;
-  if (document.hidden) { quest = syncClock(quest); saveQuest(quest); }
+  if (document.hidden && !quest.seat) { quest = syncClock(quest); saveQuest(quest); }
   else if (view === 'quest' && !seated) render();
 }
 

@@ -32,11 +32,18 @@ export function newQuest(now = Date.now(), seed = (Math.random() * 2 ** 32) >>> 
   };
 }
 
+// At a table the clock runs only while hands are being played: a minute
+// without one finishing and it stops, until the next hand picks it up
+// again from the same time (each hand moves the anchor, play.js questHand).
+export const TABLE_IDLE_MS = 60000;
+
 // Game minutes at real time `now`: the anchor plus QUEST_SPEED times the
-// real time since, capped at AWAY_CAP_DAYS game days.
+// real time since (at a table, at most TABLE_IDLE_MS of it), capped at
+// AWAY_CAP_DAYS game days.
 export function gameMinutes(q, now = Date.now()) {
-  const elapsed = Math.max(0, now - q.clock.real) / 60000 * QUEST_SPEED;
-  return q.clock.game + Math.min(elapsed, AWAY_CAP_DAYS * DAY);
+  let real = Math.max(0, now - q.clock.real);
+  if (q.seat) real = Math.min(real, TABLE_IDLE_MS);
+  return q.clock.game + Math.min((real / 60000) * QUEST_SPEED, AWAY_CAP_DAYS * DAY);
 }
 
 // Moves the anchor to `now`, so the cap counts from here: called on load
@@ -165,6 +172,8 @@ export function leave(q, now = Date.now()) {
   return {
     ...q, bankroll, seat: null, best: Math.max(q.best, bankroll), hands: (q.hands || 0) + hands,
     history: [...q.history, session].slice(-500), tableMinutes: tableMinutes(q, now),
+    // The clock as it stood at the table (stopped if play had), from now on.
+    clock: {real: now, game: gameMinutes(q, now)},
   };
 }
 

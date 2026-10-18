@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_TABLE_MINUTES, SLEEP_MINUTES, START_BANKROLL, arrive, exhausted, gameMinutes, joinList, leave, moveHome, newQuest, resume, sitDown, sleep, startIn,
+  MAX_TABLE_MINUTES, SLEEP_MINUTES, START_BANKROLL, arrive, exhausted, gameMinutes, joinList, leave, moveHome, newQuest, resume, sitDown, sleep, startIn, syncClock,
   tableMinutes, travel, wake,
 } from '../src/quest.js';
 import { HOTEL, MOVE_COST, STAKES, TRIP_COST, homeCityOf, hotelCost, moveCost, roomById, travelMinutes, tripCost } from '../src/quest-rooms.js';
@@ -44,8 +44,13 @@ test('twelve hours at the tables at most, then sleep: at home free, in a hotel f
   const table = {id: 'deuce-1/2-1', room: 'deuce', stakes: STAKES['1/2']};
   q = sitDown(q, table, 20000, roomById('deuce'), T0);
   assert.ok(q.seat);
+  // Hands every half minute keep the clock running (each moves its anchor).
+  const play = (from, to) => { for (let m = from + 2; m <= to; m += 2) q = syncClock(q, later(m)); };
+  play(0, 90);
   assert.equal(tableMinutes(q, later(90)), 90);
-  assert.ok(!exhausted(q, later(MAX_TABLE_MINUTES - 1)));
+  play(90, MAX_TABLE_MINUTES - 2);
+  assert.ok(!exhausted(q, later(MAX_TABLE_MINUTES - 2)));
+  play(MAX_TABLE_MINUTES - 2, MAX_TABLE_MINUTES);
   assert.ok(exhausted(q, later(MAX_TABLE_MINUTES)));
   // Leaving keeps the hours; played out, no list and no seat until you sleep.
   q = leave(q, later(MAX_TABLE_MINUTES));
@@ -106,6 +111,19 @@ test('time away stops the clock, except to finish a trip or a night', () => {
   // Going home to sleep: the trip and the night both finish while away.
   const homeward = travel({...q, room: 'mesquite'}, 'deuce', 120, T0, 0, 'sleep');
   assert.equal(resume(homeward, T0 + DAY_MS).clock.game, homeward.trip.end + SLEEP_MINUTES);
+});
+
+test('at a table the clock waits when no hand is played for a minute', () => {
+  let q = startIn(newQuest(T0, 6), 'tx', 'deuce', roomById('deuce').city);
+  q = sitDown(q, {id: 'deuce-1/2-1', room: 'deuce', stakes: STAKES['1/2']}, 20000, roomById('deuce'), T0);
+  const start = gameMinutes(q, T0);
+  assert.equal(gameMinutes(q, T0 + 30000), start + 2, 'half a minute of play is two game minutes');
+  assert.equal(gameMinutes(q, T0 + 60000), start + 4);
+  assert.equal(gameMinutes(q, T0 + 10 * 60000), start + 4, 'ten minutes with no hand: stopped at a minute');
+  // Leaving then keeps that time: no jump for the idle minutes.
+  const left = leave(q, T0 + 10 * 60000);
+  assert.equal(gameMinutes(left, T0 + 10 * 60000), start + 4);
+  assert.equal(left.tableMinutes, 4);
 });
 
 test('the lobby shows home, hours at the tables, fares, rest and moving', () => {
