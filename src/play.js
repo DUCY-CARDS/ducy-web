@@ -32,6 +32,7 @@ import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
+import { nextBigBlind } from './leave-bb.js';
 import {
   checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
@@ -171,6 +172,7 @@ let dealAt = 0; // when the auto-deal fires (performance.now() time)
 const holds = new Set(); // what's pausing the countdown: 'hidden', 'hover', 'user'
 let raiseTo = 0;
 let foldQueued = false; // fold (or check, when free) as soon as it's the player's turn
+let leaveAtBB = false; // leave the table instead of posting the next big blind (leave-bb.js)
 let tableGame = GAMES[0]; // the game of the table in play
 let tableBombs = 0; // its bomb pots, every so many hands (0 for none or unknown)
 let setup = loadSetup();
@@ -982,6 +984,9 @@ function show(snap) {
   ladderOfferCheck();
   regularsCheck();
   if (armRunChoice()) return;
+  // A club or friends table deals on its own: leave as soon as the hand
+  // before your big blind is over.
+  if (mode === 'guest' && leaveIfBigBlind()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
   // A queued fold folds when facing a bet, and checks (staying queued) when
   // it's free to see more cards.
@@ -1010,6 +1015,32 @@ function checkIsFree() {
 function togglePrefold() {
   foldQueued = !foldQueued && canPrefold();
   render();
+}
+
+// "Leave before my big blind" (leave-bb.js): at bot tables and club or
+// friends tables you're dealt in at. Not for a host (leaving ends the table
+// for everyone) or a heads-up challenge game.
+function canLeaveAtBB() {
+  return !!state && seated && !watching && !ladder && mode !== 'host' && !state.seats[0]?.sitting_out;
+}
+
+// Whether the next hand would make you the big blind.
+function bigBlindNext() {
+  return !!state && nextBigBlind(state.seats, num(state.button), mode === 'solo') === 0;
+}
+
+// Between hands, with the mode on: gets up if the next hand would make you
+// the big blind. True if it left.
+function leaveIfBigBlind() {
+  if (!leaveAtBB || !state?.complete || !bigBlindNext()) return false;
+  leaveTable('You left before your big blind.');
+  return true;
+}
+
+function leaveBBHtml() {
+  if (!leaveAtBB || !canLeaveAtBB()) return '';
+  return '<div class="pl-sitout on"><span><b>Leaving before your big blind.</b> You play on until it comes round to you, then get up.</span>'
+    + '<div class="pl-sitout-acts"><button class="tr-btn" data-act="leavebb">Stay</button></div></div>';
 }
 
 // Downloads (the first time) and loads the GTO bot's files in the worker.
@@ -1463,6 +1494,8 @@ async function nextHand() {
       return;
     }
   }
+  // Leaving before the big blind: get up instead of dealing it to you.
+  if (leaveIfBigBlind()) return;
   cancelDeal();
   raiseTo = 0;
   foldQueued = false;
@@ -2344,6 +2377,7 @@ function leaveTable(note = '') {
   seated = false;
   state = null;
   foldQueued = false;
+  leaveAtBB = false;
   turnEnds = 0;
   netNote = note;
   const hook = leaveHook;
@@ -2676,6 +2710,7 @@ function renderTable() {
   if (mode === 'solo') h += item('botchat', 'Bot chat', botChatOn(), 'The bots talk at the table, and answer when you chat');
   // The Bankroll Challenge (#303): another table at these stakes, same room.
   if (questTable && s.complete) h += item('qchange', 'Change table', null, 'Move to another table of this game and stakes, with your stack');
+  if (canLeaveAtBB()) h += item('leavebb', 'Leave before my big blind', leaveAtBB, 'Play on until your big blind comes round, then leave instead of posting it');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
@@ -2765,6 +2800,7 @@ function renderTable() {
   h += controlsHtml();
   h += questReadsHtml();
   h += sitOutHtml();
+  h += leaveBBHtml();
   h += chipsHtml();
   h += liveHtml();
   h += reviewHtml();
@@ -3479,6 +3515,11 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.act === 'hud') { setup.hud = !setup.hud; saveSetup(); render(); }
+  else if (el.dataset.act === 'leavebb') {
+    leaveAtBB = !leaveAtBB && canLeaveAtBB();
+    // Turned on between hands with your big blind next: get up now.
+    if (!leaveIfBigBlind()) render();
+  }
   else if (el.dataset.act === 'runpref') {
     setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(runPref()) + 1) % RUN_PREFS.length];
     saveSetup();
