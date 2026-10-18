@@ -1635,6 +1635,12 @@ body.mode-v3 :is(.topbar, .sub-tabs, .toolbar, .table-wrap, .eq-layout, .trainer
 .v3-door { text-decoration: none; border-radius: 18px; padding: 28px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 10px 0 var(--v3-shadow); transition: transform .15s; }
 .v3-door-study { background: var(--v3-red); color: var(--v3-red-ink) !important; transform: rotate(-1.2deg); }
 .v3-door-play { background: var(--v3-cream); color: var(--v3-felt) !important; transform: rotate(1.4deg); }
+/* Quest's door (#299): across both columns, the road from $1,000 to $1,000,000. */
+.v3-door-quest { grid-column: 1 / -1; background: var(--v3-felt-dark); color: var(--v3-cream) !important; box-shadow: 0 10px 0 var(--v3-shadow), inset 0 0 0 3px var(--amber); transform: rotate(-0.4deg); }
+.v3-quest-line { display: flex; align-items: center; gap: 14px; font: 400 clamp(20px, 4vw, 34px) var(--v3-display); }
+.v3-quest-line b { font-weight: 400; color: var(--amber); white-space: nowrap; }
+.v3-quest-road { flex: 1; height: 6px; border-radius: 3px; background: repeating-linear-gradient(90deg, var(--v3-cream) 0 18px, transparent 18px 30px); opacity: .6; min-width: 30px; }
+.v3-quest-sub { font-size: 17px; color: var(--v3-cream-dim); }
 .v3-door:hover, .v3-door:focus-visible { transform: rotate(0deg) translateY(-3px); }
 .v3-door-head { display: flex; justify-content: space-between; align-items: center; font-size: 30px; }
 .v3-door-name { font-family: var(--v3-display); font-size: 44px; }
@@ -1698,7 +1704,7 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 @media (max-width: 760px) {
   .v3 { padding: 20px 16px 48px; }
   .v3-doors, .v3-tiles, .v3-tiles-3 { grid-template-columns: minmax(0, 1fr); }
-  .v3-door-study, .v3-door-play { transform: none; }
+  .v3-door-study, .v3-door-play, .v3-door-quest { transform: none; }
   .v3-hero { gap: 20px; }
   .v3-bigspade { width: 180px; }
   .v3-peek { width: 72px; height: 72px; left: calc(50% + 40px); }

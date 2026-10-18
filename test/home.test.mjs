@@ -38,20 +38,20 @@ test('hub data counts mastered skills and the ladder rung', () => {
   assert.equal(d.rung, 7);
 });
 
-test('the landing page has only Study and Play', () => {
+test('the landing page has only Study, Play and Quest', () => {
   const h = hubHtml('home', hubData(store()));
   assert.match(h, /Pull up a chair\./);
   const links = [...h.matchAll(/href="(#[a-z]+)"/g)].map(m => m[1]);
-  assert.deepEqual(links, ['#study', '#lobby']);
+  assert.deepEqual(links, ['#study', '#lobby', '#quest']);
 });
 
 test('each hub links where it should', () => {
   const d = hubData(store());
   const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
-  // After the spade home and any way back: Study or Play.
-  assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge', '#charts']);
-  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#codedoug', '#gto-plo4', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice', '#ladder', '#quest']);
+  // After the spade home and any way back: Study, Play or Quest.
+  assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#quest', '#equity', '#trainer', '#challenge', '#charts']);
+  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#quest', '#codedoug', '#gto-plo4', '#gto-plo6']);
+  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#quest', '#host', '#clubs', '#practice', '#ladder', '#quest']);
   assert.equal(HUBS.length, 4);
 });
 
@@ -85,12 +85,17 @@ test('the Play page shows the heads-up challenge and your rung', () => {
   assert.match(h, /Rung 5 of 20/);
 });
 
-test('every page but the landing page can cross between Study and Play', () => {
+test('every page but the landing page can cross between Study, Play and Quest', () => {
   for (const p of ['study', 'challenge', 'equity', 'trainer']) assert.equal(sideOf(p), 'study', p);
   for (const p of ['lobby', 'practice', 'ladder', 'host', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
   assert.equal(sideOf('play', 'clubs'), 'play');
   assert.equal(sideOf('home'), '');
-  assert.match(sideSwitch('play'), /href="#study">Study<\/a><a href="#lobby" aria-current="true">Play/);
+  assert.equal(sideOf('quest'), 'quest');
+  assert.deepEqual(crumbFor('quest'), [{href: null, label: 'Bankroll Quest'}]);
+  assert.match(sideSwitch('play'), /href="#study">Study<\/a><a href="#lobby" aria-current="true">Play<\/a><a href="#quest">Quest/);
+  assert.match(sideSwitch('quest'), /href="#quest" aria-current="true">Quest/);
+  // The landing page has a door to Quest beside Study and Play.
+  assert.match(hubHtml('home', {}), /class="v3-door v3-door-quest" href="#quest"/);
   for (const hub of ['study', 'challenge', 'lobby']) assert.match(hubHtml(hub, {mastered: 0, skills: 28, rung: 1, rungs: 20}), /class="v3-switch"/, hub);
   assert.doesNotMatch(hubHtml('home', {}), /v3-switch/);
 });
