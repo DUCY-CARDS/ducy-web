@@ -6,7 +6,7 @@
 // amount you typed, data-qgo to travel, data-qnew to start a new run).
 
 import { GOAL, START_BANKROLL, buyInRange, canSit, clockText, gameMinutes, status } from './quest.js';
-import { ROOMS, TRAVEL_MINUTES, cheapestBuyIn, lobby, roomById } from './quest-rooms.js';
+import { GAMES, ROOMS, TRAVEL_MINUTES, cheapestBuyIn, lobby, roomById } from './quest-rooms.js';
 import { WHALES, lineupFor, stacksAt } from './quest-lineup.js';
 import { chipInput, chipText } from './chip-format.js';
 import { avatarUrl, botAvatar } from './avatars.js';
@@ -42,7 +42,7 @@ function tableHtml(q, room, game, id, minutes, names, have) {
   const whale = who.find(w => WHALES.includes(w));
   const {min, max} = buyInRange(blinds, room);
   let h = `<li class="qt-table${afford ? '' : ' qt-off'}">`;
-  h += `<div class="qt-top"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">No-limit Hold’em · 6-max</span>`;
+  h += `<div class="qt-top"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(GAMES[game.game]?.name || GAMES.nlhe.name)} · 6-max</span>`;
   h += `<span class="qt-faces" aria-hidden="true">${who.map(w => (botAvatar(w) ? `<img src="${avatarUrl(botAvatar(w))}" alt="">` : '')).join('')}</span></div>`;
   if (whale) h += `<p class="qt-note">${esc(names(whale))} is playing here.</p>`;
   h += `<p class="qt-meta">Buy-in ${money(min)}–${money(max)}</p>`;
@@ -61,7 +61,7 @@ function openTableHtml(q, room, game, id, minutes, names, have, amount) {
   const ask = buyInAsk(q, blinds, room);
   let h = '<div class="qt-open-bg" data-qclose="1"></div>';
   h += `<section class="qt-open" role="dialog" aria-label="${esc(game.stakes)} at ${esc(room.name)}">`;
-  h += `<div class="qt-open-head"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(room.name)} · No-limit Hold’em · 6-max</span></div>`;
+  h += `<div class="qt-open-head"><span class="qt-stakes">${esc(game.stakes)}</span><span class="qt-meta">${esc(room.name)} · ${esc(GAMES[game.game]?.name || GAMES.nlhe.name)} · 6-max</span></div>`;
   h += '<ul class="qt-seats">';
   who.forEach((w, i) => {
     const face = botAvatar(w) ? `<img src="${avatarUrl(botAvatar(w))}" alt="">` : '<span class="qt-noface"></span>';
@@ -124,7 +124,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   h += '</section>';
   h += '<section class="qt-rooms"><h2>Other rooms</h2><ul>';
   for (const r of rooms.filter(x => x.room.id !== room.id)) {
-    const games = r.games.map(g => `${g.stakes}${g.tables > 1 ? ` ×${g.tables}` : ''}`).join(' · ') || 'Quiet right now';
+    const games = r.games.map(g => `${g.stakes}${g.game && g.game !== 'nlhe' ? ` ${GAMES[g.game]?.short || g.game}` : ''}${g.tables > 1 ? ` ×${g.tables}` : ''}`).join(' · ') || 'Quiet right now';
     h += `<li class="qt-other"><span class="qt-other-name"><b>${esc(r.room.name)}</b><span class="qt-meta">${esc(r.room.kind)} · ${esc(games)}</span></span>`;
     h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}">Go there · ${TRAVEL_MINUTES} min</button></li>`;
   }
