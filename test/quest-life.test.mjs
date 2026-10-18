@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_TABLE_MINUTES, SLEEP_MINUTES, START_BANKROLL, arrive, exhausted, gameMinutes, joinList, leave, moveHome, newQuest, sitDown, sleep, startIn,
+  MAX_TABLE_MINUTES, SLEEP_MINUTES, START_BANKROLL, arrive, exhausted, gameMinutes, joinList, leave, moveHome, newQuest, resume, sitDown, sleep, startIn,
   tableMinutes, travel, wake,
 } from '../src/quest.js';
 import { HOTEL, MOVE_COST, STAKES, TRIP_COST, homeCityOf, hotelCost, moveCost, roomById, travelMinutes, tripCost } from '../src/quest-rooms.js';
@@ -82,6 +82,32 @@ test('going home to sleep: the trip, then bed on arrival', () => {
   assert.equal(rested.tableMinutes, 0);
 });
 
+test('time away stops the clock, except to finish a trip or a night', () => {
+  const deuce = roomById('deuce');
+  const q = startIn(newQuest(T0, 5), 'tx', 'deuce', deuce.city);
+  const start = gameMinutes(q, T0);
+  const DAY_MS = 24 * 3600000;
+  // A day away in the lobby: the clock hasn't moved.
+  assert.equal(resume(q, T0 + DAY_MS).clock.game, start);
+  // A minute away (a reload) is just time passing.
+  assert.equal(resume(q, T0 + 60000).clock.game, start + 4);
+  // Away on a trip: the clock runs to the end of it, then stops.
+  const t = travel(q, 'harbor', 360, T0, 0);
+  const back = resume(t, T0 + DAY_MS);
+  assert.equal(back.clock.game, t.trip.end);
+  assert.equal(arrive(back, T0 + DAY_MS).room, 'harbor');
+  // Away asleep: up at the end of the night, not a minute later.
+  const night = sleep(q, 'home', 0, T0);
+  const up = resume(night, T0 + DAY_MS);
+  assert.equal(up.clock.game, night.rest.end);
+  assert.equal(wake(up, T0 + DAY_MS).rest, null);
+  // Away part-way through a night: the clock moves only as far as the time away.
+  assert.equal(resume(night, T0 + 30 * 60000).clock.game, start + 120);
+  // Going home to sleep: the trip and the night both finish while away.
+  const homeward = travel({...q, room: 'mesquite'}, 'deuce', 120, T0, 0, 'sleep');
+  assert.equal(resume(homeward, T0 + DAY_MS).clock.game, homeward.trip.end + SLEEP_MINUTES);
+});
+
 test('the lobby shows home, hours at the tables, fares, rest and moving', () => {
   const mesquite = roomById('mesquite');
   let q = startIn(newQuest(T0, 4), 'tx', 'mesquite', mesquite.city);
@@ -101,6 +127,8 @@ test('the lobby shows home, hours at the tables, fares, rest and moving', () => 
   const asleep = questLobbyHtml(sleep(q, 'hotel', HOTEL.city, T0), T0);
   assert.match(asleep, /Asleep/);
   assert.match(asleep, /data-qcount="\d+"/);
+  assert.match(asleep, /Come back at [^<]+ and you’ll be rested/);
+  assert.match(html, /The clock stops while you’re away/);
   // At home: sleep there, no hotel.
   const home = questLobbyHtml({...q, room: 'mesquite'}, T0);
   assert.match(home, /data-qsleep="home"/);

@@ -3,10 +3,10 @@
 // quest-rooms.js is the rooms and their schedules (#301). Amounts are in
 // hundredths, like the rest of the page (100 is $1).
 //
-// The clock runs QUEST_SPEED times real time, while the page is open and
-// while it's closed, so a game day is six real hours; a long absence counts
-// for at most AWAY_CAP_DAYS game days. Game time is minutes since the world
-// began, a Monday at midnight.
+// The clock runs QUEST_SPEED times real time while you're here, so a game
+// day is six real hours. Away from the game it stops, except to finish a trip
+// or a night's sleep (resume), and then for at most AWAY_CAP_DAYS game days.
+// Game time is minutes since the world began, a Monday at midnight.
 
 export const QUEST_KEY = 'ducyQuest';
 export const START_BANKROLL = 100000; // $1,000
@@ -43,6 +43,30 @@ export function gameMinutes(q, now = Date.now()) {
 // and while playing (a long session isn't an absence).
 export function syncClock(q, now = Date.now()) {
   return {...q, clock: {real: now, game: gameMinutes(q, now)}};
+}
+
+// ---- Away from the game ----
+// The page keeps the clock's anchor fresh while you're here (syncClock), so a
+// gap longer than AWAY_MS since it was last moved is time away. Time away
+// stops the clock, except to finish a trip or a night's sleep you left on:
+// you come back where you were going, or rested, and the world has moved on
+// only that far.
+export const AWAY_MS = 2 * 60000;
+
+/** The game minute time away may run the clock to: the end of a trip (and the sleep after it) or a night, else nowhere. */
+export function awayUntil(q) {
+  if (q.trip) return q.trip.end + (q.trip.then === 'sleep' ? SLEEP_MINUTES : 0);
+  if (q.rest) return q.rest.end;
+  return q.clock.game;
+}
+
+/** Back after time away (or a hidden tab): the clock moved on only as far as a trip or a night needs. */
+export function resume(q, now = Date.now()) {
+  const away = now - q.clock.real;
+  if (away <= AWAY_MS) return syncClock(q, now);
+  const ran = Math.min((away / 60000) * QUEST_SPEED, AWAY_CAP_DAYS * DAY);
+  const game = q.clock.game + Math.max(0, Math.min(ran, awayUntil(q) - q.clock.game));
+  return {...q, clock: {real: now, game}};
 }
 
 // Spends game time without real time passing.
@@ -321,8 +345,10 @@ export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
   } catch {}
   if (!q || q.v !== 1 || !Number.isFinite(q.bankroll) || !q.clock) return null;
   q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : [], runs: Array.isArray(q.runs) ? q.runs : []};
+  // Time away stops the clock, but for a trip or a night under way.
+  q = resume(q, now);
   if (q.seat) q = leave(q, now);
-  return wake(arrive(syncClock(q, now), now), now);
+  return wake(arrive(q, now), now);
 }
 
 export function saveQuest(q, storage = globalThis.localStorage) {

@@ -92,8 +92,8 @@ test('a save round trips, and a seat left open goes back to the bankroll', () =>
   assert.equal(back.seat, null);
   assert.equal(back.bankroll, START_BANKROLL + 6000);
   assert.equal(back.seed, 9);
-  // An hour away is four game hours on.
-  assert.equal(Math.round(gameMinutes(back, 60 * MIN) - gameMinutes(q, 0)), 240);
+  // An hour away from the game doesn't move the clock (not on a trip or asleep).
+  assert.equal(Math.round(gameMinutes(back, 60 * MIN) - gameMinutes(q, 0)), 0);
   assert.equal(loadQuest(memory()), null);
   const bad = memory();
   bad.setItem('ducyQuest', '{broken');

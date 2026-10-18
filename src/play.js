@@ -39,7 +39,7 @@ import {
   topUpChoices as questTopUpChoicesFor, travel as questTravel, arrive as questArrive, startIn as questStartIn,
   joinList as questJoinList, leaveList as questLeaveList, dropMissed as questDropMissed, recordStudy as questRecordStudy,
   sleep as questSleepNow, wake as questWake, moveHome as questMoveHomeTo, exhausted as questExhausted, tableMinutes as questTableMinutes,
-  MAX_TABLE_MINUTES as QUEST_MAX_TABLE, TIRED_MINUTES as QUEST_TIRED,
+  MAX_TABLE_MINUTES as QUEST_MAX_TABLE, TIRED_MINUTES as QUEST_TIRED, resume as questResume, AWAY_MS as QUEST_AWAY_MS,
 } from './quest.js';
 import {
   ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes,
@@ -1109,6 +1109,11 @@ function questNow() {
     quest = loadQuest() || newQuest();
     saveQuest(quest);
   }
+  // Back from a hidden tab: time away only finishes a trip or a night. Here,
+  // the clock's anchor stays fresh, so later time away is told apart.
+  const now = Date.now();
+  if (now - quest.clock.real > QUEST_AWAY_MS) quest = questResume(quest, now);
+  else if (now - quest.clock.real > 30_000) quest = syncClock(quest, now);
   // A trip that's over, a night that's over, and seats you were called to
   // and didn't take.
   const q = questDropMissed(questWake(questArrive(quest)));
@@ -1188,7 +1193,7 @@ async function sitQuest(id, chips, moving = false) {
 // milestone reached.
 function questHand() {
   if (!questTable || !quest?.seat || !state) return;
-  quest = questRecordHand(quest, num(state.seats[0].stack));
+  quest = questRecordHand(syncClock(quest), num(state.seats[0].stack));
   const m = checkMilestones(quest);
   quest = m.q;
   if (m.reached.length) questMilestone = m.reached.at(-1).text;
@@ -3798,6 +3803,11 @@ function onPointer(e) {
 
 function onVisibility() {
   hold('hidden', document.hidden);
+  // The Bankroll challenge's clock: leaving marks where it stopped; coming
+  // back moves it on only for a trip or a night under way (quest.js resume).
+  if (!quest) return;
+  if (document.hidden) { quest = syncClock(quest); saveQuest(quest); }
+  else if (view === 'quest' && !seated) render();
 }
 
 // The legal bet or raise range now, in chips (hundredths), or null.

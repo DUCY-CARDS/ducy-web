@@ -148,6 +148,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   }
   h += '</section>';
   h += restHtml(q, room, now);
+  h += '<p class="qt-meta qw-away">The clock stops while you’re away from the game, except to finish a trip or a night’s sleep.</p>';
   // Waiting for a seat: study while you wait.
   if (mine.some(l => !l.called)) h += studyHtml(q, study, 'while you wait');
   h += otherRoomsHtml(rooms, room, q);
@@ -199,7 +200,7 @@ function travelHtml(q, now, minutes, study) {
   h += `<div class="qw-road" aria-hidden="true"><span class="qw-car${far ? ' qw-plane' : ''}" data-qmove="${start},${end}" style="left:${(100 * Math.min(1, Math.max(0, (now - start) / Math.max(1, end - start)))).toFixed(1)}%"></span></div>`;
   h += `<p class="qw-left">Arriving in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(t.end))}</p>`;
   // A long trip runs on the game clock, not this page.
-  if (t.end - t.start > 30) h += '<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page, and you’ll be there when the clock gets there.</p>';
+  if (t.end - t.start > 30) h += `<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page. Come back at ${esc(realTime(t.then === 'sleep' ? realAt(now, minutes, t.end + SLEEP_MINUTES) : end))} and you’ll be ${t.then === 'sleep' ? 'home and rested' : 'there'}.</p>`;
   h += '</section>';
   return h + studyHtml(q, study, 'on the way');
 }
@@ -224,6 +225,9 @@ function gameRowHtml(q, room, game, mine, now, minutes) {
   return h + '</li>';
 }
 
+/** A real time of day, in the viewer's own clock: "10:42 PM". */
+export const realTime = ms => new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+
 /** Game minutes as hours and minutes: "3h 20m", "45m". */
 export const hoursText = m => {
   const h = Math.floor(m / 60), mm = Math.floor(m % 60);
@@ -236,7 +240,7 @@ function sleepHtml(q, now, minutes, study) {
   const end = realAt(now, minutes, r.end);
   let h = `<section class="qw-trip" aria-live="polite"><span class="qt-label">${r.where === 'hotel' ? 'At the hotel' : 'At home'}</span><h2>Asleep</h2>`;
   h += `<p class="qw-left">Up in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(r.end))}</p>`;
-  h += '<p class="qt-note">The night goes on without you watching: play the Regulars, study, or close the page, and you’ll be rested when the clock gets there.</p></section>';
+  h += `<p class="qt-note">The night goes on without you watching: play the Regulars, study, or close the page. Come back at ${esc(realTime(end))} and you’ll be rested.</p></section>`;
   return h + studyHtml(q, study, 'before bed');
 }
 
