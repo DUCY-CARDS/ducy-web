@@ -77,7 +77,9 @@ export const PLAYER_AVATARS = [
 let avatarBase = import.meta.url;
 
 // The URL of an avatar's SVG, next to this module (so inside the release folder).
-export const avatarUrl = id => new URL(`./avatars/${id}.svg`, avatarBase).href;
+// A face drawn on the page (a Bankroll Challenge player, quest-faces.js) is
+// already an image URL, and passes through.
+export const avatarUrl = id => (String(id).startsWith('data:') ? id : new URL(`./avatars/${id}.svg`, avatarBase).href);
 
 // A tab left open across deploys can outlive its release folder (deploy.sh
 // keeps only the newest few), and then avatars it hadn't shown yet fail to

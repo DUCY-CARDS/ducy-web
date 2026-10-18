@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FAMILIES, LOOKS, NAMES, botIdOf, familyFor, isGeneric, isReg, lookFor, nameFor, parseBotId, personOf, roster, tourist, touristShare,
+  FAMILIES, botIdOf, familyFor, isGeneric, isReg, lookFor, nameFor, parseBotId, personOf, roster, tourist, touristShare,
 } from '../src/quest-people.js';
 import { LINEUP_SEATS, POOLS, REGULARS_AT_MID, buyInFor, lineupFor, lineupStacks, replacementPool, roomLineups } from '../src/quest-lineup.js';
 import { ROOMS, STAKES } from '../src/quest-rooms.js';
@@ -11,6 +11,7 @@ import { READ_HANDS, accuracyText, reviewReads, suggestFamily, tagOf, tagPlayer,
 import { MILESTONES, START_BANKROLL, checkMilestones, leave, newQuest, newRun, recordHand, sitDown } from '../src/quest.js';
 import { bankrollChart, bankrollSeries, biggestPots, byStakes, durationText, hallOfRecords, withRegulars } from '../src/quest-stats.js';
 import { personaOf } from '../src/bot-chat.js';
+import { BASES, GEARS, NAMES } from '../src/quest-faces.js';
 
 const T0 = Date.UTC(2026, 9, 17);
 // Game minutes: day 0 is a Monday.
@@ -18,10 +19,6 @@ const at = (day, hour) => day * 1440 + hour * 60;
 const FRI_9PM = at(4, 21), TUE_2PM = at(1, 14);
 
 test('a person is the same from the same seed, with a look and a name that fit', () => {
-  for (const look of LOOKS) {
-    assert.ok(['f', 'm'].includes(look.gender) && ['young', 'middle', 'older'].includes(look.age), look.avatar);
-  }
-  for (const g of ['f', 'm']) for (const age of ['young', 'middle', 'older']) assert.ok(NAMES[g][age].length >= 15, `${g} ${age}`);
   const id = botIdOf('maniac', 12345);
   assert.deepEqual(parseBotId(id), {family: 'maniac', seed: 12345});
   assert.deepEqual(personOf(id), personOf(id));
@@ -29,7 +26,9 @@ test('a person is the same from the same seed, with a look and a name that fit',
   assert.ok(isGeneric(id) && !isGeneric('milk_king'));
   const p = personOf(id);
   assert.match(p.name, /^[A-Z][a-z]+ [A-Z]\.$/);
-  assert.ok(NAMES[p.look.gender][p.look.age].includes(p.name.split(' ')[0]), 'a name for the look’s gender and age');
+  assert.ok(NAMES[p.look.pool][p.look.gender][p.look.age].includes(p.name.split(' ')[0]), 'a name for the look’s pool, gender and age');
+  assert.ok(p.avatar.startsWith('data:image/svg+xml'), 'a drawn face');
+  assert.ok(BASES[p.look.base], 'from one of the bases');
 });
 
 test('style leans: older looks are rocks more often, every family shows every gear and age', () => {
@@ -45,7 +44,7 @@ test('style leans: older looks are rocks more often, every family shows every ge
   }
   assert.ok(olderRocks / older > 1.3 * (rocks / all), `older rocks ${olderRocks}/${older} vs ${rocks}/${all}`);
   for (const f of FAMILIES) {
-    for (const gear of new Set(LOOKS.map(l => l.gear))) assert.ok(seen.has(`${f}|${gear}`), `${f} with ${gear || 'no gear'}`);
+    for (const gear of GEARS) assert.ok(seen.has(`${f}|${gear}`), `${f} with ${gear || 'no gear'}`);
     for (const age of ['young', 'middle', 'older']) assert.ok(seen.has(`${f}|${age}`), `${f} ${age}`);
   }
   // Tourists lean loose, regs tight; a wild night runs wilder.
