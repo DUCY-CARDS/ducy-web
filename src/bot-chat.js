@@ -49,7 +49,7 @@ export const LINES = {
   friendly: {
     greet: ['Hi! Good luck today.', 'Hey there, nice to meet you.', 'Hello! Let’s have some fun.', 'Good luck, have fun!'],
     wonFromYou: ['Sorry about that one.', 'I got lucky there.', 'Tough spot, I know.', 'You’ll get me back.'],
-    lostToYou: ['Nice hand!', 'Well played.', 'You got me.', 'Good call.'],
+    lostToYou: ['Nice hand!', 'Well played.', 'You got me.'],
     bigWin: ['Oh wow, I’ll take it.', 'What a pot!', 'Lucky me.'],
     bigLoss: ['Ouch. Oh well.', 'That’s poker!', 'Can’t win them all.'],
     stakes: ['Want to make it a bit more interesting?', 'Shall we play a little bigger?'],
@@ -84,7 +84,7 @@ export const LINES = {
   },
   needle: {
     greet: ['Another one for the slaughter.', 'Hope you didn’t bring much.', 'Oh good, a fish.', 'Sit down. This won’t take long.'],
-    wonFromYou: ['Thanks for the donation.', 'You can fold, you know.', 'Read you like a book.', 'Was that a bluff? Cute.', 'Keep calling, I love it.'],
+    wonFromYou: ['Thanks for the donation.', 'Read you like a book.'],
     lostToYou: ['Lucky.', 'Nice catch. Don’t get used to it.', 'Even a blind squirrel…', 'Enjoy it. Won’t happen again.', 'Sure, sure.'],
     bigWin: ['Too easy.', 'Who’s next?', 'Get these chips out of my way.'],
     bigLoss: ['Unreal. Rigged.', 'Whatever.', 'That guy can’t play.'],
@@ -156,8 +156,8 @@ export const LINES = {
   },
   coach: {
     greet: ['Welcome to the stream, er, table.', 'Let’s crush some live poker.', 'Good luck. I’ll be taking notes.'],
-    wonFromYou: ['Classic population spot.', 'Gotta size up against these guys.', 'Value town. Population never folds there.', 'That one’s going in the video.'],
-    lostToYou: ['Okay, that’s a hero call. I’ll allow it.', 'Sigh. Live players never have it… except when they do.', 'Nice hand. Unusual line, but nice hand.'],
+    wonFromYou: ['Classic population spot.', 'That one’s going in the video.'],
+    lostToYou: ['Sigh. Live players never have it… except when they do.', 'Nice hand. Unusual line, but nice hand.'],
     bigWin: ['That’s how you play a big pot.', 'Textbook.'],
     bigLoss: ['Big bet, big hand. Every time.', 'Should’ve folded. Population is never bluffing there.'],
     stakes: ['Let’s move up. That’s where the money is.', 'These blinds are for beginners. Double it?'],
@@ -196,17 +196,59 @@ export const LINES = {
 // and he cusses, with the words bleeped.
 const LOSING = new Set(['lostToYou', 'bigLoss', 'gameLost']);
 export const TILT_LINES = {
-  lostToYou: ['Are you kidding me?! @#$%!', 'Unbelievable. You called with THAT?', 'Oh, come ON. #@$%ing river.', 'Every. Single. Time. @#$%.', 'Learn to fold, you @#$%.'],
+  lostToYou: ['Are you kidding me?! @#$%!', 'Oh, come ON. #@$%ing river.', 'Every. Single. Time. @#$%.'],
   bigLoss: ['@#$%! Rigged.', 'Damn it. DAMN it.', 'I can’t believe this @#$%.'],
   gameLost: ['@#$% this. Lucky @#$%. Rematch.', 'You sucked out all game. GG, I guess.', 'Unreal. @#$%ing unreal.'],
 };
 // Tommy Sweeden's (`tilt: 'swedish'`): he steams in Swedish.
 export const SWEDISH_TILT_LINES = {
-  lostToYou: ['Kuksugare!', 'Kuksugare. Every time.', 'You called with that? Kuksugare.', 'Kuksugare! Nice river.'],
+  lostToYou: ['Kuksugare!', 'Kuksugare. Every time.', 'Kuksugare! Nice river.'],
   bigLoss: ['Kuksugare!', 'Kuksugare… unbelievable.'],
   gameLost: ['Kuksugare. Rematch.', 'Kuksugare! GG, I guess.'],
 };
 const TILTS = {true: TILT_LINES, swedish: SWEDISH_TILT_LINES};
+
+// Lines that only fit when it's clear who called (handMoments' `how`):
+// `youCalled`, you called the bot's last bet; `theyCalled`, the bot called
+// yours. A bot never says "good call" about its own call.
+export const CALL_LINES = {
+  friendly: {
+    lostToYou: {youCalled: ['Good call.', 'Nice call, you had me.'], theyCalled: ['Good bet. I had to look.', 'Nice bet. Had to see it.']},
+    wonFromYou: {youCalled: ['Sorry, I had it that time.'], theyCalled: ['Sorry, I had to call that.']},
+  },
+  chatty: {
+    lostToYou: {youCalled: ['Good call. You saw right through me.'], theyCalled: ['Had to see it. Should’ve folded.']},
+    wonFromYou: {youCalled: ['Thanks for paying me off!'], theyCalled: ['Nice try. Not today.']},
+  },
+  needle: {
+    lostToYou: {youCalled: ['Lucky call.'], theyCalled: ['Had to see it. Lucky.']},
+    wonFromYou: {youCalled: ['You can fold, you know.', 'Keep calling, I love it.'], theyCalled: ['Was that a bluff? Cute.', 'Nice try.']},
+  },
+  grump: {
+    lostToYou: {youCalled: ['Of course you called.'], theyCalled: ['Why did I call. Why.']},
+    wonFromYou: {youCalled: ['Huh. You paid me off.']},
+  },
+  cool: {
+    lostToYou: {youCalled: ['Good call.'], theyCalled: ['Nice bet.']},
+    wonFromYou: {youCalled: ['Thanks for the call.'], theyCalled: ['Had to look.']},
+  },
+  math: {
+    lostToYou: {youCalled: ['Correct call. The odds were yours.'], theyCalled: ['My call was -EV. Noted.']},
+    wonFromYou: {youCalled: ['Your call had the wrong price.'], theyCalled: ['Pot odds said call.']},
+  },
+  coach: {
+    lostToYou: {youCalled: ['Okay, that’s a hero call. I’ll allow it.'], theyCalled: ['Had to call. Population bluffs that spot.']},
+    wonFromYou: {youCalled: ['Value town. Population never folds there.', 'Gotta size up against these guys.'], theyCalled: ['Hero call. That one’s going in the video.']},
+  },
+  robot: {
+    lostToYou: {youCalled: ['Correct call, human.'], theyCalled: ['Call was within frequency.']},
+    wonFromYou: {youCalled: ['Thank you for the call.'], theyCalled: ['Bluff detected.']},
+  },
+};
+export const TILT_CALL_LINES = {
+  true: {lostToYou: {youCalled: ['Unbelievable. You called with THAT?', 'Learn to fold, you @#$%.'], theyCalled: ['Why did I call?! @#$%!']}},
+  swedish: {lostToYou: {youCalled: ['You called with that? Kuksugare.'], theyCalled: ['Kuksugare! Why did I call?']}},
+};
 
 // Moments a bot always speaks at (when the chat is on), however quiet: they
 // open and close a heads-up challenge game, and answer when you talk.
@@ -225,12 +267,16 @@ export function speaks(id, moment, {headsUp = false, ladder = false, rng = Math.
   return rng() < Math.min(0.95, p);
 }
 
-// A line for `moment` in the bot's tone (null if there's none).
-export function lineFor(id, moment, rng = Math.random) {
+// A line for `moment` in the bot's tone (null if there's none). `how`
+// (handMoments: 'youCalled' or 'theyCalled') adds the lines about who
+// called; without it only lines that fit either way.
+export function lineFor(id, moment, rng = Math.random, how = null) {
   const persona = personaOf(id);
-  const tilt = persona.tilt && LOSING.has(moment) && TILTS[persona.tilt]?.[moment];
-  const lines = tilt || LINES[persona.tone]?.[moment];
-  if (!lines?.length) return null;
+  const tilting = persona.tilt && LOSING.has(moment) && TILTS[persona.tilt]?.[moment];
+  const base = tilting || LINES[persona.tone]?.[moment] || [];
+  const extra = (how && (tilting ? TILT_CALL_LINES[persona.tilt] : CALL_LINES[persona.tone])?.[moment]?.[how]) || [];
+  const lines = [...base, ...extra];
+  if (!lines.length) return null;
   return lines[Math.floor(rng() * lines.length)];
 }
 
@@ -252,10 +298,26 @@ export function replyMoment(text) {
   return 'other';
 }
 
+// Who called whom at the end of a hand, between you (seat 0) and bot `seat`,
+// from the hand's events: 'youCalled' when you called the bot's last bet or
+// raise, 'theyCalled' when the bot called yours, else null.
+export function callShape(events, seat) {
+  let bettor = null;
+  let callers = new Set();
+  for (const e of events || []) {
+    if (e.type === 'bet' || e.type === 'raise') { bettor = e.seat; callers = new Set(); }
+    else if (e.type === 'call' && bettor != null) callers.add(e.seat);
+  }
+  if (bettor === seat && callers.has(0)) return 'youCalled';
+  if (bettor === 0 && callers.has(seat)) return 'theyCalled';
+  return null;
+}
+
 // What a finished hand gives the bots to talk about: [{seat, moment}], at
 // most one, from the seats' results (`net`, in chips) and the big blind.
-// Seat 0 is you.
-export function handMoments(seats, bigBlind) {
+// Seat 0 is you. With the hand's `events`, a pot between you and that bot
+// also says who called (`how`, see callShape), when it's clear.
+export function handMoments(seats, bigBlind, events = null) {
   const bb = Math.max(1, bigBlind);
   const net = seats.map(s => Number(s.net) || 0);
   const you = net[0];
@@ -263,8 +325,12 @@ export function handMoments(seats, bigBlind) {
   if (!bots.length) return [];
   const top = bots.reduce((a, b) => (b.net > a.net ? b : a));
   const low = bots.reduce((a, b) => (b.net < a.net ? b : a));
-  if (you <= -10 * bb && top.net > 0) return [{seat: top.i, moment: 'wonFromYou'}];
-  if (you >= 10 * bb && low.net < 0) return [{seat: low.i, moment: 'lostToYou'}];
+  const withHow = (seat, moment) => {
+    const how = callShape(events, seat);
+    return how ? [{seat, moment, how}] : [{seat, moment}];
+  };
+  if (you <= -10 * bb && top.net > 0) return withHow(top.i, 'wonFromYou');
+  if (you >= 10 * bb && low.net < 0) return withHow(low.i, 'lostToYou');
   if (top.net >= 30 * bb) return [{seat: top.i, moment: 'bigWin'}];
   if (low.net <= -30 * bb) return [{seat: low.i, moment: 'bigLoss'}];
   return [];
