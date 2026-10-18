@@ -8,6 +8,7 @@
 
 import { ORDER } from './ladder.js';
 import { roll } from './quest-rooms.js';
+import { buyInRange } from './quest.js';
 
 export const LINEUP_SEATS = 5; // and you: 6-handed
 // The wild ones who sometimes sit in big games, and only there.
@@ -47,6 +48,37 @@ export function lineupFor(seed, tableId, stakes, minutes, have = null) {
     picked.push(free.splice(Math.floor(roll(seed, tableId, 'seat', block, i) * free.length), 1)[0]);
   }
   return picked;
+}
+
+// How deep the Regulars buy in, in big blinds: most for 100 BB or more, a
+// few short. Whales always buy in for the most the room allows.
+const BUY_IN_BBS = [40, 60, 80, 100, 100, 100, 150, 200, 200];
+
+/**
+ * What Regular `id` buys in (and tops up) for at table `tableId`, in chips,
+ * within the room's buy-in range: the same for them all through a block of
+ * game hours, and different from player to player.
+ */
+export function buyInFor(seed, tableId, id, blinds, room, minutes) {
+  const {min, max} = buyInRange(blinds, room);
+  if (WHALES.includes(id)) return max;
+  const block = Math.floor(minutes / (60 * BLOCK_HOURS));
+  const bbs = BUY_IN_BBS[Math.floor(roll(seed, tableId, 'buyin', id, block) * BUY_IN_BBS.length)];
+  return Math.max(min, Math.min(max, bbs * blinds[1]));
+}
+
+/**
+ * The chips in front of each of `ids` when you walk up to the table: their
+ * buy-in, won or lost a little since (half to one and a half of it), so no
+ * two stacks look alike. Whole big blinds.
+ */
+export function stacksAt(seed, tableId, ids, blinds, room, minutes) {
+  const block = Math.floor(minutes / (60 * BLOCK_HOURS));
+  return ids.map(id => {
+    const buyIn = buyInFor(seed, tableId, id, blinds, room, minutes);
+    const swing = 0.5 + roll(seed, tableId, 'stack', id, block);
+    return Math.max(blinds[1], Math.round((buyIn * swing) / blinds[1]) * blinds[1]);
+  });
 }
 
 /** Who replaces a Regular who leaves mid-session: anyone from the table's pool. */

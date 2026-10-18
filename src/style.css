@@ -2026,8 +2026,28 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .qt-faces { display: flex; margin-left: auto; }
 .qt-faces img { width: 26px; height: 26px; border-radius: 50%; background: var(--bg-inset); border: 2px solid var(--bg-raised); margin-left: -6px; }
 .qt-note { font-size: 13px; color: var(--fg); margin: 0; }
-.qt-buyins { display: flex; gap: 6px; flex-wrap: wrap; }
-.qt-buyins .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; }
+.qt-open-btn { align-self: flex-start; font-family: var(--font-ui); font-size: 12px; padding: 5px 12px; }
+/* An open table: who's there with their chips, and your buy-in. */
+.qt-open-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; }
+.qt-open { position: fixed; z-index: 51; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.35); }
+.qt-open .qt-meta, .qt-open .qt-label { color: #5a6b5f; }
+.qt-open .qt-stakes { color: #1d3a2c; }
+.qt-open-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.qt-seats { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.qt-seats li { display: flex; align-items: center; gap: 10px; background: rgba(29,58,44,0.07); border-radius: 8px; padding: 6px 10px; }
+.qt-seats img, .qt-noface { width: 30px; height: 30px; border-radius: 50%; background: #d9cba6; flex-shrink: 0; }
+.qt-seat-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qt-seat-chips { font-family: var(--font-data, inherit); font-variant-numeric: tabular-nums; font-weight: 600; }
+.qt-buyin { display: flex; flex-direction: column; gap: 6px; }
+.qt-buyin .qt-label { font-size: 14px; font-weight: 600; color: #1d3a2c; }
+.qt-buyin-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.qt-dollar { font-size: 18px; font-weight: 600; }
+.qt-buyin-row input { width: 8.5em; font-size: 16px; }
+.qt-buyin-row .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; }
+.qt-open-acts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.qt-open .cc-btn { color: #1d3a2c; border-color: rgba(29,58,44,0.35); background: transparent; font-family: var(--font-ui); }
+.qt-open .cc-btn:hover { background: rgba(29,58,44,0.08); }
+.qt-open-acts .cc-btn { font-size: 14px; padding: 8px 14px; }
 .qt-rooms ul, .qt-runs ul { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .qt-other { display: flex; align-items: center; gap: 10px; justify-content: space-between; background: var(--bg-inset); border-radius: 8px; padding: 10px 12px; }
 .qt-other-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

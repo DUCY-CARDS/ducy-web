@@ -37,7 +37,7 @@ import {
   sitDown as questSitDown, syncClock, topUp as questTopUp, travel as questTravel,
 } from './quest.js';
 import { STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
-import { lineupFor, replacementPool } from './quest-lineup.js';
+import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
 import { currentRoom, questLobbyHtml } from './quest-ui.js';
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
@@ -1048,6 +1048,8 @@ let quest = null; // the quest (quest.js), once loaded
 let questTable = null; // {id, stakes, room} while sitting at one
 let questNote = ''; // a line for the lobby, e.g. how the last session went
 let questTimer = null; // redraws the lobby as the clock moves
+let questOpen = null; // the table opened in the lobby, to choose a buy-in
+let questAmount = 0; // the buy-in typed there, kept as the lobby redraws
 
 function questNow() {
   if (!quest) {
@@ -1062,28 +1064,41 @@ function questLobbyPage() {
   clearTimeout(questTimer);
   // The clock moves four times real time: the tables change as it does.
   questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
-  return questLobbyHtml(q, Date.now(), {names: regularName, have: personalities.map(p => p.id), note: questNote});
+  return questLobbyHtml(q, Date.now(), {names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount});
 }
 
-// Sits down at quest table `id` with `bbs` big blinds from the bankroll.
-async function sitQuest(id, bbs) {
+// Sits down at quest table `id` with `chips` from the bankroll (what you
+// typed at the open table, kept within the buy-in range). The Regulars there
+// keep the stacks the open table showed, each with their own buy-in.
+async function sitQuest(id, chips) {
   const q = syncClock(questNow());
   const room = currentRoom(q);
   const minutes = gameMinutes(q);
   const game = questLobby(q.seed, minutes).find(r => r.room.id === room.id)?.games.find(g => g.ids.includes(id));
+  questOpen = null;
   if (!game) { questNote = 'That table has broken up.'; render(); return; }
   const blinds = QUEST_STAKES[game.stakes];
-  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds}, bbs * blinds[1], room);
+  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds}, chips, room);
   if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
-  const bots = lineupFor(q.seed, id, game.stakes, minutes, personalities.map(p => p.id));
+  const have = personalities.map(p => p.id);
+  const bots = lineupFor(q.seed, id, game.stakes, minutes, have);
+  const buyInOf = who => buyInFor(q.seed, id, who, blinds, room, minutes);
   quest = seatedQ;
   saveQuest(quest);
   questNote = '';
   questTable = {id, stakes: game.stakes, room};
   ladder = null;
-  await sitDown({bots, game: 'nlhe', buyIn: quest.seat.stack, sb: blinds[0], bb: blinds[1], gto: false, regs: true});
-  // Regulars who leave are replaced from the same stakes' pool.
-  if (regulars) regulars.pool = replacementPool(game.stakes, personalities.map(p => p.id));
+  await sitDown({
+    bots, game: 'nlhe', buyIn: quest.seat.stack, sb: blinds[0], bb: blinds[1], gto: false, regs: true,
+    stacks: [quest.seat.stack, ...stacksAt(q.seed, id, bots, blinds, room, minutes)],
+    buyIns: [quest.seat.stack, ...bots.map(buyInOf)],
+  });
+  // Regulars who leave are replaced from the same stakes' pool, and buy in
+  // for their own amount.
+  if (regulars) {
+    regulars.pool = replacementPool(game.stakes, have);
+    regulars.buyInOf = buyInOf;
+  }
   bannerHook = () => (quest?.seat ? `${room.name} · ${game.stakes} · ${questClock(gameMinutes(quest))} · Bankroll $${chipText(quest.bankroll)}` : '');
 }
 
@@ -1159,7 +1174,9 @@ async function regularsBetween() {
   const r = betweenHands({
     stacks: state.seats.map(x => num(x.stack)), bank: regulars.bank, bots: tableBots,
     buyIn: regulars.buyIn, all: regulars.pool || personalities.map(p => p.id),
+    buyIns: regulars.buyIns, buyInOf: regulars.buyInOf,
   });
+  if (r.buyIns) regulars.buyIns = r.buyIns;
   for (const {seat, chips} of r.sets) await call('setStack', seat, chips);
   const notes = [];
   const seated = [...tableBots];
@@ -1220,9 +1237,11 @@ const bombSetting = () => (setup.bomb && !gameOf(setup.game).bomb ? bombEvery(se
 // game resuming), instead of the buy-in.
 // `bombs` is a bomb pot every so many hands (0 for none). `reviewAll` keeps
 // a ladder game's hands for review (ladder.reviewing says if it could).
-async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false, bombs = 0, reviewAll = false}) {
+// `buyIns`, at a Regulars table, is each seat's own buy-in when they differ
+// (a Bankroll challenge table): what each Regular tops up to.
+async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = false, bombs = 0, reviewAll = false, buyIns = null}) {
   clearTimeout(timer);
-  regulars = regs ? {bank: startBank(bots, buyIn), buyIn, done: 0, pending: null} : null;
+  regulars = regs ? {bank: startBank(bots, buyIn, buyIns), buyIn, buyIns, buyInOf: null, done: 0, pending: null} : null;
   regularsNote = '';
   cancelDeal();
   lastSummary = null;
@@ -3190,9 +3209,16 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qsit],[data-qgo],[data-qnew]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew]');
   if (q && !q.disabled) {
-    if (q.dataset.qsit) sitQuest(q.dataset.qsit, +q.dataset.qbb);
+    if (q.dataset.qopen) { questOpen = q.dataset.qopen; questAmount = 0; questNote = ''; render(); root.querySelector('#qt-amt')?.focus(); }
+    else if (q.dataset.qclose) { questOpen = null; render(); }
+    else if (q.dataset.qamt) {
+      const amt = root.querySelector('#qt-amt');
+      if (amt) amt.value = q.dataset.qamt;
+      questAmount = parseChips(q.dataset.qamt) || 0;
+    }
+    else if (q.dataset.qsit) sitQuest(q.dataset.qsit, parseChips(root.querySelector('#qt-amt')?.value) || 0);
     else if (q.dataset.qgo) questGo(q.dataset.qgo);
     else questNewRun(q.dataset.qnew);
     return;
@@ -3344,6 +3370,7 @@ function onClick(e) {
 function onInput(e) {
   if (e.target.id === 'pl-bombevery' && e.target.value) { setup.bombEvery = bombEvery(e.target.value); saveSetup(); }
   if (e.target.id === 'pl-chipamt') chipAsk = parseChips(e.target.value) || 0;
+  if (e.target.id === 'qt-amt') questAmount = parseChips(e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
     // The slider steps in chips; its far end is the top of the range.
     const r = betRange();

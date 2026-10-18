@@ -13,9 +13,12 @@ export const BANKROLL_BUY_INS = 3;
 export const LEAVE_CHANCE = 0.015;
 export const REGULARS_SEATS = 5; // and you: 6-handed
 
-/** What each bot seat has left after its first buy-in (seat 0 is you). */
-export function startBank(bots, buyIn) {
-  return [0, ...bots.map(() => (BANKROLL_BUY_INS - 1) * buyIn)];
+/**
+ * What each bot seat has left after its first buy-in (seat 0 is you).
+ * `buyIns`, when given, is each seat's own buy-in (seat 0 unused).
+ */
+export function startBank(bots, buyIn, buyIns = null) {
+  return [0, ...bots.map((_, i) => (BANKROLL_BUY_INS - 1) * (buyIns?.[i + 1] ?? buyIn))];
 }
 
 /** `n` Regulars picked at random from `ids`, all different when there are enough. */
@@ -35,26 +38,34 @@ export function pickRegulars(ids, n, rng = Math.random) {
  * stacks to set, the Regulars leaving and who replaces them, and the new
  * bank and seating. `leaveChance` is each Regular's chance of leaving anyway
  * (LEAVE_CHANCE by default).
+ *
+ * Players who buy in for different amounts (a Bankroll challenge table):
+ * `buyIns` is each seat's own buy-in (seat 0 unused) and `buyInOf(id)` what a
+ * newcomer buys in for; the result then has the new `buyIns` too.
  */
-export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random, leaveChance = LEAVE_CHANCE}) {
+export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random, leaveChance = LEAVE_CHANCE, buyIns = null, buyInOf = null}) {
   const nextBank = [...bank];
   const seated = [...bots];
+  const nextBuyIns = buyIns ? [...buyIns] : null;
   const sets = [], swaps = [];
   const replace = seat => {
     const free = all.filter(id => !seated.includes(id));
     const id = pickRegulars(free.length ? free : all, 1, rng)[0];
-    swaps.push({seat, from: seated[seat - 1], id, chips: buyIn});
+    const chips = buyInOf ? buyInOf(id) : buyIn;
+    swaps.push({seat, from: seated[seat - 1], id, chips});
     seated[seat - 1] = id;
-    nextBank[seat] = (BANKROLL_BUY_INS - 1) * buyIn;
+    if (nextBuyIns) nextBuyIns[seat] = chips;
+    nextBank[seat] = (BANKROLL_BUY_INS - 1) * chips;
   };
   for (let seat = 1; seat < stacks.length; seat++) {
     const stack = stacks[seat];
+    const target = nextBuyIns?.[seat] ?? buyIn;
     // Done for the day, whatever's in front of them.
     if (stack > 0 && leaveChance > 0 && rng() < leaveChance) { replace(seat); continue; }
-    if (stack >= buyIn / 2) continue;
+    if (stack >= target / 2) continue;
     const left = nextBank[seat] || 0;
     if (left > 0) {
-      const add = Math.min(buyIn - stack, left);
+      const add = Math.min(target - stack, left);
       nextBank[seat] = left - add;
       sets.push({seat, chips: stack + add});
       continue;
@@ -62,5 +73,5 @@ export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random,
     if (stack > 0) continue; // playing out the last of the bankroll
     replace(seat);
   }
-  return {sets, swaps, bank: nextBank, bots: seated};
+  return {sets, swaps, bank: nextBank, bots: seated, ...(nextBuyIns ? {buyIns: nextBuyIns} : {})};
 }
