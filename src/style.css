@@ -2067,3 +2067,33 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
   .qt-goal { grid-column: 1 / -1; }
   .qt-other { flex-direction: column; align-items: flex-start; }
 }
+
+/* Bankroll challenge: the run's stats (quest-stats.js), the session's reads
+   and the read menu at a table (quest-reads.js, #304, #306). */
+.qt-stats h2, .qt-review h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; color: var(--fg-strong); margin: 18px 0 8px; }
+.qs-box { background: var(--bg-inset); border-radius: 10px; padding: 10px 12px; }
+.qs-chart { display: block; max-width: 100%; height: auto; }
+.qs-line { stroke: var(--amber); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.qs-area { fill: var(--amber-faint); }
+.qs-dot { fill: var(--amber); }
+.qs-grid { stroke: var(--border); stroke-width: 1; }
+.qs-label { fill: var(--fg-muted); font: 11px var(--font-data); }
+.qs-scroll { overflow-x: auto; margin-top: 10px; }
+.qs-table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100%; }
+.qs-table th, .qs-table td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.qs-table th:first-child, .qs-table td:first-child { text-align: left; }
+.qs-table th { color: var(--fg-muted); font-weight: 600; font-size: 12px; }
+.qt-stats .qt-meta { margin: 8px 0 0; }
+.qt-review ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.qt-review li { font-size: 14px; color: var(--fg); padding-left: 14px; position: relative; }
+.qt-review li::before { content: ''; position: absolute; left: 0; top: 0.5em; width: 6px; height: 6px; border-radius: 50%; background: var(--fg-muted); }
+.qt-review li.qr-right::before { background: var(--green); }
+.qt-review li.qr-wrong::before { background: var(--red); }
+.qr-chip { display: block; font: 600 10px var(--font-ui); letter-spacing: 0.03em; color: var(--amber); }
+.qr-hint { margin: 6px 0 0; }
+.qr-milestone { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--amber-faint); color: var(--fg-strong); font-weight: 600; }
+.qr-menu { margin-top: 8px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.qr-menu b { color: var(--fg-strong); }
+.qr-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qr-tags .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; }
+.qr-tags .cc-btn.on { outline: 2px solid var(--amber); }

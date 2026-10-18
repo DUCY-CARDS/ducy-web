@@ -36,7 +36,22 @@ export const PERSONAS = {
   gto: {tone: 'robot', talk: 0.3},
 };
 const DEFAULT = {tone: 'friendly', talk: 0.3};
-export const personaOf = id => PERSONAS[String(id).startsWith('gto') ? 'gto' : id] || DEFAULT;
+// The Bankroll Challenge's generic players (`g-<family>-<seed>`) talk by
+// family, a clue to read (#306): the maniac needles, the calling station
+// chats and celebrates, the grinder says little and the rock next to
+// nothing.
+export const FAMILY_PERSONAS = {
+  maniac: {tone: 'needle', talk: 0.35},
+  station: {tone: 'chatty', talk: 0.3},
+  grinder: {tone: 'cool', talk: 0.12},
+  rock: {tone: 'cool', talk: 0.04},
+};
+export const personaOf = id => {
+  const s = String(id);
+  const family = /^g-([a-z]+)-\d+$/.exec(s)?.[1];
+  if (family) return FAMILY_PERSONAS[family] || DEFAULT;
+  return PERSONAS[s.startsWith('gto') ? 'gto' : s] || DEFAULT;
+};
 
 // Moments a bot may speak at.
 //   greet: sitting down with you; wonFromYou: took a pot you lost a lot in;
