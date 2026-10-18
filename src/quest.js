@@ -93,6 +93,24 @@ export function topUp(q, to, room) {
   return {...q, bankroll: q.bankroll - paid, seat: {...q.seat, stack: q.seat.stack + paid, bought: q.seat.bought + paid}};
 }
 
+// The stacks you can top up to at the table, from `stack` chips: 40, 100
+// and 200 big blinds and the room's maximum buy-in, as far as the bankroll
+// pays. [{bbs, to, all}]: `to` the stack after it, `all` when the bankroll
+// can't pay the whole way and this takes all of it.
+export function topUpChoices(q, stack, room) {
+  if (!q.seat) return [];
+  const bb = q.seat.stakes[1];
+  const {max} = buyInRange(q.seat.stakes, room);
+  const levels = [...new Set([40, 100, 200].map(b => b * bb).filter(x => x <= max).concat(max))].sort((a, b) => a - b);
+  const out = [];
+  for (const level of levels) {
+    const to = Math.min(level, stack + q.bankroll);
+    if (to <= stack || out.some(o => o.to === to)) continue;
+    out.push({bbs: Math.round(level / bb), to, all: to < level});
+  }
+  return out;
+}
+
 // Leaves the table: the stack goes back to the bankroll, and the session
 // (what was bought in and taken away) goes into the history.
 export function leave(q, now = Date.now()) {

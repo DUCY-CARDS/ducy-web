@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AWAY_CAP_DAYS, GOAL, QUEST_SPEED, START_BANKROLL, buyInRange, canSit, clockText, dayHour, gameMinutes,
-  leave, loadQuest, newQuest, saveQuest, setStack, sitDown, spendMinutes, status, syncClock, topUp,
+  leave, loadQuest, newQuest, saveQuest, setStack, sitDown, spendMinutes, status, syncClock, topUp, topUpChoices,
 } from '../src/quest.js';
 import { ROOMS, STAKES, TRAVEL_MINUTES, activity, cheapestBuyIn, lobby, roomById, tablesRunning } from '../src/quest-rooms.js';
 
@@ -38,6 +38,20 @@ test('the clock reads as a day and a time', () => {
 test('buy-ins run 40 to 200 big blinds, or a room’s own limits', () => {
   assert.deepEqual(buyInRange(STAKES['1/2']), {min: 8000, max: 40000});
   assert.deepEqual(buyInRange(STAKES['10/20'], roomById('ivory')), {min: 100000, max: 500000});
+});
+
+test('top-up choices: 40, 100 and 200 BB above your stack, as far as the bankroll pays', () => {
+  const table = {room: 'deuce', stakes: STAKES['1/2'], id: 'deuce-1/2-1'};
+  let q = sitDown(newQuest(0, 3), table, 20000);
+  assert.deepEqual(topUpChoices(q, 15000), [{bbs: 100, to: 20000, all: false}, {bbs: 200, to: 40000, all: false}]);
+  // At the maximum there's nothing to top up to.
+  assert.deepEqual(topUpChoices(q, 40000), []);
+  // A short bankroll: the top choice takes all of it, and choices it can't
+  // reach drop out.
+  q = {...q, bankroll: 3000};
+  assert.deepEqual(topUpChoices(q, 15000), [{bbs: 100, to: 18000, all: true}]);
+  assert.deepEqual(topUpChoices({...q, bankroll: 0}, 15000), []);
+  assert.deepEqual(topUpChoices(newQuest(0, 3), 0), [], 'not seated');
 });
 
 test('chips go from the bankroll to the table and back', () => {

@@ -34,7 +34,7 @@ import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
   clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, saveQuest, setStack as questSetStack,
-  sitDown as questSitDown, syncClock, topUp as questTopUp, travel as questTravel,
+  sitDown as questSitDown, syncClock, topUp as questTopUp, topUpChoices as questTopUpChoicesFor, travel as questTravel,
 } from './quest.js';
 import { STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
 import { lineupFor, replacementPool } from './quest-lineup.js';
@@ -1106,6 +1106,8 @@ function questStandUp() {
     questNote = `You left with $${chipText(before.stack)} (${net >= 0 ? '+' : '−'}$${chipText(Math.abs(net))} this session).`;
   }
   questTable = null;
+  questTopUpOpen = false;
+  questTopUpNext = 0;
 }
 
 function questGo(roomId) {
@@ -1182,19 +1184,74 @@ async function regularsBetween() {
 // Rebuy (out of chips) or top up (below a buy-in) to a full buy-in.
 async function rebuy() {
   if (!regulars || !state?.complete) return;
-  if (regulars.pending) await regulars.pending;
-  let to = regulars.buyIn;
-  // At a quest table the chips come out of the bankroll, as far as it goes.
+  await topUpTo(regulars.buyIn);
+  render();
+  armDeal();
+}
+
+// Brings your stack up to `target` chips between hands. At a quest table
+// the chips come out of the bankroll, as far as it goes, and never past the
+// room's maximum buy-in.
+async function topUpTo(target) {
+  if (regulars?.pending) await regulars.pending;
+  let to = Math.max(num(state.seats[0].stack), target);
   if (questTable && quest?.seat) {
-    quest = questTopUp(questSetStack(quest, num(state.seats[0].stack)), regulars.buyIn, questTable.room);
+    quest = questTopUp(questSetStack(quest, num(state.seats[0].stack)), target, questTable.room);
     saveQuest(quest);
     to = quest.seat.stack;
   }
   await call('setStack', 0, to);
   state.seats[0].stack = to;
   regularsNote = '';
-  render();
-  armDeal();
+}
+
+// ---- Top up at a quest table ----
+// The table bar's Top up button opens a choice of stacks (40, 100 and 200
+// big blinds, and the room's maximum) that the bankroll can pay. Between
+// hands it happens at once; during a hand it waits for the next deal.
+let questTopUpOpen = false; // the choice is showing
+let questTopUpNext = 0; // the stack to top up to before the next hand, or 0
+
+// The stacks you can top up to now: [{bbs, to, all}], `all` when the
+// bankroll can't pay the whole way and the choice takes all of it.
+function questTopUpChoices() {
+  if (!questTable || !quest?.seat || !state) return [];
+  return questTopUpChoicesFor(quest, num(state.seats[0].stack), questTable.room);
+}
+
+async function questTopUpPick(to) {
+  questTopUpOpen = false;
+  if (!questTable || !quest?.seat) return;
+  if (state?.complete) {
+    questTopUpNext = 0;
+    await topUpTo(to);
+    render();
+    armDeal();
+  } else {
+    questTopUpNext = to;
+    render();
+  }
+}
+
+// The table bar at a quest table: the room, clock and bankroll, and Top up.
+function questBarHtml() {
+  const text = bannerHook?.() || '';
+  const choices = questTopUpChoices();
+  let h = `<div class="pl-promo-line qt-tablebar"><span>${esc(text)}</span>`;
+  if (questTopUpNext) {
+    h += `<span class="qt-topup-next">Topping up to $${c(questTopUpNext)} before the next hand <button class="tr-btn" data-act="quest-topup-cancel">Cancel</button></span>`;
+  } else if (choices.length) {
+    h += `<button class="tr-btn qt-topup" data-act="quest-topup" aria-expanded="${questTopUpOpen}">Top up</button>`;
+  }
+  h += '</div>';
+  if (questTopUpOpen && !questTopUpNext) {
+    h += '<div class="qt-topup-choices" role="group" aria-label="Top up to">';
+    for (const o of choices) {
+      h += `<button class="tr-btn" data-act="quest-topup-to" data-to="${o.to}">To $${c(o.to)} <span class="pl-meta">${o.all ? 'all your bankroll' : `${o.bbs} BB`}</span></button>`;
+    }
+    h += `<button class="tr-btn" data-act="quest-topup">Close</button></div>`;
+  }
+  return h;
 }
 
 async function startTable() {
@@ -1268,6 +1325,12 @@ async function nextHand() {
   // A Regulars table: the seats are settled first, and you need chips.
   if (mode === 'solo' && regulars) {
     if (regulars.pending) await regulars.pending;
+    // A top-up chosen during the last hand.
+    if (questTopUpNext && state?.complete) {
+      const to = questTopUpNext;
+      questTopUpNext = 0;
+      await topUpTo(to);
+    }
     if (state && !num(state.seats[0].stack)) {
       regularsNote = 'You’re out of chips. Rebuy to keep playing.';
       cancelDeal();
@@ -2484,7 +2547,8 @@ function renderTable() {
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
-  if (mode === 'guest' || questTable) h += promoLineHtml();
+  if (questTable && !(celebration && Date.now() < celebration.until)) h += questBarHtml();
+  else if (mode === 'guest' || questTable) h += promoLineHtml();
   // 8 or 9 seats: smaller seats (style.css). A bomb pot: two boards of
   // the same size, rather than run twice's smaller second one.
   h += `<div class="pl-felt${n >= CROWDED ? ' crowded' : ''}${bombHand(s) ? ' two-boards' : ''}">`;
@@ -3290,6 +3354,9 @@ function onClick(e) {
   else if (el.dataset.act === 'sit') startTable();
   else if (el.dataset.act === 'sitregulars') sitRegulars();
   else if (el.dataset.act === 'rebuy') rebuy();
+  else if (el.dataset.act === 'quest-topup') { questTopUpOpen = !questTopUpOpen; render(); }
+  else if (el.dataset.act === 'quest-topup-to') questTopUpPick(Number(el.dataset.to));
+  else if (el.dataset.act === 'quest-topup-cancel') { questTopUpNext = 0; render(); }
   else if (el.dataset.act === 'next') nextHand();
   else if (el.dataset.act === 'pause') hold('user', !holds.has('user'));
   else if (el.dataset.act === 'dealdelay') {
