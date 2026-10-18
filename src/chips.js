@@ -3,7 +3,8 @@
 //
 // Each game has a favored chip, the one players bet with: the smallest worth
 // at least the big blind (red at 1/2 and 2/5, green at 5/10). Chips smaller
-// than it (whites at 1/2) are only for what it can't pay, the odd dollars.
+// than it are only for what it can't pay, the odd dollars: whites at 1/2,
+// and at 2/5 too, where the $2 blind is paid in whites.
 // The rest is as many of the favored chip as possible, at least a full
 // stack, with all the stacks (the whites' too) at most SHOWN: when that
 // isn't enough, a stack of it is traded for the next chip up, then another,
@@ -43,9 +44,11 @@ export function breakdown(amount, bigBlind) {
   // The smallest chip in play, and the favored one.
   const first = Math.max(0, CHIPS.findLastIndex(c => c.value <= bb));
   const fav = Math.max(first, CHIPS.findIndex(c => c.value >= bb));
-  // What the favored chip can't pay, in the smaller chips in play.
+  // What the favored chip can't pay, in smaller chips: whites for odd
+  // dollars, at 2/5 as well (its $2 blind is whites), so $1,003 there is 40
+  // reds, 32 greens and 3 whites, not a mixed stack of blacks.
   const odd = whole % CHIPS[fav].value;
-  const small = fav > first ? pay(odd, fav - 1).chips : [];
+  const small = fav > 0 ? pay(odd, fav - 1).chips : [];
   const main = whole - small.reduce((t, c) => t + c.value * c.count, 0);
   // The small chips' stacks count too. Bigger chips come in one at a time:
   // reds alone, then with greens, then blacks too, and so on.
