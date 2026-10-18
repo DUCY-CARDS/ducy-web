@@ -147,9 +147,11 @@ export const ROOMS = [
 ];
 
 // Game minutes to get from one room to another: across town, to another
-// city in the region, or to another region. The clock runs four times real
-// time, so these take 1½, 3 and 6 real minutes, and can't be skipped.
-export const TRAVEL = {town: 6, region: 12, far: 24};
+// city in the region (2 hours), or to another region (6 hours). The clock
+// runs four times real time, so that's 1½, 30 and 90 real minutes. A trip
+// can't be skipped, but it runs on the game clock: you can play elsewhere,
+// study or close the page, and you're there when the clock says so.
+export const TRAVEL = {town: 6, region: 120, far: 360};
 
 const cityById = id => REGIONS.flatMap(r => r.cities.map(c => ({...c, region: r}))).find(c => c.id === id) || null;
 /** A room's city: {id, name, small, region}. */

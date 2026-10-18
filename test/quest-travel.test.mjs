@@ -6,7 +6,7 @@ import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, lis
 import { REGIONS, ROOMS, STAKES, TRAVEL, cityOf, regionOf, roomById, startRoom, travelMinutes } from '../src/quest-rooms.js';
 import { listKey, listsNow, seatGap, waitingAt } from '../src/quest-waitlist.js';
 import { question } from '../src/quest-study.js';
-import { questLobbyHtml } from '../src/quest-ui.js';
+import { clock, questLobbyHtml } from '../src/quest-ui.js';
 
 const T0 = Date.UTC(2026, 9, 17);
 const later = gm => T0 + (gm / 4) * 60000; // real time after `gm` game minutes
@@ -29,8 +29,13 @@ test('trips: across town, to another city, to another region, in real time', () 
   assert.equal(travelMinutes(roomById('mesquite'), roomById('deuce')), TRAVEL.region);
   assert.equal(travelMinutes(roomById('mesquite'), roomById('harbor')), TRAVEL.far);
   assert.equal(travelMinutes(roomById('deuce'), roomById('deuce')), 0);
-  // Across town is 1½ real minutes: no skipping it.
+  // Across town is 1½ real minutes; another city costs 2 game hours, another
+  // region 6 (30 and 90 real minutes).
   assert.equal((TRAVEL.town / 4) * 60, 90);
+  assert.equal(TRAVEL.region, 120);
+  assert.equal(TRAVEL.far, 360);
+  assert.equal(clock(90 * 60000), '1:30:00');
+  assert.equal(clock(65000), '1:05');
   let q = startIn(newQuest(T0, 1), 'tx', 'mesquite');
   assert.equal(q.room, 'mesquite');
   assert.equal(q.home, 'tx');
@@ -43,6 +48,8 @@ test('trips: across town, to another city, to another region, in real time', () 
   assert.match(html, /data-qcount="\d+"/);
   assert.match(html, /data-qans="0"/);
   assert.doesNotMatch(html, /data-qlist|data-qgo/);
+  // A long trip says it runs without you.
+  assert.match(html, /goes on without you watching/);
   // A new run after a trip starts where it was going.
   assert.equal(newRun(q, later(4)).room, 'deuce');
 });

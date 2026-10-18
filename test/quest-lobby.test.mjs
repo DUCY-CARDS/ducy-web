@@ -74,7 +74,7 @@ test('a trip takes real time: you are on the road until it ends; a run that ends
   assert.equal(gameMinutes(t, T0), gameMinutes(q, T0));
   assert.equal(t.room, 'deuce');
   assert.equal(arrive(t, T0 + 60000).room, 'deuce', 'a minute in, still on the road');
-  // At four times real time, 24 game minutes is 6 real minutes.
+  // At four times real time, 6 game hours is 90 real minutes.
   const there = arrive(t, T0 + (mins / 4) * 60000);
   assert.equal(there.room, 'harbor');
   assert.equal(there.trip, null);

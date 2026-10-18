@@ -151,10 +151,11 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
 const gameLabel = g => `${g.stakes} ${GAMES[g.game]?.name || GAMES.nlhe.name}`;
 // Real time (ms) when the clock reaches game minute `at`.
 const realAt = (now, minutes, at) => Math.round(now + ((at - minutes) * 60000) / QUEST_SPEED);
-/** A real-time countdown, "1:05". */
+/** A real-time countdown, "1:05", or "1:29:40" from an hour up. */
 export const clock = ms => {
   const s = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const mmss = `${String(Math.floor(s / 60) % 60).padStart(s >= 3600 ? 2 : 1, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mmss}` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const ordinal = n => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
@@ -188,7 +189,10 @@ function travelHtml(q, now, minutes, study) {
   let h = `<section class="qw-trip" aria-live="polite"><span class="qt-label">${esc(how)}</span><h2>${esc(to.name)}</h2>`;
   h += `<p class="qt-meta">${esc(city ? `${city.name}, ${city.region.name}` : '')}</p>`;
   h += `<div class="qw-road" aria-hidden="true"><span class="qw-car${far ? ' qw-plane' : ''}" data-qmove="${start},${end}" style="left:${(100 * Math.min(1, Math.max(0, (now - start) / Math.max(1, end - start)))).toFixed(1)}%"></span></div>`;
-  h += `<p class="qw-left">Arriving in <b data-qcount="${end}">${esc(clock(end - now))}</b></p></section>`;
+  h += `<p class="qw-left">Arriving in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(t.end))}</p>`;
+  // A long trip runs on the game clock, not this page.
+  if (t.end - t.start > 30) h += '<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page, and you’ll be there when the clock gets there.</p>';
+  h += '</section>';
   return h + studyHtml(q, study, 'on the way');
 }
 
