@@ -20,6 +20,7 @@ import { lineupFor, stacksAt } from './quest-lineup.js';
 import { FAMILY_NAMES, personOf } from './quest-people.js';
 import { TAG_NAMES, accuracyText, tagOf } from './quest-reads.js';
 import { bankrollChart, bankrollSeries, biggestPots, byStakes, durationText, hallOfRecords, withRegulars } from './quest-stats.js';
+import { halfOf, openOffers, stakingTotals, unread } from './quest-scenarios.js';
 import { chipInput, chipText } from './chip-format.js';
 import { avatarUrl, botAvatar } from './avatars.js';
 
@@ -111,6 +112,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   h += `<span class="qt-meta">Best ${money(q.best)} · ${q.history.length} session${q.history.length === 1 ? '' : 's'}</span></div>`;
   h += '</section>';
   if (note) h += `<p class="pl-desc">${esc(note)}</p>`;
+  h += inboxHtml(q, minutes);
   if (review?.length) h += reviewHtml(review);
   if (st === 'won') {
     h += `<section class="qt-end"><h2>A million.</h2><p>You turned ${money(START_BANKROLL)} into ${money(q.bankroll)} in ${q.history.length} sessions and ${(q.hands || 0).toLocaleString('en-US')} hands, over ${esc(durationText(runMinutes))} of game time.</p>`;
@@ -311,6 +313,35 @@ function studyHtml(q, study, when) {
   return h + '</section>';
 }
 
+// The inbox (#355, quest-scenarios.js): offers waiting for an answer first,
+// then the newest news, unread ones marked. play.js handles data-qsc
+// ("<message id>:<answer>") and marks them read once shown.
+const INBOX_SHOWN = 5;
+function inboxHtml(q, minutes) {
+  const all = q.inbox || [];
+  if (!all.length) return '';
+  const offers = openOffers(q, minutes);
+  // An answered offer is replaced by its news ("You staked…"), so it isn't shown again.
+  const news = all.filter(m => !offers.includes(m) && !m.offer?.answered).slice(0, Math.max(0, INBOX_SHOWN - offers.length));
+  const fresh = unread(q);
+  let h = `<section class="qs-inbox" aria-live="polite"><h2>Inbox${fresh ? ` <span class="qs-new">${fresh} new</span>` : ''}</h2><ul>`;
+  for (const m of offers) {
+    h += `<li class="qs-offer"><p>${esc(m.text)}</p><div class="qt-open-acts">`;
+    if (m.offer.kind === 'stake') {
+      const affordable = q.bankroll >= m.offer.amount;
+      h += `<button class="tr-start" data-qsc="${m.id}:accept"${affordable ? '' : ' disabled'}>Stake them ${money(m.offer.amount)}</button>`;
+      h += `<button class="cc-btn" data-qsc="${m.id}:more">Ask for ${Math.round(Math.min(0.8, m.offer.share + 0.15) * 100)}% of the profit</button>`;
+      h += `<button class="cc-btn" data-qsc="${m.id}:less">Offer ${money(halfOf(m.offer.amount))} instead</button>`;
+      h += `<button class="cc-btn" data-qsc="${m.id}:decline">No thanks</button>`;
+    } else {
+      h += `<button class="tr-start" data-qsc="${m.id}:confront">Ask about the money</button><button class="cc-btn" data-qsc="${m.id}:letgo">Let it go</button>`;
+    }
+    h += `</div><span class="qt-meta">${esc(clockText(m.at))} · answer by ${esc(clockText(m.offer.expires))}</span></li>`;
+  }
+  for (const m of news) h += `<li class="${m.read ? '' : 'qs-unread'}"><p>${esc(m.text)}</p><span class="qt-meta">${esc(clockText(m.at))}</span></li>`;
+  return h + '</ul></section>';
+}
+
 // The hall of records: wins (fastest first), then the best peaks.
 function runsHtml(q) {
   if (!q.runs?.length) return '';
@@ -329,7 +360,7 @@ const signed = n => `${n >= 0 ? '+' : '−'}${money(Math.abs(n))}`;
 // results with the named Regulars, and how well you read players.
 function statsHtml(q, names) {
   const hist = q.history || [];
-  if (!hist.length && !q.readStats) return '';
+  if (!hist.length && !q.readStats && !q.stakes?.length) return '';
   let h = '<section class="qt-stats"><h2>Your run</h2>';
   const chart = bankrollChart(bankrollSeries(hist), 560, 160, money);
   if (chart) h += `<div class="qs-box">${chart}</div>`;
@@ -347,6 +378,13 @@ function statsHtml(q, names) {
   const regs = withRegulars(hist).slice(0, 6);
   if (regs.length) h += `<p class="qt-meta">With the Regulars: ${regs.map(r => `${esc(names(r.id))} ${signed(r.net)} (${r.sessions})`).join(' · ')}</p>`;
   if (q.readStats) h += `<p class="qt-meta">Your reads: first reads right ${esc(accuracyText(q.readStats.first))} · later reads ${esc(accuracyText(q.readStats.later))}</p>`;
+  const st = stakingTotals(q);
+  if (st.count || st.outstanding) {
+    const parts = [];
+    if (st.count) parts.push(`${plural(st.count, 'stake')} settled: ${money(st.staked)} put up, ${money(st.returned)} back (${signed(st.net)}, ${st.roi >= 0 ? '+' : '−'}${Math.abs(Math.round(st.roi * 100))}%)`);
+    if (st.outstanding) parts.push(`${money(st.outstanding)} still out`);
+    h += `<p class="qt-meta">Staking: ${esc(parts.join(' · '))}</p>`;
+  }
   return h + '</section>';
 }
 

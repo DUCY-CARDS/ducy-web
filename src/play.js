@@ -51,6 +51,7 @@ import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.j
 import { clock as questCountdown, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
+import { SCENARIOS, answerStake, confront as questConfront, markRead as questMarkRead, maybeAskStake, owedBy, post as questPost, resolveStakes } from './quest-scenarios.js';
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
@@ -1119,9 +1120,9 @@ function questNow() {
   if (quest.seat) { /* questHand keeps it */ }
   else if (now - quest.clock.real > QUEST_AWAY_MS) quest = questResume(quest, now);
   else if (now - quest.clock.real > 30_000) quest = syncClock(quest, now);
-  // A trip that's over, a night that's over, and seats you were called to
-  // and didn't take.
-  const q = questDropMissed(questWake(questArrive(quest)));
+  // A trip that's over, a night that's over, seats you were called to and
+  // didn't take, and stakes whose week is up (quest-scenarios.js).
+  const q = resolveStakes(questDropMissed(questWake(questArrive(quest))), gameMinutes(quest));
   if (q !== quest) {
     if (q.room !== quest.room) questStudy = null;
     quest = q;
@@ -1137,10 +1138,14 @@ function questLobbyPage() {
   questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
   // Countdowns (a trip, your place on a list) tick once the page is drawn.
   setTimeout(questTick, 0);
-  return questLobbyHtml(q, Date.now(), {
+  const html = questLobbyHtml(q, Date.now(), {
     names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount,
     generic: genericPlayers, review: questReview, study: questStudy,
   });
+  // The inbox's news has been shown: it's read now (offers stay until answered).
+  const read = questMarkRead(q);
+  if (read !== q) { quest = read; saveQuest(quest); }
+  return html;
 }
 
 // Sits down at quest table `id` with `chips` from the bankroll (what you
@@ -1220,8 +1225,20 @@ function questStandUp() {
   if (state) quest = questSetStack(quest, num(state.seats[0].stack));
   const before = quest.seat;
   quest = questLeave(quest);
-  const reviewed = reviewReads(quest, questPeopleThisSession());
+  const people = questPeopleThisSession();
+  const reviewed = reviewReads(quest, people);
   quest = forgetTourists(reviewed.q);
+  // Scenarios on the way out (#355): someone you played with may ask you to
+  // stake them, and anyone who stiffed you, sat with you again, can be asked about it.
+  if (before) {
+    const minutes = gameMinutes(quest);
+    quest = maybeAskStake(quest, people, before.stakes, minutes, id => isReg(quest.seed, ROOMS.map(r => r.id), id), quest.history.length);
+    for (const p of people) {
+      if (!owedBy(quest, p.id)) continue;
+      const name = personOf(p.id)?.name || 'Someone';
+      quest = questPost(quest, {kind: 'confront', at: minutes, text: `${name}, who never paid you back for the stake, was at your table tonight.`, offer: {kind: 'confront', id: p.id, expires: minutes + SCENARIOS.stake.offerHours * 60}});
+    }
+  }
   // After changing tables, the review covers both.
   questReview = [...(questReview || []), ...reviewed.rows];
   saveQuest(quest);
@@ -1416,6 +1433,22 @@ function questTick() {
     }
     if (done) { clearInterval(questTicker); questTicker = null; render(); }
   }, 1000);
+}
+
+// An answer to an offer in the inbox (quest-scenarios.js): a stake to take,
+// decline or counter, or someone to confront about one.
+function questScenario(msgId, answer) {
+  const q = questNow();
+  const minutes = gameMinutes(q);
+  const msg = (q.inbox || []).find(m => m.id === msgId);
+  if (!msg?.offer || msg.offer.answered) return;
+  if (msg.offer.kind === 'stake') quest = answerStake(q, msgId, answer, minutes);
+  else {
+    const done = {...q, inbox: q.inbox.map(m => (m.id === msgId ? {...m, read: true, offer: {...m.offer, answered: answer}} : m))};
+    quest = answer === 'confront' ? questConfront(done, msg.offer.id, minutes) : done;
+  }
+  saveQuest(quest);
+  render();
 }
 
 function questNewRun(result) {
@@ -3592,9 +3625,10 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome],[data-qsc]');
   if (q && !q.disabled) {
-    if (q.dataset.qstart) questStart(q.dataset.qstart);
+    if (q.dataset.qsc) { const [msg, answer] = q.dataset.qsc.split(':'); questScenario(msg, answer); }
+    else if (q.dataset.qstart) questStart(q.dataset.qstart);
     else if (q.dataset.qsleep) questSleep(q.dataset.qsleep);
     else if (q.dataset.qgohome) questGoHome();
     else if (q.dataset.qmovehome) questMoveHome();
