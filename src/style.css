@@ -2083,6 +2083,13 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .qw-trip { margin-top: 14px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 3px 0 #0f2219; }
 .qw-trip h2 { font-family: var(--font-display); font-weight: 400; font-size: 28px; margin: 0; }
 .qw-trip .qt-meta { color: #5a6b5f; margin: 0; }
+/* Rest and home (#351): a quiet card, amber when played out. */
+.qw-rest { margin-top: 14px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.qw-rest h3 { margin: 0; font-size: 15px; color: var(--fg-strong); }
+.qw-rest .qt-meta { margin: 0; }
+.qw-rest .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; align-self: flex-start; }
+.qw-rest-tired { border-color: var(--amber); }
+.qw-rest-tired h3, .qw-tired { color: var(--amber); }
 .qw-road { position: relative; height: 34px; margin: 10px 14px 4px; border-bottom: 3px dashed rgba(29,58,44,0.35); }
 .qw-car { position: absolute; bottom: 2px; width: 28px; height: 14px; margin-left: -14px; border-radius: 6px 9px 3px 3px; background: #c9472f; transition: left 1s linear; }
 .qw-car::before, .qw-car::after { content: ''; position: absolute; bottom: -5px; width: 8px; height: 8px; border-radius: 50%; background: #1d3a2c; }

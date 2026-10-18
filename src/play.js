@@ -38,12 +38,17 @@ import {
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
   topUpChoices as questTopUpChoicesFor, travel as questTravel, arrive as questArrive, startIn as questStartIn,
   joinList as questJoinList, leaveList as questLeaveList, dropMissed as questDropMissed, recordStudy as questRecordStudy,
+  sleep as questSleepNow, wake as questWake, moveHome as questMoveHomeTo, exhausted as questExhausted, tableMinutes as questTableMinutes,
+  MAX_TABLE_MINUTES as QUEST_MAX_TABLE, TIRED_MINUTES as QUEST_TIRED,
 } from './quest.js';
-import { ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes } from './quest-rooms.js';
+import {
+  ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes,
+  tripCost as questTripCost, hotelCost as questHotelCost, moveCost as questMoveCost, homeCityOf as questHomeCityOf,
+} from './quest-rooms.js';
 import { listsNow as questListsNow } from './quest-waitlist.js';
 import { question as questQuestion } from './quest-study.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { clock as questCountdown, currentRoom, faceOf, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { clock as questCountdown, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import {
@@ -1097,14 +1102,16 @@ let questOpen = null; // the table opened in the lobby, to choose a buy-in
 let questAmount = 0; // the buy-in typed there, kept as the lobby redraws
 let questTagFor = null; // the seat whose read menu is open
 let questMilestone = ''; // a milestone just reached, shown at the table
+let questTooTired = false; // twelve hours at the tables: stand up after this hand
 
 function questNow() {
   if (!quest) {
     quest = loadQuest() || newQuest();
     saveQuest(quest);
   }
-  // A trip that's over, and seats you were called to and didn't take.
-  const q = questDropMissed(questArrive(quest));
+  // A trip that's over, a night that's over, and seats you were called to
+  // and didn't take.
+  const q = questDropMissed(questWake(questArrive(quest)));
   if (q !== quest) {
     if (q.room !== quest.room) questStudy = null;
     quest = q;
@@ -1144,7 +1151,7 @@ async function sitQuest(id, chips, moving = false) {
   // The named Regulars at the table, for your results against them.
   const named = bots.filter(b => !isGeneric(b));
   const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game, with: named}, chips, room);
-  if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
+  if (!seatedQ) { questNote = questExhausted(q) ? 'You’re too tired to play. Get some sleep first.' : 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
   const buyInOf = who => buyInFor(q.seed, id, who, blinds, room, minutes);
   quest = seatedQ;
   saveQuest(quest);
@@ -1169,7 +1176,12 @@ async function sitQuest(id, chips, moving = false) {
     regulars.leaveChance = LEAVE_CHANCE * (1 + 1.5 * wildness(minutes));
   }
   const label = game.game === 'plo4' ? `${game.stakes} PLO` : game.stakes;
-  bannerHook = () => (quest?.seat ? `${room.name} · ${label} · ${questClock(gameMinutes(quest))} · Bankroll ${chipText(quest.bankroll)}` : '');
+  bannerHook = () => {
+    if (!quest?.seat) return '';
+    const played = questTableMinutes(quest);
+    const tired = played >= QUEST_TIRED ? ` · ${questHours(played)} at the tables, ${questHours(Math.max(0, QUEST_MAX_TABLE - played))} left before you have to sleep` : '';
+    return `${room.name} · ${label} · ${questClock(gameMinutes(quest))} · Bankroll ${chipText(quest.bankroll)}${tired}`;
+  };
 }
 
 // After each hand at a quest table: the stack and the hand, saved, and any
@@ -1181,6 +1193,8 @@ function questHand() {
   quest = m.q;
   if (m.reached.length) questMilestone = m.reached.at(-1).text;
   saveQuest(quest);
+  // Twelve hours at the tables (#351): this hand was the last.
+  if (questExhausted(quest)) questTooTired = true;
 }
 
 // The generic players you sat with this session: [{id, hands, rates}].
@@ -1280,10 +1294,51 @@ function questReadsHtml() {
 // with study on the way), and you can't skip it.
 function questGo(roomId) {
   const q = questNow();
-  quest = questTravel(q, roomId, questTravelMinutes(currentRoom(q), questRoomById(roomId)));
+  const from = currentRoom(q), to = questRoomById(roomId);
+  const fare = questTripCost(from, to);
+  const next = questTravel(q, roomId, questTravelMinutes(from, to), Date.now(), fare);
+  questNote = next === q && q.bankroll < fare ? `The trip costs $${chipText(fare)}, more than your bankroll.` : '';
+  quest = next;
+  saveQuest(quest);
+  questOpen = null;
+  render();
+}
+
+// Sleep where you are (#351): at home for free, or in a hotel away from it.
+function questSleep(where) {
+  const q = questNow();
+  const room = currentRoom(q);
+  quest = questSleepNow(q, where, where === 'hotel' ? questHotelCost(room) : 0);
   saveQuest(quest);
   questNote = '';
   questOpen = null;
+  render();
+}
+
+// Go home to sleep: the trip (and its fare), then bed on arrival.
+function questGoHome() {
+  const q = questNow();
+  const from = currentRoom(q);
+  const home = ROOMS.find(r => r.city === questHomeCityOf(q));
+  if (!home || !from) return;
+  quest = questTravel(q, home.id, questTravelMinutes(from, home), Date.now(), questTripCost(from, home), 'sleep');
+  saveQuest(quest);
+  questNote = '';
+  questOpen = null;
+  render();
+}
+
+// Makes the city you're in home, for the cost of moving.
+function questMoveHome() {
+  const q = questNow();
+  const room = currentRoom(q);
+  const city = room?.city;
+  const cost = questMoveCost(questHomeCityOf(q), room);
+  const next = questMoveHomeTo({...q, homeCity: questHomeCityOf(q)}, city, cost);
+  if (next.homeCity !== city) return;
+  quest = next;
+  saveQuest(quest);
+  questNote = `You moved. ${room.name} is your local room now.`;
   render();
 }
 
@@ -1291,7 +1346,7 @@ function questGo(roomId) {
 function questStart(regionId) {
   const room = questStartRoom(regionId);
   if (!room) return;
-  quest = questStartIn(questNow(), regionId, room.id);
+  quest = questStartIn(questNow(), regionId, room.id, room.city);
   saveQuest(quest);
   render();
 }
@@ -1390,6 +1445,16 @@ function regularsCheck() {
   if (!hn || hn === regulars.done) return;
   regulars.done = hn;
   questHand();
+  if (questTooTired) {
+    // Played out: stand up after this hand, back to the lobby to rest.
+    questTooTired = false;
+    setTimeout(() => {
+      leaveTable();
+      questNote = `You’ve been at the tables ${QUEST_MAX_TABLE / 60} hours. Get some sleep before you play again.`;
+      render();
+    }, 1500);
+    return;
+  }
   regulars.pending = regularsBetween().catch(e => console.warn(e));
 }
 
@@ -3507,9 +3572,12 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome]');
   if (q && !q.disabled) {
     if (q.dataset.qstart) questStart(q.dataset.qstart);
+    else if (q.dataset.qsleep) questSleep(q.dataset.qsleep);
+    else if (q.dataset.qgohome) questGoHome();
+    else if (q.dataset.qmovehome) questMoveHome();
     else if (q.dataset.qlist) questList(q.dataset.qlist);
     else if (q.dataset.qunlist || q.dataset.qpass) questUnlist(q.dataset.qunlist || q.dataset.qpass);
     else if (q.dataset.qans) questAnswer(+q.dataset.qans);
