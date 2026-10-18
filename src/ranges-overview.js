@@ -23,8 +23,11 @@ export function gameSkills(progress, cards) {
 const spade = (cls, label) =>
   `<svg class="v3-spade ${cls}" viewBox="0 0 32 32" width="30" height="30" role="img" aria-label="${label}"><path d="${SPADE_PATH}"/></svg>`;
 
-/** The overview's html, with game `cards` open. */
-export function overviewHtml(progress, cards = 2) {
+/**
+ * The overview's html, with game `cards` open. `extra` is more of that game's
+ * track, after its top-% skills (Hold'em: Ducybot's ranges, chart-trainer.js).
+ */
+export function overviewHtml(progress, cards = 2, extra = '') {
   const games = OVERVIEW_GAMES.map(([n]) => gameSkills(progress, n));
   const open = games.find(g => g.cards === cards) || games[0];
   let h = '<div class="v3 v3-embed"><div class="v3-page">';
@@ -38,8 +41,8 @@ export function overviewHtml(progress, cards = 2) {
   }
   h += '</div>';
   // One track per game (range-selection design, #244): the top-% skills,
-  // the next to work on marked, and a big button to practise it. Opening
-  // ranges by position come later (#249).
+  // the next to work on marked, and a big button to practise it. Ranges by
+  // position (#249) follow in `extra`.
   const next = nextSkill(open);
   h += '<div class="v3-track">';
   h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">Your ranges</span></div>`;
@@ -57,8 +60,9 @@ export function overviewHtml(progress, cards = 2) {
     h += `<div class="v3-track-go"><span>Every ${esc(open.name)} range mastered. Tap one to keep practising.</span></div>`;
   }
   h += '</section>';
+  h += extra;
   // Every other option (#244): only behind Custom range.
-  h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Any game and cutoff, one kind of hand, the test’s length, Hold’em charts or your own ranges.</span></div>';
+  h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Any game and cutoff, one kind of hand, the test’s length, or your own ranges.</span></div>';
   return h + '</div></div></div>';
 }
 

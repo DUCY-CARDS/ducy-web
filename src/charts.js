@@ -23,7 +23,7 @@ import { avatarUrl, botAvatar } from './avatars.js';
 const RANKS = 'AKQJT98765432';
 const ACTION_NAMES = ['Fold', 'Call', 'Raise', 'All-in'];
 const POSITION_ORDER = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
-const KINDS = [
+export const KINDS = [
   {kind: 'open', label: 'Open', text: s => (s.id.startsWith('hu-') ? `${s.hero}, first to act` : `${s.hero}, everyone before folded`)},
   {kind: 'vs-open', label: 'Facing an open', text: s => `${s.hero} facing a ${s.villain} open`},
   {kind: 'vs-3bet', label: 'Facing a 3-bet', text: s => `${s.hero} opened, ${s.villain} 3-bet`},
@@ -32,7 +32,7 @@ const KINDS = [
   {kind: 'vs-iso', label: 'Limped, then raised', text: s => `${s.hero} limped, ${s.villain} raised`},
 ];
 // What "call" and "raise" mean at each kind of spot.
-const VERBS = {
+export const VERBS = {
   open: ['Fold', 'Limp', 'Raise', 'All-in'],
   'vs-open': ['Fold', 'Call', '3-bet', 'All-in'],
   'vs-3bet': ['Fold', 'Call', '4-bet', 'All-in'],

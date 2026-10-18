@@ -3,13 +3,14 @@
 // splits mistakes into hands wrongly included (played but not in the range)
 // and wrongly excluded (folded but in the range).
 
-import { RANGE_PRESETS, PRESET_GROUPS } from './presets.js';
+import { RANGE_PRESETS } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 import { MASTERY, gainFor, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
 import { overviewHtml } from './ranges-overview.js';
+import { chartTrackHtml, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -480,8 +481,11 @@ function loadProgress() {
     return {};
   }
   // Records from an older ranking start over, keeping only the session log.
+  // Ducybot's ranges (chart:…) carry their chart's fingerprint instead,
+  // checked when the chart loads (chart-trainer.js).
   let changed = false;
   for (const [key, rec] of Object.entries(all)) {
+    if (key.startsWith('chart:')) continue;
     if (rec && rec.model !== modelVersion(key)) {
       all[key] = newRecord(key, {sessions: rec.sessions, resetBy: 'model'});
       changed = true;
@@ -905,22 +909,18 @@ function lookupHtml(text, cut) {
 
 function renderSetup() {
   if (st.game === 'omaha') { renderOmahaSetup(); return; }
-  const t = targetFor(st.choice) || targetFor(st.choice = 'preset:open-btn');
   const saved = savedRanges();
+  // Ranges by position are Ducybot's now (chart-trainer.js, #249), practised
+  // on their own screen; this one tests your own ranges.
+  if (!st.choice.startsWith('saved:') || !targetFor(st.choice)) st.choice = saved.length ? `saved:${saved[0].i}` : '';
+  const t = st.choice ? targetFor(st.choice) : null;
   let h = '<div class="tr-wrap">';
   h += '<div class="tr-head"><button type="button" class="link-btn tr-back" data-act="overview">‹ All skills</button><h1>Pre-flop ranges</h1>';
-  h += `<p>Pick a range, then decide for each random hand whether it belongs. There’s no feedback along the way; after ${st.total} hands you’ll see your accuracy and which hands you wrongly played or wrongly folded.</p></div>`;
+  h += `<p>Practise Ducybot’s ranges spot by spot, or test one of your own: decide for each random hand whether it belongs, with no feedback until the end of ${st.total} hands.</p></div>`;
   h += gameTabs();
   h += '<div class="tr-setup">';
   h += '<div class="tr-choose">';
-  for (const g of PRESET_GROUPS) {
-    h += `<div class="tr-group">${esc(g.label)}</div><div class="tr-options">`;
-    for (const p of RANGE_PRESETS.filter(x => x.spot === g.spot)) {
-      const key = `preset:${p.id}`;
-      h += `<button class="tr-opt${st.choice === key ? ' on' : ''}" data-choice="${esc(key)}">${esc(p.name)}</button>`;
-    }
-    h += '</div>';
-  }
+  h += chartOptionsHtml();
   h += '<div class="tr-group">Your ranges</div><div class="tr-options">';
   for (const r of saved) {
     const key = `saved:${r.i}`;
@@ -932,6 +932,8 @@ function renderSetup() {
 
   if (st.edit) {
     h += editorHtml();
+  } else if (!t) {
+    h += '<div class="tr-preview"><p class="tr-note">Make a range with <b>+ New range</b> to test yourself on it, or pick one of Ducybot’s spots to practise.</p></div>';
   } else {
     const all = new Set([...t.value, ...t.bluff]);
     h += '<div class="tr-preview">';
@@ -1143,7 +1145,12 @@ function renderSummary() {
 
 function render() {
   if (!open) return;
-  if (st.screen === 'overview') root.innerHTML = overviewHtml(loadProgress(), st.ovCards);
+  if (st.screen === 'overview') {
+    const progress = loadProgress();
+    root.innerHTML = overviewHtml(progress, st.ovCards, st.ovCards === 2 ? chartTrackHtml(progress) : '');
+  }
+  else if (st.screen === 'chart-practice') { chartTick(); root.innerHTML = chartPracticeHtml(); }
+  else if (st.screen === 'chart-summary') root.innerHTML = chartSummaryHtml();
   else if (st.screen === 'practice') renderPractice();
   else if (st.screen === 'practice-summary') renderPracticeSummary();
   else if (st.screen === 'play') renderPlay();
@@ -1190,6 +1197,16 @@ function answer(yes) {
 function onClick(e) {
   // The skills list stays open (or closed) across re-renders.
   if (e.target.closest('.tr-skills > summary')) { st.skillsOpen = !st.skillsOpen; return; }
+  // Ducybot's ranges: the overview's track and its practice (chart-trainer.js).
+  const ce = e.target.closest('[data-cht-table],[data-cht-mode],[data-cht-bb],[data-cht-skill],[data-cht-answer],[data-cht-all],[data-cht-act]');
+  if (ce) {
+    const to = chartClick(ce);
+    if (to) {
+      if (typeof to === 'string') { st.screen = to; st.edit = null; }
+      render();
+      return;
+    }
+  }
   const el = e.target.closest('[data-skill],[data-drill],[data-drill-start],[data-choice],[data-total],[data-act],[data-answer],[data-cell],[data-tgame],[data-ocards],[data-opct],[data-ovgame],[data-ovchoice]');
   if (!el) return;
   if (el.dataset.act !== 'reset-progress') st.confirmReset = false;
@@ -1255,8 +1272,13 @@ function onClick(e) {
 }
 
 function onKey(e) {
-  if (!open || e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+  // Typing in a field isn't an answer; a mixed-strategy slider still lets Enter submit.
+  if (!open || e.target.closest('input:not([type=range]), textarea') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
   const k = e.key.toLowerCase();
+  if (st.screen === 'chart-practice') {
+    if (chartKey(k)) { e.preventDefault(); render(); }
+    return;
+  }
   if (st.screen === 'practice') {
     const pr = st.practice;
     if (pr.feedback && (k === ' ' || k === 'enter')) { e.preventDefault(); nextPractice(); }
@@ -1279,6 +1301,8 @@ function onChange(e) {
 }
 
 function onInput(e) {
+  // Mixed-strategy sliders update in place, so a drag isn't interrupted.
+  if (chartInput(e.target, root)) return;
   // Lookup updates in place so the field keeps focus.
   if (e.target.id === 'tr-lookup') {
     st.lookup = e.target.value;
@@ -1302,6 +1326,7 @@ export function openTrainer(el) {
     root.addEventListener('change', onChange);
     root.addEventListener('keydown', onEditorKey);
     document.addEventListener('keydown', onKey);
+    setChartRender(() => { if (open) render(); });
   }
   open = true;
   render();

@@ -2004,6 +2004,42 @@ body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .pfc-detail { font-size: 14px; color: var(--fg); }
 .pfc-detail b { color: var(--fg-strong); margin-right: 6px; font-family: var(--font-data); }
 
+/* Pre-flop ranges: Ducybot's ranges (#249, chart-trainer.js). Its track on
+   the overview, and practising a spot: action buttons (fixed hands) or
+   sliders (mixed strategies), and his mix shown as a bar in the charts' colours. */
+.ct-intro, .ct-note { font-size: 13px; color: #4f6155; margin: 0 0 10px; max-width: 62ch; line-height: 1.45; }
+.ct-note { margin: 10px 0 0; }
+.ct-opts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; }
+.ct-track .cc-btn:not(.on) { color: #1d3a2c; border-color: #bcae8a; }
+.ct-track .v3-skill span { white-space: normal; text-align: center; line-height: 1.2; }
+.ct-sub { color: var(--fg-muted); font-size: 14px; }
+.ct-actions .tr-btn { min-width: 0; flex: 1 1 140px; max-width: 220px; }
+.ct-play .tr-btn.ct-a3 { background: #7d1d14; border-color: #7d1d14; }
+.ct-play .tr-btn.ct-a1 { background: #2f8a55; border-color: #2f8a55; }
+.ct-feedback { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.ct-feedback p { margin: 0; }
+.ct-feedback.good { background: rgba(47,138,85,0.16); }
+.ct-feedback.good strong { color: #2f8a55; }
+.ct-mixrow { display: flex; align-items: center; gap: 10px; }
+.ct-mixlabel { font-size: 12px; font-weight: 600; color: var(--fg-muted); min-width: 64px; }
+.ct-mix { flex: 1; display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: var(--bg-inset); }
+.ct-mix .pfc-part { position: static; height: 100%; }
+.ct-words { font-size: 14px; color: var(--fg); }
+.ct-sliders { display: flex; flex-direction: column; gap: 10px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+.ct-slider { display: grid; grid-template-columns: 170px 1fr 3.5em; align-items: center; gap: 12px; }
+.ct-verb { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--fg-strong); }
+.ct-slider input[type=range] { width: 100%; accent-color: var(--teal); }
+.ct-share { font-family: var(--font-data); text-align: right; color: var(--fg-strong); }
+.ct-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.ct-grid { max-width: 520px; }
+.ct-grid .pfc-cell { cursor: default; }
+.ct-grid .pfc-cell.ct-missed::after { content: ''; position: absolute; inset: 0; border: 2px solid #f0c24a; border-radius: 3px; z-index: 2; }
+.pfc-swatch.ct-missed-key { background: transparent; box-shadow: inset 0 0 0 2px #f0c24a; }
+@media (max-width: 520px) {
+  .ct-slider { grid-template-columns: 1fr 3em; }
+  .ct-slider input[type=range] { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* The club manager (manage.html, manage.js): running a club, a page apart
    from the player app. Its badge in the top bar, and the clubs part shown on
    its own. On the player app, the cards that send you there. */
