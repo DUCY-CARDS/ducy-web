@@ -7,11 +7,13 @@
 // data-qstart (start in a region), data-qlist / data-qunlist (a waitlist),
 // data-qopen (take a seat you've been called to), data-qpass, data-qsit (sit
 // down with the amount you typed), data-qgo (travel), data-qans (a study
-// answer) and data-qnew (a new run). Countdowns carry data-qcount (the real
-// time they end, in ms) for play.js to tick.
+// answer), data-qnew (a new run), and life on the road (#351): data-qsleep
+// ('home' or 'hotel', sleep here), data-qgohome (go home to sleep) and
+// data-qmovehome (make this city home). Countdowns carry data-qcount (the
+// real time they end, in ms) for play.js to tick.
 
-import { CALL_MINUTES, GOAL, QUEST_SPEED, START_BANKROLL, buyInRange, canSit, clockText, gameMinutes, listStatus, status } from './quest.js';
-import { GAMES, REGIONS, ROOMS, cheapestBuyIn, cityOf, regionOf, roomById, travelMinutes } from './quest-rooms.js';
+import { CALL_MINUTES, GOAL, MAX_TABLE_MINUTES, QUEST_SPEED, SLEEP_MINUTES, START_BANKROLL, TIRED_MINUTES, buyInRange, canSit, clockText, exhausted, gameMinutes, listStatus, status, tableMinutes } from './quest.js';
+import { GAMES, REGIONS, ROOMS, cheapestBuyIn, cityNamed, cityOf, homeCityOf, hotelCost, moveCost, regionOf, roomById, travelMinutes, tripCost } from './quest-rooms.js';
 import { listsNow } from './quest-waitlist.js';
 import { question } from './quest-study.js';
 import { lineupFor, stacksAt } from './quest-lineup.js';
@@ -102,6 +104,9 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   h += '<section class="qt-head">';
   h += `<div class="qt-stat"><span class="qt-label">Bankroll</span><b class="qt-big">${money(q.bankroll)}</b></div>`;
   h += `<div class="qt-stat"><span class="qt-label">Clock</span><b>${esc(clockText(minutes))}</b></div>`;
+  const home = cityNamed(homeCityOf(q));
+  if (home) h += `<div class="qt-stat"><span class="qt-label">Home</span><b>${esc(home.name)}</b></div>`;
+  if (q.room || q.trip || q.rest) h += `<div class="qt-stat"><span class="qt-label">At the tables</span><b class="${exhausted(q, now) ? 'qw-tired' : ''}">${esc(hoursText(tableMinutes(q, now)))} of ${MAX_TABLE_MINUTES / 60}h</b></div>`;
   h += `<div class="qt-goal"><span class="qt-label">To ${money(GOAL)}</span><span class="qt-bar"><span style="width:${(100 * goalProgress(q.bankroll)).toFixed(1)}%"></span></span>`;
   h += `<span class="qt-meta">Best ${money(q.best)} · ${q.history.length} session${q.history.length === 1 ? '' : 's'}</span></div>`;
   h += '</section>';
@@ -121,6 +126,8 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   if (!q.room && !q.trip) return h + regionPickerHtml() + statsHtml(q, names) + runsHtml(q);
   // On the road: the trip takes real time, and you can study on the way.
   if (q.trip) return h + travelHtml(q, now, minutes, study) + statsHtml(q, names) + runsHtml(q);
+  // Asleep: the night runs on the game clock, like a trip.
+  if (q.rest) return h + sleepHtml(q, now, minutes, study) + statsHtml(q, names) + runsHtml(q);
   const rooms = listsNow(q.seed, minutes);
   const here = rooms.find(r => r.room.id === room.id);
   const mine = listStatus(q, now);
@@ -140,9 +147,11 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
     h += '</ul>';
   }
   h += '</section>';
+  h += restHtml(q, room, now);
+  h += '<p class="qt-meta qw-away">The clock stops while you’re away from the game, except to finish a trip or a night’s sleep.</p>';
   // Waiting for a seat: study while you wait.
   if (mine.some(l => !l.called)) h += studyHtml(q, study, 'while you wait');
-  h += otherRoomsHtml(rooms, room);
+  h += otherRoomsHtml(rooms, room, q);
   const opened = open && here?.games.find(g => g.ids.includes(open));
   if (opened) h += openTableHtml(q, room, opened, open, minutes, names, have, amount, generic);
   return h + statsHtml(q, names) + runsHtml(q);
@@ -191,7 +200,7 @@ function travelHtml(q, now, minutes, study) {
   h += `<div class="qw-road" aria-hidden="true"><span class="qw-car${far ? ' qw-plane' : ''}" data-qmove="${start},${end}" style="left:${(100 * Math.min(1, Math.max(0, (now - start) / Math.max(1, end - start)))).toFixed(1)}%"></span></div>`;
   h += `<p class="qw-left">Arriving in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(t.end))}</p>`;
   // A long trip runs on the game clock, not this page.
-  if (t.end - t.start > 30) h += '<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page, and you’ll be there when the clock gets there.</p>';
+  if (t.end - t.start > 30) h += `<p class="qt-note">The trip goes on without you watching: play the Regulars, study, or close the page. Come back at ${esc(realTime(t.then === 'sleep' ? realAt(now, minutes, t.end + SLEEP_MINUTES) : end))} and you’ll be ${t.then === 'sleep' ? 'home and rested' : 'there'}.</p>`;
   h += '</section>';
   return h + studyHtml(q, study, 'on the way');
 }
@@ -210,13 +219,63 @@ function gameRowHtml(q, room, game, mine, now, minutes) {
     const at = realAt(now, minutes, mine.callAt);
     h += `<p class="qw-you">You’re ${mine.ahead ? `${ordinal(mine.ahead + 1)} on the list` : 'next'} · called in <b data-qcount="${at}">${esc(clock(at - now))}</b></p>`;
     h += `<button class="cc-btn qt-open-btn" data-qunlist="${esc(game.key)}">Take my name off</button>`;
-  } else if (afford) h += `<button class="cc-btn qt-open-btn" data-qlist="${esc(game.key)}">Put my name down · ${esc(realWait((game.waiting.length + 1) * game.gap))}</button>`;
+  } else if (afford && exhausted(q, now)) h += '<p class="qt-note">Sleep before you put your name down again.</p>';
+  else if (afford) h += `<button class="cc-btn qt-open-btn" data-qlist="${esc(game.key)}">Put my name down · ${esc(realWait((game.waiting.length + 1) * game.gap))}</button>`;
   else h += `<p class="qt-note">Needs ${money(min)} to sit down.</p>`;
   return h + '</li>';
 }
 
-// The other rooms, by city: their games and lists, and how far.
-function otherRoomsHtml(rooms, room) {
+/** A real time of day, in the viewer's own clock: "10:42 PM". */
+export const realTime = ms => new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+
+/** Game minutes as hours and minutes: "3h 20m", "45m". */
+export const hoursText = m => {
+  const h = Math.floor(m / 60), mm = Math.floor(m % 60);
+  return h ? `${h}h${mm ? ` ${mm}m` : ''}` : `${mm}m`;
+};
+
+// Asleep: where, when you'll be up, and study meanwhile.
+function sleepHtml(q, now, minutes, study) {
+  const r = q.rest;
+  const end = realAt(now, minutes, r.end);
+  let h = `<section class="qw-trip" aria-live="polite"><span class="qt-label">${r.where === 'hotel' ? 'At the hotel' : 'At home'}</span><h2>Asleep</h2>`;
+  h += `<p class="qw-left">Up in <b data-qcount="${end}">${esc(clock(end - now))}</b> · ${esc(clockText(r.end))}</p>`;
+  h += `<p class="qt-note">The night goes on without you watching: play the Regulars, study, or close the page. Come back at ${esc(realTime(end))} and you’ll be rested.</p></section>`;
+  return h + studyHtml(q, study, 'before bed');
+}
+
+// Rest and home: tired after a long session, sleep here (home, or a hotel
+// away from it) or go home to sleep; away from home, make this city home.
+function restHtml(q, room, now) {
+  const played = tableMinutes(q, now);
+  const homeId = homeCityOf(q);
+  const atHome = cityOf(room)?.id === homeId;
+  const homeRoom = ROOMS.find(r => r.city === homeId);
+  const tired = exhausted(q, now);
+  const sleepy = played >= TIRED_MINUTES;
+  let h = `<section class="qw-rest${tired ? ' qw-rest-tired' : ''}"><h3>${tired ? 'You’re exhausted' : 'Rest'}</h3>`;
+  h += `<p class="qt-meta">${tired ? `After ${MAX_TABLE_MINUTES / 60} hours at the tables you need ${hoursText(SLEEP_MINUTES)} of sleep before you play again.` : sleepy ? `${hoursText(played)} at the tables: time to think about bed.` : `${hoursText(played)} at the tables since you last slept, of ${MAX_TABLE_MINUTES / 60}.`}</p>`;
+  h += '<div class="qt-open-acts">';
+  if (atHome) h += '<button class="cc-btn" data-qsleep="home">Sleep at home</button>';
+  else {
+    const night = hotelCost(room);
+    h += `<button class="cc-btn" data-qsleep="hotel"${q.bankroll < night ? ' disabled' : ''}>Get a hotel room · ${money(night)}</button>`;
+    if (homeRoom) {
+      const cost = tripCost(room, homeRoom);
+      h += `<button class="cc-btn" data-qgohome="1"${q.bankroll < cost ? ' disabled' : ''}>Go home to sleep · ${clock((travelMinutes(room, homeRoom) * 60000) / QUEST_SPEED)}${cost ? ` · ${money(cost)}` : ''}</button>`;
+    }
+  }
+  h += '</div>';
+  if (!atHome) {
+    const cost = moveCost(homeId, room);
+    h += `<p class="qt-meta">Living in ${esc(cityOf(room)?.name || '')} would put these games across town.</p>`;
+    h += `<button class="cc-btn" data-qmovehome="1"${q.bankroll < cost ? ' disabled' : ''}>Move here · ${money(cost)}</button>`;
+  }
+  return h + '</section>';
+}
+
+// The other rooms, by city: their games and lists, how far, and the fare.
+function otherRoomsHtml(rooms, room, q) {
   const here = regionOf(room);
   const order = [here, ...REGIONS.filter(r => r.id !== here?.id)].filter(Boolean);
   let h = '<section class="qt-rooms"><h2>Other rooms</h2>';
@@ -229,7 +288,8 @@ function otherRoomsHtml(rooms, room) {
       const games = r.games.map(g => `${g.stakes}${g.game !== 'nlhe' ? ` ${GAMES[g.game]?.short || g.game}` : ''} (${g.waiting.length ? `${g.waiting.length} waiting` : 'no list'})`).join(' · ') || 'Quiet right now';
       const mins = travelMinutes(room, r.room);
       h += `<li class="qt-other"><span class="qt-other-name"><b>${esc(r.room.name)}</b><span class="qt-meta">${esc(city?.name || '')} · ${esc(r.room.kind)}</span><span class="qt-meta">${esc(games)}</span></span>`;
-      h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}">Go there · ${clock((mins * 60000) / QUEST_SPEED)}</button></li>`;
+      const fare = tripCost(room, r.room);
+      h += `<button class="cc-btn" data-qgo="${esc(r.room.id)}"${q.bankroll < fare ? ' disabled' : ''}>Go there · ${clock((mins * 60000) / QUEST_SPEED)}${fare ? ` · ${money(fare)}` : ''}</button></li>`;
     }
     h += '</ul>';
   }

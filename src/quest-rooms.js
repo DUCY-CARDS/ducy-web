@@ -164,12 +164,38 @@ export const startRoom = regionId => {
   return ROOMS.find(r => r.city === town?.id) || null;
 };
 
-/** Game minutes from room `from` to room `to` (both rooms). */
-export function travelMinutes(from, to) {
-  if (!from || !to || from.id === to.id) return 0;
-  if (from.city === to.city) return TRAVEL.town;
-  return regionOf(from)?.id === regionOf(to)?.id ? TRAVEL.region : TRAVEL.far;
+/** How far room `to` is from room `from`: 'town', 'region', 'far', or null for the same room. */
+export function tripKind(from, to) {
+  if (!from || !to || from.id === to.id) return null;
+  if (from.city === to.city) return 'town';
+  return regionOf(from)?.id === regionOf(to)?.id ? 'region' : 'far';
 }
+
+/** Game minutes from room `from` to room `to` (both rooms). */
+export const travelMinutes = (from, to) => TRAVEL[tripKind(from, to)] ?? 0;
+
+// ---- What life on the road costs (#351), in hundredths ----
+// A trip: across town is free, another city is gas, another region airfare.
+export const TRIP_COST = {town: 0, region: 4000, far: 30000};
+// Moving home: to another city in the region, or to another region.
+export const MOVE_COST = {region: 50000, far: 200000};
+// A night in a hotel, by the size of the place.
+export const HOTEL = {small: 8000, city: 15000};
+
+/** What the trip from room `from` to room `to` costs. */
+export const tripCost = (from, to) => TRIP_COST[tripKind(from, to)] ?? 0;
+/** A hotel night where room `room` is. */
+export const hotelCost = room => (cityOf(room)?.small ? HOTEL.small : HOTEL.city);
+/** What moving home from city `fromCity` (an id) to room `room`'s city costs, or 0 if it's already home. */
+export function moveCost(fromCity, room) {
+  const to = cityOf(room);
+  if (!to || to.id === fromCity) return 0;
+  return cityById(fromCity)?.region.id === to.region.id ? MOVE_COST.region : MOVE_COST.far;
+}
+/** The city a quest calls home: where it moved to, else its region's small town. */
+export const homeCityOf = q => q.homeCity || startRoom(q.home)?.city || null;
+/** A city by id: {id, name, small, region}. */
+export const cityNamed = id => cityById(id);
 // Big games run in blocks of this many game hours once they start.
 const BLOCK_HOURS = 4;
 

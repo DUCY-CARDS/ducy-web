@@ -3,10 +3,10 @@
 // quest-rooms.js is the rooms and their schedules (#301). Amounts are in
 // hundredths, like the rest of the page (100 is $1).
 //
-// The clock runs QUEST_SPEED times real time, while the page is open and
-// while it's closed, so a game day is six real hours; a long absence counts
-// for at most AWAY_CAP_DAYS game days. Game time is minutes since the world
-// began, a Monday at midnight.
+// The clock runs QUEST_SPEED times real time while you're here, so a game
+// day is six real hours. Away from the game it stops, except to finish a trip
+// or a night's sleep (resume), and then for at most AWAY_CAP_DAYS game days.
+// Game time is minutes since the world began, a Monday at midnight.
 
 export const QUEST_KEY = 'ducyQuest';
 export const START_BANKROLL = 100000; // $1,000
@@ -26,20 +26,54 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // milliseconds), and the seed its world is built from.
 export function newQuest(now = Date.now(), seed = (Math.random() * 2 ** 32) >>> 0) {
   // No room yet: a run starts by choosing where to put down roots (startIn).
-  return {v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, trip: null, lists: [], best: START_BANKROLL, history: [], runs: []};
+  return {
+    v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, trip: null, lists: [], best: START_BANKROLL, history: [], runs: [],
+    homeCity: null, tableMinutes: 0, rest: null,
+  };
 }
 
+// At a table the clock runs only while hands are being played: a minute
+// without one finishing and it stops, until the next hand picks it up
+// again from the same time (each hand moves the anchor, play.js questHand).
+export const TABLE_IDLE_MS = 60000;
+
 // Game minutes at real time `now`: the anchor plus QUEST_SPEED times the
-// real time since, capped at AWAY_CAP_DAYS game days.
+// real time since (at a table, at most TABLE_IDLE_MS of it), capped at
+// AWAY_CAP_DAYS game days.
 export function gameMinutes(q, now = Date.now()) {
-  const elapsed = Math.max(0, now - q.clock.real) / 60000 * QUEST_SPEED;
-  return q.clock.game + Math.min(elapsed, AWAY_CAP_DAYS * DAY);
+  let real = Math.max(0, now - q.clock.real);
+  if (q.seat) real = Math.min(real, TABLE_IDLE_MS);
+  return q.clock.game + Math.min((real / 60000) * QUEST_SPEED, AWAY_CAP_DAYS * DAY);
 }
 
 // Moves the anchor to `now`, so the cap counts from here: called on load
 // and while playing (a long session isn't an absence).
 export function syncClock(q, now = Date.now()) {
   return {...q, clock: {real: now, game: gameMinutes(q, now)}};
+}
+
+// ---- Away from the game ----
+// The page keeps the clock's anchor fresh while you're here (syncClock), so a
+// gap longer than AWAY_MS since it was last moved is time away. Time away
+// stops the clock, except to finish a trip or a night's sleep you left on:
+// you come back where you were going, or rested, and the world has moved on
+// only that far.
+export const AWAY_MS = 2 * 60000;
+
+/** The game minute time away may run the clock to: the end of a trip (and the sleep after it) or a night, else nowhere. */
+export function awayUntil(q) {
+  if (q.trip) return q.trip.end + (q.trip.then === 'sleep' ? SLEEP_MINUTES : 0);
+  if (q.rest) return q.rest.end;
+  return q.clock.game;
+}
+
+/** Back after time away (or a hidden tab): the clock moved on only as far as a trip or a night needs. */
+export function resume(q, now = Date.now()) {
+  const away = now - q.clock.real;
+  if (away <= AWAY_MS) return syncClock(q, now);
+  const ran = Math.min((away / 60000) * QUEST_SPEED, AWAY_CAP_DAYS * DAY);
+  const game = q.clock.game + Math.max(0, Math.min(ran, awayUntil(q) - q.clock.game));
+  return {...q, clock: {real: now, game}};
 }
 
 // Spends game time without real time passing.
@@ -73,15 +107,15 @@ export const canSit = (q, stakes, room) => q.bankroll >= buyInRange(stakes, room
 // says 'plo4') with `amount` chips from the bankroll, kept within the buy-in
 // range. Returns the new quest, or null if the bankroll can't cover the
 // minimum (or already seated).
-export function sitDown(q, table, amount, room) {
+export function sitDown(q, table, amount, room, now = Date.now()) {
   const {min, max} = buyInRange(table.stakes, room);
-  if (q.seat || q.bankroll < min) return null;
+  if (q.seat || q.bankroll < min || q.rest || q.trip || exhausted(q, now)) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
   const game = table.game || 'nlhe';
   // Sitting down takes your name off every list.
   return {
     ...q, bankroll: q.bankroll - chips, room: table.room, lists: [],
-    seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || []},
+    seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || [], since: gameMinutes(q, now)},
   };
 }
 
@@ -137,8 +171,49 @@ export function leave(q, now = Date.now()) {
   const session = {at: Math.floor(gameMinutes(q, now)), room, stakes, game, net: stack - bought, hands, bigWin, bigLoss, with: regulars, bankroll};
   return {
     ...q, bankroll, seat: null, best: Math.max(q.best, bankroll), hands: (q.hands || 0) + hands,
-    history: [...q.history, session].slice(-500),
+    history: [...q.history, session].slice(-500), tableMinutes: tableMinutes(q, now),
+    // The clock as it stood at the table (stopped if play had), from now on.
+    clock: {real: now, game: gameMinutes(q, now)},
   };
+}
+
+// ---- Rest (#351) ----
+// At most MAX_TABLE_MINUTES at the tables between sleeps (a warning from
+// TIRED_MINUTES); then you stand up and sleep, at home for free or in a
+// hotel, for SLEEP_MINUTES on the game clock, like a trip.
+export const MAX_TABLE_MINUTES = 12 * 60;
+export const TIRED_MINUTES = 10 * 60;
+export const SLEEP_MINUTES = 6 * 60;
+
+/** Game minutes at the tables since you last slept, the seat you're in included. */
+export function tableMinutes(q, now = Date.now()) {
+  const sat = q.seat?.since != null ? Math.max(0, gameMinutes(q, now) - q.seat.since) : 0;
+  return (q.tableMinutes || 0) + sat;
+}
+/** Played out: no more tables until you've slept. */
+export const exhausted = (q, now = Date.now()) => tableMinutes(q, now) >= MAX_TABLE_MINUTES;
+
+/**
+ * Goes to sleep where you are, `where` 'home' or 'hotel', paying `cost` (a
+ * hotel night). Not while seated, on the road or asleep, or if the bankroll
+ * can't pay. Your places on lists are given up.
+ */
+export function sleep(q, where, cost = 0, now = Date.now()) {
+  if (q.seat || q.trip || q.rest || q.bankroll < cost) return q;
+  const at = gameMinutes(q, now);
+  return {...q, bankroll: q.bankroll - cost, lists: [], rest: {start: at, end: at + SLEEP_MINUTES, where}};
+}
+
+/** Awake again, if the night's over: the hours at the tables start from zero. */
+export function wake(q, now = Date.now()) {
+  if (!q.rest || gameMinutes(q, now) < q.rest.end) return q;
+  return {...q, rest: null, tableMinutes: 0};
+}
+
+/** Makes city `cityId` home, for `cost` from the bankroll (where you are now). */
+export function moveHome(q, cityId, cost) {
+  if (q.seat || q.trip || q.rest || !cityId || cityId === q.homeCity || q.bankroll < cost) return q;
+  return {...q, bankroll: q.bankroll - cost, homeCity: cityId};
 }
 
 // Milestones on the way to GOAL, each announced once a run.
@@ -172,26 +247,31 @@ export function status(q, cheapest) {
 
 // Starts a run in region `regionId`'s small town (`roomId`, its room): where
 // you put down roots. Only before you're anywhere.
-export function startIn(q, regionId, roomId) {
+export function startIn(q, regionId, roomId, cityId = null) {
   if (q.room || q.trip) return q;
-  return {...q, home: regionId, room: roomId};
+  return {...q, home: regionId, room: roomId, homeCity: cityId};
 }
 
 // Sets off for room `roomId`, a trip of `minutes` game minutes. The trip takes
 // real time (the clock runs four times real time, so six game minutes is a
 // minute and a half): you're on the road until it's over, and you can't skip
-// it. Your places on waitlists are given up. Not while seated, already on
-// the road, or to the room you're in.
-export function travel(q, roomId, minutes, now = Date.now()) {
-  if (q.seat || q.trip || q.room === roomId) return q;
+// it. Your places on waitlists are given up. `cost` (gas or airfare, #351)
+// comes from the bankroll; `then` 'sleep' goes to bed on arrival (going
+// home to rest). Not while seated, asleep, already on the road, to the room
+// you're in, or if the bankroll can't pay.
+export function travel(q, roomId, minutes, now = Date.now(), cost = 0, then = null) {
+  if (q.seat || q.trip || q.rest || q.room === roomId || q.bankroll < cost) return q;
   const at = gameMinutes(q, now);
-  return {...q, trip: {from: q.room, to: roomId, start: at, end: at + minutes}, lists: []};
+  return {...q, bankroll: q.bankroll - cost, trip: {from: q.room, to: roomId, start: at, end: at + minutes, then}, lists: []};
 }
 
-// The trip over, if it is: you're in the room you were going to.
+// The trip over, if it is: you're in the room you were going to (asleep, if
+// you went home to rest, and maybe awake again if that was long ago).
 export function arrive(q, now = Date.now()) {
   if (!q.trip || gameMinutes(q, now) < q.trip.end) return q;
-  return {...q, room: q.trip.to, trip: null};
+  const there = {...q, room: q.trip.to, trip: null};
+  if (q.trip.then !== 'sleep') return there;
+  return wake({...there, rest: {start: q.trip.end, end: q.trip.end + SLEEP_MINUTES, where: 'home'}}, now);
 }
 
 // ---- Waitlists ----
@@ -204,7 +284,7 @@ export const CALL_MINUTES = 8;
 // game}, `ahead` the players waiting before you and `gap` the game minutes
 // between seats opening. Your name is called when they've all been seated.
 export function joinList(q, game, ahead, gap, now = Date.now()) {
-  if (q.seat || q.trip || !q.room || (q.lists || []).some(l => l.key === game.key)) return q;
+  if (q.seat || q.trip || q.rest || exhausted(q, now) || !q.room || (q.lists || []).some(l => l.key === game.key)) return q;
   const at = gameMinutes(q, now);
   const entry = {key: game.key, stakes: game.stakes, game: game.game || 'nlhe', room: q.room, joined: at, gap, callAt: at + (ahead + 1) * gap};
   return {...q, lists: [...(q.lists || []), entry]};
@@ -259,7 +339,7 @@ export function newRun(q, now = Date.now(), result = 'broke') {
   // You start again where you are; after a trip, where it was going.
   const room = q.trip ? q.trip.to : q.room;
   return {
-    ...fresh, clock, started: clock.game, room, home: q.home, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
+    ...fresh, clock, started: clock.game, room, home: q.home, homeCity: q.homeCity ?? null, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
     reads: q.reads || {}, readStats: q.readStats, people: q.people || {}, study: q.study,
   };
 }
@@ -274,8 +354,10 @@ export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
   } catch {}
   if (!q || q.v !== 1 || !Number.isFinite(q.bankroll) || !q.clock) return null;
   q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : [], runs: Array.isArray(q.runs) ? q.runs : []};
+  // Time away stops the clock, but for a trip or a night under way.
+  q = resume(q, now);
   if (q.seat) q = leave(q, now);
-  return arrive(syncClock(q, now), now);
+  return wake(arrive(q, now), now);
 }
 
 export function saveQuest(q, storage = globalThis.localStorage) {
