@@ -4,11 +4,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { START_BANKROLL, newQuest, newRun, sitDown, leave, travel, gameMinutes } from '../src/quest.js';
 import { ROOMS, STAKES, TRAVEL_MINUTES, lobby } from '../src/quest-rooms.js';
-import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, poolFor, replacementPool, stacksAt } from '../src/quest-lineup.js';
+import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, lineupStacks, poolFor, replacementPool, stacksAt } from '../src/quest-lineup.js';
 import { buyInAsk, currentRoom, goalProgress, questLobbyHtml } from '../src/quest-ui.js';
 import { betweenHands, startBank } from '../src/regulars.js';
 
 const T0 = Date.UTC(2026, 9, 17);
+
+test('a running game’s stacks are uneven: short buyers, deep winners', () => {
+  const stakes = STAKES['1/2'];
+  const room = ROOMS[0];
+  const range = {min: 40 * stakes[1], max: 200 * stakes[1]};
+  let over = 0, under = 0, all = 0;
+  const weak = [], strong = [];
+  for (let t = 0; t < 400; t++) {
+    const bots = lineupFor(3, `s${t}`, '1/2', 500);
+    const stacks = lineupStacks(3, `s${t}`, bots, stakes, room, 500);
+    assert.equal(stacks.length, bots.length);
+    assert.ok(new Set(stacks.map(s => s.stack)).size > 1, 'not all the same');
+    stacks.forEach(({stack, buyIn}, i) => {
+      assert.ok(stack > 0 && stack % 1 === 0, `stack ${stack}`);
+      assert.ok(buyIn >= range.min && buyIn <= range.max, `buy-in ${buyIn}`);
+      all++;
+      if (stack > range.max) over++;
+      if (stack < 100 * stakes[1]) under++;
+      (['rampart', 'bungleman', 'jonny_slow'].includes(bots[i]) ? weak : ['phil_bigmouth', 'tom_collins', 'brad_owned'].includes(bots[i]) ? strong : []).push(buyIn);
+    });
+  }
+  // Some winners sit over the maximum buy-in, plenty are under 100 BB.
+  assert.ok(over > all * 0.03 && over < all * 0.4, `${over} of ${all} over the maximum`);
+  assert.ok(under > all * 0.15, `${under} of ${all} under 100 BB`);
+  // Weaker Regulars buy in for less, on average.
+  const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+  assert.ok(mean(weak) < mean(strong), `weak ${mean(weak)} v strong ${mean(strong)}`);
+  // The same through the block.
+  const bots = lineupFor(3, 'k', '1/2', 10);
+  assert.deepEqual(lineupStacks(3, 'k', bots, stakes, room, 10).map(s => s.buyIn), lineupStacks(3, 'k', bots, stakes, room, 100).map(s => s.buyIn));
+});
 
 test('line-ups come from the stakes’ pool, whales only in big games', () => {
   for (const stakes of Object.keys(STAKES)) {

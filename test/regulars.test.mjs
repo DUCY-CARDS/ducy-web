@@ -34,6 +34,19 @@ test('below half a buy-in, a Regular tops up to a full buy-in from the bankroll'
   assert.deepEqual(r.bank, [0, 130, 100]);
 });
 
+test('with buy-ins by seat, each Regular tops up to their own', () => {
+  // A short buyer (40) at 25 stays: over half their buy-in. A deep one
+  // (400) at 150 tops up to 400; a newcomer takes the table's buy-in.
+  const r = betweenHands({stacks: [100, 25, 150, 0], bank: [0, 80, 800, 0], bots: ['a', 'b', 'c'], buyIn: 100,
+    buyIns: [0, 40, 400, 200], all: ALL, rng: seq(0), ...stay});
+  assert.deepEqual(r.sets, [{seat: 2, chips: 400}]);
+  assert.equal(r.swaps.length, 1);
+  assert.equal(r.swaps[0].chips, 100);
+  assert.deepEqual(r.buyIns, [0, 40, 400, 100]);
+  // Without them, nothing changes: no buyIns comes back.
+  assert.equal(betweenHands({stacks: [100, 60], bank: [0, 200], bots: ['a'], buyIn: 100, all: ALL, ...stay}).buyIns, undefined);
+});
+
 test('the last of a bankroll tops up only what is left', () => {
   const r = betweenHands({stacks: [100, 10], bank: [0, 40], bots: ['a'], buyIn: 100, all: ALL, ...stay});
   assert.deepEqual(r.sets, [{seat: 1, chips: 50}]);
