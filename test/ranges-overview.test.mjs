@@ -49,12 +49,9 @@ test('with Ducybot\'s track, Hold\'em shows it instead of top %, and its tile co
   const holdem = {html: '<section class="ct-track">LESSONS</section>', mastered: 3, total: 11, score: 27};
   const h = overviewHtml(progress, 2, holdem);
   assert.match(h, /LESSONS/);
+  // Hold'em is the lesson path alone: no top-% skills, no game tiles (Omaha is in its Settings).
   assert.doesNotMatch(h, /data-skill="2:/);
-  assert.match(h, /Hold’em<\/b><span>3 of 11 skills/);
-  assert.match(h, /--pct:27%/);
-  // Top % is still there, behind Custom range.
-  assert.equal((h.match(/data-act="custom"/g) || []).length, 1);
-  assert.match(h, /Top-% ranges/);
+  assert.doesNotMatch(h, /data-ovgame=/);
   // Omaha keeps its top-% track, with Hold'em's tile still from his lessons.
   const o = overviewHtml(progress, 4, holdem);
   assert.equal((o.match(/data-skill="4:/g) || []).length, TOP_TARGETS.length + 1);
