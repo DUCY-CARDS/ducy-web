@@ -332,7 +332,9 @@ export const runRecord = (q, now = Date.now(), result = 'broke') => ({
 
 // A run that's over (broke, or won) starts again at $1,000 in the same
 // world, on the same clock, with the past runs kept (the newest 20). What
-// you know about the players (reads) carries over: it's the same world.
+// you know about the players (reads) carries over: it's the same world. So
+// do the scenarios (quest-scenarios.js): your inbox, and stakes still out
+// come back to the new run.
 export function newRun(q, now = Date.now(), result = 'broke') {
   const fresh = newQuest(now, q.seed);
   const clock = syncClock(q, now).clock;
@@ -341,6 +343,7 @@ export function newRun(q, now = Date.now(), result = 'broke') {
   return {
     ...fresh, clock, started: clock.game, room, home: q.home, homeCity: q.homeCity ?? null, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
     reads: q.reads || {}, readStats: q.readStats, people: q.people || {}, study: q.study,
+    inbox: q.inbox || [], inboxN: q.inboxN || 0, stakes: q.stakes || [], ledger: q.ledger || [],
   };
 }
 
