@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LINES, PERSONAS, SWEDISH_TILT_LINES, TILT_LINES, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
+import { LINES, PERSONAS, SWEDISH_TILT_LINES, TILT_LINES, callShape, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
 
 const MOMENTS = ['greet', 'wonFromYou', 'lostToYou', 'bigWin', 'bigLoss', 'stakes', 'gameWon', 'gameLost', 'idle', 'hello', 'luck', 'nice', 'thanks', 'laugh', 'gg', 'other'];
 
@@ -83,4 +83,33 @@ test('a hand gives the bot it concerned something to say', () => {
   assert.deepEqual(handMoments(seats([0, 8000, -8000]), 200), [{seat: 1, moment: 'bigWin'}]);
   // A small pot: nothing to say.
   assert.deepEqual(handMoments(seats([-200, 300, -100]), 200), []);
+});
+
+test('a bot never says "good call" about its own call', () => {
+  const seats = nets => nets.map(net => ({net}));
+  // You bet the river, seat 1 called and lost: the bot called.
+  const youBet = [{type: 'bet', seat: 1, to: 400}, {type: 'call', seat: 0}, {type: 'board'}, {type: 'bet', seat: 0, to: 2000}, {type: 'call', seat: 1}];
+  assert.equal(callShape(youBet, 1), 'theyCalled');
+  assert.deepEqual(handMoments(seats([4000, -4000, 0]), 200, youBet), [{seat: 1, moment: 'lostToYou', how: 'theyCalled'}]);
+  // Seat 1 bet, you called and won: you called.
+  const theyBet = [{type: 'bet', seat: 1, to: 2000}, {type: 'call', seat: 0}];
+  assert.equal(callShape(theyBet, 1), 'youCalled');
+  // Checked down, or no events: nothing about calls.
+  assert.equal(callShape([{type: 'check', seat: 0}, {type: 'check', seat: 1}], 1), null);
+  assert.equal(callShape(null, 1), null);
+  // No line about a call fits the wrong way round, for any persona.
+  for (const id of Object.keys(PERSONAS)) {
+    for (const moment of ['lostToYou', 'wonFromYou']) {
+      for (let i = 0; i < 40; i++) {
+        const line = lineFor(id, moment, () => i / 40, 'theyCalled');
+        assert.ok(!/good call|nice call|correct call|hero call\. I|you called|keep calling|you can fold|paid me off|paying me off|thanks for the call|learn to fold|for the call/i.test(line), `${id} ${moment}: ${line}`);
+        const plain = lineFor(id, moment, () => i / 40);
+        assert.ok(!/\bcall/i.test(plain), `${id} ${moment} without how: ${plain}`);
+      }
+    }
+  }
+  // When you called, the right lines can come up.
+  const seen = new Set();
+  for (let i = 0; i < 40; i++) seen.add(lineFor('jen_silly', 'lostToYou', () => i / 40, 'youCalled'));
+  assert.ok(seen.has('Good call.'));
 });

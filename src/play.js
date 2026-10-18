@@ -1560,7 +1560,7 @@ const headsUpTable = () => botSeats().length === 1;
 // A bot seat says something about `moment`, after `delay` ms: if the chat's
 // on, it has a line for it, and (unless `force`) it feels like talking and
 // hasn't just spoken.
-function botSpeak(seat, moment, {force = false, delay = 800} = {}) {
+function botSpeak(seat, moment, {force = false, delay = 800, how = null} = {}) {
   if (!botChatOn() || mode !== 'solo' || !state?.seats?.[seat]) return;
   const id = seatId(seat);
   const hand = num(state.hand_number);
@@ -1569,7 +1569,7 @@ function botSpeak(seat, moment, {force = false, delay = 800} = {}) {
     if (botSpoke[seat] != null && hand - botSpoke[seat] < gap) return;
     if (!speaks(id, moment, {headsUp: headsUpTable(), ladder: !!ladder})) return;
   }
-  const text = lineFor(id, moment);
+  const text = lineFor(id, moment, Math.random, how);
   if (!text) return;
   botSpoke[seat] = hand;
   const table = tableBots.join();
@@ -1596,8 +1596,10 @@ function botChatAfterHand() {
   botChatHand = hn;
   // A challenge game's last hand: the bot speaks to the game instead (ladderCheck).
   if (ladder && state.seats.some(s => !s.empty && !num(s.stack))) return;
-  const said = handMoments(state.seats, num(state.big_blind ?? setup.bb));
-  for (const {seat, moment} of said) botSpeak(seat, moment);
+  // The hand's events say who called whom, so a bot never says "good call"
+  // about its own call.
+  const said = handMoments(state.seats, num(state.big_blind ?? setup.bb), state.events);
+  for (const {seat, moment, how} of said) botSpeak(seat, moment, {how});
   if (!said.length && headsUpTable()) botSpeak(botSeats()[0], 'idle');
 }
 
