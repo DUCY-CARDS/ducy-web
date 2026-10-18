@@ -2005,3 +2005,39 @@ body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 body.mode-manage .mg-main { display: block; }
 body.mode-manage .mg-main .cl-wrap { max-width: 1100px; margin: 0 auto; }
 .cl-elsewhere { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+
+/* Bankroll quest's lobby (#303, quest-ui.js): cream cards on the felt. */
+body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
+.qt-head { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 16px 24px; align-items: end; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 16px 18px; box-shadow: 0 3px 0 #0f2219; }
+.qt-stat { display: flex; flex-direction: column; gap: 2px; }
+.qt-label { font-size: 12px; font-weight: 600; color: #5a6b5f; }
+.qt-big { font-family: var(--font-display); font-size: 30px; font-weight: 400; line-height: 1; }
+.qt-goal { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.qt-bar { display: block; height: 10px; border-radius: 999px; background: #d9cba6; overflow: hidden; }
+.qt-bar span { display: block; height: 100%; background: #c9472f; border-radius: 999px; min-width: 4px; }
+.qt-meta { font-size: 12px; color: var(--fg-muted); }
+.qt-head .qt-meta { color: #5a6b5f; }
+.qt-room h2, .qt-rooms h2, .qt-runs h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; color: var(--fg-strong); margin: 18px 0 2px; }
+.qt-tables { list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.qt-table { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.qt-table.qt-off { opacity: 0.55; }
+.qt-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qt-stakes { font-family: var(--font-display); font-size: 22px; color: var(--fg-strong); }
+.qt-faces { display: flex; margin-left: auto; }
+.qt-faces img { width: 26px; height: 26px; border-radius: 50%; background: var(--bg-inset); border: 2px solid var(--bg-raised); margin-left: -6px; }
+.qt-note { font-size: 13px; color: var(--fg); margin: 0; }
+.qt-buyins { display: flex; gap: 6px; flex-wrap: wrap; }
+.qt-buyins .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; }
+.qt-rooms ul, .qt-runs ul { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.qt-other { display: flex; align-items: center; gap: 10px; justify-content: space-between; background: var(--bg-inset); border-radius: 8px; padding: 10px 12px; }
+.qt-other-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qt-other-name b { color: var(--fg-strong); }
+.qt-other .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; flex-shrink: 0; }
+.qt-runs li { font-size: 13px; color: var(--fg); }
+.qt-end { background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 18px; margin-top: 14px; }
+.qt-end h2 { font-family: var(--font-display); font-weight: 400; font-size: 28px; margin: 0 0 6px; }
+@media (max-width: 600px) {
+  .qt-head { grid-template-columns: 1fr 1fr; }
+  .qt-goal { grid-column: 1 / -1; }
+  .qt-other { flex-direction: column; align-items: flex-start; }
+}

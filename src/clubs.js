@@ -1302,7 +1302,7 @@ function viewHtml() {
   }
   // Bots, Ladder and Start a game (Train and Play, #209) have nothing of the
   // clubs.
-  if (view === 'play' || view === 'ladder' || view === 'host') return '';
+  if (view === 'play' || view === 'ladder' || view === 'quest' || view === 'host') return '';
   if (view === 'join') {
     const h = requestsHtml();
     return h || msg ? msg + h : '';

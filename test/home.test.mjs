@@ -51,7 +51,7 @@ test('each hub links where it should', () => {
   // After the spade home and any way back: Study or Play.
   assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#equity', '#trainer', '#challenge', '#charts']);
   assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#codedoug', '#gto-plo4', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice', '#ladder']);
+  assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#host', '#clubs', '#practice', '#ladder', '#quest']);
   assert.equal(HUBS.length, 4);
 });
 
