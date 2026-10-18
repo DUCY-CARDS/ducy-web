@@ -61,7 +61,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   const minutes = gameMinutes(q, now);
   const st = status(q, cheapestBuyIn());
   const room = currentRoom(q);
-  let h = '<div class="pl-head"><h1>Bankroll quest</h1></div>';
+  let h = '<div class="pl-head"><h1>Bankroll challenge</h1></div>';
   h += '<section class="qt-head">';
   h += `<div class="qt-stat"><span class="qt-label">Bankroll</span><b class="qt-big">${money(q.bankroll)}</b></div>`;
   h += `<div class="qt-stat"><span class="qt-label">Clock</span><b>${esc(clockText(minutes))}</b></div>`;

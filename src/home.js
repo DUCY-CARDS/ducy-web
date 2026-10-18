@@ -26,7 +26,7 @@ const CRUMBS = {
   trainer: ['study', 'Pre-flop ranges'],
   charts: ['study', 'Pre-flop charts'],
   ladder: ['lobby', 'Heads-up challenge'],
-  quest: ['lobby', 'Bankroll quest'],
+  quest: ['lobby', 'Bankroll challenge'],
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
@@ -212,7 +212,7 @@ function lobbyPage(d) {
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
   // Bankroll quest (#299): $1,000 to $1,000,000 across the card rooms.
-  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
+  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll challenge</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
   return h + '</div>';
 }
 

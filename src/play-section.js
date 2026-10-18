@@ -25,7 +25,7 @@ import { crumbFor, sideOf, sideSwitch } from './home.js';
 
 export const TABS = ['play', 'ladder', 'quest', 'join', 'host', 'clubs'];
 // Each tab's window title (#195): "Private clubs · DUCY".
-const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll quest', join: 'Join a game', host: 'Start a game', clubs: 'Private clubs'};
+const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll challenge', join: 'Join a game', host: 'Start a game', clubs: 'Private clubs'};
 
 let tab = null; // the tab showing, or null when the section is closed
 let seenSeats = 0; // open seats the last time Clubs was looked at
