@@ -344,6 +344,8 @@ export function newRun(q, now = Date.now(), result = 'broke') {
     ...fresh, clock, started: clock.game, room, home: q.home, homeCity: q.homeCity ?? null, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
     reads: q.reads || {}, readStats: q.readStats, people: q.people || {}, study: q.study,
     inbox: q.inbox || [], inboxN: q.inboxN || 0, stakes: q.stakes || [], ledger: q.ledger || [],
+    // Getting staked (quest-backer.js): your name as a horse, and a backer still owed.
+    rep: q.rep, backing: q.backing ?? null, backerCooldown: q.backerCooldown,
   };
 }
 

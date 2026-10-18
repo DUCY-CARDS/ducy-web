@@ -2166,6 +2166,23 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .qt-review li::before { content: ''; position: absolute; left: 0; top: 0.5em; width: 6px; height: 6px; border-radius: 50%; background: var(--fg-muted); }
 .qt-review li.qr-right::before { background: var(--green); }
 .qt-review li.qr-wrong::before { background: var(--red); }
+/* A backer's test (#356): one hand at a time on a cream card; then the result. */
+.qb-test { background: #f3e7c9; color: #1d3a2c; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 0 #0f2219; margin: 14px 0; }
+.qb-test h2 { font-family: var(--font-display); font-weight: 400; font-size: 24px; margin: 0; color: #1d3a2c; }
+.qb-test .qt-label, .qb-test .qt-meta { color: #5a6b5f; }
+.qb-ask { margin: 0; font-size: 16px; }
+.qb-cards { display: flex; gap: 8px; }
+.qb-card { width: 54px; height: 76px; border-radius: 8px; background: #fffaf0; border: 1px solid #c9b98f; display: grid; place-items: center; font: 700 22px var(--font-ui); color: #1d2a24; }
+.qb-card.r { color: #b0391f; }
+.qb-test .cc-btn { color: #1d3a2c; border-color: #bcae8a; }
+.qb-test .qt-open-acts { flex-wrap: wrap; }
+.qb-result { border-radius: 12px; padding: 14px 16px; margin: 14px 0; background: rgba(243, 231, 201, 0.06); border-left: 4px solid var(--fg-muted); display: flex; flex-direction: column; gap: 8px; }
+.qb-result.qr-right { border-left-color: var(--green); }
+.qb-result.qr-wrong { border-left-color: var(--red); }
+.qb-result h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; color: var(--fg-strong); margin: 0; }
+.qb-result ul { margin: 0; padding-left: 18px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.qb-result .cc-btn { align-self: flex-start; }
+.qb-backed { font-size: 14px; color: var(--fg); background: rgba(232, 176, 74, 0.12); border-radius: 10px; padding: 10px 14px; }
 /* The inbox (#355): offers to answer on cream cards, news below. */
 .qs-inbox h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; color: var(--fg-strong); margin: 18px 0 8px; display: flex; align-items: center; gap: 10px; }
 .qs-new { font: 700 12px var(--font-ui); background: var(--amber); color: #1d2a24; border-radius: 999px; padding: 2px 9px; }
