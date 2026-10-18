@@ -2,8 +2,8 @@
 // club balance and a table. Pure functions over the club object; the host's
 // page (clubs.js) runs each table with ducy's MultiTable.club in a worker.
 //
-// A table: {id, name, game, sb, bb, minBB, maxBB, seats, turnSecs, status,
-// createdAt}. Status is 'open', 'closing' (no new players; everyone is
+// A table: {id, name, game, sb, bb, minBB, maxBB, seats, turnSecs,
+// sitOutMins, stayHands, status, createdAt}. Status is 'open', 'closing' (no new players; everyone is
 // cashed out at the end of the hand) or 'closed' (kept for history).
 //
 // Chips: a member asks the table for chips (the engine checks the table's
@@ -46,6 +46,11 @@ export function defaultTableName(club, game, sb, bb) {
 // How long someone may sit out before their seat is given up (#70): set per
 // table, defaulting to the club's setting, which starts at 10 minutes. 0: no limit.
 export const DEFAULT_SIT_OUT_MINS = 10;
+// The hit-and-run rule: once a player is up at a table (their stack more than
+// they brought to it), they play this many more hands before they may leave.
+// Set per table; 0 is off, the default. Back to even or down, they may leave
+// any time, and the count starts again if they get ahead again.
+export const MAX_STAY_HANDS = 500;
 
 const whole = n => Number.isSafeInteger(n) && n > 0;
 
@@ -65,7 +70,7 @@ export function checkTableLimit(club, limits) {
 
 // Adds a table to the club from the host's choices; throws on bad input,
 // or when the club's `limits` (#265) allow no more.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS} = {}, now = Date.now(), limits = null) {
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS, stayHands = 0} = {}, now = Date.now(), limits = null) {
   ensureTables(club);
   checkTableLimit(club, limits);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
@@ -77,9 +82,12 @@ export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB 
   }
   if (!Number.isSafeInteger(turnSecs) || turnSecs < 0) throw new Error('Pick a turn time.');
   if (!Number.isSafeInteger(sitOutMins) || sitOutMins < 0) throw new Error('Pick a sit-out limit.');
+  if (!Number.isSafeInteger(stayHands) || stayHands < 0 || stayHands > MAX_STAY_HANDS) {
+    throw new Error(`Hands to play once up: 0 (off) to ${MAX_STAY_HANDS}.`);
+  }
   const t = {
     id: tableId(), name: String(name).trim().slice(0, MAX_TABLE_NAME) || defaultTableName(club, game, sb, bb),
-    game, sb, bb, minBB, maxBB, seats, turnSecs, sitOutMins, status: 'open', createdAt: now,
+    game, sb, bb, minBB, maxBB, seats, turnSecs, sitOutMins, stayHands, status: 'open', createdAt: now,
   };
   club.tables.push(t);
   return t;
@@ -105,6 +113,8 @@ export function tablesBody(club, seatedCounts = {}) {
     tables: openTables(club).filter(t => t.status === 'open').map(t => ({
       id: t.id, name: t.name, game: t.game, sb: t.sb, bb: t.bb, min: limits(t).min, max: limits(t).max,
       seats: t.seats, taken: seatedCounts[t.id] || 0,
+      // The hit-and-run rule, so members know before they sit.
+      ...(t.stayHands ? {stayHands: t.stayHands} : {}),
     })),
     // The rathole rule's window, so members see it before they sit (#187).
     rathole: club.ratholeHours ?? 0,
@@ -153,13 +163,33 @@ export function leftTable(club, id, chips, now = Date.now()) {
 }
 
 // Between hands: the ledger takes each seated member's stack from the
-// engine's count (`players`: [{client_id, chips}]).
-export function syncStacks(club, players) {
+// engine's count (`players`: [{client_id, chips}]). `handNumber`, the hand
+// just finished, marks when someone first got ahead at the table (`upAt`,
+// for the hit-and-run rule); back to even or down clears it.
+export function syncStacks(club, players, handNumber = 0) {
   for (const p of players) {
     const m = club.members[p.client_id];
-    if (m?.seat) setStack(club, p.client_id, Number(p.chips));
+    if (!m?.seat) continue;
+    setStack(club, p.client_id, Number(p.chips));
+    const s = m.seat;
+    if (s.put == null) continue; // seated before the ledger kept what they brought
+    if (s.stack > s.put) s.upAt ??= handNumber;
+    else delete s.upAt;
   }
 }
+
+// The hit-and-run rule: how many more hands member `id` plays at table `t`
+// before they may leave, with `completed` hands finished there so far. 0 when
+// they may go: the table has no rule, they aren't up, or they've played them.
+export function handsToStay(club, id, t, completed) {
+  const need = t?.stayHands || 0;
+  const s = club.members[id]?.seat;
+  if (!need || !s || s.table !== t.id || s.upAt == null || s.put == null || !(s.stack > s.put)) return 0;
+  return Math.max(0, need - (completed - s.upAt));
+}
+
+// What a player is told when they try to leave too soon.
+export const stayText = n => `You’re up at this table, so you play ${n} more ${n === 1 ? 'hand' : 'hands'} before you can leave.`;
 
 // The host's page opened after closing with people at tables: those tables
 // stopped, and any hand in progress didn't count. Everyone seated gets back

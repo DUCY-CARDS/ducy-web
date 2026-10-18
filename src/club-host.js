@@ -20,7 +20,7 @@
 // folded or sat out, no hand is dealt, until someone is back (an outage
 // shouldn't fold everyone).
 
-import { canJoin, cashOutTable, chipsForTable, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
+import { canJoin, cashOutTable, chipsForTable, handsToStay, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
 import { refundTopUp } from './club-chips.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
@@ -189,7 +189,19 @@ export function createTableHost({
       r.publish = state;
     }
     // Between hands the engine's count is the truth.
-    if (r.complete) syncStacks(club(), r.players);
+    if (r.complete) syncStacks(club(), r.players, r.handNumber);
+    // The hit-and-run rule: each player hears how many hands they still owe
+    // the table whenever that changes, so their Leave button can say so.
+    if (t.stayHands) {
+      r.stay ??= new Map();
+      const done = completedHands(r);
+      for (const p of r.players) {
+        const left = handsToStay(club(), p.client_id, t, done);
+        if (r.stay.get(p.client_id) === left) continue;
+        r.stay.set(p.client_id, left);
+        sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'stay', hands: left}});
+      }
+    }
     // Chip requests: approved if the club ledger allows them.
     for (const q of res.chipRequests || []) {
       if (r.asking.has(q.seat)) continue;
@@ -475,10 +487,19 @@ export function createTableHost({
     tablesChanged();
   }
 
+  // Hands finished at a table: the one shown counts once it's over.
+  const completedHands = r => (r.complete ? r.handNumber : Math.max(0, r.handNumber - 1));
+
   // A member's command for table `tid`.
   async function handle(tid, id, cmd) {
     const t = tableById(club(), tid);
     if (!cmd || typeof cmd.type !== 'string') return;
+    // The hit-and-run rule: up at this table, they stay until they've played
+    // the table's hands (their page says so before they try).
+    if (cmd.type === 'leave' && t?.stayHands && running.has(tid)) {
+      const left = handsToStay(club(), id, t, completedHands(running.get(tid)));
+      if (left) { sendTable(id, {type: 'table', table: tid, update: {type: 'stay', hands: left, refused: true}}); return; }
+    }
     // A commitment or reveal for the next hand's deal (#136).
     if (cmd.type === 'fair_commit' || cmd.type === 'fair_reveal') { await fairIncoming(tid, id, cmd); return; }
     if (cmd.type === 'join') {

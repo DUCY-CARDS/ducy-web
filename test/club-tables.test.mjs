@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  buyInRange, canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
+  buyInRange, canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, handsToStay, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
   tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
 
@@ -124,6 +124,41 @@ test('buy in, play, top up, leave: the club ledger follows the table and adds up
   assert.equal(club.members.bob.seat, null);
   assert.ok(totals(club).conserved);
   assert.equal(leftTable(club, 'bob', 0), null, 'only once');
+});
+
+test('hit and run: once up, a player plays the table’s hands before leaving', () => {
+  const club = clubWith('ann', 'bob');
+  assert.equal(newTable(club).stayHands, 0, 'off by default');
+  assert.throws(() => newTable(club, {stayHands: -1}), /0 \(off\) to 500/);
+  assert.throws(() => newTable(club, {stayHands: 501}), /0 \(off\) to 500/);
+  const t = newTable(club, {sb: 1, bb: 2, minBB: 40, maxBB: 100, stayHands: 10});
+  assert.equal(tablesBody(club).tables.find(x => x.id === t.id).stayHands, 10, 'members see it');
+  chipsForTable(club, 'ann', t, 100);
+  chipsForTable(club, 'bob', t, 100);
+  // Not up: free to go.
+  assert.equal(handsToStay(club, 'ann', t, 0), 0);
+  // Hand 3: Ann goes up 40. She owes 10 hands from there.
+  syncStacks(club, [{client_id: 'ann', chips: 140}, {client_id: 'bob', chips: 60}], 3);
+  assert.equal(handsToStay(club, 'ann', t, 3), 10);
+  assert.equal(handsToStay(club, 'bob', t, 3), 0, 'down: free to go');
+  syncStacks(club, [{client_id: 'ann', chips: 150}, {client_id: 'bob', chips: 50}], 9);
+  assert.equal(handsToStay(club, 'ann', t, 9), 4, 'still up: the count keeps going');
+  // A top-up counts as chips brought: Bob has 150 in after topping up 50, so
+  // 130 isn't up; 160 is.
+  chipsForTable(club, 'bob', t, 50);
+  syncStacks(club, [{client_id: 'ann', chips: 120}, {client_id: 'bob', chips: 130}], 10);
+  assert.equal(handsToStay(club, 'bob', t, 10), 0);
+  syncStacks(club, [{client_id: 'ann', chips: 120}, {client_id: 'bob', chips: 160}], 10);
+  assert.equal(handsToStay(club, 'bob', t, 10), 10);
+  // Ann back to even: free to go, and the count starts over if she gets ahead again.
+  syncStacks(club, [{client_id: 'ann', chips: 100}, {client_id: 'bob', chips: 150}], 11);
+  assert.equal(handsToStay(club, 'ann', t, 11), 0);
+  syncStacks(club, [{client_id: 'ann', chips: 110}, {client_id: 'bob', chips: 140}], 12);
+  assert.equal(handsToStay(club, 'ann', t, 12), 10);
+  assert.equal(handsToStay(club, 'ann', t, 22), 0, 'played them');
+  // A table without the rule never holds anyone.
+  const free = newTable(club, {name: 'Free'});
+  assert.equal(handsToStay(club, 'ann', free, 12), 0);
 });
 
 test('the rathole rule applies when buying back in at the same table', () => {

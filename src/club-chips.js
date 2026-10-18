@@ -165,7 +165,9 @@ export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
   if (amt > max) throw new Error(`The maximum buy-in is ${chipText(max)}.`);
   if (amt > m.balance) throw new Error(`You have ${chipText(m.balance)} chips in the club.`);
   m.balance -= amt;
-  m.seat = {table, stack: amt};
+  // `put`: what they've brought to the table in all (buy-in and top-ups), to
+  // tell when they're up there (club-tables.js handsToStay).
+  m.seat = {table, stack: amt, put: amt};
   return record(club, m, 'buy_in', amt, now, {table});
 }
 
@@ -179,6 +181,7 @@ export function topUp(club, id, amt, max, now = Date.now()) {
   if (moved <= 0) return null;
   m.balance -= moved;
   m.seat.stack += moved;
+  if (m.seat.put != null) m.seat.put += moved;
   return record(club, m, 'top_up', moved, now, {table: m.seat.table});
 }
 
@@ -188,7 +191,10 @@ export function topUp(club, id, amt, max, now = Date.now()) {
 export function refundTopUp(club, id, amt, now = Date.now()) {
   const m = member(club, id);
   amount(amt);
-  if (m.seat) m.seat.stack = Math.max(0, m.seat.stack - amt);
+  if (m.seat) {
+    m.seat.stack = Math.max(0, m.seat.stack - amt);
+    if (m.seat.put != null) m.seat.put = Math.max(0, m.seat.put - amt);
+  }
   m.balance += amt;
   return record(club, m, 'top_up_refund', amt, now, {table: m.seat?.table});
 }

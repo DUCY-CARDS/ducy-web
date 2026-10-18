@@ -265,6 +265,9 @@ function tableFormHtml(code = '', {wizard = false} = {}) {
   h += `<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="${esc(last.maxBB || 100)}"></label>`;
   h += `<label>Time to act<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === (last.turnSecs ?? 30) ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
   h += `<label>Sitting out<select class="pl-text" name="sitOutMins">${[5, 10, 15, 30, 0].map(m => `<option value="${m}"${m === defOut ? ' selected' : ''}>${m ? m + ' min' : 'No limit'}</option>`).join('')}</select></label>`;
+  // The hit-and-run rule: a player who's up plays this many more hands first.
+  const stay = last.stayHands ?? 0;
+  h += `<label>Once up, hands before leaving<select class="pl-text" name="stayHands">${[...new Set([0, 10, 20, 30, 50, stay])].sort((a, b) => a - b).map(n => `<option value="${n}"${n === stay ? ' selected' : ''}>${n ? n + ' hands' : 'Off'}</option>`).join('')}</select></label>`;
   h += '</div></details>';
   h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-skip">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
@@ -307,6 +310,7 @@ function submitTable(f) {
     name: v('name'), game: v('game'), sb, bb,
     minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats, turnSecs: Number(v('turnSecs')),
     sitOutMins: Number(v('sitOutMins')),
+    stayHands: Number(v('stayHands')),
   };
   if (blinds === 'other' && !(Number.isSafeInteger(sb) && Number.isSafeInteger(bb) && sb >= 1 && sb <= bb)) {
     // Said in the form, so what was typed stays (#186).
@@ -316,7 +320,7 @@ function submitTable(f) {
     f.elements.sb.focus();
     return;
   }
-  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
+  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs, stayHands: settings.stayHands});
   // An assistant's: the host opens it.
   if (f.dataset.code) {
     tableForm = false;
@@ -2084,6 +2088,8 @@ function memberTablesHtml(m, hostHere) {
     h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
     h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
     if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
+    // The hit-and-run rule, before you sit.
+    if (t.stayHands > 0) h += `<span class="pl-meta cl-why">Once you’re up here, you play ${t.stayHands} more hands before you can leave.</span>`;
     if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
     else {
       if (free > 0 || why !== 'Full') h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit down</button>`;
