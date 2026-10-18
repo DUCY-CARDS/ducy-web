@@ -77,12 +77,25 @@ export function sitDown(q, table, amount, room) {
   if (q.seat || q.bankroll < min) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
   const game = table.game || 'nlhe';
-  return {...q, bankroll: q.bankroll - chips, room: table.room, seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips}};
+  return {
+    ...q, bankroll: q.bankroll - chips, room: table.room,
+    seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || []},
+  };
 }
 
-// The stack at the table after a hand.
+// The stack at the table (after a top-up, or when leaving).
 export function setStack(q, stack) {
   return q.seat ? {...q, seat: {...q.seat, stack: Math.max(0, Math.round(stack))}} : q;
+}
+
+// A hand played: the stack after it, the hand counted, and its result kept
+// if it's the session's biggest pot won or lost.
+export function recordHand(q, stack) {
+  if (!q.seat) return q;
+  const after = Math.max(0, Math.round(stack));
+  const net = after - q.seat.stack;
+  const s = q.seat;
+  return {...q, seat: {...s, stack: after, hands: (s.hands || 0) + 1, bigWin: Math.max(s.bigWin || 0, net), bigLoss: Math.min(s.bigLoss || 0, net)}};
 }
 
 // Tops up between hands to `to` chips (at most the maximum buy-in), from the
@@ -117,10 +130,32 @@ export function topUpChoices(q, stack, room) {
 // (what was bought in and taken away) goes into the history.
 export function leave(q, now = Date.now()) {
   if (!q.seat) return q;
-  const {stack, bought, stakes, room, game = 'nlhe'} = q.seat;
+  const {stack, bought, stakes, room, game = 'nlhe', hands = 0, bigWin = 0, bigLoss = 0, with: regulars = []} = q.seat;
   const bankroll = q.bankroll + stack;
-  const session = {at: Math.floor(gameMinutes(q, now)), room, stakes, game, net: stack - bought};
-  return {...q, bankroll, seat: null, best: Math.max(q.best, bankroll), history: [...q.history, session].slice(-500)};
+  const session = {at: Math.floor(gameMinutes(q, now)), room, stakes, game, net: stack - bought, hands, bigWin, bigLoss, with: regulars, bankroll};
+  return {
+    ...q, bankroll, seat: null, best: Math.max(q.best, bankroll), hands: (q.hands || 0) + hands,
+    history: [...q.history, session].slice(-500),
+  };
+}
+
+// Milestones on the way to GOAL, each announced once a run.
+export const MILESTONES = [
+  {at: 500000, text: '$5,000: five times what you started with.'},
+  {at: 2500000, text: '$25,000: the big games in the Ivory Room are within reach.'},
+  {at: 10000000, text: '$100,000: six figures.'},
+  {at: 25000000, text: '$250,000: a quarter of a million.'},
+  {at: 50000000, text: '$500,000: halfway there, in dollars.'},
+];
+
+// Milestones the bankroll (with any stack at a table) has just reached:
+// {q, reached}, the quest with them marked done and the new ones in order.
+export function checkMilestones(q) {
+  const total = q.bankroll + (q.seat?.stack || 0);
+  const done = new Set(q.milestones || []);
+  const reached = MILESTONES.filter(m => total >= m.at && !done.has(m.at));
+  if (!reached.length) return {q, reached};
+  return {q: {...q, milestones: [...done, ...reached.map(m => m.at)]}, reached};
 }
 
 // The quest's state: 'playing', 'won' (the bankroll, with any stack at the
@@ -142,14 +177,20 @@ export function travel(q, roomId, minutes, now = Date.now()) {
 
 // The record of a run that's ended: its peak, sessions and how long it ran.
 export const runRecord = (q, now = Date.now(), result = 'broke') => ({
-  result, peak: q.best, sessions: q.history.length, minutes: Math.floor(gameMinutes(q, now) - START_MINUTES), ended: now,
+  result, peak: q.best, sessions: q.history.length, hands: q.hands || 0,
+  minutes: Math.floor(gameMinutes(q, now) - (q.started ?? START_MINUTES)), ended: now,
 });
 
 // A run that's over (broke, or won) starts again at $1,000 in the same
-// world, on the same clock, with the past runs kept (the newest 20).
+// world, on the same clock, with the past runs kept (the newest 20). What
+// you know about the players (reads) carries over: it's the same world.
 export function newRun(q, now = Date.now(), result = 'broke') {
   const fresh = newQuest(now, q.seed);
-  return {...fresh, clock: syncClock(q, now).clock, room: q.room, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20)};
+  const clock = syncClock(q, now).clock;
+  return {
+    ...fresh, clock, started: clock.game, room: q.room, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20),
+    reads: q.reads || {}, readStats: q.readStats, people: q.people || {},
+  };
 }
 
 // Loads the saved quest, or null. A quest saved while seated comes back

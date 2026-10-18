@@ -31,14 +31,17 @@ import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
-import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
+import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
-  clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, saveQuest, setStack as questSetStack,
-  sitDown as questSitDown, syncClock, topUp as questTopUp, topUpChoices as questTopUpChoicesFor, travel as questTravel,
+  checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
+  saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
+  topUpChoices as questTopUpChoicesFor, travel as questTravel,
 } from './quest.js';
-import { STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
+import { ROOMS, STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { currentRoom, questLobbyHtml } from './quest-ui.js';
+import { currentRoom, faceOf, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
+import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
@@ -120,6 +123,8 @@ const amtStep = () => (wholeChips ? '1' : CHIP_STEP);
 let root = null;
 let open = false;
 let personalities = [];
+// Whether this ducy-wasm seats the Bankroll Challenge's generic players (#256).
+let genericPlayers = false;
 // The GTO bot: a solver-trained strategy for heads-up No-limit Hold'em. Its
 // files are hosted at gto/ (see scripts/upload-gto.sh); it's offered when
 // they're there.
@@ -959,6 +964,9 @@ function show(snap) {
     shownSeq = snap.seq;
     turnEnds = snap.turnMsLeft != null ? (clockStopped || Date.now()) + num(snap.turnMsLeft) : 0;
   }
+  // The Bankroll Challenge's generic players show their own names, not
+  // their family's (a style is for you to read).
+  if (mode === 'solo') for (const seat of snap.state?.seats || []) { const p = personOf(seat.id); if (p) seat.name = p.name; }
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
   gameSounds();
   botToAct = snap.botToAct;
@@ -1045,11 +1053,14 @@ async function prepareGto(bots = setup.bots) {
 // bankroll: the stack is saved after every hand, top-ups come out of the
 // bankroll, and leaving puts the stack back.
 let quest = null; // the quest (quest.js), once loaded
-let questTable = null; // {id, stakes, room} while sitting at one
+let questTable = null; // {id, stakes, room, buyIn} while sitting at one
 let questNote = ''; // a line for the lobby, e.g. how the last session went
+let questReview = null; // the last session's reads (quest-reads.js reviewReads rows)
 let questTimer = null; // redraws the lobby as the clock moves
 let questOpen = null; // the table opened in the lobby, to choose a buy-in
 let questAmount = 0; // the buy-in typed there, kept as the lobby redraws
+let questTagFor = null; // the seat whose read menu is open
+let questMilestone = ''; // a milestone just reached, shown at the table
 
 function questNow() {
   if (!quest) {
@@ -1064,13 +1075,18 @@ function questLobbyPage() {
   clearTimeout(questTimer);
   // The clock moves four times real time: the tables change as it does.
   questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
-  return questLobbyHtml(q, Date.now(), {names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount});
+  return questLobbyHtml(q, Date.now(), {
+    names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount,
+    generic: genericPlayers, review: questReview,
+  });
 }
 
 // Sits down at quest table `id` with `chips` from the bankroll (what you
-// typed at the open table, kept within the buy-in range). The Regulars there
-// keep the stacks the open table showed, each with their own buy-in.
-async function sitQuest(id, chips) {
+// typed at the open table, kept within the buy-in range; or, changing
+// tables, the stack you had, `moving` keeping the last table's reads for the
+// review). The players there keep the stacks the open table showed, each with
+// their own buy-in: the Regulars by strength, generic players by habit.
+async function sitQuest(id, chips, moving = false) {
   const q = syncClock(questNow());
   const room = currentRoom(q);
   const minutes = gameMinutes(q);
@@ -1078,15 +1094,20 @@ async function sitQuest(id, chips) {
   questOpen = null;
   if (!game) { questNote = 'That table has broken up.'; render(); return; }
   const blinds = QUEST_STAKES[game.stakes];
-  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game}, chips, room);
-  if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
   const have = personalities.map(p => p.id);
-  const bots = lineupFor(q.seed, id, game.stakes, minutes, have);
+  const bots = lineupFor(q.seed, id, game.stakes, minutes, have, {generic: genericPlayers});
+  // The named Regulars at the table, for your results against them.
+  const named = bots.filter(b => !isGeneric(b));
+  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game, with: named}, chips, room);
+  if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
   const buyInOf = who => buyInFor(q.seed, id, who, blinds, room, minutes);
   quest = seatedQ;
   saveQuest(quest);
   questNote = '';
-  questTable = {id, stakes: game.stakes, room};
+  if (!moving) questReview = null;
+  questTagFor = null;
+  questMilestone = '';
+  questTable = {id, stakes: game.stakes, room, buyIn: quest.seat.stack};
   ladder = null;
   // Hold'em or pot-limit Omaha (four cards), as the table spreads.
   await sitDown({
@@ -1094,29 +1115,46 @@ async function sitQuest(id, chips) {
     stacks: [quest.seat.stack, ...stacksAt(q.seed, id, bots, blinds, room, minutes)],
     buyIns: [quest.seat.stack, ...bots.map(buyInOf)],
   });
-  // Regulars who leave are replaced from the same stakes' pool, and buy in
-  // for their own amount.
   if (regulars) {
-    regulars.pool = replacementPool(game.stakes, have);
+    // Players who leave are replaced from the table's pool: the stakes'
+    // Regulars, or its bench of regs and tourists, each buying in for their
+    // own amount. Late at night, people come and go more.
+    regulars.pool = replacementPool(game.stakes, have, {seed: q.seed, tableId: id, minutes, generic: genericPlayers});
     regulars.buyInOf = buyInOf;
+    regulars.leaveChance = LEAVE_CHANCE * (1 + 1.5 * wildness(minutes));
   }
   const label = game.game === 'plo4' ? `${game.stakes} PLO` : game.stakes;
-  bannerHook = () => (quest?.seat ? `${room.name} · ${label} · ${questClock(gameMinutes(quest))} · Bankroll $${chipText(quest.bankroll)}` : '');
+  bannerHook = () => (quest?.seat ? `${room.name} · ${label} · ${questClock(gameMinutes(quest))} · Bankroll ${chipText(quest.bankroll)}` : '');
 }
 
-// After each hand at a quest table: the stack, saved.
+// After each hand at a quest table: the stack and the hand, saved, and any
+// milestone reached.
 function questHand() {
   if (!questTable || !quest?.seat || !state) return;
-  quest = questSetStack(quest, num(state.seats[0].stack));
+  quest = questRecordHand(quest, num(state.seats[0].stack));
+  const m = checkMilestones(quest);
+  quest = m.q;
+  if (m.reached.length) questMilestone = m.reached.at(-1).text;
   saveQuest(quest);
 }
 
-// Leaving a quest table: the stack goes back to the bankroll.
+// The generic players you sat with this session: [{id, hands, rates}].
+function questPeopleThisSession() {
+  const book = sessionStats[tableGame?.id] || {};
+  return Object.keys(book).filter(isGeneric).map(id => ({id, hands: book[id].hands, rates: rates(book[id])}));
+}
+
+// Leaving a quest table: the stack goes back to the bankroll, and your reads
+// are checked.
 function questStandUp() {
   if (!questTable || !quest) return;
   if (state) quest = questSetStack(quest, num(state.seats[0].stack));
   const before = quest.seat;
   quest = questLeave(quest);
+  const reviewed = reviewReads(quest, questPeopleThisSession());
+  quest = forgetTourists(reviewed.q);
+  // After changing tables, the review covers both.
+  questReview = [...(questReview || []), ...reviewed.rows];
   saveQuest(quest);
   if (before) {
     const net = before.stack - before.bought;
@@ -1125,6 +1163,72 @@ function questStandUp() {
   questTable = null;
   questTopUpOpen = false;
   questTopUpNext = 0;
+  questTagFor = null;
+  questMilestone = '';
+}
+
+// Tourists are gone after their day: their reads leave the save with them.
+function forgetTourists(q) {
+  const today = Math.floor(gameMinutes(q) / 1440);
+  const reads = Object.fromEntries(Object.entries(q.reads || {}).filter(([, r]) => r.reg || (r.day ?? today) >= today));
+  return {...q, reads};
+}
+
+// Your read on the player in seat `seat`: a tag, kept with them.
+function questTag(seat, tag) {
+  const id = seatId(seat);
+  if (!questTable || !isGeneric(id)) return;
+  const hands = (sessionStats[tableGame?.id] || {})[id]?.hands || 0;
+  const q = tagPlayer(questNow(), id, tag, hands);
+  const reg = isReg(q.seed, ROOMS.map(r => r.id), id);
+  quest = {...q, reads: {...q.reads, [id]: {...q.reads[id], day: Math.floor(gameMinutes(q) / 1440), reg}}};
+  saveQuest(quest);
+  questTagFor = null;
+  render();
+}
+
+// Moves to another table of the same game and stakes in this room, with your stack.
+async function questChangeTable() {
+  if (!questTable || !quest?.seat || !state?.complete) return;
+  const q = syncClock(quest);
+  const minutes = gameMinutes(q);
+  const room = questTable.room;
+  const game = questLobby(q.seed, minutes).find(r => r.room.id === room.id)?.games.find(g => g.ids.includes(questTable.id));
+  const other = game?.ids.find(t => t !== questTable.id);
+  if (!other) { regularsNote = `No other ${questTable.stakes} ${tableGame.name} table is running here right now.`; render(); return; }
+  const stack = num(state.seats[0].stack);
+  leaveTable();
+  await sitQuest(other, stack, true);
+  render();
+}
+
+// Your read on a quest table's player, on their name plate.
+function questChip(i) {
+  if (!questTable || i === 0 || !quest) return '';
+  const tag = tagOf(quest, seatId(i));
+  return tag && tag !== 'unsure' ? `<span class="qr-chip">${esc(TAG_NAMES[tag])}</span>` : '';
+}
+
+// The read menu at a quest table, and a milestone just reached.
+function questReadsHtml() {
+  if (!questTable || mode !== 'solo' || !state) return '';
+  let h = '';
+  if (questMilestone) h += `<p class="qr-milestone">${esc(questMilestone)}</p>`;
+  const seat = questTagFor;
+  if (seat == null || !state.seats[seat] || !isGeneric(seatId(seat))) {
+    if (genericPlayers && state.seats.some((_, i) => i > 0 && isGeneric(seatId(i)))) h += '<p class="pl-meta qr-hint">Tap a player to note your read on them.</p>';
+    return h;
+  }
+  const id = seatId(seat);
+  const p = personOf(id);
+  const r = rates((allStats[tableGame?.id] || {})[id]);
+  const now = tagOf(questNow(), id);
+  h += `<div class="qr-menu"><b>Your read on ${esc(p.name)}</b>`;
+  h += `<span class="pl-meta">${r.hands ? `Plays ${pct(r.vpip)} of hands, raises ${pct(r.pfr)}, aggression ${afText(r.af)}, over ${r.hands} hands with you` : 'No hands together yet'}</span>`;
+  h += '<div class="qr-tags">';
+  for (const t of TAGS) h += `<button class="cc-btn${now === t ? ' on' : ''}" data-qtag="${t}" data-qseat="${seat}" aria-pressed="${now === t}">${esc(TAG_NAMES[t])}</button>`;
+  h += '<button class="link-btn" data-qtag="close">Close</button></div></div>';
+  return h;
 }
 
 function questGo(roomId) {
@@ -1160,7 +1264,7 @@ async function sitRegulars() {
   await sitDown({bots: setup.bots, game: setup.game, buyIn, sb, bb, gto: false, regs: true, bombs: bombSetting()});
 }
 
-const regularName = id => personalities.find(p => p.id === id)?.name || id;
+const regularName = id => nameOfBot(id, x => personalities.find(p => p.id === x)?.name || x);
 
 // A hand just finished at a Regulars table: top up the Regulars who need it
 // and replace the ones who are out, or who just got up to go (regulars.js
@@ -1178,7 +1282,7 @@ async function regularsBetween() {
   const r = betweenHands({
     stacks: state.seats.map(x => num(x.stack)), bank: regulars.bank, bots: tableBots,
     buyIn: regulars.buyIn, all: regulars.pool || personalities.map(p => p.id),
-    buyIns: regulars.buyIns, buyInOf: regulars.buyInOf,
+    buyIns: regulars.buyIns, buyInOf: regulars.buyInOf, leaveChance: regulars.leaveChance ?? LEAVE_CHANCE,
   });
   if (r.buyIns) regulars.buyIns = r.buyIns;
   for (const {seat, chips} of r.sets) await call('setStack', seat, chips);
@@ -1427,9 +1531,12 @@ async function pace() {
   clearTimeout(timer);
   if (!open || !seated || !botToAct || busy) return;
   const started = performance.now();
+  // A generic player takes the time their style does (a clue, #306).
+  const family = questTable && state ? personOf(seatId(state.to_act ?? 0))?.family : null;
+  const wait = family ? thinkMs(family) : BOT_DELAY;
   const snap = await request('advance');
   if (!snap || !open) return;
-  timer = setTimeout(() => show(snap), Math.max(0, BOT_DELAY - (performance.now() - started)));
+  timer = setTimeout(() => show(snap), Math.max(0, wait - (performance.now() - started)));
 }
 
 // Resolves to whether the table took the action.
@@ -2312,7 +2419,7 @@ function crowdedPos(n) {
 // its personality id (the GTO bot: the robot). Anyone else (other people at a
 // friends or club table) gets the first letter of their name.
 function avatarHtml(i) {
-  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' ? botAvatar(seatId(i)) : '';
+  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' ? faceOf(seatId(i)) : '';
   if (id) return `<div class="pl-av"><img src="${avatarUrl(id)}" alt=""></div>`;
   const letter = [...String(state.seats[i].name || '?').trim()][0] || '?';
   return `<div class="pl-av none" aria-hidden="true">${esc(letter.toUpperCase())}</div>`;
@@ -2567,6 +2674,8 @@ function renderTable() {
   if (!watching) h += item('sounds', 'Alerts', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   if (mode === 'solo') h += item('botchat', 'Bot chat', botChatOn(), 'The bots talk at the table, and answer when you chat');
+  // The Bankroll Challenge (#303): another table at these stakes, same room.
+  if (questTable && s.complete) h += item('qchange', 'Change table', null, 'Move to another table of this game and stakes, with your stack');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
@@ -2619,7 +2728,7 @@ function renderTable() {
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
     const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b>${questChip(i)}<span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -2654,6 +2763,7 @@ function renderTable() {
   h += '</div>';
   h += summaryHtml();
   h += controlsHtml();
+  h += questReadsHtml();
   h += sitOutHtml();
   h += chipsHtml();
   h += liveHtml();
@@ -2741,7 +2851,7 @@ function controlsHtml() {
         // table; who left and who sat down goes on its own line.
         const swaps = regularsNote.startsWith('You’re out') ? '' : regularsNote;
         // At a quest table, only what the bankroll can pay.
-        const upTo = questTable && quest ? Math.min(regulars.buyIn, mine + quest.bankroll) : regulars.buyIn;
+        const upTo = questTable && quest ? Math.min(questTable.buyIn, mine + quest.bankroll) : regulars.buyIn;
         if (!mine) {
           status = upTo > 0 ? '<span class="pl-result">You’re out of chips. Rebuy to keep playing.</span>' : '<span class="pl-result">You’re out of chips, and your bankroll is empty.</span>';
           raise = upTo > 0 ? `<button class="tr-start" data-act="rebuy">Rebuy ${c(upTo)}</button>` : blank;
@@ -3291,6 +3401,19 @@ function onClick(e) {
     else questNewRun(q.dataset.qnew);
     return;
   }
+  // A quest table's reads (#306): tap a generic player, then tag them.
+  const tagBtn = e.target.closest('[data-qtag]');
+  if (tagBtn) {
+    if (tagBtn.dataset.qtag === 'close') { questTagFor = null; render(); }
+    else questTag(+tagBtn.dataset.qseat, tagBtn.dataset.qtag);
+    return;
+  }
+  const seatEl = questTable && state && e.target.closest('.pl-seat[data-seat]');
+  if (seatEl && +seatEl.dataset.seat > 0 && isGeneric(seatId(+seatEl.dataset.seat))) {
+    questTagFor = questTagFor === +seatEl.dataset.seat ? null : +seatEl.dataset.seat;
+    render();
+    return;
+  }
   const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb]');
   if (!el) return;
   const d = el.dataset;
@@ -3387,6 +3510,7 @@ function onClick(e) {
   else if (el.dataset.act === 'quest-topup') { questTopUpOpen = !questTopUpOpen; render(); }
   else if (el.dataset.act === 'quest-topup-to') questTopUpPick(Number(el.dataset.to));
   else if (el.dataset.act === 'quest-topup-cancel') { questTopUpNext = 0; render(); }
+  else if (el.dataset.act === 'qchange') { tableMenuOpen = false; questChangeTable(); }
   else if (el.dataset.act === 'next') nextHand();
   else if (el.dataset.act === 'pause') hold('user', !holds.has('user'));
   else if (el.dataset.act === 'dealdelay') {
@@ -3578,6 +3702,7 @@ export async function openPlay(el, shortcut, v = 'play') {
   if (!personalities.length) {
     root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the bots…</p></div>';
     personalities = await call('personalities');
+    try { genericPlayers = ((await call('genericFamilies')) || []).length > 0; } catch {}
     try { gtoAvailable = (await fetch(GTO_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
     try { gto6Available = await call('gto6Supported') && (await fetch(GTO6_MANIFEST, {cache: 'no-cache'})).ok; } catch {}
     for (const plo of Object.values(GTO_PLOS)) {

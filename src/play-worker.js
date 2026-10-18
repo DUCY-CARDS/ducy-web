@@ -128,6 +128,9 @@ async function loadGtoDepths(manifestUrl) {
 
 const ops = {
   personalities: () => botPersonalities(),
+  // The generic players' families (ducy #256), or [] with an older ducy-wasm
+  // that can't seat them.
+  genericFamilies: () => (wasm.genericFamilies ? wasm.genericFamilies() : []),
   // stacks, if given, are each seat's chips for the first hand (a ladder game
   // resuming); an older ducy-wasm without setStack starts everyone at the buy-in.
   create: (bots, buyIn, sb, bb, seed, game, stacks) => {
