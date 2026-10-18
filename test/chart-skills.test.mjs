@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cellHand } from '../src/charts.js';
 import {
-  CHART_TRACKS, DEFAULT_BB, chartSkillKey, parseChartKey, chartFile, spotName, spotNameFromId, spotQuestion,
+  CHART_TRACKS, trackIds, DEFAULT_BB, chartSkillKey, parseChartKey, chartFile, spotName, spotNameFromId, spotQuestion,
   trainingActions, handMix, fixedAnswers, fixedSeverity, mixDistance, difficulty, obviousCells, pickCell,
   cardsFor, spotFingerprint, fixedPenalty, mixedPenalty, setShare, MIN_ACTION, chartLevel,
 } from '../src/chart-skills.js';
@@ -16,7 +16,17 @@ const spotOf = (table, id, bb = DEFAULT_BB) => read(chartFile(table, bb)).spots.
 const seeded = seed => () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
 
 test('every spot on the track is in its chart at 100 BB', () => {
-  for (const t of CHART_TRACKS) for (const id of t.ids) assert.ok(spotOf(t.table, id), `${t.table} ${id}`);
+  for (const t of CHART_TRACKS) for (const id of trackIds(t.table)) assert.ok(spotOf(t.table, id), `${t.table} ${id}`);
+});
+
+test('lessons run from opens to the advanced spots', () => {
+  const hu = CHART_TRACKS.find(t => t.table === 'hu');
+  assert.deepEqual(hu.lessons.map(l => l.label), ['Opens', 'Facing an open', 'Facing a 3-bet', 'Facing a 4-bet']);
+  assert.equal(trackIds('hu')[0], 'hu-open-BTN');
+  // 6-max: every position's open first; the lessons facing a raise wait for the solve.
+  const six = CHART_TRACKS.find(t => t.table === '6max');
+  assert.deepEqual(six.lessons[0].ids, ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']);
+  assert.ok(six.lessons.slice(1).every(l => l.soon && !l.ids.length));
 });
 
 test('skill keys round-trip', () => {
@@ -53,7 +63,7 @@ test('rare actions are left out and their share goes to a kept one', () => {
   // Facing a 4-bet there's no raise but all-in, and it's kept.
   assert.deepEqual(trainingActions(spotOf('hu', 'hu-vs-4bet-BB-BTN')).actions.map(x => x.a), [0, 1, 3]);
   // Every kept action is used at least MIN_ACTION% and every mix adds to 100.
-  for (const t of CHART_TRACKS) for (const id of t.ids) {
+  for (const t of CHART_TRACKS) for (const id of trackIds(t.table)) {
     const s = spotOf(t.table, id), ta2 = trainingActions(s);
     for (const x of ta2.actions) assert.ok(s.overall[x.a] >= MIN_ACTION, `${id} ${x.verb}`);
     assert.ok(ta2.actions.length >= 2, id);

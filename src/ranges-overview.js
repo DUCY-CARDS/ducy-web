@@ -1,8 +1,9 @@
 // Pre-flop ranges' first screen (V3, #225), like IXL: an overall score for
-// each game, then that game's top-% skills, each a spade, filled once
-// mastered (a score of 90 or more), with the next one to practise up front
-// (#244). Picking a skill opens its practice in trainer.js. Pure: built from
-// the trainer's saved progress.
+// each game, then that game's skills, each a spade, filled once mastered (a
+// score of 90 or more), with the next one to practise up front (#244).
+// Hold'em's skills are Ducybot's ranges (chart-trainer.js, #249); Omaha's are
+// top-% ranges. Picking a skill opens its practice in trainer.js. Pure:
+// built from the trainer's saved progress.
 
 import { MASTERY, skillState, skillKey } from './trainer-skills.js';
 import { SPADE_PATH } from './home.js';
@@ -24,11 +25,16 @@ const spade = (cls, label) =>
   `<svg class="v3-spade ${cls}" viewBox="0 0 32 32" width="30" height="30" role="img" aria-label="${label}"><path d="${SPADE_PATH}"/></svg>`;
 
 /**
- * The overview's html, with game `cards` open. `extra` is more of that game's
- * track, after its top-% skills (Hold'em: Ducybot's ranges, chart-trainer.js).
+ * The overview's html, with game `cards` open. `holdem`, when given, is
+ * Hold'em's own track (Ducybot's ranges, chart-trainer.js): {html, mastered,
+ * total, score}. It replaces Hold'em's top-% skills, which stay under Custom
+ * range, and scores Hold'em's tile. Omaha games keep their top-% track.
  */
-export function overviewHtml(progress, cards = 2, extra = '') {
-  const games = OVERVIEW_GAMES.map(([n]) => gameSkills(progress, n));
+export function overviewHtml(progress, cards = 2, holdem = null) {
+  const games = OVERVIEW_GAMES.map(([n]) => {
+    const g = gameSkills(progress, n);
+    return n === 2 && holdem ? {...g, mastered: holdem.mastered, total: holdem.total, score: holdem.score} : g;
+  });
   const open = games.find(g => g.cards === cards) || games[0];
   let h = '<div class="v3 v3-embed"><div class="v3-page">';
   h += '<div class="v3-headline"><h1>Pre-flop ranges</h1></div>';
@@ -40,11 +46,16 @@ export function overviewHtml(progress, cards = 2, extra = '') {
     h += `<span class="v3-area-text"><b>${g.name}</b><span>${g.mastered} of ${g.total} skills</span></span></button>`;
   }
   h += '</div>';
-  // One track per game (range-selection design, #244): the top-% skills,
-  // the next to work on marked, and a big button to practise it. Ranges by
-  // position (#249) follow in `extra`.
-  const next = nextSkill(open);
   h += '<div class="v3-track">';
+  // Hold'em's track is Ducybot's ranges by position (#249).
+  if (open.cards === 2 && holdem) {
+    h += holdem.html;
+    h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Top-% ranges, one kind of hand, the test’s length, or your own ranges.</span></div>';
+    return h + '</div></div></div>';
+  }
+  // One track per game (range-selection design, #244): the top-% skills,
+  // the next to work on marked, and a big button to practise it.
+  const next = nextSkill(open);
   h += `<section class="v3-skillcard"><div class="v3-skillcard-head"><span class="v3-tile-name">Your ranges</span></div>`;
   h += '<div class="v3-skillrow v3-trackrow">';
   for (const s of open.skills) {
@@ -60,7 +71,6 @@ export function overviewHtml(progress, cards = 2, extra = '') {
     h += `<div class="v3-track-go"><span>Every ${esc(open.name)} range mastered. Tap one to keep practising.</span></div>`;
   }
   h += '</section>';
-  h += extra;
   // Every other option (#244): only behind Custom range.
   h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Any game and cutoff, one kind of hand, the test’s length, or your own ranges.</span></div>';
   return h + '</div></div></div>';

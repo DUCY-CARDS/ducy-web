@@ -45,6 +45,23 @@ test('the next skill is the first not mastered; started ones say how far to go',
   assert.match(overviewHtml(started, 2), /Practice top 40%.*61 of 90 to earn its spade/s);
 });
 
+test('with Ducybot\'s track, Hold\'em shows it instead of top %, and its tile counts his lessons', () => {
+  const holdem = {html: '<section class="ct-track">LESSONS</section>', mastered: 3, total: 11, score: 27};
+  const h = overviewHtml(progress, 2, holdem);
+  assert.match(h, /LESSONS/);
+  assert.doesNotMatch(h, /data-skill="2:/);
+  assert.match(h, /Hold’em<\/b><span>3 of 11 skills/);
+  assert.match(h, /--pct:27%/);
+  // Top % is still there, behind Custom range.
+  assert.equal((h.match(/data-act="custom"/g) || []).length, 1);
+  assert.match(h, /Top-% ranges/);
+  // Omaha keeps its top-% track, with Hold'em's tile still from his lessons.
+  const o = overviewHtml(progress, 4, holdem);
+  assert.equal((o.match(/data-skill="4:/g) || []).length, TOP_TARGETS.length + 1);
+  assert.doesNotMatch(o, /LESSONS/);
+  assert.match(o, /Hold’em<\/b><span>3 of 11 skills/);
+});
+
 test('an Omaha game shows its own skills', () => {
   const h = overviewHtml(progress, 4);
   assert.equal((h.match(/data-skill="4:/g) || []).length, TOP_TARGETS.length + 1);

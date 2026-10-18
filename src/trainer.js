@@ -10,7 +10,7 @@ import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 import { MASTERY, gainFor, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
 import { overviewHtml } from './ranges-overview.js';
-import { chartTrackHtml, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
+import { chartTrackHtml, chartTrackSummary, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -1147,7 +1147,8 @@ function render() {
   if (!open) return;
   if (st.screen === 'overview') {
     const progress = loadProgress();
-    root.innerHTML = overviewHtml(progress, st.ovCards, st.ovCards === 2 ? chartTrackHtml(progress) : '');
+    // Hold'em's track is Ducybot's ranges; its tile counts his lessons.
+    root.innerHTML = overviewHtml(progress, st.ovCards, {html: st.ovCards === 2 ? chartTrackHtml(progress) : '', ...chartTrackSummary(progress)});
   }
   else if (st.screen === 'chart-practice') { chartTick(); root.innerHTML = chartPracticeHtml(); }
   else if (st.screen === 'chart-summary') root.innerHTML = chartSummaryHtml();
