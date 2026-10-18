@@ -26,7 +26,6 @@ const CRUMBS = {
   trainer: ['study', 'Pre-flop ranges'],
   charts: ['study', 'Pre-flop charts'],
   ladder: ['lobby', 'Heads-up challenge'],
-  quest: ['lobby', 'Bankroll challenge'],
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
@@ -40,6 +39,8 @@ const PARENTS = {study: ['home', 'Study'], challenge: ['study', 'Heads-up traini
  * ('train', 'play' or 'clubs' from play.js), for the 'play' page.
  */
 export function crumbFor(p, table) {
+  // Quest is a place of its own, at the top.
+  if (p === 'quest') return [{href: null, label: 'Bankroll Quest'}];
   let page = p;
   if (p === 'play') page = table === 'play' ? 'host' : table === 'clubs' ? 'clubs' : 'practice';
   const here = CRUMBS[page];
@@ -52,16 +53,18 @@ export function crumbFor(p, table) {
 }
 
 /**
- * Study or Play, whichever side `side` is on ('study' or 'play'; else
- * neither): two links to cross between them from any page.
+ * Study, Play or Quest, whichever side `side` is on ('study', 'play' or
+ * 'quest'; else none): links to cross between them from any page. Quest,
+ * the Bankroll Challenge (#299), is its own top-level place.
  */
 export function sideSwitch(side) {
   const a = (s, href, label) => `<a href="${href}"${s === side ? ' aria-current="true"' : ''}>${label}</a>`;
-  return `<nav class="v3-switch" aria-label="Study or Play">${a('study', '#study', 'Study')}${a('play', '#lobby', 'Play')}</nav>`;
+  return `<nav class="v3-switch" aria-label="Study, Play or Quest">${a('study', '#study', 'Study')}${a('play', '#lobby', 'Play')}${a('quest', '#quest', 'Quest')}</nav>`;
 }
 
-/** Which side page `p` is on: 'study', 'play' or '' (the landing page). */
+/** Which side page `p` is on: 'study', 'play', 'quest' or '' (the landing page). */
 export function sideOf(p, table) {
+  if (p === 'quest') return 'quest';
   const crumbs = crumbFor(p, table);
   const top = crumbs[0]?.href || (p === 'study' || p === 'challenge' ? '#study' : p === 'lobby' ? '#lobby' : '');
   return top === '#study' ? 'study' : top === '#lobby' ? 'play' : '';
@@ -162,6 +165,10 @@ function homePage() {
   h += `<span class="v3-door-art">${rangeChart()}</span></a>`;
   h += '<a class="v3-door v3-door-play" href="#lobby"><span class="v3-door-head"><span class="v3-door-name">Play</span><span aria-hidden="true">→</span></span>';
   h += `<span class="v3-door-art">${miniTable(['player-01', 'player-02', 'player-03', 'player-04', 'player-05'])}</span></a>`;
+  // Quest (#299): the Bankroll Challenge, a door of its own.
+  h += '<a class="v3-door v3-door-quest" href="#quest"><span class="v3-door-head"><span class="v3-door-name">Bankroll Quest</span><span aria-hidden="true">→</span></span>';
+  h += `<span class="v3-quest-line"><b>$1,000</b><span class="v3-quest-road" aria-hidden="true"></span><b>$1,000,000</b></span>`;
+  h += '<span class="v3-quest-sub">Card rooms, regs and whales, and one bankroll.</span></a>';
   return h + '</div></div>';
 }
 
@@ -211,8 +218,8 @@ function lobbyPage(d) {
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
-  // Bankroll quest (#299): $1,000 to $1,000,000 across the card rooms.
-  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll challenge</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
+  // Quest (#299), also at the top: $1,000 to $1,000,000 across the card rooms.
+  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll Quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
   return h + '</div>';
 }
 
