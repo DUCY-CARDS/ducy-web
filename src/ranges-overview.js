@@ -26,9 +26,10 @@ const spade = (cls, label) =>
 
 /**
  * The overview's html, with game `cards` open. `holdem`, when given, is
- * Hold'em's own track (Ducybot's ranges, chart-trainer.js): {html, mastered,
- * total, score}. It replaces Hold'em's top-% skills, which stay under Custom
- * range, and scores Hold'em's tile. Omaha games keep their top-% track.
+ * Hold'em's own page (Ducybot's lesson path, chart-trainer.js): {html,
+ * mastered, total, score}. Hold'em then shows only that; its top-% skills
+ * stay under Custom range. Omaha games (reached from its Settings) keep their
+ * top-% track and the game tiles, Hold'em's scored from its lessons.
  */
 export function overviewHtml(progress, cards = 2, holdem = null) {
   const games = OVERVIEW_GAMES.map(([n]) => {
@@ -38,6 +39,9 @@ export function overviewHtml(progress, cards = 2, holdem = null) {
   const open = games.find(g => g.cards === cards) || games[0];
   let h = '<div class="v3 v3-embed"><div class="v3-page">';
   h += '<div class="v3-headline"><h1>Pre-flop ranges</h1></div>';
+  // Hold'em is Ducybot's lesson path on its own (#249): no game tiles, and
+  // its Settings hold everything else (Omaha, top-%, your own ranges).
+  if (open.cards === 2 && holdem) return h + holdem.html + '</div></div>';
   h += '<div class="v3-areas">';
   for (const g of games) {
     const on = g.cards === open.cards;
@@ -47,12 +51,6 @@ export function overviewHtml(progress, cards = 2, holdem = null) {
   }
   h += '</div>';
   h += '<div class="v3-track">';
-  // Hold'em's track is Ducybot's ranges by position (#249).
-  if (open.cards === 2 && holdem) {
-    h += holdem.html;
-    h += '<div class="v3-track-custom"><button type="button" class="btn-small" data-act="custom">Custom range</button><span>Top-% ranges, one kind of hand, the test’s length, or your own ranges.</span></div>';
-    return h + '</div></div></div>';
-  }
   // One track per game (range-selection design, #244): the top-% skills,
   // the next to work on marked, and a big button to practise it.
   const next = nextSkill(open);

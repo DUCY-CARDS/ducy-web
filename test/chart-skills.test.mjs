@@ -7,7 +7,7 @@ import { cellHand } from '../src/charts.js';
 import {
   CHART_TRACKS, trackIds, DEFAULT_BB, chartSkillKey, parseChartKey, chartFile, spotName, spotNameFromId, spotQuestion,
   trainingActions, handMix, fixedAnswers, fixedSeverity, mixDistance, difficulty, obviousCells, pickCell,
-  cardsFor, spotFingerprint, fixedPenalty, mixedPenalty, setShare, MIN_ACTION, chartLevel,
+  cardsFor, spotFingerprint, fixedPenalty, mixedPenalty, setShare, MIN_ACTION, chartLevel, tableScene,
 } from '../src/chart-skills.js';
 
 const read = name => JSON.parse(readFileSync(new URL(`../charts/${name}`, import.meta.url), 'utf8'));
@@ -19,9 +19,11 @@ test('every spot on the track is in its chart at 100 BB', () => {
   for (const t of CHART_TRACKS) for (const id of trackIds(t.table)) assert.ok(spotOf(t.table, id), `${t.table} ${id}`);
 });
 
-test('lessons run from opens to the advanced spots', () => {
+test('lessons run from opens to the advanced spots, 6-max first', () => {
+  assert.equal(CHART_TRACKS[0].table, '6max');
+  assert.equal(DEFAULT_BB, 200);
   const hu = CHART_TRACKS.find(t => t.table === 'hu');
-  assert.deepEqual(hu.lessons.map(l => l.label), ['Opens', 'Facing an open', 'Facing a 3-bet', 'Facing a 4-bet']);
+  assert.deepEqual(hu.lessons.map(l => l.label), ['Opening ranges', 'Facing an open', 'Facing a 3-bet', 'Facing a 4-bet']);
   assert.equal(trackIds('hu')[0], 'hu-open-BTN');
   // 6-max: every position's open first; the lessons facing a raise wait for the solve.
   const six = CHART_TRACKS.find(t => t.table === '6max');
@@ -49,19 +51,22 @@ test('spot names and questions', () => {
 });
 
 test('rare actions are left out and their share goes to a kept one', () => {
-  // UTG at 6-max: a 4% limp and a 0.4% all-in fold into the raise.
-  const utg = spotOf('6max', 'open-UTG');
+  // UTG at 6-max: a 4-5% limp and a 0.4% all-in fold into the raise, at 100 and 200 BB.
+  assert.deepEqual(trainingActions(spotOf('6max', 'open-UTG', 200)).actions.map(x => x.verb), ['Fold', 'Raise to 2.5 BB']);
+  const utg = spotOf('6max', 'open-UTG', 100);
   const ta = trainingActions(utg);
   assert.deepEqual(ta.actions.map(x => x.a), [0, 2]);
-  assert.deepEqual(ta.actions.map(x => x.verb), ['Fold', 'Raise']);
+  assert.deepEqual(ta.actions.map(x => x.verb), ['Fold', 'Raise to 2.5 BB']);
   const aa = handMix(utg, cell('AA'), ta);
   assert.ok(aa[1] > 99, `UTG raises AA: ${aa}`);
   // The small blind limps a lot, so its limp stays.
-  assert.deepEqual(trainingActions(spotOf('6max', 'open-SB')).actions.map(x => x.verb), ['Fold', 'Limp', 'Raise']);
+  assert.deepEqual(trainingActions(spotOf('6max', 'open-SB')).actions.map(x => x.verb), ['Fold', 'Limp', 'Raise to 3 BB']);
+  assert.equal(spotQuestion(spotOf('6max', 'open-UTG'), false), 'You’re UTG, first to act.');
+  assert.equal(spotQuestion(spotOf('6max', 'open-CO'), false), 'You’re on the cutoff. Everyone before you folded.');
   // Heads-up, the big blind facing a limp can't fold: check or raise.
   assert.deepEqual(trainingActions(spotOf('hu', 'hu-vs-limp-BB-BTN')).actions.map(x => x.verb), ['Check', 'Raise to 2.5 BB']);
-  // Facing a 4-bet there's no raise but all-in, and it's kept.
-  assert.deepEqual(trainingActions(spotOf('hu', 'hu-vs-4bet-BB-BTN')).actions.map(x => x.a), [0, 1, 3]);
+  // Facing a 4-bet there's no raise but all-in, and it's kept at 100 BB.
+  assert.deepEqual(trainingActions(spotOf('hu', 'hu-vs-4bet-BB-BTN', 100)).actions.map(x => x.a), [0, 1, 3]);
   // Every kept action is used at least MIN_ACTION% and every mix adds to 100.
   for (const t of CHART_TRACKS) for (const id of trackIds(t.table)) {
     const s = spotOf(t.table, id), ta2 = trainingActions(s);
@@ -143,4 +148,42 @@ test('a spot\'s fingerprint changes with its chart', () => {
   const t = {...s, cells: s.cells.map((c, i) => (i ? c : [1, 18, 80, 1]))};
   assert.equal(spotFingerprint(s), spotFingerprint({...s}));
   assert.notEqual(spotFingerprint(s), spotFingerprint(t));
+});
+
+const byPos = scene => Object.fromEntries(scene.seats.map(s => [s.pos, `${s.state}${s.label ? ` ${s.label}` : ''}`]));
+
+test('the table as the hand reaches you: opens', () => {
+  const hj = tableScene({kind: 'open', hero: 'HJ'}, false);
+  assert.deepEqual(byPos(hj), {UTG: 'fold Fold', HJ: 'hero', CO: 'waiting', BTN: 'waiting', SB: 'blind 0.5', BB: 'blind 1'});
+  assert.equal(hj.pot, 1.5);
+  assert.equal(hj.story, 'UTG folds');
+  assert.equal(hj.button, 'BTN');
+  const utg = tableScene({kind: 'open', hero: 'UTG'}, false);
+  assert.equal(utg.story, '');
+  const sb = tableScene({kind: 'open', hero: 'SB'}, false);
+  assert.deepEqual(byPos(sb), {UTG: 'fold Fold', HJ: 'fold Fold', CO: 'fold Fold', BTN: 'fold Fold', SB: 'hero 0.5', BB: 'blind 1'});
+  const btn = tableScene({kind: 'open', hero: 'BTN'}, true);
+  assert.deepEqual(byPos(btn), {BTN: 'hero 0.5', BB: 'blind 1'});
+});
+
+test('the table as the hand reaches you: facing action', () => {
+  const bbco = tableScene({kind: 'vs-open', hero: 'BB', villain: 'CO'}, false);
+  assert.deepEqual(byPos(bbco), {UTG: 'fold Fold', HJ: 'fold Fold', CO: 'raise Raise 2.5', BTN: 'fold Fold', SB: 'fold Fold', BB: 'hero 1'});
+  assert.equal(bbco.story, 'UTG folds · HJ folds · CO raises to 2.5 · BTN folds · SB folds');
+  assert.equal(bbco.pot, 4);
+  // Heads-up, from the chart's own sizes.
+  const s = spotOf('hu', 'hu-vs-3bet-BTN-BB');
+  const three = tableScene(s, true);
+  assert.deepEqual(byPos(three), {BTN: 'hero Raise 2.5', BB: 'raise 3-bets 7.5'});
+  assert.equal(three.story, 'BTN raises to 2.5 · BB 3-bets to 7.5');
+  assert.equal(three.pot, 10);
+  const four = tableScene(spotOf('hu', 'hu-vs-4bet-BB-BTN'), true, {threeBet: 7.5});
+  assert.equal(four.story, 'BTN raises to 2.5 · BB 3-bets to 7.5 · BTN 4-bets to 17.5');
+  assert.equal(four.pot, 25);
+  const limp = tableScene(spotOf('hu', 'hu-vs-limp-BB-BTN'), true);
+  assert.deepEqual(byPos(limp), {BTN: 'call Limp', BB: 'hero 1'});
+  assert.equal(limp.story, 'BTN limps');
+  const iso = tableScene(spotOf('hu', 'hu-vs-iso-BTN-BB'), true);
+  assert.equal(iso.story, 'BTN limps · BB raises to 2.5');
+  assert.deepEqual(byPos(iso), {BTN: 'hero Limp', BB: 'raise Raise 2.5'});
 });

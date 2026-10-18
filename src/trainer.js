@@ -10,7 +10,7 @@ import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
 import { MASTERY, gainFor, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
 import { overviewHtml } from './ranges-overview.js';
-import { chartTrackHtml, chartTrackSummary, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
+import { cs, chartTrackHtml, chartTrackSummary, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
 
 const SUITS = [
   {c: 's', ch: '♠', red: false},
@@ -1198,6 +1198,8 @@ function answer(yes) {
 function onClick(e) {
   // The skills list stays open (or closed) across re-renders.
   if (e.target.closest('.tr-skills > summary')) { st.skillsOpen = !st.skillsOpen; return; }
+  // Ducybot's ranges' Settings stays as it was left across redraws.
+  if (e.target.closest('.ct-settings > summary')) { cs.settingsOpen = !cs.settingsOpen; return; }
   // Ducybot's ranges: the overview's track and its practice (chart-trainer.js).
   const ce = e.target.closest('[data-cht-table],[data-cht-mode],[data-cht-bb],[data-cht-skill],[data-cht-answer],[data-cht-all],[data-cht-act]');
   if (ce) {

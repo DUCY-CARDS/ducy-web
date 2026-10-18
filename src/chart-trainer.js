@@ -9,15 +9,27 @@ import { cellHand } from './charts.js';
 import {
   CHART_TRACKS, trackIds, CHART_MODES, DEFAULT_BB, chartSkillKey, chartFile, spotName, spotNameFromId, spotQuestion,
   trainingActions, handMix, fixedAnswers, fixedSeverity, mixDistance, obviousCells, pickCell,
-  cardsFor, spotFingerprint, fixedPenalty, mixedPenalty, setShare, chartLevel, RIGHT_MIX, CLOSE_MIX,
+  cardsFor, spotFingerprint, fixedPenalty, mixedPenalty, setShare, chartLevel, RIGHT_MIX, CLOSE_MIX, tableScene,
 } from './chart-skills.js';
 
 const PROGRESS_KEY = 'ducyTrainerProgress'; // shared with trainer.js
 const PROBE_RATE = 0.1;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 
-// What's picked on the track, and the practice under way.
-export const cs = {table: 'hu', bb: DEFAULT_BB, mode: 'fixed', id: null, practice: null};
+// What's picked on the track, and the practice under way. The table and the
+// stack depth are remembered in this browser (a convenience; if storage is
+// blocked it starts at 6-max, 200 BB).
+const PICK_KEY = 'ducyChartPick';
+function loadPick() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PICK_KEY) || '{}');
+    return {table: CHART_TRACKS.some(t => t.table === p.table) ? p.table : CHART_TRACKS[0].table, bb: Number.isFinite(p.bb) ? p.bb : DEFAULT_BB};
+  } catch { return {table: CHART_TRACKS[0].table, bb: DEFAULT_BB}; }
+}
+function savePick() {
+  try { localStorage.setItem(PICK_KEY, JSON.stringify({table: cs.table, bb: cs.bb})); } catch {}
+}
+export const cs = {...loadPick(), mode: 'fixed', id: null, practice: null};
 let index = null; // charts/index.json
 const files = new Map(); // file → data, a promise, or null
 let rerender = () => {};
@@ -84,49 +96,56 @@ const SPADE = 'M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-
 const spade = (won, label) => `<svg class="v3-spade ${won ? 'won' : 'open'}" viewBox="0 0 32 32" width="30" height="30" role="img" aria-label="${label}"><path d="${SPADE}"/></svg>`;
 
 /**
- * Hold'em's track on the Pre-flop ranges overview: Ducybot's ranges. Pick
- * heads-up or 6-max, then lessons in order, opens first, each a row of spots.
+ * Hold'em on the Pre-flop ranges page: one path through Ducybot's ranges
+ * (layout C of the ranges workshop). The only choice in view is the table,
+ * 6-max or heads-up; then the spots in lesson order, opening ranges from
+ * UTG round to the small blind first, then the spots after a raise. The
+ * next spot not yet mastered carries the Practice button. Mixed strategies
+ * open on a spot once its fixed hands are mastered. Everything else (stack
+ * depth, Omaha, top-% and your own ranges) is under Settings, closed.
  */
 export function chartTrackHtml(progress) {
   loadIndex();
-  const skills = trackSkills(progress, cs.table, cs.bb, cs.mode);
-  const next = skills.find(s => s.status !== 'mastered');
+  const fixed = trackSkills(progress, cs.table, cs.bb, 'fixed');
+  const mixed = trackSkills(progress, cs.table, cs.bb, 'mixed');
+  const next = fixed.find(s => s.status !== 'mastered');
   const track = CHART_TRACKS.find(t => t.table === cs.table);
-  let h = '<section class="v3-skillcard ct-track"><div class="v3-skillcard-head"><span class="v3-tile-name">Ducybot’s ranges</span></div>';
-  h += '<p class="ct-intro">His GTO pre-flop ranges, lesson by lesson: opening ranges from each position first, then the spots after a raise. Fixed hands: pick his action. Mixed strategies: set how often he takes each one.</p>';
+  let h = '<section class="ct-path">';
   h += '<div class="ct-table" role="group" aria-label="Table">';
   for (const t of CHART_TRACKS) h += `<button type="button" class="ct-table-btn${cs.table === t.table ? ' on' : ''}" data-cht-table="${t.table}" aria-pressed="${cs.table === t.table}">${t.label}</button>`;
   h += '</div>';
-  h += '<div class="ct-opts"><div class="pl-opts">';
-  for (const m of CHART_MODES) h += `<button type="button" class="cc-btn${cs.mode === m.mode ? ' on' : ''}" data-cht-mode="${m.mode}" title="${esc(m.text)}">${m.label}</button>`;
-  h += '</div>';
-  const depths = depthsFor(cs.table);
-  if (depths.length > 1) {
-    h += '<div class="pl-opts">';
-    for (const bb of depths) h += `<button type="button" class="cc-btn${cs.bb === bb ? ' on' : ''}" data-cht-bb="${bb}">${bb} BB</button>`;
-    h += '</div>';
-  }
-  h += '</div>';
-  // The next skill to practise, up front: the first not mastered, in lesson order.
-  h += next
-    ? `<div class="v3-track-go"><button type="button" class="tr-start" data-cht-skill="${next.id}">Practice ${esc(next.name)}</button><span>${next.status === 'started' ? `${next.score} of ${MASTERY} to earn its spade.` : `Score ${MASTERY} to earn its spade.`}</span></div>`
-    : '<div class="v3-track-go"><span>Every lesson here mastered. Tap a spot to keep practising.</span></div>';
-  track.lessons.forEach((lesson, n) => {
-    const done = lesson.ids.length && lesson.ids.every(id => skills.find(s => s.id === id).status === 'mastered');
-    h += `<div class="ct-lesson${lesson.soon ? ' soon' : ''}"><div class="ct-lesson-head"><b>Lesson ${n + 1} · ${esc(lesson.label)}</b>${done ? '<span class="ct-done">✓ Mastered</span>' : ''}</div>`;
-    if (lesson.soon) {
-      h += '<p class="ct-note">Coming once the six-handed solve plays these spots well.</p></div>';
-      return;
-    }
-    h += '<div class="v3-skillrow v3-trackrow">';
+  for (const lesson of track.lessons) {
+    h += `<h3 class="ct-path-lesson${lesson.soon ? ' soon' : ''}">${esc(lesson.label)}</h3>`;
+    if (lesson.soon) { h += '<p class="ct-note">Coming soon.</p>'; continue; }
+    h += '<ol class="ct-steps">';
     for (const id of lesson.ids) {
-      const s = skills.find(x => x.id === id);
-      const label = s.status === 'mastered' ? 'Mastered' : s.status === 'started' ? `Score ${s.score}` : 'Not started';
-      h += `<button type="button" class="v3-skill${s === next ? ' next' : ''}" data-cht-skill="${s.id}">${spade(s.status === 'mastered', label)}<span>${esc(s.name)}</span><b>${s.status === 'new' ? '–' : s.score}</b></button>`;
+      const s = fixed.find(x => x.id === id), m = mixed.find(x => x.id === id);
+      const st = s.status === 'mastered' ? 'done' : s === next ? 'now' : s.status === 'started' ? 'started' : 'todo';
+      const what = s.status === 'mastered' ? `Mastered · ${s.score}` : s.status === 'started' ? `Score ${s.score} of ${MASTERY}` : s === next ? `Score ${MASTERY} to master it` : '';
+      h += `<li class="ct-step ${st}"><i aria-hidden="true">${s.status === 'mastered' ? '✓' : ''}</i><div class="ct-step-body">`;
+      h += `<button type="button" class="ct-step-name" data-cht-skill="${id}">${esc(s.name)}</button>`;
+      if (what) h += `<span class="ct-step-what">${esc(what)}</span>`;
+      if (s === next) h += `<button type="button" class="tr-start ct-go" data-cht-skill="${id}">Practice</button>`;
+      // Mixed strategies: open once the fixed hands are mastered.
+      if (s.status === 'mastered') h += `<button type="button" class="link-btn ct-mixed" data-cht-skill="${id}" data-cht-mode="mixed">Mixed strategies${m.status === 'new' ? '' : ` · ${m.status === 'mastered' ? '✓ ' : ''}${m.score}`}</button>`;
+      h += '</div></li>';
     }
+    h += '</ol>';
+  }
+  if (!next) h += '<p class="ct-note">Every spot here mastered. Tap one to keep practising, or try its mixed strategies.</p>';
+  // Settings: closed, at the bottom.
+  const depths = depthsFor(cs.table);
+  h += `<details class="ct-settings"${cs.settingsOpen ? ' open' : ''}><summary>Settings</summary><div class="ct-settings-body">`;
+  if (depths.length > 1) {
+    h += '<div class="ct-set-row"><span>Stack depth</span><div class="pl-opts">';
+    for (const bb of depths) h += `<button type="button" class="cc-btn${cs.bb === bb ? ' on' : ''}" data-cht-bb="${bb}">${bb} BB</button>`;
     h += '</div></div>';
-  });
-  return h + '</section>';
+  }
+  h += '<div class="ct-set-row"><span>Game</span><div class="pl-opts"><button type="button" class="cc-btn on">Hold’em</button>';
+  for (const [n, name] of [[4, 'Omaha 4'], [5, 'Omaha 5'], [6, 'Omaha 6']]) h += `<button type="button" class="cc-btn" data-ovgame="${n}">${name}</button>`;
+  h += '</div></div>';
+  h += '<div class="ct-set-row"><span>More</span><button type="button" class="btn-small" data-act="custom">Top-% ranges and your own</button></div>';
+  return h + '</div></details></section>';
 }
 
 /** Ducybot's spots as a group of options for the Custom screen. */
@@ -167,6 +186,12 @@ function prepare() {
     answered: 0, correct: 0, streak: 0, history: [], delta: 0, feedback: null, mastered: false,
   });
   saveRec(pr.key, {...rec, chart: fp});
+  // The table as the hand reaches you (chart-skills.js tableScene), with the
+  // raise sizes this spot's chart doesn't carry taken from the other spots.
+  const others = files.get(chartFile(pr.table, pr.bb))?.spots || [];
+  const openTo = others.find(s => s.kind === 'open' && s.hero === (pr.hu ? 'BTN' : 'UTG'))?.sizes?.[0]?.to;
+  const threeBet = others.find(s => s.kind === 'vs-3bet')?.facing;
+  pr.scene = tableScene(spot, pr.hu, {...(openTo ? {open: openTo} : {}), ...(threeBet ? {threeBet} : {})});
   nextHand();
 }
 
@@ -241,6 +266,39 @@ function scoreBar(pr) {
   return h + '</div>';
 }
 
+// The table as the hand reaches you: an oval with every seat round it (you at
+// the bottom), the button, what each did before you (folded seats faded),
+// who's still to act, the pot, your cards, and the action in words.
+function tableHtml(pr, cards) {
+  const sc = pr.scene;
+  const n = sc.seats.length;
+  const hi = sc.seats.findIndex(s => s.state === 'hero');
+  const at = i => {
+    const a = Math.PI / 2 + (2 * Math.PI * ((i - hi + n) % n)) / n;
+    return {x: 50 + 43 * Math.cos(a), y: 47 + 38 * Math.sin(a)};
+  };
+  const deal = pr.feedback ? '' : ` data-deal="${pr.answered}"`;
+  let h = `<div class="ct-felt"><div class="ct-board${n === 2 ? ' hu' : ''}" role="img" aria-label="${esc(sc.story ? `${sc.story}. Your turn.` : 'You’re first to act.')}">`;
+  h += `<div class="ct-oval"></div><span class="ct-pot">Pot ${sc.pot} BB</span>`;
+  sc.seats.forEach((s, i) => {
+    const p = at(i);
+    const chip = s.label && s.state !== 'hero' ? `<span class="ct-act ${s.state}">${esc(s.label)}</span>` : s.state === 'hero' && s.label ? `<span class="ct-act hero">${esc(s.label)}</span>` : '';
+    const you = s.state === 'hero';
+    h += `<div class="ct-seat ${s.state}" style="left:${p.x.toFixed(1)}%;top:${p.y.toFixed(1)}%">`;
+    if (you) h += `<div class="tr-cards ct-cards"${deal}>${cards.map(cardHtml).join('')}</div>`;
+    h += `<span class="ct-plate">${you ? 'You · ' : ''}${esc(s.pos)}</span>${chip}</div>`;
+    if (s.pos === sc.button) {
+      // Beside the seat, a little toward the middle, clear of its cards.
+      const q = at(i), b = {x: q.x + (50 - q.x) * 0.2 + (q.y > 60 ? 13 : 9), y: q.y + (47 - q.y) * 0.2 + (q.y > 60 ? -6 : 0)};
+      h += `<span class="ct-button" style="left:${b.x.toFixed(1)}%;top:${b.y.toFixed(1)}%" title="Dealer button">D</span>`;
+    }
+  });
+  h += '</div>';
+  h += `<p class="ct-story">${esc(sc.story || 'Everyone else is still to act.')}</p>`;
+  h += `<div class="tr-v3-ask">${esc(spotQuestion(pr.spot, pr.hu))}</div></div>`;
+  return h;
+}
+
 const titleOf = pr => `${pr.hu ? 'Heads-up' : '6-max'} · ${esc(spotName(pr.spot))}`;
 const modeLabel = mode => CHART_MODES.find(m => m.mode === mode).label;
 
@@ -272,7 +330,7 @@ export function chartPracticeHtml() {
   }
 
   const {cards, mix} = pr.current;
-  h += `<div class="tr-felt"><div class="tr-v3-ask">${esc(spotQuestion(pr.spot, pr.hu))}</div><div class="tr-cards"${pr.feedback ? '' : ` data-deal="${pr.answered}"`}>${cards.map(cardHtml).join('')}</div></div>`;
+  h += tableHtml(pr, cards);
   const ta = pr.ta;
   if (pr.feedback) {
     const f = pr.feedback;
@@ -356,11 +414,13 @@ export function chartSummaryHtml() {
  */
 export function chartClick(el) {
   const d = el.dataset;
-  if (d.chtTable && !d.chtSkill) { cs.table = d.chtTable; if (!depthsFor(cs.table).includes(cs.bb)) cs.bb = DEFAULT_BB; return true; }
-  if (d.chtMode) { cs.mode = d.chtMode; return true; }
-  if (d.chtBb) { cs.bb = +d.chtBb; return true; }
+  if (d.chtTable && !d.chtSkill) { cs.table = d.chtTable; if (!depthsFor(cs.table).includes(cs.bb)) cs.bb = DEFAULT_BB; savePick(); return true; }
+  if (d.chtMode && !d.chtSkill) { cs.mode = d.chtMode; return true; }
+  if (d.chtBb) { cs.bb = +d.chtBb; savePick(); return true; }
   if (d.chtSkill) {
-    if (d.chtTable) cs.table = d.chtTable;
+    if (d.chtTable) { cs.table = d.chtTable; savePick(); }
+    // A spot starts as fixed hands; its "Mixed strategies" link says mixed.
+    cs.mode = d.chtMode || 'fixed';
     cs.id = d.chtSkill;
     startChartPractice();
     return 'chart-practice';

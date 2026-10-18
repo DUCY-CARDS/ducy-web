@@ -14,16 +14,16 @@ import { cellHand, VERBS, sizedVerbs } from './charts.js';
 // 2-6% and shoves 100 BB stacks with aces far too often, which isn't worth
 // learning. Fill in its spots once the solve is right.
 export const CHART_TRACKS = [
+  {table: '6max', label: '6-max', lessons: [
+    {label: 'Opening ranges', ids: ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']},
+    {label: 'Facing an open', ids: [], soon: true},
+    {label: 'Facing a 3-bet', ids: [], soon: true},
+  ]},
   {table: 'hu', label: 'Heads-up', lessons: [
-    {label: 'Opens', ids: ['hu-open-BTN']},
+    {label: 'Opening ranges', ids: ['hu-open-BTN']},
     {label: 'Facing an open', ids: ['hu-vs-open-BB-BTN', 'hu-vs-limp-BB-BTN']},
     {label: 'Facing a 3-bet', ids: ['hu-vs-3bet-BTN-BB', 'hu-vs-iso-BTN-BB']},
     {label: 'Facing a 4-bet', ids: ['hu-vs-4bet-BB-BTN']},
-  ]},
-  {table: '6max', label: '6-max', lessons: [
-    {label: 'Opens', ids: ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']},
-    {label: 'Facing an open', ids: [], soon: true},
-    {label: 'Facing a 3-bet', ids: [], soon: true},
   ]},
 ];
 
@@ -33,12 +33,15 @@ export const CHART_MODES = [
   {mode: 'fixed', label: 'Fixed hands', text: 'Pick the action.'},
   {mode: 'mixed', label: 'Mixed strategies', text: 'Set how often to take each action.'},
 ];
-export const DEFAULT_BB = 100;
+// Deep stacks to start with; other depths are under Settings.
+export const DEFAULT_BB = 200;
 
 // An action used less than this often in a spot overall (in %) isn't asked
 // about: the solve's noise (a 13% all-in with aces first in, a 4% limp from
 // UTG) folds into the spot's main aggressive action, or else its call.
 export const MIN_ACTION = 4;
+// Open-limping from a 6-max seat other than the small blind needs this much.
+export const OPEN_LIMP_MIN = 10;
 // In fixed mode, besides a hand's most frequent action, any action it takes at
 // least this often (in %) is also right.
 export const FIXED_OK = 30;
@@ -87,7 +90,7 @@ export function spotQuestion(spot, hu) {
   const at = p => where[p] || p;
   const facing = spot.facing ? ` to ${+Number(spot.facing).toFixed(1)} BB` : '';
   switch (spot.kind) {
-    case 'open': return hu ? `You’re on ${at(spot.hero)}, first to act.` : `You’re ${spot.hero === 'UTG' ? 'UTG' : `on ${at(spot.hero)}`}, everyone before you folded.`;
+    case 'open': return hu ? `You’re on ${at(spot.hero)}, first to act.` : spot.hero === 'UTG' ? 'You’re UTG, first to act.' : `You’re on ${at(spot.hero)}. Everyone before you folded.`;
     case 'vs-open': return `You’re on ${at(spot.hero)}. ${spot.villain} raises${facing}.`;
     case 'vs-3bet': return `You opened from ${at(spot.hero)}. ${spot.villain} 3-bets${facing}.`;
     case 'vs-4bet': return `You 3-bet from ${at(spot.hero)}. ${spot.villain} 4-bets${facing}.`;
@@ -103,8 +106,14 @@ export function spotQuestion(spot, hu) {
  * where each action's share goes (itself, or the kept action it folds into).
  */
 export function trainingActions(spot) {
-  const verbs = sizedVerbs(spot, VERBS[spot.kind] || ['Fold', 'Call', 'Raise', 'All-in']);
-  const kept = [0, 1, 2, 3].filter(a => spot.overall[a] >= MIN_ACTION);
+  // The 6-max charts don't carry raise sizes; their opens are the solve's
+  // 2.5 BB, or 3 BB from the small blind.
+  const sized = spot.sizes?.length || spot.kind !== 'open' || String(spot.id).startsWith('hu-') ? spot : {...spot, sizes: [{to: spot.hero === 'SB' ? 3 : 2.5}]};
+  const verbs = sizedVerbs(sized, VERBS[spot.kind] || ['Fold', 'Call', 'Raise', 'All-in']);
+  // Open-limping is only real strategy from the small blind and heads-up; from
+  // the other 6-max seats the solve's few limps are noise, unless they're common.
+  const limpNoise = spot.kind === 'open' && spot.hero !== 'SB' && !String(spot.id).startsWith('hu-');
+  const kept = [0, 1, 2, 3].filter(a => spot.overall[a] >= (a === 1 && limpNoise ? OPEN_LIMP_MIN : MIN_ACTION));
   // A dropped action's share goes to the nearest kept action of the same
   // leaning: all-in to raise (else call), raise to all-in (else call), call to
   // raise (else fold), fold to call.
@@ -260,4 +269,89 @@ export function setShare(mix, k, v) {
     else out[k] += diff;
   }
   return out;
+}
+
+// ---- The table, as the hand reaches you ----
+
+export const SIX_SEATS = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
+export const HU_SEATS = ['BTN', 'BB']; // the button is the small blind
+
+const bbText = x => String(+Number(x).toFixed(2));
+
+/**
+ * The table when it's your turn in `spot`: who sits where, what each did
+ * before you, and the pot. `sizes` are raises the spot's chart doesn't carry
+ * (in BB): {open, threeBet} — the open (2.5 by default, 3 from the small
+ * blind six-handed), and the 3-bet you made before facing a 4-bet.
+ * Returns {seats: [{pos, state, label}], button, pot, story}: state 'hero',
+ * 'fold', 'raise', 'call', 'blind' (posted, not acted yet) or 'waiting' (to
+ * act after you); `story` the action in words, e.g. "UTG folds".
+ */
+export function tableScene(spot, hu, sizes = {}) {
+  const seats = hu ? HU_SEATS : SIX_SEATS;
+  const open = sizes.open ?? 2.5;
+  const openFrom = p => (p === 'SB' && !hu ? (sizes.sbOpen ?? 3) : open);
+  const put = Object.fromEntries(seats.map(p => [p, 0]));
+  const state = {}, label = {};
+  const blindOf = p => (hu ? (p === 'BTN' ? 0.5 : 1) : p === 'SB' ? 0.5 : p === 'BB' ? 1 : 0);
+  for (const p of seats) if (blindOf(p)) { put[p] = blindOf(p); state[p] = 'blind'; label[p] = bbText(blindOf(p)); }
+  const story = [];
+  const act = (p, s, amount, words) => {
+    state[p] = s;
+    if (amount != null) put[p] = amount;
+    label[p] = s === 'fold' ? 'Fold' : s === 'call' ? (amount === 1 && words === 'limps' ? 'Limp' : `Call ${bbText(amount)}`) : `${words === 'raises' ? 'Raise' : words} ${bbText(amount)}`;
+    story.push(s === 'fold' ? `${p} folds` : s === 'call' ? `${p} ${words === 'limps' ? 'limps' : `calls ${bbText(amount)}`}` : `${p} ${words.toLowerCase()} to ${bbText(amount)}`);
+  };
+  const order = seats; // preflop action order: UTG first six-handed, the button first heads-up
+  const between = (a, b) => order.slice(order.indexOf(a) + 1, order.indexOf(b));
+  const before = p => order.slice(0, order.indexOf(p));
+  const folds = ps => ps.forEach(p => { if (state[p] !== 'fold') act(p, 'fold'); });
+  const hero = spot.hero, v = spot.villain;
+  switch (spot.kind) {
+    case 'open':
+      folds(before(hero));
+      break;
+    case 'vs-open':
+      folds(before(v));
+      act(v, 'raise', spot.facing ?? openFrom(v), 'raises');
+      folds(between(v, hero));
+      break;
+    case 'vs-limp':
+      folds(before(v));
+      act(v, 'call', 1, 'limps');
+      folds(between(v, hero));
+      break;
+    case 'vs-iso':
+      // You limped; the villain (behind you) raised.
+      folds(before(hero));
+      act(hero, 'call', 1, 'limps');
+      folds(between(hero, v));
+      act(v, 'raise', spot.facing ?? 3, 'raises');
+      break;
+    case 'vs-3bet':
+      folds(before(hero));
+      act(hero, 'raise', openFrom(hero), 'raises');
+      folds(between(hero, v));
+      act(v, 'raise', spot.facing ?? 3 * openFrom(hero), '3-bets');
+      folds(order.filter(p => p !== hero && p !== v && order.indexOf(p) > order.indexOf(v)));
+      break;
+    case 'vs-4bet':
+      // The villain opened, you 3-bet, they 4-bet.
+      folds(before(v));
+      act(v, 'raise', openFrom(v), 'raises');
+      folds(between(v, hero));
+      act(hero, 'raise', sizes.threeBet ?? 3 * openFrom(v), '3-bets');
+      folds(order.filter(p => p !== hero && p !== v && order.indexOf(p) > order.indexOf(hero)));
+      act(v, 'raise', spot.facing ?? 2.3 * (sizes.threeBet ?? 3 * openFrom(v)), '4-bets');
+      break;
+    default:
+      break;
+  }
+  // You, and whoever is still to act after you (blinds keep their chips).
+  const facing = state[hero];
+  state[hero] = 'hero';
+  label[hero] = facing && facing !== 'blind' ? label[hero] : (blindOf(hero) ? bbText(blindOf(hero)) : '');
+  for (const p of order.slice(order.indexOf(hero) + 1)) if (!state[p] || state[p] === 'blind') state[p] = state[p] === 'blind' ? 'blind' : 'waiting';
+  const pot = Object.values(put).reduce((a, b) => a + b, 0);
+  return {seats: seats.map(p => ({pos: p, state: state[p] || 'waiting', label: label[p] || ''})), button: 'BTN', pot: +pot.toFixed(2), story: story.join(' · ')};
 }
