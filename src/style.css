@@ -2011,6 +2011,17 @@ body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .ct-note { margin: 10px 0 0; }
 .ct-opts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; }
 .ct-track .cc-btn:not(.on) { color: #1d3a2c; border-color: #bcae8a; }
+/* Heads-up or 6-max: the track's first choice, a big two-way switch. */
+.ct-table { display: inline-flex; align-self: flex-start; padding: 4px; gap: 4px; background: #e4d6b2; border-radius: 999px; }
+.v3-track .v3-track-custom { flex-basis: 100%; }
+.ct-lesson .v3-trackrow { justify-content: flex-start; gap: 8px 18px; }
+.ct-table-btn { border: 0; border-radius: 999px; padding: 8px 20px; background: transparent; color: #1d3a2c; font: 700 15px var(--font-ui); cursor: pointer; }
+.ct-table-btn.on { background: #1d3a2c; color: #f3e7c9; }
+/* Lessons in order, each a row of spots. */
+.ct-lesson { border-top: 1px solid #ddcfa9; padding-top: 12px; }
+.ct-lesson-head { display: flex; align-items: baseline; gap: 10px; color: #1d3a2c; font-size: 14px; margin-bottom: 6px; }
+.ct-done { color: #1f7a3a; font-weight: 700; font-size: 13px; }
+.ct-lesson.soon .ct-lesson-head b { color: #7a8a7f; }
 .ct-track .v3-skill span { white-space: normal; text-align: center; line-height: 1.2; }
 .ct-sub { color: var(--fg-muted); font-size: 14px; }
 .ct-actions .tr-btn { min-width: 0; flex: 1 1 140px; max-width: 220px; }

@@ -8,14 +8,27 @@
 
 import { cellHand, VERBS, sizedVerbs } from './charts.js';
 
-// The spots offered for practice, in track order. 6-max spots facing a raise
-// stay out for now: the six-handed solve there 3-bets only 2-6% and shoves
-// 100 BB stacks with aces far too often, which isn't worth learning. Add them
-// here once the solve is right.
+// The Hold'em track: a table (heads-up or 6-max), then lessons in order, from
+// opening ranges to the more advanced spots. A lesson with `soon` is shown
+// but not practised yet: the six-handed solve facing a raise 3-bets only
+// 2-6% and shoves 100 BB stacks with aces far too often, which isn't worth
+// learning. Fill in its spots once the solve is right.
 export const CHART_TRACKS = [
-  {table: 'hu', label: 'Heads-up', ids: ['hu-open-BTN', 'hu-vs-open-BB-BTN', 'hu-vs-limp-BB-BTN', 'hu-vs-3bet-BTN-BB', 'hu-vs-iso-BTN-BB', 'hu-vs-4bet-BB-BTN']},
-  {table: '6max', label: '6-max', ids: ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']},
+  {table: 'hu', label: 'Heads-up', lessons: [
+    {label: 'Opens', ids: ['hu-open-BTN']},
+    {label: 'Facing an open', ids: ['hu-vs-open-BB-BTN', 'hu-vs-limp-BB-BTN']},
+    {label: 'Facing a 3-bet', ids: ['hu-vs-3bet-BTN-BB', 'hu-vs-iso-BTN-BB']},
+    {label: 'Facing a 4-bet', ids: ['hu-vs-4bet-BB-BTN']},
+  ]},
+  {table: '6max', label: '6-max', lessons: [
+    {label: 'Opens', ids: ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']},
+    {label: 'Facing an open', ids: [], soon: true},
+    {label: 'Facing a 3-bet', ids: [], soon: true},
+  ]},
 ];
+
+/** A table's spots in lesson order. */
+export const trackIds = table => CHART_TRACKS.find(t => t.table === table).lessons.flatMap(l => l.ids);
 export const CHART_MODES = [
   {mode: 'fixed', label: 'Fixed hands', text: 'Pick the action.'},
   {mode: 'mixed', label: 'Mixed strategies', text: 'Set how often to take each action.'},
