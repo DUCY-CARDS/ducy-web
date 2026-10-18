@@ -840,7 +840,9 @@ function revealCounts(from, to) {
 // stays before the next) and `peelRuns` (1, or 2 when it's run twice).
 function peelSteps(before, after) {
   const from = before.board.length;
-  const faceUp = !!ladder || wholeChips;
+  // Once the players have decided whether to run it twice, the hands are
+  // turned over, as at a real table, and the boards come out face up to them.
+  const faceUp = !!ladder || wholeChips || !!before.run_choice;
   const known = before.events.length;
   // Chips as they were before the pot was paid out.
   const pot = after.seats.reduce((t, x) => t + num(x.won), 0);
