@@ -1,10 +1,11 @@
 // Getting staked in the Bankroll Challenge (#356): a backer offers to stake
 // you at bigger games, but only if you can prove you know your ranges. The
-// proof is a test: hands from Ducybot's charts (chart-skills.js), random
-// spots and positions, pick the action. Pass, and the stake is yours for a
-// game week; then you pay it back with the backer's share of your profit.
+// proof is a test: hands from Ducybot's 6-max charts (chart-skills.js), every
+// position, pick the action. Pass, and the stake is yours for a game week;
+// then you pay it back with the backer's cut of your profit, smaller the
+// better you scored.
 //
-// - **Training counts:** every Ducybot spot you've mastered in Pre-flop ranges
+// - **Training counts:** every 6-max spot you've mastered in Pre-flop ranges
 //   lowers the mark you need, down to a floor.
 // - **Reputation as a horse:** paying a backer what you owe raises it; owing
 //   more than you can pay (stiffing them) lowers it a lot. A bad name means
@@ -15,7 +16,7 @@
 
 import { roll } from './quest-rooms.js';
 import { post, book } from './quest-scenarios.js';
-import { trainingActions, handMix, fixedAnswers, obviousCells, pickCell, cardsFor, spotQuestion, spotName } from './chart-skills.js';
+import { CHART_TRACKS, DEFAULT_BB, chartFile, trainingActions, handMix, fixedAnswers, pickCell, cardsFor, spotQuestion, spotName } from './chart-skills.js';
 
 const DAY = 1440;
 /** An offer that waits until it's answered. */
@@ -27,7 +28,11 @@ export const BACKER = {
   minSessions: 3,
   // The stake: this many buy-ins (100 BB) at the next stakes up from where you played.
   buyIns: 10,
-  share: 0.5,
+  // The backer's cut of the profit: this at the pass mark, down to cutAtPerfect
+  // for a perfect score, in steps of cutStep.
+  cutAtPass: 0.5,
+  cutAtPerfect: 0.3,
+  cutStep: 0.05,
   days: 7,
   offerHours: 24,
   // The test: this many hands; the mark to pass, lowered per mastered trainer spot.
@@ -46,11 +51,14 @@ const LADDER = [[100, 200], [200, 500], [500, 1000], [1000, 2000], [2500, 5000],
 const label = s => `${s[0] / 100}/${s[1] / 100}`;
 const dollars = n => (n / 100).toLocaleString('en-US', {maximumFractionDigits: 0});
 
-// The spots the test draws from: the heads-up track and the 6-max opens, at 100 BB.
-export const TEST_SPOTS = [
-  {file: 'ducybot-hu-100.json', hu: true, ids: ['hu-open-BTN', 'hu-vs-open-BB-BTN', 'hu-vs-limp-BB-BTN', 'hu-vs-3bet-BTN-BB', 'hu-vs-iso-BTN-BB', 'hu-vs-4bet-BB-BTN']},
-  {file: 'ducybot-100.json', hu: false, ids: ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']},
-];
+// The spots the test draws from: the 6-max track's spots, at the trainer's
+// default depth. A lesson still to come (`soon`) has none yet; new 6-max
+// lessons join the test as they go on the track. (Reads a flat `ids` track too.)
+const sixMax = CHART_TRACKS.find(t => t.table === '6max');
+export const TEST_SPOTS = [{
+  file: chartFile('6max', DEFAULT_BB), hu: false,
+  ids: sixMax.lessons ? sixMax.lessons.filter(l => !l.soon).flatMap(l => l.ids) : sixMax.ids,
+}];
 
 const BACKERS = ['Dmitri', 'Lena', 'Marcus', 'Priya', 'Owen', 'Sofia', 'Kenji', 'Rosa'];
 
@@ -65,6 +73,17 @@ export function passMark(q, mastered) {
   const rep = horseRep(q);
   const base = Math.max(BACKER.floor, BACKER.mark - BACKER.perMastered * mastered);
   return Math.min(95, base + (rep < 0 ? -rep * BACKER.badName : 0));
+}
+
+/**
+ * The backer's cut after a passing score: the offer's cut at the mark, down
+ * to cutAtPerfect at 100%, in whole steps of 5%. Below the mark, the offer's cut.
+ */
+export function cutFor(pct, mark, offerCut = BACKER.cutAtPass) {
+  if (pct < mark) return offerCut;
+  const t = mark >= 100 ? 1 : (pct - mark) / (100 - mark);
+  const cut = offerCut - t * Math.max(0, offerCut - BACKER.cutAtPerfect);
+  return Math.round(Math.round(cut / BACKER.cutStep) * BACKER.cutStep * 100) / 100;
 }
 
 /** The stakes one step up from `stakes` (or the top). */
@@ -87,8 +106,9 @@ export function maybeBackerOffer(q, stakes, minutes, n = 0) {
   const up = stakesUp(stakes);
   const amount = BACKER.buyIns * 100 * up[1];
   const name = BACKERS[Math.floor(roll(q.seed, 'backer-name', Math.floor(minutes), n) * BACKERS.length)];
-  const offer = {kind: 'backer', name, stakes: up, amount, share: BACKER.share, expires: minutes + BACKER.offerHours * 60};
-  const text = `${name}, a backer, has been watching you play: “I’ll stake you $${dollars(amount)} to play ${label(up)} for a week, ${Math.round(BACKER.share * 100)}% of the profit to me. First, show me you know your ranges.”`;
+  const offer = {kind: 'backer', name, stakes: up, amount, share: BACKER.cutAtPass, expires: minutes + BACKER.offerHours * 60};
+  const pc = x => `${Math.round(x * 100)}%`;
+  const text = `${name}, a backer, has been watching you play: “I’ll stake you $${dollars(amount)} to play ${label(up)} for a week, for a cut of the profit. First, show me you know your 6-max ranges. The better you score, the smaller my cut: ${pc(offer.share)} at the pass mark, down to ${pc(BACKER.cutAtPerfect)}.”`;
   return post(q, {kind: 'backer-offer', at: minutes, text, offer});
 }
 
@@ -100,11 +120,22 @@ export function maybeBackerOffer(q, stakes, minutes, n = 0) {
 export function makeTest(q, charts, msgId, rand = seeded(q.seed, msgId)) {
   const pool = TEST_SPOTS.flatMap(t => t.ids.map(id => ({file: t.file, hu: t.hu, spot: charts[t.file]?.spots?.find(s => s.id === id)}))).filter(x => x.spot);
   if (!pool.length) return null;
+  // Every position twice (as far as the hands go), the rest at random, shuffled.
+  const order = [];
+  for (let r = 0; r < 2; r++) for (let i = 0; i < pool.length && order.length < BACKER.hands; i++) order.push(i);
+  while (order.length < BACKER.hands) order.push(Math.floor(rand() * pool.length));
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
   const hands = [];
-  for (let k = 0; k < BACKER.hands; k++) {
-    const pick = pool[Math.floor(rand() * pool.length)];
-    // Real decisions: not the obvious hands, mostly from the middle of the range.
-    const cell = pickCell(pick.spot, {band: [0.1, 1.01], rand});
+  for (const i of order) {
+    const pick = pool[i];
+    // Real decisions: not the obvious hands, mostly from the middle of the
+    // range, and never a hand so mixed that every action counts as right.
+    const ta = trainingActions(pick.spot);
+    let cell;
+    for (let tries = 0; tries < 30; tries++) {
+      cell = pickCell(pick.spot, {band: [0.1, 1.01], rand, ta});
+      if (fixedAnswers(handMix(pick.spot, cell, ta)).length < ta.actions.length) break;
+    }
     hands.push({file: pick.file, hu: pick.hu, id: pick.spot.id, cell, cards: cardsFor(cell, rand)});
   }
   return {msgId, hands, answers: []};
@@ -162,10 +193,11 @@ export function finishTest(q, charts, test, mastered, minutes) {
     q = {...q, backerCooldown: minutes + BACKER.cooldownDays * DAY};
     return post(q, {kind: 'backer-news', at: minutes, text: `${o.name} watched you get ${s.right} of ${s.of} (${s.pct}%), short of the ${mark}% they wanted. “Study up and I’ll think about it.”`});
   }
-  const backing = {name: o.name, amount: o.amount, share: o.share, stakes: o.stakes, start: minutes, end: minutes + BACKER.days * DAY, base: q.bankroll};
+  const share = cutFor(s.pct, mark, o.share);
+  const backing = {name: o.name, amount: o.amount, share, stakes: o.stakes, start: minutes, end: minutes + BACKER.days * DAY, base: q.bankroll};
   q = {...q, bankroll: q.bankroll + o.amount, backing};
   q = book(q, {at: minutes, kind: 'backed', amount: o.amount, name: o.name});
-  return post(q, {kind: 'backer-news', at: minutes, text: `You got ${s.right} of ${s.of} (${s.pct}%). ${o.name} is staking you $${dollars(o.amount)} to play ${label(o.stakes)}. In a week you pay it back, with ${Math.round(o.share * 100)}% of your profit.`});
+  return post(q, {kind: 'backer-news', at: minutes, text: `You scored ${s.pct}% (${s.right} of ${s.of}): ${o.name} will take ${Math.round(share * 100)}% of the profit. They’re staking you $${dollars(o.amount)} to play ${label(o.stakes)}; in a week you pay it back, with their cut.`});
 }
 
 /** What you owe a backer now: {net, owed} — their stake and their share of a profit, or what's left of it after a loss. */

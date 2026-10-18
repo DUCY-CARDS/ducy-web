@@ -3,9 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { newQuest } from '../src/quest.js';
-import { handMix, fixedAnswers, trainingActions } from '../src/chart-skills.js';
+import { DEFAULT_BB, handMix, fixedAnswers, trainingActions } from '../src/chart-skills.js';
 import {
-  BACKER, TEST_SPOTS, passMark, stakesUp, maybeBackerOffer, makeTest, testHand, answerTest, scoreTest, finishTest, settleBacking, answerSettle, horseRep,
+  BACKER, TEST_SPOTS, cutFor, passMark, stakesUp, maybeBackerOffer, makeTest, testHand, answerTest, scoreTest, finishTest, settleBacking, answerSettle, horseRep,
 } from '../src/quest-backer.js';
 
 const DAY = 1440, T0 = 4 * DAY + 20 * 60;
@@ -42,6 +42,22 @@ test('the pass mark drops with training and rises with a bad name', () => {
   assert.deepEqual(stakesUp([5000, 10000]), [5000, 10000]);
 });
 
+test('the better the score, the smaller the cut: full at the mark, 30% at perfect, in 5% steps', () => {
+  assert.equal(cutFor(80, 80), 0.5);
+  assert.equal(cutFor(100, 80), 0.3);
+  assert.equal(cutFor(90, 80), 0.4);
+  assert.equal(cutFor(87, 80), 0.45); // 0.43 rounds to 0.45
+  assert.equal(cutFor(93, 80), 0.35); // 0.37 rounds to 0.35
+  assert.equal(cutFor(60, 80), 0.5, 'below the mark: the offer\'s cut');
+  assert.equal(cutFor(100, 100), 0.3);
+  for (let p = 66; p <= 100; p++) {
+    const c = cutFor(p, 66);
+    assert.ok(c <= 0.5 && c >= 0.3 && Math.abs(c * 20 - Math.round(c * 20)) < 1e-9, `${p}%: ${c}`);
+    if (p > 66) assert.ok(c <= cutFor(p - 1, 66), 'never more for a better score');
+  }
+  assert.match(offered().inbox[0].text, /6-max ranges\. The better you score, the smaller my cut: 50% at the pass mark, down to 30%/);
+});
+
 test('a backer gets in touch only after a few sessions, not while backed or cooling off', () => {
   let offers = 0;
   for (let n = 0; n < 300; n++) if (maybeBackerOffer(quest(), [100, 200], T0, n).inbox) offers++;
@@ -51,7 +67,7 @@ test('a backer gets in touch only after a few sessions, not while backed or cool
   assert.equal(o.kind, 'backer');
   assert.deepEqual(o.stakes, [200, 500]);
   assert.equal(o.amount, BACKER.buyIns * 100 * 500);
-  assert.match(q.inbox[0].text, /show me you know your ranges/);
+  assert.match(q.inbox[0].text, /show me you know your 6-max ranges/);
   for (let n = 0; n < 100; n++) {
     assert.equal(maybeBackerOffer(quest({history: played(1)}), [100, 200], T0, n).inbox, undefined);
     assert.equal(maybeBackerOffer(quest({backing: {end: T0 + DAY}}), [100, 200], T0, n).inbox, undefined);
@@ -63,11 +79,18 @@ test('a backer gets in touch only after a few sessions, not while backed or cool
   assert.ok(bad < offers, `bad name ${bad}, clean ${offers}`);
 });
 
-test('the test: random spots and positions, real decisions, the same for the same offer', () => {
+test('the test: 6-max only, at the trainer\'s depth, every position at least twice, the same for the same offer', () => {
+  assert.equal(TEST_SPOTS.length, 1);
+  assert.equal(TEST_SPOTS[0].file, `ducybot-${DEFAULT_BB}.json`);
+  assert.deepEqual(TEST_SPOTS[0].ids, ['open-UTG', 'open-HJ', 'open-CO', 'open-BTN', 'open-SB']);
   const q = offered();
+  for (let n = 0; n < 20; n++) {
+    const t = makeTest(q, charts, `m${n}`);
+    assert.equal(t.hands.length, BACKER.hands);
+    assert.ok(t.hands.every(h => !h.hu && h.file === TEST_SPOTS[0].file));
+    for (const id of TEST_SPOTS[0].ids) assert.ok(t.hands.filter(h => h.id === id).length >= 2, `${id} at least twice`);
+  }
   const t = makeTest(q, charts, q.inbox[0].id);
-  assert.equal(t.hands.length, BACKER.hands);
-  assert.ok(new Set(t.hands.map(h => h.id)).size >= 4, 'a mix of spots');
   assert.deepEqual(makeTest(q, charts, q.inbox[0].id), t);
   const shown = testHand(charts, t.hands[0]);
   assert.ok(shown.question && shown.title && shown.actions.length >= 2 && shown.cards.length === 2);
@@ -83,7 +106,9 @@ test('pass and the stake comes in; fail and the backer walks for a few days', ()
   const passed = finishTest(q, charts, take(t, true), 0, T0 + 60);
   assert.equal(passed.bankroll, q.bankroll + q.inbox[0].offer.amount);
   assert.equal(passed.backing.amount, q.inbox[0].offer.amount);
-  assert.match(passed.inbox[0].text, /is staking you/);
+  // A perfect score: the smallest cut.
+  assert.equal(passed.backing.share, BACKER.cutAtPerfect);
+  assert.match(passed.inbox[0].text, /You scored 100% \(15 of 15\): \w+ will take 30% of the profit/);
   // Finished once only.
   assert.equal(finishTest(passed, charts, take(t, true), 0, T0 + 90), passed);
   const failed = finishTest(q, charts, take(t, false), 0, T0 + 60);
@@ -100,12 +125,17 @@ test('settling: the backer asks; pay their stake and share, or what\'s left; or 
   const seated = {...backed, seat: {}};
   assert.equal(settleBacking(seated, b.end + 1), seated, 'not while at a table');
   const due = (bankroll) => { const q = settleBacking({...backed, bankroll}, b.end); return {q, msg: q.inbox[0]}; };
-  // Won $2,000 on top: the stake back plus half the profit; your name grows.
+  // Won $2,000 on top: the stake back plus the agreed cut (30% for a perfect test); your name grows.
+  assert.equal(b.share, 0.3);
   const w = due(backed.bankroll + 200000);
-  assert.equal(w.msg.offer.owed, b.amount + 100000);
+  assert.equal(w.msg.offer.owed, b.amount + 60000);
+  assert.match(w.msg.text, /30% of the profit, \$5,600 in all/);
   assert.equal(settleBacking(w.q, b.end + 10), w.q, 'asked once');
   const won = answerSettle(w.q, w.msg.id, 'pay', b.end + 5);
-  assert.equal(won.bankroll, backed.bankroll + 200000 - b.amount - 100000);
+  assert.equal(won.bankroll, backed.bankroll + 200000 - b.amount - 60000);
+  // At the mark, the full cut.
+  const atMark = settleBacking({...backed, backing: {...b, share: cutFor(80, 80)}, bankroll: backed.bankroll + 200000}, b.end);
+  assert.equal(atMark.inbox[0].offer.owed, b.amount + 100000);
   assert.equal(horseRep(won), 1);
   assert.equal(won.backing, null);
   // Lost most of their money: hand back what's left; your name shrinks a little.

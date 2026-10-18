@@ -1471,12 +1471,12 @@ async function questLoadCharts() {
   return questCharts;
 }
 
-// Ducybot spots mastered in Pre-flop ranges (fixed hands, any depth): they
-// lower the mark a backer asks for.
+// 6-max spots mastered in Pre-flop ranges (fixed hands, any depth): they
+// lower the mark a backer asks for. The test is 6-max only, so heads-up doesn't count.
 function questTrainerMastered() {
   try {
     const p = JSON.parse(localStorage.getItem('ducyTrainerProgress') || '{}');
-    const ids = new Set(Object.entries(p).filter(([k, r]) => /^chart:.+:fixed$/.test(k) && Math.max(r?.best || 0, r?.score || 0) >= 90).map(([k]) => k.split(':')[3]));
+    const ids = new Set(Object.entries(p).filter(([k, r]) => /^chart:6max:.+:fixed$/.test(k) && Math.max(r?.best || 0, r?.score || 0) >= 90).map(([k]) => k.split(':')[3]));
     return ids.size;
   } catch { return 0; }
 }
@@ -1501,7 +1501,7 @@ function questTestAnswer(k) {
   const mark = passMark(q, mastered);
   const score = scoreTest(questCharts, test);
   quest = {...finishTest({...q, backerTest: null}, questCharts, test, mastered, gameMinutes(q)), backerTest: null};
-  questTestResult = {...score, mark, passed: score.pct >= mark};
+  questTestResult = {...score, mark, passed: score.pct >= mark, cut: quest.backing?.share};
   saveQuest(quest);
   render();
 }

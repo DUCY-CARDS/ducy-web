@@ -349,7 +349,7 @@ function inboxHtml(q, minutes, mastered = 0) {
     h += '</div>';
     if (m.offer.kind === 'backer') {
       const mark = passMark(q, mastered);
-      h += `<span class="qt-meta">${BACKER.hands} hands from Ducybot’s ranges: get ${mark}% right. ${mastered ? `Your ${mastered} mastered spot${mastered === 1 ? '' : 's'} in Pre-flop ranges lowered the mark.` : 'Mastering spots in <a href="#trainer">Pre-flop ranges</a> lowers the mark.'}${horseRep(q) < 0 ? ' Your name with backers raised it.' : ''}</span>`;
+      h += `<span class="qt-meta">${BACKER.hands} hands from Ducybot’s ranges: get ${mark}% right. ${mastered ? `Your ${mastered} mastered 6-max spot${mastered === 1 ? '' : 's'} in Pre-flop ranges lowered the mark.` : 'Mastering 6-max spots in <a href="#trainer">Pre-flop ranges</a> lowers the mark.'}${horseRep(q) < 0 ? ' Your name with backers raised it.' : ''}</span>`;
     }
     h += m.offer.expires >= NEVER ? '</li>' : `<span class="qt-meta">${esc(clockText(m.at))} · answer by ${esc(clockText(m.offer.expires))}</span></li>`;
   }
@@ -361,7 +361,7 @@ function inboxHtml(q, minutes, mastered = 0) {
 // play.js handles data-qbt (the action's index). No feedback until the end.
 function testHtml(t) {
   if (t.loading) return '<section class="qb-test"><p class="pl-desc">Dealing the test…</p></section>';
-  let h = `<section class="qb-test" aria-live="polite"><span class="qt-label">${esc(t.name)}’s test · hand ${t.n + 1} of ${t.of} · ${t.mark}% to pass</span>`;
+  let h = `<section class="qb-test" aria-live="polite"><span class="qt-label">${esc(t.name)}’s 6-max test · hand ${t.n + 1} of ${t.of} · ${t.mark}% to pass</span>`;
   h += `<h2>${esc(t.title)}</h2><p class="qb-ask">${esc(t.question)}</p>`;
   h += `<div class="qb-cards">${t.cards.map(c => `<span class="qb-card${'hd'.includes(c[1]) ? ' r' : ''}">${esc(c[0])}${{s: '♠', h: '♥', d: '♦', c: '♣'}[c[1]]}</span>`).join('')}</div>`;
   h += `<div class="qt-open-acts">${t.actions.map((a, k) => `<button class="${k === 0 ? 'cc-btn' : 'tr-start'}" data-qbt="${k}">${esc(a)}</button>`).join('')}</div>`;
@@ -372,6 +372,7 @@ function testHtml(t) {
 function testResultHtml(r) {
   let h = `<section class="qb-result ${r.passed ? 'qr-right' : 'qr-wrong'}"><h2>${r.passed ? 'Passed' : 'Not this time'}: ${r.right} of ${r.of} (${r.pct}%)</h2>`;
   h += `<p class="qt-meta">You needed ${r.mark}%.</p>`;
+  if (r.passed && r.cut != null) h += `<p>You scored ${r.pct}%: they’ll take ${Math.round(r.cut * 100)}% of the profit.</p>`;
   if (r.misses.length) {
     h += '<ul>';
     for (const m of r.misses.slice(0, 6)) {
