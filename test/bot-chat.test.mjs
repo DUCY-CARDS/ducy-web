@@ -1,14 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LINES, PERSONAS, SWEDISH_TILT_LINES, TILT_LINES, callShape, handMoments, lineFor, personaOf, replyMoment, speaks } from '../src/bot-chat.js';
+import {
+  LINES, OWN, PERSONAS, SWEDISH_TILT_LINES, TILT_LINES, callShape, forgetRecent, handMoments, lineFor, linesFor, personaOf, replyMoment, speaks,
+} from '../src/bot-chat.js';
 
 const MOMENTS = ['greet', 'wonFromYou', 'lostToYou', 'bigWin', 'bigLoss', 'stakes', 'gameWon', 'gameLost', 'idle', 'hello', 'luck', 'nice', 'thanks', 'laugh', 'gg', 'other'];
+// The moments that come up most: each tone has plenty to say at them.
+const OFTEN = ['greet', 'wonFromYou', 'lostToYou', 'bigWin', 'bigLoss', 'idle', 'other'];
 
-test('every tone has lines for every moment', () => {
+test('every tone has lines for every moment, and plenty for the common ones', () => {
   for (const [tone, lines] of Object.entries(LINES)) {
     for (const m of MOMENTS) assert.ok(lines[m]?.length, `${tone} ${m}`);
+    for (const m of OFTEN) assert.ok(lines[m].length >= 6, `${tone} ${m}: ${lines[m].length}`);
   }
   for (const p of Object.values(PERSONAS)) assert.ok(LINES[p.tone], p.tone);
+});
+
+test('every Regular has lines of their own, and no line repeats in a pool', () => {
+  for (const id of Object.keys(PERSONAS).filter(id => id !== 'gto')) {
+    assert.ok(OWN[id], id);
+    for (const m of ['greet', 'idle', 'other']) assert.ok(OWN[id][m]?.length, `${id} ${m}`);
+  }
+  for (const id of Object.keys(PERSONAS)) {
+    for (const m of MOMENTS) {
+      for (const how of [null, 'youCalled', 'theyCalled']) {
+        const pool = linesFor(id, m, how);
+        assert.equal(new Set(pool).size, pool.length, `${id} ${m} ${how}: a repeated line`);
+      }
+    }
+  }
+});
+
+test('a bot doesn’t repeat itself, or what the table just heard', () => {
+  forgetRecent();
+  let r = 0;
+  const rng = () => (r = (r * 9301 + 49297) % 233280) / 233280;
+  const said = [];
+  for (let i = 0; i < 8; i++) said.push(lineFor('jen_silly', 'greet', rng));
+  assert.equal(new Set(said).size, said.length, said.join(' | '));
+  // Two friendly bots don't echo each other.
+  forgetRecent();
+  const a = lineFor('jen_silly', 'lostToYou', () => 0);
+  const b = lineFor('andrew_favorable', 'lostToYou', () => 0);
+  assert.notEqual(a, b);
+  forgetRecent();
 });
 
 test('some Regulars are nice and some trash talk', () => {
@@ -25,9 +60,11 @@ test('some Regulars are nice and some trash talk', () => {
 });
 
 test('Danny is friendly, until he loses a pot', () => {
+  forgetRecent();
   assert.ok(LINES.friendly.greet.includes(lineFor('danny_smallball', 'greet', () => 0)));
   assert.ok(LINES.friendly.wonFromYou.includes(lineFor('danny_smallball', 'wonFromYou', () => 0)));
   for (const m of ['lostToYou', 'bigLoss', 'gameLost']) {
+    assert.deepEqual(linesFor('danny_smallball', m), TILT_LINES[m], m);
     assert.ok(TILT_LINES[m].includes(lineFor('danny_smallball', m, () => 0)), m);
   }
   // Nobody else tilts.
@@ -35,6 +72,7 @@ test('Danny is friendly, until he loses a pot', () => {
 });
 
 test('Tommy is cool, until he loses a pot: then Kuksugare', () => {
+  forgetRecent();
   assert.ok(LINES.cool.greet.includes(lineFor('tommy_sweeden', 'greet', () => 0)));
   assert.ok(LINES.cool.wonFromYou.includes(lineFor('tommy_sweeden', 'wonFromYou', () => 0)));
   for (const m of ['lostToYou', 'bigLoss', 'gameLost']) {
@@ -45,9 +83,18 @@ test('Tommy is cool, until he loses a pot: then Kuksugare', () => {
   }
 });
 
-test('lines come from the bot’s own tone', () => {
+test('lines come from the bot’s own tone and its own lines', () => {
+  forgetRecent();
   assert.ok(LINES.needle.lostToYou.includes(lineFor('nik_airbag', 'lostToYou', () => 0)));
-  assert.ok(LINES.friendly.lostToYou.includes(lineFor('jen_silly', 'lostToYou', () => 0.99)));
+  assert.ok(OWN.jen_silly.lostToYou.includes(lineFor('jen_silly', 'lostToYou', () => 0.99)));
+  for (const id of ['phil_bigmouth', 'jen_silly', 'milk_king']) {
+    for (const m of MOMENTS) {
+      const pool = linesFor(id, m);
+      for (const line of [...(LINES[personaOf(id).tone][m] || []), ...(OWN[id][m] || [])]) assert.ok(pool.includes(line), `${id} ${m}: ${line}`);
+    }
+  }
+  // Another bot's own lines aren't in the pool.
+  assert.ok(!linesFor('jen_silly', 'greet').includes(OWN.milk_king.greet[0]));
 });
 
 test('they talk more heads-up, and always at the end of a challenge game', () => {
@@ -97,19 +144,16 @@ test('a bot never says "good call" about its own call', () => {
   // Checked down, or no events: nothing about calls.
   assert.equal(callShape([{type: 'check', seat: 0}, {type: 'check', seat: 1}], 1), null);
   assert.equal(callShape(null, 1), null);
-  // No line about a call fits the wrong way round, for any persona.
+  // No line about a call fits the wrong way round, for any persona: every
+  // line it could say.
   for (const id of Object.keys(PERSONAS)) {
     for (const moment of ['lostToYou', 'wonFromYou']) {
-      for (let i = 0; i < 40; i++) {
-        const line = lineFor(id, moment, () => i / 40, 'theyCalled');
-        assert.ok(!/good call|nice call|correct call|hero call\. I|you called|keep calling|you can fold|paid me off|paying me off|thanks for the call|learn to fold|for the call/i.test(line), `${id} ${moment}: ${line}`);
-        const plain = lineFor(id, moment, () => i / 40);
-        assert.ok(!/\bcall/i.test(plain), `${id} ${moment} without how: ${plain}`);
+      for (const line of linesFor(id, moment, 'theyCalled')) {
+        assert.ok(!/good call|nice call|correct call|hero call\. I|you called|keep calling|you can fold|paid me off|paying me off|thanks for the call|learn to fold|for the call|appreciate the call/i.test(line), `${id} ${moment}: ${line}`);
       }
+      for (const plain of linesFor(id, moment)) assert.ok(!/\bcall/i.test(plain), `${id} ${moment} without how: ${plain}`);
     }
   }
   // When you called, the right lines can come up.
-  const seen = new Set();
-  for (let i = 0; i < 40; i++) seen.add(lineFor('jen_silly', 'lostToYou', () => i / 40, 'youCalled'));
-  assert.ok(seen.has('Good call.'));
+  assert.ok(linesFor('jen_silly', 'lostToYou', 'youCalled').includes('Good call.'));
 });
