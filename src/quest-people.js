@@ -10,57 +10,23 @@
 //   never seen after that day.
 // - **Leans, never rules:** regs are more often grinders or rocks, tourists
 //   more often stations or maniacs; late weekend nights run wilder; older
-//   players lean rock; a hoodie or sunglasses lean grinder, a cap or a
-//   jersey lean loose; a jacket leans rock.
-// - **Looks and names:** each person gets an avatar to fit their style (a
-//   lean), then a first name and last initial to fit the avatar's gender and
-//   age. Until the generic avatars of #305 are drawn, the looks are the
-//   player avatars. Names are common, invented-for-the-table first names
-//   with no cultural pools yet: those come with the drawn avatars.
+//   players lean rock; headphones, a hoodie or sunglasses lean grinder, a
+//   cap or a tourist shirt lean loose; a jacket leans rock.
+// - **Looks and names** (quest-faces.js, #305): each person is drawn from
+//   one of 60 hand-set bases with their own hairstyle, clothes and gear,
+//   leaning to their style, and named from that base's name pool, gender
+//   and age.
 //
 // Pure, and the same for the same seed. A person's look and name come from
 // their seed alone, so a bot id (`g-rock-123`) always shows the same person.
 
 import { roll } from './quest-rooms.js';
+import { faceUrl, lookFor, nameFor } from './quest-faces.js';
+
+export { lookFor, nameFor };
 
 export const FAMILIES = ['rock', 'station', 'maniac', 'grinder'];
 export const FAMILY_NAMES = {rock: 'Rock', station: 'Calling station', maniac: 'Maniac', grinder: 'Grinder'};
-
-// The player avatars as generic looks: gender (as drawn), age band, and the
-// gear that's a clue to style.
-export const LOOKS = [
-  {avatar: 'player-01', gender: 'm', age: 'young', gear: 'hoodie'},
-  {avatar: 'player-02', gender: 'm', age: 'older', gear: 'jacket'},
-  {avatar: 'player-03', gender: 'f', age: 'young', gear: ''},
-  {avatar: 'player-04', gender: 'm', age: 'middle', gear: ''},
-  {avatar: 'player-05', gender: 'f', age: 'young', gear: ''},
-  {avatar: 'player-06', gender: 'm', age: 'young', gear: 'cap'},
-  {avatar: 'player-07', gender: 'f', age: 'older', gear: ''},
-  {avatar: 'player-08', gender: 'f', age: 'middle', gear: ''},
-  {avatar: 'player-09', gender: 'm', age: 'middle', gear: ''},
-  {avatar: 'player-10', gender: 'f', age: 'middle', gear: ''},
-  {avatar: 'player-11', gender: 'm', age: 'young', gear: 'sunglasses'},
-  {avatar: 'player-12', gender: 'f', age: 'young', gear: ''},
-  {avatar: 'player-13', gender: 'f', age: 'young', gear: 'jersey'},
-  {avatar: 'player-14', gender: 'm', age: 'older', gear: 'jacket'},
-  {avatar: 'player-15', gender: 'f', age: 'middle', gear: ''},
-  {avatar: 'player-16', gender: 'm', age: 'young', gear: 'beanie'},
-];
-
-// First names by gender and age band: names common for that generation.
-export const NAMES = {
-  f: {
-    young: ['Maya', 'Chloe', 'Priya', 'Sofia', 'Jasmine', 'Hannah', 'Leah', 'Nina', 'Zoe', 'Ava', 'Grace', 'Mia', 'Elena', 'Kayla', 'Tess', 'Lily', 'Ana', 'Jade', 'Rosa', 'Amara'],
-    middle: ['Lisa', 'Michelle', 'Angela', 'Karen', 'Nicole', 'Tanya', 'Monica', 'Rachel', 'Denise', 'Carmen', 'Julie', 'Wendy', 'Sandra', 'Heather', 'Gina', 'Linda', 'Teresa', 'Mei', 'Dana', 'Paula'],
-    older: ['Dorothy', 'Barbara', 'Joan', 'Shirley', 'Marilyn', 'Gloria', 'Betty', 'Ruth', 'Carol', 'Judy', 'Maria', 'Helen', 'Peggy', 'Irene', 'Rita', 'June', 'Vera', 'Lois', 'Edna', 'Nora'],
-  },
-  m: {
-    young: ['Tyler', 'Jordan', 'Kevin', 'Marcus', 'Ethan', 'Dylan', 'Ryan', 'Andre', 'Luis', 'Nate', 'Jake', 'Omar', 'Sam', 'Eli', 'Owen', 'Raj', 'Cody', 'Leo', 'Dev', 'Mateo'],
-    middle: ['Dave', 'Mike', 'Steve', 'Rob', 'Tony', 'Brian', 'Chris', 'Greg', 'Paul', 'Sal', 'Rick', 'Dan', 'Eddie', 'Manny', 'Jim', 'Hector', 'Ray', 'Vinny', 'Kenny', 'Frank'],
-    older: ['Walt', 'Harold', 'Earl', 'Stan', 'Gene', 'Lou', 'Sid', 'Herb', 'Bernie', 'Al', 'Morris', 'Hank', 'Norm', 'Irv', 'Leon', 'Abe', 'Vern', 'Gus', 'Clyde', 'Murray'],
-  },
-};
-const INITIALS = 'ABCDEFGHJKLMNPRSTVW';
 
 // Style leans: each family's weight by kind of player, then multipliers for
 // age, gear and a wild hour.
@@ -68,15 +34,6 @@ const KIND_WEIGHTS = {
   reg: {rock: 0.3, station: 0.15, maniac: 0.15, grinder: 0.4},
   tourist: {rock: 0.15, station: 0.45, maniac: 0.33, grinder: 0.07},
 };
-const GEAR_LEAN = {
-  hoodie: {grinder: 2.2},
-  sunglasses: {grinder: 2.2},
-  beanie: {grinder: 1.4, maniac: 1.3},
-  cap: {station: 1.7, maniac: 1.7},
-  jersey: {station: 1.8, maniac: 1.6},
-  jacket: {rock: 2.2},
-};
-const AGE_LEAN = {older: {rock: 2.4, maniac: 0.6}, middle: {}, young: {maniac: 1.3}};
 
 const pick = (weights, r) => {
   const entries = Object.entries(weights);
@@ -100,22 +57,6 @@ export function familyFor(kind, wild, r) {
   return pick(w, r);
 }
 
-// How likely a look is for a family: its gear and age leans.
-const lookWeight = (look, family) => (GEAR_LEAN[look.gear]?.[family] ?? 1) * (AGE_LEAN[look.age]?.[family] ?? 1);
-
-/** A person's look, from their family and seed: an avatar that leans to their style. */
-export function lookFor(family, seed) {
-  const weights = Object.fromEntries(LOOKS.map((l, i) => [i, lookWeight(l, family)]));
-  return LOOKS[+pick(weights, roll(seed, 'look'))];
-}
-
-/** A person's name, from their look and seed: "Dave R.". */
-export function nameFor(look, seed) {
-  const list = NAMES[look.gender][look.age];
-  const first = list[Math.floor(roll(seed, 'first') * list.length)];
-  return `${first} ${INITIALS[Math.floor(roll(seed, 'initial') * INITIALS.length)]}.`;
-}
-
 /** The bot id that seats a person: `g-<family>-<seed>`. */
 export const botIdOf = (family, seed) => `g-${family}-${seed}`;
 
@@ -128,15 +69,21 @@ export function parseBotId(id) {
 /** Whether `id` seats a generic player. */
 export const isGeneric = id => !!parseBotId(id);
 
+const people = new Map();
 /**
  * Everything shown about a generic player, from their bot id alone:
- * {id, family, seed, look, avatar, name, buyInBb}. Null for other ids.
+ * {id, family, seed, look, avatar, name, buyInBb}, `avatar` an image URL of
+ * their drawn face (quest-faces.js). Null for other ids.
  */
 export function personOf(id) {
+  if (people.has(id)) return people.get(id);
   const p = parseBotId(id);
   if (!p) return null;
   const look = lookFor(p.family, p.seed);
-  return {id, family: p.family, seed: p.seed, look, avatar: look.avatar, name: nameFor(look, p.seed), buyInBb: usualBuyInBb(p.family, p.seed)};
+  const person = {id, family: p.family, seed: p.seed, look, avatar: faceUrl(look, id), name: nameFor(look, p.seed), buyInBb: usualBuyInBb(p.family, p.seed)};
+  if (people.size > 2000) people.clear();
+  people.set(id, person);
+  return person;
 }
 
 // A player's usual buy-in in big blinds: stations and rocks often short,
