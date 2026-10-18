@@ -189,7 +189,7 @@ export function handsToStay(club, id, t, completed) {
 }
 
 // What a player is told when they try to leave too soon.
-export const stayText = n => `You’re up at this table, so you play ${n} more ${n === 1 ? 'hand' : 'hands'} before you can leave.`;
+export const stayText = n => `You’re up at this table, so you play ${n} more ${n === 1 ? 'hand' : 'hands'} before you can leave. Sitting out doesn’t stop the count: you’re dealt in and fold, posting your blinds, until it’s done.`;
 
 // The host's page opened after closing with people at tables: those tables
 // stopped, and any hand in progress didn't count. Everyone seated gets back

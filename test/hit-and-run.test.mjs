@@ -6,10 +6,12 @@ import assert from 'node:assert/strict';
 
 // A play worker that answers every table call with the state the test sets.
 const calls = [];
+const mustPlay = [];
 let reply = {complete: true, hand_number: 2, chips: 140};
 globalThis.Worker = class {
   postMessage({id, op, args}) {
     if (op === 'clubCall') calls.push({method: args[1], cmd: args[3]});
+    if (op === 'clubMustPlay') mustPlay.push(args);
     const result = op === 'clubCall'
       ? {out: [], state: {complete: reply.complete, hand_number: reply.hand_number}, players: [{client_id: 'ann', seat: 0, chips: reply.chips}], turnMsLeft: null, seq: calls.length}
       : true;
@@ -40,6 +42,8 @@ test('up at a table with the rule, a member plays its hands before leaving', asy
   // Hand 2 ended with Ann up 40: she owes 5 hands, and is told.
   const stays = () => sent.filter(m => m.type === 'stay');
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 5});
+  // Owing hands, sitting out or dropping off blinds her off: the engine is told.
+  assert.deepEqual(mustPlay.at(-1), ['t1', 'ann', true]);
   // Leaving now is refused, and never reaches the table.
   await th.handle('t1', 'ann', {type: 'leave'});
   await settle();
@@ -50,11 +54,13 @@ test('up at a table with the rule, a member plays its hands before leaving', asy
   await th.handle('t1', 'ann', {type: 'hello'});
   await settle();
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 2});
+  assert.equal(mustPlay.length, 1, 'told once, not every hand');
   // Hand 7 played: free to go, and the leave goes through.
   reply = {complete: true, hand_number: 7, chips: 150};
   await th.handle('t1', 'ann', {type: 'hello'});
   await settle();
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 0});
+  assert.deepEqual(mustPlay.at(-1), ['t1', 'ann', false], 'call time over: the usual sit-out rules');
   await th.handle('t1', 'ann', {type: 'leave'});
   await settle();
   assert.ok(calls.some(c => c.cmd?.type === 'leave'), 'the leave reached the table');

@@ -197,9 +197,13 @@ export function createTableHost({
       const done = completedHands(r);
       for (const p of r.players) {
         const left = handsToStay(club(), p.client_id, t, done);
-        if (r.stay.get(p.client_id) === left) continue;
+        const was = r.stay.get(p.client_id);
+        if (was === left) continue;
         r.stay.set(p.client_id, left);
         sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'stay', hands: left}});
+        // Owing hands, sitting out or dropping off blinds them off (dealt in,
+        // checking or folding) rather than taking them out of the count.
+        if (!was !== !left) Promise.resolve(call('clubMustPlay', tid, p.client_id, left > 0)).catch(() => {});
       }
     }
     // Chip requests: approved if the club ledger allows them.
