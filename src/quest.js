@@ -25,7 +25,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // A new quest: the starting bankroll, the clock anchored at `now` (real
 // milliseconds), and the seed its world is built from.
 export function newQuest(now = Date.now(), seed = (Math.random() * 2 ** 32) >>> 0) {
-  return {v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, best: START_BANKROLL, history: []};
+  return {v: 1, seed, bankroll: START_BANKROLL, clock: {real: now, game: START_MINUTES}, seat: null, room: null, best: START_BANKROLL, history: [], runs: []};
 }
 
 // Game minutes at real time `now`: the anchor plus QUEST_SPEED times the
@@ -113,6 +113,25 @@ export function status(q, cheapest) {
   return 'playing';
 }
 
+// Goes to room `roomId`, which takes `minutes` of game time (none to the
+// room you're in). Not while seated.
+export function travel(q, roomId, minutes, now = Date.now()) {
+  if (q.seat || q.room === roomId) return q;
+  return {...spendMinutes(q, minutes, now), room: roomId};
+}
+
+// The record of a run that's ended: its peak, sessions and how long it ran.
+export const runRecord = (q, now = Date.now(), result = 'broke') => ({
+  result, peak: q.best, sessions: q.history.length, minutes: Math.floor(gameMinutes(q, now) - START_MINUTES), ended: now,
+});
+
+// A run that's over (broke, or won) starts again at $1,000 in the same
+// world, on the same clock, with the past runs kept (the newest 20).
+export function newRun(q, now = Date.now(), result = 'broke') {
+  const fresh = newQuest(now, q.seed);
+  return {...fresh, clock: syncClock(q, now).clock, room: q.room, runs: [...(q.runs || []), runRecord(q, now, result)].slice(-20)};
+}
+
 // Loads the saved quest, or null. A quest saved while seated comes back
 // with the stack returned to the bankroll (no hands are played away), and
 // the clock moved on for the time away.
@@ -122,7 +141,7 @@ export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
     q = JSON.parse(storage.getItem(QUEST_KEY) || 'null');
   } catch {}
   if (!q || q.v !== 1 || !Number.isFinite(q.bankroll) || !q.clock) return null;
-  q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : []};
+  q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : [], runs: Array.isArray(q.runs) ? q.runs : []};
   if (q.seat) q = leave(q, now);
   return syncClock(q, now);
 }

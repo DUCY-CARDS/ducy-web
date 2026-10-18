@@ -33,6 +33,13 @@ import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from '.
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import {
+  clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, saveQuest, setStack as questSetStack,
+  sitDown as questSitDown, syncClock, topUp as questTopUp, travel as questTravel,
+} from './quest.js';
+import { STAKES as QUEST_STAKES, TRAVEL_MINUTES, lobby as questLobby } from './quest-rooms.js';
+import { lineupFor, replacementPool } from './quest-lineup.js';
+import { currentRoom, questLobbyHtml } from './quest-ui.js';
+import {
   START_CHIPS, WINS_TO_TAKE, answerStakes, blindsAt, buyInAt, chipsNow,
   finishGame, gameBlinds, keepGame, levelOf, loadProgress, newProgress, opponentOf, pausedGame,
   rungShown, rungsFor, saveProgress, stakesOffer, startGame,
@@ -410,6 +417,8 @@ function renderSetup() {
   // Start a game (Play, #209): a table for friends.
   else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
   else if (view === 'join') h = err;
+  // Bankroll quest (#299, #303): its lobby.
+  else if (view === 'quest') h = err + questLobbyPage();
   root.hidden = !h;
   root.innerHTML = h ? `<div class="pl-wrap">${h}</div>` : '';
 }
@@ -1029,6 +1038,90 @@ async function prepareGto(bots = setup.bots) {
   }
 }
 
+// ---- Bankroll quest (#299) ----
+// The career game: a bankroll of $1,000 to turn into $1,000,000 at the card
+// rooms' tables (quest.js, quest-rooms.js). Its lobby is the 'quest' tab
+// (quest-ui.js). A quest table is a Regulars table whose chips come from the
+// bankroll: the stack is saved after every hand, top-ups come out of the
+// bankroll, and leaving puts the stack back.
+let quest = null; // the quest (quest.js), once loaded
+let questTable = null; // {id, stakes, room} while sitting at one
+let questNote = ''; // a line for the lobby, e.g. how the last session went
+let questTimer = null; // redraws the lobby as the clock moves
+
+function questNow() {
+  if (!quest) {
+    quest = loadQuest() || newQuest();
+    saveQuest(quest);
+  }
+  return quest;
+}
+
+function questLobbyPage() {
+  const q = questNow();
+  clearTimeout(questTimer);
+  // The clock moves four times real time: the tables change as it does.
+  questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
+  return questLobbyHtml(q, Date.now(), {names: regularName, have: personalities.map(p => p.id), note: questNote});
+}
+
+// Sits down at quest table `id` with `bbs` big blinds from the bankroll.
+async function sitQuest(id, bbs) {
+  const q = syncClock(questNow());
+  const room = currentRoom(q);
+  const minutes = gameMinutes(q);
+  const game = questLobby(q.seed, minutes).find(r => r.room.id === room.id)?.games.find(g => g.ids.includes(id));
+  if (!game) { questNote = 'That table has broken up.'; render(); return; }
+  const blinds = QUEST_STAKES[game.stakes];
+  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds}, bbs * blinds[1], room);
+  if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
+  const bots = lineupFor(q.seed, id, game.stakes, minutes, personalities.map(p => p.id));
+  quest = seatedQ;
+  saveQuest(quest);
+  questNote = '';
+  questTable = {id, stakes: game.stakes, room};
+  ladder = null;
+  await sitDown({bots, game: 'nlhe', buyIn: quest.seat.stack, sb: blinds[0], bb: blinds[1], gto: false, regs: true});
+  // Regulars who leave are replaced from the same stakes' pool.
+  if (regulars) regulars.pool = replacementPool(game.stakes, personalities.map(p => p.id));
+  bannerHook = () => (quest?.seat ? `${room.name} · ${game.stakes} · ${questClock(gameMinutes(quest))} · Bankroll $${chipText(quest.bankroll)}` : '');
+}
+
+// After each hand at a quest table: the stack, saved.
+function questHand() {
+  if (!questTable || !quest?.seat || !state) return;
+  quest = questSetStack(quest, num(state.seats[0].stack));
+  saveQuest(quest);
+}
+
+// Leaving a quest table: the stack goes back to the bankroll.
+function questStandUp() {
+  if (!questTable || !quest) return;
+  if (state) quest = questSetStack(quest, num(state.seats[0].stack));
+  const before = quest.seat;
+  quest = questLeave(quest);
+  saveQuest(quest);
+  if (before) {
+    const net = before.stack - before.bought;
+    questNote = `You left with $${chipText(before.stack)} (${net >= 0 ? '+' : '−'}$${chipText(Math.abs(net))} this session).`;
+  }
+  questTable = null;
+}
+
+function questGo(roomId) {
+  quest = questTravel(questNow(), roomId, TRAVEL_MINUTES);
+  saveQuest(quest);
+  questNote = '';
+  render();
+}
+
+function questNewRun(result) {
+  quest = newRun(questNow(), Date.now(), result);
+  saveQuest(quest);
+  questNote = '';
+  render();
+}
+
 // ---- Play the Regulars (#225) ----
 // A 6-handed table of random Regulars run like a card room (regulars.js):
 // between hands each tops up from a bankroll of three buy-ins, and one who
@@ -1058,13 +1151,14 @@ function regularsCheck() {
   const hn = num(state.hand_number);
   if (!hn || hn === regulars.done) return;
   regulars.done = hn;
+  questHand();
   regulars.pending = regularsBetween().catch(e => console.warn(e));
 }
 
 async function regularsBetween() {
   const r = betweenHands({
     stacks: state.seats.map(x => num(x.stack)), bank: regulars.bank, bots: tableBots,
-    buyIn: regulars.buyIn, all: personalities.map(p => p.id),
+    buyIn: regulars.buyIn, all: regulars.pool || personalities.map(p => p.id),
   });
   for (const {seat, chips} of r.sets) await call('setStack', seat, chips);
   const notes = [];
@@ -1089,8 +1183,15 @@ async function regularsBetween() {
 async function rebuy() {
   if (!regulars || !state?.complete) return;
   if (regulars.pending) await regulars.pending;
-  await call('setStack', 0, regulars.buyIn);
-  state.seats[0].stack = regulars.buyIn;
+  let to = regulars.buyIn;
+  // At a quest table the chips come out of the bankroll, as far as it goes.
+  if (questTable && quest?.seat) {
+    quest = questTopUp(questSetStack(quest, num(state.seats[0].stack)), regulars.buyIn, questTable.room);
+    saveQuest(quest);
+    to = quest.seat.stack;
+  }
+  await call('setStack', 0, to);
+  state.seats[0].stack = to;
   regularsNote = '';
   render();
   armDeal();
@@ -2026,6 +2127,7 @@ function clockText() {
 }
 
 function leaveTable(note = '') {
+  questStandUp();
   ladderLeave();
   wholeChips = false;
   bannerHook = null;
@@ -2381,7 +2483,8 @@ function renderTable() {
   if (mode === 'solo') h += item('botchat', 'Bot chat', botChatOn(), 'The bots talk at the table, and answer when you chat');
   h += '</div></details>';
   h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
-  if (mode === 'guest') h += promoLineHtml();
+  // A club table's promotions, or a quest table's room, clock and bankroll.
+  if (mode === 'guest' || questTable) h += promoLineHtml();
   // 8 or 9 seats: smaller seats (style.css). A bomb pot: two boards of
   // the same size, rather than run twice's smaller second one.
   h += `<div class="pl-felt${n >= CROWDED ? ' crowded' : ''}${bombHand(s) ? ' two-boards' : ''}">`;
@@ -2550,12 +2653,14 @@ function controlsHtml() {
         // Out of chips (#225): say so at once, with Rebuy or Leave the
         // table; who left and who sat down goes on its own line.
         const swaps = regularsNote.startsWith('You’re out') ? '' : regularsNote;
+        // At a quest table, only what the bankroll can pay.
+        const upTo = questTable && quest ? Math.min(regulars.buyIn, mine + quest.bankroll) : regulars.buyIn;
         if (!mine) {
-          status = '<span class="pl-result">You’re out of chips. Rebuy to keep playing.</span>';
-          raise = `<button class="tr-start" data-act="rebuy">Rebuy ${c(regulars.buyIn)}</button>`;
+          status = upTo > 0 ? '<span class="pl-result">You’re out of chips. Rebuy to keep playing.</span>' : '<span class="pl-result">You’re out of chips, and your bankroll is empty.</span>';
+          raise = upTo > 0 ? `<button class="tr-start" data-act="rebuy">Rebuy ${c(upTo)}</button>` : blank;
           call = '<button class="tr-btn" data-act="leave">Leave the table</button>';
           fold = blank;
-        } else if (mine < regulars.buyIn) fold = `<button class="tr-btn" data-act="rebuy">Top up to ${c(regulars.buyIn)}</button>`;
+        } else if (mine < upTo) fold = `<button class="tr-btn" data-act="rebuy">Top up to ${c(upTo)}</button>`;
         if (swaps) status += `<span class="pl-meta pl-swaps">${esc(swaps)}</span>`;
       }
     }
@@ -2756,10 +2861,10 @@ function render() {
   syncChat();
   if (!open) return;
   // A ladder game shows on the Ladder tab as well as Bots.
-  if (seated && view !== 'play' && !(ladder && view === 'ladder')) {
+  if (seated && view !== 'play' && !(ladder && view === 'ladder') && !(questTable && view === 'quest')) {
     // At a table, the other tabs can't start another one.
     root.hidden = view === 'clubs';
-    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#${ladder ? 'ladder' : 'play'}">Back to the table</a></div></section></div>`;
+    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#${ladder ? 'ladder' : questTable ? 'quest' : 'play'}">Back to the table</a></div></section></div>`;
     return;
   }
   root.hidden = false;
@@ -3084,6 +3189,14 @@ function onClick(e) {
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
+  // Bankroll quest's lobby (quest-ui.js).
+  const q = e.target.closest('[data-qsit],[data-qgo],[data-qnew]');
+  if (q && !q.disabled) {
+    if (q.dataset.qsit) sitQuest(q.dataset.qsit, +q.dataset.qbb);
+    else if (q.dataset.qgo) questGo(q.dataset.qgo);
+    else questNewRun(q.dataset.qnew);
+    return;
+  }
   const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb]');
   if (!el) return;
   const d = el.dataset;
