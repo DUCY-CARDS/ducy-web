@@ -68,14 +68,16 @@ export function buyInRange(stakes, room = {}) {
 // Whether the bankroll covers a seat at these stakes.
 export const canSit = (q, stakes, room) => q.bankroll >= buyInRange(stakes, room).min;
 
-// Sits down at `table` ({room, stakes, id}) with `amount` chips from the
-// bankroll, kept within the buy-in range. Returns the new quest, or null if
-// the bankroll can't cover the minimum (or already seated).
+// Sits down at `table` ({room, stakes, id, game}; Hold'em unless `game`
+// says 'plo4') with `amount` chips from the bankroll, kept within the buy-in
+// range. Returns the new quest, or null if the bankroll can't cover the
+// minimum (or already seated).
 export function sitDown(q, table, amount, room) {
   const {min, max} = buyInRange(table.stakes, room);
   if (q.seat || q.bankroll < min) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
-  return {...q, bankroll: q.bankroll - chips, room: table.room, seat: {table: table.id, room: table.room, stakes: table.stakes, stack: chips, bought: chips}};
+  const game = table.game || 'nlhe';
+  return {...q, bankroll: q.bankroll - chips, room: table.room, seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips}};
 }
 
 // The stack at the table after a hand.
@@ -115,9 +117,9 @@ export function topUpChoices(q, stack, room) {
 // (what was bought in and taken away) goes into the history.
 export function leave(q, now = Date.now()) {
   if (!q.seat) return q;
-  const {stack, bought, stakes, room} = q.seat;
+  const {stack, bought, stakes, room, game = 'nlhe'} = q.seat;
   const bankroll = q.bankroll + stack;
-  const session = {at: Math.floor(gameMinutes(q, now)), room, stakes, net: stack - bought};
+  const session = {at: Math.floor(gameMinutes(q, now)), room, stakes, game, net: stack - bought};
   return {...q, bankroll, seat: null, best: Math.max(q.best, bankroll), history: [...q.history, session].slice(-500)};
 }
 

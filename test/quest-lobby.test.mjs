@@ -116,3 +116,51 @@ test('Regulars buy in for different amounts, and top up to their own', () => {
   assert.deepEqual(r.buyIns, [0, 8000, 40000, 12000]);
   assert.deepEqual(startBank(['a', 'b'], 20000, [0, 8000, 40000]), [0, 16000, 80000]);
 });
+
+test('rooms spread pot-limit Omaha tables too, with their own ids', () => {
+  const plo = ROOMS.flatMap(r => r.games.filter(g => g.game === 'plo4').map(g => `${r.id} ${g.stakes}`));
+  assert.ok(plo.length >= 3, `Omaha games: ${plo.join(', ')}`);
+  // Over a game week some Omaha tables run, ids apart from Hold'em's.
+  const ids = new Set();
+  let omaha = 0;
+  for (let m = 0; m < 7 * 1440; m += 60) {
+    for (const r of lobby(11, m)) {
+      for (const g of r.games) {
+        for (const id of g.ids) {
+          assert.ok(!ids.has(`${m} ${id}`), `${id} twice`);
+          ids.add(`${m} ${id}`);
+        }
+        if (g.game === 'plo4') {
+          omaha++;
+          assert.ok(g.ids.every(id => id.includes('-plo4-')), g.ids.join());
+        } else {
+          assert.equal(g.game, 'nlhe');
+          assert.ok(g.ids.every(id => id === `${r.room.id}-${g.stakes}-${id.split('-').pop()}`), g.ids.join());
+        }
+      }
+    }
+  }
+  assert.ok(omaha > 50, `Omaha tables ran in ${omaha} room-hours`);
+});
+
+test('an Omaha seat and its session remember the game', () => {
+  const q = newQuest(T0, 3);
+  const seated = sitDown(q, {id: 'harbor-plo4-2/5-1', room: 'harbor', stakes: STAKES['2/5'], game: 'plo4'}, 50000);
+  assert.equal(seated.seat.game, 'plo4');
+  assert.equal(leave(seated, T0).history.at(-1).game, 'plo4');
+  // Hold'em by default.
+  assert.equal(sitDown(q, {id: 'deuce-1/2-1', room: 'deuce', stakes: STAKES['1/2']}, 20000).seat.game, 'nlhe');
+});
+
+test('the lobby names an Omaha table’s game', () => {
+  const q = {...newQuest(T0, 5), room: 'harbor'};
+  // Find a time the Copper Harbor's 2/5 PLO runs.
+  let at = null;
+  for (let m = q.clock.game; m < q.clock.game + 7 * 1440 && at == null; m += 60) {
+    if (lobby(q.seed, m).find(r => r.room.id === 'harbor').games.some(g => g.game === 'plo4')) at = m;
+  }
+  assert.ok(at != null);
+  const html = questLobbyHtml(q, T0 + (at - q.clock.game) / 4 * 60000);
+  assert.match(html, /Pot-limit Omaha · 6-max/);
+  assert.match(html, /data-qopen="harbor-plo4-/);
+});

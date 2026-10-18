@@ -13,9 +13,20 @@ export const STAKES = {
   '50/100': [5000, 10000],
 };
 
-// Each room spreads some stakes: `tables` is how many run at its busiest,
-// `chance` (when below 1) how often the game runs at all in an hour that
-// could have it, and `when` the hours (and days) a big game can start.
+// The games the rooms spread: Hold'em, and pot-limit Omaha (four cards).
+export const GAMES = {
+  nlhe: {name: 'No-limit Hold’em', short: 'Hold’em'},
+  plo4: {name: 'Pot-limit Omaha', short: 'PLO'},
+};
+export const gameOf = g => g.game || 'nlhe';
+// A game's key for its dice and table ids: Hold'em's is its stakes, so worlds
+// from before Omaha keep their Hold'em tables.
+const gameKey = g => (gameOf(g) === 'nlhe' ? g.stakes : `${gameOf(g)} ${g.stakes}`);
+
+// Each room spreads some games at some stakes (Hold'em unless `game` says
+// otherwise): `tables` is how many run at its busiest, `chance` (when below
+// 1) how often the game runs at all in an hour that could have it, and
+// `when` the hours (and days) a big game can start.
 export const ROOMS = [
   {
     id: 'deuce',
@@ -25,6 +36,7 @@ export const ROOMS = [
       {stakes: '1/2', tables: 6},
       {stakes: '2/5', tables: 2},
       {stakes: '5/10', tables: 1, chance: 0.35},
+      {stakes: '1/2', game: 'plo4', tables: 1, chance: 0.6},
     ],
   },
   {
@@ -35,6 +47,8 @@ export const ROOMS = [
       {stakes: '2/5', tables: 3},
       {stakes: '5/10', tables: 2},
       {stakes: '10/20', tables: 1, chance: 0.6},
+      {stakes: '2/5', game: 'plo4', tables: 2},
+      {stakes: '5/10', game: 'plo4', tables: 1, chance: 0.5},
     ],
   },
   {
@@ -47,6 +61,7 @@ export const ROOMS = [
       {stakes: '10/20', tables: 1},
       {stakes: '25/50', tables: 1, chance: 0.5, when: 'evenings'},
       {stakes: '50/100', tables: 1, chance: 0.35, when: 'weekend-nights'},
+      {stakes: '25/50', game: 'plo4', tables: 1, chance: 0.4, when: 'evenings'},
     ],
   },
 ];
@@ -98,16 +113,16 @@ export function tablesRunning(seed, room, game, minutes) {
     // A big game runs for a block of hours once it starts: one roll a block.
     const block = Math.floor(m / (60 * BLOCK_HOURS));
     const chance = (game.chance ?? 1) * (game.when ? 1 : a);
-    if (roll(seed, room.id, game.stakes, 'block', block) >= chance) return 0;
+    if (roll(seed, room.id, gameKey(game), 'block', block) >= chance) return 0;
     return Math.max(1, Math.round(game.tables * a));
   }
   // A little noise an hour, so two Fridays aren't identical.
   const hourIndex = Math.floor(m / 60);
-  const noise = 0.85 + 0.3 * roll(seed, room.id, game.stakes, 'hour', hourIndex);
+  const noise = 0.85 + 0.3 * roll(seed, room.id, gameKey(game), 'hour', hourIndex);
   return Math.max(a >= 0.2 ? 1 : 0, Math.round(game.tables * a * noise));
 }
 
-// Every room's games right now: [{room, stakes, blinds, tables}], with the
+// Every room's games right now: [{room, stakes, game, blinds, tables}], with the
 // rooms' tables numbered (`ids`, stable while a table runs).
 export function lobby(seed, minutes) {
   return ROOMS.map(room => ({
@@ -115,7 +130,8 @@ export function lobby(seed, minutes) {
     games: room.games
       .map(game => {
         const tables = tablesRunning(seed, room, game, minutes);
-        return {stakes: game.stakes, blinds: STAKES[game.stakes], tables, ids: Array.from({length: tables}, (_, i) => `${room.id}-${game.stakes}-${i + 1}`)};
+        const key = gameKey(game).replace(' ', '-');
+        return {stakes: game.stakes, game: gameOf(game), blinds: STAKES[game.stakes], tables, ids: Array.from({length: tables}, (_, i) => `${room.id}-${key}-${i + 1}`)};
       })
       .filter(g => g.tables > 0),
   }));

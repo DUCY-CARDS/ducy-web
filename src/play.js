@@ -1078,7 +1078,7 @@ async function sitQuest(id, chips) {
   questOpen = null;
   if (!game) { questNote = 'That table has broken up.'; render(); return; }
   const blinds = QUEST_STAKES[game.stakes];
-  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds}, chips, room);
+  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game}, chips, room);
   if (!seatedQ) { questNote = 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
   const have = personalities.map(p => p.id);
   const bots = lineupFor(q.seed, id, game.stakes, minutes, have);
@@ -1088,8 +1088,9 @@ async function sitQuest(id, chips) {
   questNote = '';
   questTable = {id, stakes: game.stakes, room};
   ladder = null;
+  // Hold'em or pot-limit Omaha (four cards), as the table spreads.
   await sitDown({
-    bots, game: 'nlhe', buyIn: quest.seat.stack, sb: blinds[0], bb: blinds[1], gto: false, regs: true,
+    bots, game: game.game || 'nlhe', buyIn: quest.seat.stack, sb: blinds[0], bb: blinds[1], gto: false, regs: true,
     stacks: [quest.seat.stack, ...stacksAt(q.seed, id, bots, blinds, room, minutes)],
     buyIns: [quest.seat.stack, ...bots.map(buyInOf)],
   });
@@ -1099,7 +1100,8 @@ async function sitQuest(id, chips) {
     regulars.pool = replacementPool(game.stakes, have);
     regulars.buyInOf = buyInOf;
   }
-  bannerHook = () => (quest?.seat ? `${room.name} · ${game.stakes} · ${questClock(gameMinutes(quest))} · Bankroll $${chipText(quest.bankroll)}` : '');
+  const label = game.game === 'plo4' ? `${game.stakes} PLO` : game.stakes;
+  bannerHook = () => (quest?.seat ? `${room.name} · ${label} · ${questClock(gameMinutes(quest))} · Bankroll $${chipText(quest.bankroll)}` : '');
 }
 
 // After each hand at a quest table: the stack, saved.
