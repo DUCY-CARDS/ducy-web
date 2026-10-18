@@ -6,7 +6,7 @@
 //   clubCall(id, method, ...args) for handle, disconnected, newHand,
 //     advance, tick, approveChips, denyChips, remove, state, resume (the
 //     time is added) | clubDrop(id) | clubSave(id) | clubRestore(id, json) |
-//   clubSitOutLimit(id, ms) | clockPause(key, on)
+//   clubSitOutLimit(id, ms) | clubMustPlay(id, client, on) | clockPause(key, on)
 // clubCall results also carry `players` and `departed`.
 //
 // Each table sees its own clock: real time, minus the time it was stopped
@@ -106,6 +106,13 @@ export function clubEngine(MultiTable) {
     },
     // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
     clubSitOutLimit: (id, ms) => { tables.get(id)?.setSitOutLimit(ms); return true; },
+    // Whether member `client` owes table id hands (the hit-and-run rule):
+    // while they do, sitting out or dropping off blinds them off instead of
+    // taking them out. False with a ducy-wasm from before it could.
+    clubMustPlay: (id, client, on) => {
+      const t = tables.get(id);
+      return !!(t?.setMustPlay && t.setMustPlay(String(client), !!on, now(id)));
+    },
     // Stops (on) or restarts a table's clock: while stopped no time passes
     // for it, so no turn runs out and no sit-out expires; it resumes with the
     // time that was left.

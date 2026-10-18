@@ -28,7 +28,7 @@ import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from '.
 import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
-import { defaultSeats, maxSeats } from './club-tables.js';
+import { defaultSeats, maxSeats, stayText } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
@@ -243,6 +243,9 @@ let hostTitle = '';
 let tableTitle = '';
 let netNote = ''; // connection status, e.g. "Reconnecting…"
 let noteUntil = 0; // keep netNote on screen until then (a refused chip request)
+// A club table's hit-and-run rule: hands you still play before you may
+// leave, as the host last said (0: free to go).
+let stayLeft = 0;
 let shownSeq = -1; // state number on screen, so late results are dropped
 let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
@@ -2338,6 +2341,7 @@ function startGuest(code) {
   joinedByCode = false;
   myChips = null;
   mySeat = null;
+  stayLeft = 0;
   chipAsk = 0;
   gtoTable = false;
   review = null;
@@ -2359,6 +2363,13 @@ function startGuest(code) {
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
   if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
+  // The hit-and-run rule (club-host.js): hands left before you may leave.
+  if (m.type === 'stay') {
+    stayLeft = Math.max(0, num(m.hands) || 0);
+    if (m.refused && stayLeft) { netNote = stayText(stayLeft); noteUntil = Date.now() + 6000; }
+    render();
+    return;
+  }
   if (m.type === 'state') {
     lastView = m.view;
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
@@ -2868,7 +2879,9 @@ function renderTable() {
   if (questTable && s.complete) h += item('qchange', 'Change table', null, 'Move to another table of this game and stakes, with your stack');
   if (canLeaveAtBB()) h += item('leavebb', 'Leave before my big blind', leaveAtBB, 'Play on until your big blind comes round, then leave instead of posting it');
   h += '</div></details>';
-  h += `<button class="pl-leave" data-act="leave">${watching ? 'Stop watching' : 'Leave'}</button></span></div>`;
+  // Up at a club table with the hit-and-run rule: the button says how long.
+  const stay = mode === 'guest' && !watching && stayLeft > 0;
+  h += `<button class="pl-leave" data-act="leave"${stay ? ` title="${esc(stayText(stayLeft))}"` : ''}>${watching ? 'Stop watching' : stay ? `Leave in ${stayLeft} ${stayLeft === 1 ? 'hand' : 'hands'}` : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
   if (questTable && !(celebration && Date.now() < celebration.until)) h += questBarHtml();
   else if (mode === 'guest' || questTable) h += promoLineHtml();
@@ -3727,6 +3740,8 @@ function onClick(e) {
   }
   else if (el.dataset.act === 'autodeal') { setAutoDeal(!autoDealOn()); saveSetup(); holds.delete('user'); render(); armDeal(); }
   else if (el.dataset.act === 'leave') {
+    // A club table's hit-and-run rule: up, you play its hands first.
+    if (mode === 'guest' && !watching && stayLeft > 0) { netNote = stayText(stayLeft); noteUntil = Date.now() + 6000; render(); return; }
     if (ladder && !ladder.over && state && !state.complete && !confirm('Leave in the middle of a hand? It folds this hand; the game picks up later with the chips you have behind.')) return;
     if (mode === 'host') forgetSavedTable();
     leaveTable();
