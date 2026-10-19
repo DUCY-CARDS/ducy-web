@@ -1154,7 +1154,22 @@ function questNow() {
   return quest;
 }
 
+// Saved at a table (a refresh, or the page closed while playing): straight
+// back to it, rather than standing you up.
+let questBackToTableBusy = false;
+async function questBackToTable() {
+  if (questBackToTableBusy || !quest?.seat || questTable || seated) return;
+  questBackToTableBusy = true;
+  try { await sitQuest(quest.seat.table, quest.seat.stack, true, true); } finally { questBackToTableBusy = false; }
+  render();
+}
+
 function questLobbyPage() {
+  // Saved at a table (a refresh): back to it, rather than the lobby.
+  if (questNow().seat && !questTable) {
+    setTimeout(questBackToTable, 0);
+    return '<div class="pl-wrap"><p class="pl-meta">Back to your table…</p></div>';
+  }
   // Calls you're seeing now: the time to take the seat starts here.
   // (Not in a hidden tab: there the watcher says so, and the seat waits.)
   const seen = document.hidden ? questNow() : questSeeCalls(questNow());
@@ -1181,19 +1196,27 @@ function questLobbyPage() {
 // tables, the stack you had, `moving` keeping the last table's reads for the
 // review). The players there keep the stacks the open table showed, each with
 // their own buy-in: the Regulars by strength, generic players by habit.
-async function sitQuest(id, chips, moving = false) {
+async function sitQuest(id, chips, moving = false, resume = false) {
   const q = syncClock(questNow());
   const room = currentRoom(q);
   const minutes = gameMinutes(q);
   const game = questLobby(q.seed, minutes).find(r => r.room.id === room.id)?.games.find(g => g.ids.includes(id));
   questOpen = null;
-  if (!game) { questNote = 'That table has broken up.'; render(); return; }
+  if (!game) {
+    // Back after a refresh to a table that's gone: up, with your stack.
+    if (resume) quest = questLeave(q);
+    if (resume) saveQuest(quest);
+    questNote = 'That table has broken up.';
+    render();
+    return;
+  }
   const blinds = QUEST_STAKES[game.stakes];
   const have = personalities.map(p => p.id);
   const bots = lineupFor(q.seed, id, game.stakes, minutes, have, {generic: genericPlayers});
   // The named Regulars at the table, for your results against them.
   const named = bots.filter(b => !isGeneric(b));
-  const seatedQ = questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game, with: named}, chips, room);
+  // Back after a refresh: you're already in the seat, with its stack.
+  const seatedQ = resume ? q : questSitDown(q, {id, room: room.id, stakes: blinds, game: game.game, with: named}, chips, room);
   if (!seatedQ) { questNote = questExhausted(q) ? 'You’re too tired to play. Get some sleep first.' : 'Your bankroll doesn’t cover that buy-in.'; render(); return; }
   const buyInOf = who => buyInFor(q.seed, id, who, blinds, room, minutes);
   quest = seatedQ;
@@ -1202,7 +1225,7 @@ async function sitQuest(id, chips, moving = false) {
   if (!moving) questReview = null;
   questTagFor = null;
   questMilestone = '';
-  questTable = {id, stakes: game.stakes, room, buyIn: quest.seat.stack};
+  questTable = {id, stakes: game.stakes, room, buyIn: resume ? Math.max(quest.seat.stack, quest.seat.bought) : quest.seat.stack};
   ladder = null;
   // Hold'em or pot-limit Omaha (four cards), as the table spreads.
   await sitDown({
@@ -1468,7 +1491,7 @@ export function watchQuestSeat(onCall) {
       if (questAlerted.has(id)) continue;
       questAlerted.add(id);
       const game = here?.games.find(g => (g.game || 'nlhe') === l.game && g.stakes === l.stakes) || l;
-      if (quest.seat) onCall(`Your ${questGameLabel(game)} seat is ready. It’s held until you get up from this table.`, 'Move after this hand');
+      if (questTable) onCall(`Your ${questGameLabel(game)} seat is ready. It’s held until you get up from this table.`, 'Move after this hand');
       else onCall(`Your seat is ready: ${questGameLabel(game)}. It’s held until you go back to the quest.`, 'Take my seat');
     }
   };
@@ -1484,6 +1507,11 @@ export function takeQuestSeat() {
     if (!state?.complete) { questLeaveForSeat = true; return; }
     leaveTable();
     questNote = '';
+  } else if (quest?.seat && !questTable) {
+    // Still in a seat saved before a refresh, not sat back down yet: up
+    // from it, with your stack, so the lobby shows the seat you were called to.
+    quest = questLeave(quest);
+    saveQuest(quest);
   }
   if (location.hash !== '#quest') location.hash = 'quest';
   else if (open) render();
