@@ -40,6 +40,7 @@ import {
   joinList as questJoinList, leaveList as questLeaveList, dropMissed as questDropMissed, recordStudy as questRecordStudy,
   sleep as questSleepNow, wake as questWake, moveHome as questMoveHomeTo, exhausted as questExhausted, tableMinutes as questTableMinutes,
   MAX_TABLE_MINUTES as QUEST_MAX_TABLE, TIRED_MINUTES as QUEST_TIRED, resume as questResume, AWAY_MS as QUEST_AWAY_MS,
+  seeCalls as questSeeCalls, unseenCalls as questUnseenCalls,
 } from './quest.js';
 import {
   ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes,
@@ -48,7 +49,7 @@ import {
 import { listsNow as questListsNow } from './quest-waitlist.js';
 import { question as questQuestion } from './quest-study.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { gameClock as questCountdown, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { gameClock as questCountdown, gameLabel as questGameLabel, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import { SCENARIOS, answerStake, confront as questConfront, markRead as questMarkRead, maybeAskStake, owedBy, post as questPost, resolveStakes } from './quest-scenarios.js';
@@ -1134,7 +1135,11 @@ function questNow() {
 }
 
 function questLobbyPage() {
-  const q = questNow();
+  // Calls you're seeing now: the time to take the seat starts here.
+  // (Not in a hidden tab: there the watcher says so, and the seat waits.)
+  const seen = document.hidden ? questNow() : questSeeCalls(questNow());
+  if (seen !== quest) { quest = seen; saveQuest(quest); }
+  const q = quest;
   clearTimeout(questTimer);
   // The clock moves four times real time: the tables change as it does.
   questTimer = setTimeout(() => { if (open && view === 'quest' && !seated) render(); }, 30_000);
@@ -1414,6 +1419,39 @@ function questAnswer(i) {
   quest = questRecordStudy(q, right);
   saveQuest(quest);
   render();
+}
+
+// In line while you do something else (the charts, drills, another table):
+// every few seconds, with your name on a list and the quest lobby not in
+// front, the clock is kept running (time on a list isn't time away) and a
+// call is passed to `onCall(text)` once, so the page can say your seat is
+// ready. The seat is held until you come back to the lobby (quest.js seeCalls).
+let questWatcher = null;
+const questAlerted = new Set();
+export function watchQuestSeat(onCall) {
+  clearInterval(questWatcher);
+  const check = () => {
+    if (!quest) {
+      // Not opened yet this visit: only a saved quest with your name down matters.
+      const saved = loadQuest();
+      if (!saved?.lists?.length) return;
+      quest = saved;
+    }
+    if (!quest.lists?.length || quest.seat || (open && view === 'quest' && !document.hidden)) return;
+    const q = questNow();
+    if (Date.now() - q.clock.real > 5_000) { quest = syncClock(q); saveQuest(quest); }
+    const rooms = questLobby(quest.seed, gameMinutes(quest));
+    const here = rooms.find(r => r.room.id === quest.room);
+    for (const l of questUnseenCalls(quest)) {
+      const id = `${l.key}@${l.joined}`;
+      if (questAlerted.has(id)) continue;
+      questAlerted.add(id);
+      const game = here?.games.find(g => (g.game || 'nlhe') === l.game && g.stakes === l.stakes) || l;
+      onCall(`Your seat is ready: ${questGameLabel(game)}. It's held until you go back to the quest.`);
+    }
+  };
+  questWatcher = setInterval(check, 2000);
+  check();
 }
 
 // Ticks the lobby's countdowns (data-qcount, the real time each ends) every

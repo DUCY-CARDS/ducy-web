@@ -2,7 +2,7 @@
 // waitlists you wait in, and study while you travel or wait.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, listStatus, newQuest, newRun, recordStudy, sitDown, startIn, travel } from '../src/quest.js';
+import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, listStatus, newQuest, newRun, recordStudy, seeCalls, sitDown, startIn, travel, unseenCalls } from '../src/quest.js';
 import { REGIONS, ROOMS, STAKES, TRAVEL, cityOf, regionOf, roomById, startRoom, travelMinutes } from '../src/quest-rooms.js';
 import { listKey, listsNow, seatGap, waitingAt } from '../src/quest-waitlist.js';
 import { question } from '../src/quest-study.js';
@@ -90,9 +90,21 @@ test('joining a list: called once those ahead are seated, then a short time to t
   assert.equal(s.ahead, 1);
   [s] = listStatus(q, later(9));
   assert.ok(s.called);
+  // Called while you're doing something else: the seat is held for you.
+  assert.deepEqual(unseenCalls(q, later(9)).map(l => l.key), ['nlhe 1/2']);
+  assert.equal(listStatus(q, later(9 + 10 * CALL_MINUTES)).length, 1);
+  assert.equal(dropMissed(q, later(9 + 10 * CALL_MINUTES)), q);
+  assert.match(questLobbyHtml(q, later(9)), /held for you/);
+  // Back in the lobby, you've seen it: the time to take the seat starts then.
+  const seen = seeCalls(q, later(20));
+  assert.equal(seeCalls(seen, later(21)), seen, 'seen once');
+  assert.equal(unseenCalls(seen, later(20)).length, 0);
+  assert.equal(seeCalls(q, later(4)), q, 'nothing called yet');
+  assert.equal(listStatus(seen, later(20)).length, 1);
+  assert.equal(listStatus(seen, later(20))[0].wait, CALL_MINUTES);
   // Not taken in time: the seat goes to the next name.
-  assert.equal(listStatus(q, later(9 + CALL_MINUTES)).length, 0);
-  assert.equal(dropMissed(q, later(9 + CALL_MINUTES)).lists.length, 0);
+  assert.equal(listStatus(seen, later(20 + CALL_MINUTES)).length, 0);
+  assert.equal(dropMissed(seen, later(20 + CALL_MINUTES)).lists.length, 0);
   // Leaving the list, travelling or sitting down takes your name off.
   assert.equal(leaveList(q, 'nlhe 1/2').lists.length, 0);
   assert.equal(travel(q, 'deuce', 12, T0).lists.length, 0);
