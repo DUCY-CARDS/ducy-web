@@ -257,6 +257,31 @@ function gameRowHtml(q, room, game, mine, now, minutes) {
   return h + '</li>';
 }
 
+/**
+ * The games running in your room, for a look from your table: each with
+ * its tables, who's waiting, and your place on its list (or a way to put
+ * your name down). `here` is the room's entry from quest-waitlist.js
+ * listsNow; `seat` the game you're playing (q.seat), marked as yours.
+ */
+export function roomGamesHtml(q, here, now, minutes) {
+  if (!here?.games.length) return '<p class="pl-meta">No other games are running here right now.</p>';
+  const mine = listStatus(q, now);
+  const seatGame = q.seat && here.games.find(g => (g.game || 'nlhe') === (q.seat.game || 'nlhe') && String(g.blinds) === String(q.seat.stakes));
+  const seatKey = seatGame?.key;
+  let h = '<ul class="qt-roomgames">';
+  for (const g of here.games) {
+    const l = mine.find(x => x.key === g.key);
+    h += `<li><span class="qt-stakes">${esc(g.stakes)}</span> <span class="qt-meta">${esc(GAMES[g.game]?.short || GAMES.nlhe.short)} · ${plural(g.tables, 'table')} · ${g.waiting.length ? `${g.waiting.length} waiting` : 'no list'}</span> `;
+    if (g.key === seatKey) h += '<b class="qw-you">You’re playing here</b>';
+    else if (l?.called) h += '<b class="qw-you">Your seat is ready</b>';
+    else if (l) h += `<span class="qw-you">${l.ahead ? `${ordinal(l.ahead + 1)} on the list` : 'Next'} · ${esc(gameClock(realAt(now, minutes, l.callAt) - now))}</span> <button class="cc-btn" data-qunlist="${esc(g.key)}">Off the list</button>`;
+    // Moving tables takes your stack with you.
+    else if (canSit({...q, bankroll: q.bankroll + (q.seat?.stack || 0)}, g.blinds, roomById(q.room))) h += `<button class="cc-btn" data-qlist="${esc(g.key)}">Put my name down · ${esc(gameWait((g.waiting.length + 1) * g.gap))}</button>`;
+    h += '</li>';
+  }
+  return h + '</ul>';
+}
+
 /** A real time of day, in the viewer's own clock: "10:42 PM". */
 export const realTime = ms => new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
 

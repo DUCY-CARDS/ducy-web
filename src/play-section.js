@@ -13,7 +13,7 @@
 // of things waiting for you on Clubs, a dot on it when a table you can sit
 // at opens, and the count in the window title.
 
-import { openPlay, closePlay, joinTable, tableGroup, tableName, takeQuestSeat, watchQuestSeat } from './play.js';
+import { openPlay, closePlay, joinTable, tableGroup, tableName, showQuestGames, takeQuestSeat, watchQuestSeat } from './play.js';
 import {
   anyClubs, closeClubs, clubCrumb, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
@@ -81,12 +81,14 @@ export function startBackground() {
   changed();
   // Your name on a Bankroll Quest list: say so when the seat is ready,
   // whatever you're doing, and from the system while the page isn't in front.
-  watchQuestSeat((text, label) => {
-    toast(text, label, takeQuestSeat, 0);
+  // A new game in your room says so too, for a few seconds.
+  watchQuestSeat((text, label, kind = 'seat') => {
+    const go = kind === 'games' ? showQuestGames : takeQuestSeat;
+    toast(text, label, go, kind === 'games' ? 10_000 : 0);
     if (document.hidden && notifyOn()) {
       try {
-        const note = new Notification('ducy', {body: text, tag: 'ducy-quest-seat'});
-        note.onclick = () => { window.focus(); takeQuestSeat(); note.close(); };
+        const note = new Notification('ducy', {body: text, tag: kind === 'games' ? 'ducy-quest-game' : 'ducy-quest-seat'});
+        note.onclick = () => { window.focus(); go(); note.close(); };
       } catch {}
     }
   });
