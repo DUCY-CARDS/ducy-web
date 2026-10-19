@@ -324,9 +324,10 @@ export function recordStudy(q, right) {
   return {...q, study: {n: s.n + 1, right: s.right + (right ? 1 : 0)}};
 }
 
-// The record of a run that's ended: its peak, sessions and how long it ran.
+// The record of a run that's ended: how (broke, won, or 'quit' when you
+// started a new one), its peak and final bankroll, sessions and how long it ran.
 export const runRecord = (q, now = Date.now(), result = 'broke') => ({
-  result, peak: q.best, sessions: q.history.length, hands: q.hands || 0,
+  result, peak: q.best, final: q.bankroll, sessions: q.history.length, hands: q.hands || 0,
   minutes: Math.floor(gameMinutes(q, now) - (q.started ?? START_MINUTES)), ended: now,
 });
 
