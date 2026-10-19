@@ -102,6 +102,8 @@ function render() {
   h += '<div class="ps-sections"><section class="ps-section"><span class="ps-section-title">At the table</span>';
   // Against the bots the next hand always comes on its own; this is for
   // tables of people.
+  // Here as well as the table's ⋯ menu, which is easy to miss on a phone.
+  h += row('Time between hands', `${p.dealSecs}s`, 'pref-dealSecs');
   h += row('Auto-deal with friends', p.autoDeal ? 'On' : 'Off', 'pref-autoDeal');
   h += row('Run it twice', {ask: 'Ask', twice: 'Always', once: 'Never'}[p.runTwice], 'pref-runTwice');
   // Alerts (your turn, 5 seconds left) apart from the game's own sounds.
