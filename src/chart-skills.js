@@ -201,13 +201,15 @@ const COMBOS = i => { const r = Math.floor(i / 13), c = i % 13; return r === c ?
  * difficulty band, weighted by how many combos it has. Relaxes the band, then
  * obviousness, rather than give up. Returns the cell index.
  */
-export function pickCell(spot, {band = [0, 1.01], probe = false, rand = Math.random, ta = trainingActions(spot), obvious = obviousCells(spot, ta)} = {}) {
+export function pickCell(spot, {band = [0, 1.01], probe = false, rand = Math.random, ta = trainingActions(spot), obvious = obviousCells(spot, ta), avoid = null} = {}) {
   const mixes = spot.cells.map((_, i) => handMix(spot, i, ta));
   const tries = probe
     ? [i => obvious[i]]
     : [i => !obvious[i] && difficulty(mixes[i]) >= band[0] && difficulty(mixes[i]) < band[1], i => !obvious[i], () => true];
   for (const ok of tries) {
-    const pool = mixes.map((_, i) => i).filter(ok);
+    // Never `avoid` (the hand just played) again, unless it's all there is.
+    let pool = mixes.map((_, i) => i).filter(ok);
+    if (avoid != null && pool.length > 1) pool = pool.filter(i => i !== avoid);
     if (!pool.length) continue;
     let x = rand() * pool.reduce((s, i) => s + COMBOS(i), 0);
     for (const i of pool) { x -= COMBOS(i); if (x < 0) return i; }

@@ -119,6 +119,25 @@ function dealOmaha(n) {
   return d.slice(0, n).sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || SUIT_ORDER.indexOf(a[1]) - SUIT_ORDER.indexOf(b[1]));
 }
 
+/**
+ * A hand whatever its suits: its ranks, and how many cards share each suit
+ * (AKs and AKo differ; A♠K♠ and A♥K♥ don't).
+ */
+export function handKind(cards) {
+  const ranks = cards.map(c => c[0]).sort((a, b) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b)).join('');
+  const suits = {};
+  for (const c of cards) suits[c[1]] = (suits[c[1]] || 0) + 1;
+  return `${ranks}:${Object.values(suits).sort((a, b) => b - a).join('')}`;
+}
+
+/** Deals with `deal` (returning {cards} or the cards) until the hand isn't the same as `prev`'s, suits aside; tries a few dozen times. */
+export function dealNotAgain(deal, prev) {
+  const kind = prev && handKind(prev);
+  let h = deal();
+  for (let i = 0; kind && i < 50 && handKind(h.cards || h) === kind; i++) h = deal();
+  return h;
+}
+
 // Top-% games share one flow; these pick Hold'em or Omaha by hole-card count.
 // V3's names (#225): the same as the Pre-flop ranges overview.
 const gameName = n => (n === 2 ? 'Hold’em' : `Omaha ${n}`);
@@ -683,11 +702,13 @@ function nextPractice() {
   const pr = st.practice;
   pr.feedback = null;
   const band = levelFor(pr.score).band;
-  if (pr.drill) { pr.current = dealDrill(pr.cards, pr.pct, band, pr.drill); render(); return; }
+  // Never the same hand twice in a row, even in other suits.
+  const prev = pr.current?.cards;
+  if (pr.drill) { pr.current = dealNotAgain(() => dealDrill(pr.cards, pr.pct, band, pr.drill), prev); render(); return; }
   const focus = focusFor(pr);
-  if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealProbe(pr.cards, pr.pct);
-  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealInBand(pr.cards, pr.pct, band, focus.tag, focus.side), focus: focus.tag};
-  else pr.current = dealInBand(pr.cards, pr.pct, band);
+  if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealNotAgain(() => dealProbe(pr.cards, pr.pct), prev);
+  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealNotAgain(() => dealInBand(pr.cards, pr.pct, band, focus.tag, focus.side), prev), focus: focus.tag};
+  else pr.current = dealNotAgain(() => dealInBand(pr.cards, pr.pct, band), prev);
   render();
 }
 
@@ -1176,11 +1197,12 @@ function start() {
 
 function next() {
   if (st.hands.length >= st.total) { st.screen = 'summary'; render(); return; }
+  const prev = st.current?.cards;
   if (st.target.omaha) {
-    const cards = dealTop(st.target.cards);
+    const cards = dealNotAgain(() => dealTop(st.target.cards), prev);
     st.current = {cards, pct: topPercentile(cards)};
   } else {
-    const cards = dealHand();
+    const cards = dealNotAgain(dealHand, prev);
     st.current = {cards, cls: handClass(cards[0], cards[1])};
   }
   render();
