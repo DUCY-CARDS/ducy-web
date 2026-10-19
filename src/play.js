@@ -26,6 +26,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
 import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
+import { shownPots } from './pots.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
@@ -3151,7 +3152,16 @@ function renderTable() {
   // split afresh, colouring up or down.
   const chipsNow = !s.complete && handChips(s.seats.map(x => ({stack: num(x.stack), street_bet: num(x.street_bet)})), s.events || [], bb);
   const potChips = chipsNow ? chipRow(chipsNow.pot, 6, 'ch-pot') : chipPile(gathered, bb, 6, 'ch-pot', true);
-  h += gathered > 0 || total ? `<div class="pl-pot">${potChips}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
+  // All-ins (pots.js): the main pot and each side pot on its own, and an
+  // all-in no one could match isn't in any of them: it goes back.
+  const split = !s.complete && shownPots(s.seats, s.events);
+  if (split) {
+    const many = split.pots.length > 2;
+    let amounts = split.pots.map((p, k) => `<span class="pl-amt">${k ? `Side pot${many ? ` ${k}` : ''}` : split.pots.length > 1 ? 'Main pot' : 'Pot'} ${c(p.amount)}</span>`).join('');
+    const u = split.uncalled;
+    if (u) amounts += `<span class="pl-total" title="Uncalled: no one could match it">${c(u.amount)} back to ${u.seat === 0 && !watching ? 'you' : esc(nameOf(u.seat))}</span>`;
+    h += `<div class="pl-pot">${potChips}${amounts}</div></div>`;
+  } else h += gathered > 0 || total ? `<div class="pl-pot">${potChips}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
     const p = seatPos(i, n);
     if (seat.empty) {
