@@ -107,3 +107,24 @@ test('over many hands about LEAVE_CHANCE of Regulars leave', () => {
   const rate = left / (hands * 5);
   assert.ok(Math.abs(rate - LEAVE_CHANCE) < 0.003, `rate ${rate}`);
 });
+
+test('never two of the same player at a table: with no one else free, the seat keeps its player', () => {
+  // Everyone in the pool is already seated: the broke Regular buys in again.
+  const broke = betweenHands({stacks: [100, 0, 300], bank: [0, 0, 200], bots: ['a', 'b'], buyIn: 100, all: ['a', 'b'], leaveChance: 0});
+  assert.deepEqual(broke.swaps, []);
+  assert.deepEqual(broke.sets, [{seat: 1, chips: 100}]);
+  assert.equal(broke.bank[1], 200);
+  // Leaving with chips, and no one to take the seat: they stay.
+  const stays = betweenHands({stacks: [100, 80, 300], bank: [0, 200, 200], bots: ['a', 'b'], buyIn: 100, all: ['a', 'b'], leaveChance: 1, rng: () => 0});
+  assert.deepEqual(stays.swaps, []);
+  assert.deepEqual(stays.bots, ['a', 'b']);
+  // Over many hands nobody is ever seated twice, and nobody with the same name.
+  let bots = ['a', 'b', 'c'], stacks = [100, 0, 0, 0];
+  const nameOf = id => id.replace(/\d$/, '');
+  for (let h = 0; h < 200; h++) {
+    const r = betweenHands({stacks, bank: [0, 0, 0, 0], bots, buyIn: 100, all: ['a', 'b', 'c', 'd', 'a2', 'e'], leaveChance: 0.3, nameOf});
+    bots = r.bots;
+    assert.equal(new Set(bots.map(nameOf)).size, bots.length, bots.join());
+    stacks = [100, ...bots.map(() => (Math.random() < 0.5 ? 0 : 100))];
+  }
+});
