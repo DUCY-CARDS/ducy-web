@@ -135,7 +135,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   if (q.trip) return h + travelHtml(q, now, minutes, study) + statsHtml(q, names) + runsHtml(q);
   // Asleep: the night runs on the game clock, like a trip.
   if (q.rest) return h + sleepHtml(q, now, minutes, study) + statsHtml(q, names) + runsHtml(q);
-  const all = listsNow(q.seed, minutes);
+  const all = listsNow(q.seed, minutes, homeRoomOf(q)?.id);
   const here = all.find(r => r.room.id === room.id);
   // Other cities' local clubs are only known to the people who live there.
   const rooms = all.filter(r => r.room.id === room.id || knownRoom(q, r.room));

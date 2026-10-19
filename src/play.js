@@ -1394,7 +1394,7 @@ function questStart(regionId) {
 function questList(key) {
   const q = questNow();
   const minutes = gameMinutes(q);
-  const game = questListsNow(q.seed, minutes).find(r => r.room.id === q.room)?.games.find(g => g.key === key);
+  const game = questListsNow(q.seed, minutes, questHomeRoomOf(q)?.id).find(r => r.room.id === q.room)?.games.find(g => g.key === key);
   if (!game) return;
   quest = questJoinList(q, game, game.waiting.length, game.gap);
   saveQuest(quest);

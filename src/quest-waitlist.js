@@ -16,18 +16,22 @@ const MAX_WAITING = 5;
 /** A game's list key in a room: `nlhe 1/2`, `plo4 2/5`. */
 export const listKey = g => `${g.game || 'nlhe'} ${g.stakes}`;
 
-// Game minutes between seats opening at a single table. Kept short so the
-// whole list (MAX_WAITING ahead of you, plus your own seat) clears in under
-// a game minute, about 15 real seconds: waiting isn't the game.
-const SEAT_GAP = 0.15;
+// Game minutes between seats opening at a single table. A full list
+// (MAX_WAITING ahead of you, plus your own seat) clears in about five game
+// minutes, a minute and a quarter of real time. At your home club, where
+// you're a regular, the floor gets you in almost straight away: under a
+// game minute for the whole list.
+const SEAT_GAP = 0.8;
+const HOME_SEAT_GAP = 0.15;
 
 /**
  * Game minutes between seats opening in a game spreading `tables` tables:
- * a seat comes free every SEAT_GAP game minutes (a couple of real seconds)
- * at one table, faster with more tables.
+ * a seat comes free every SEAT_GAP game minutes at one table (HOME_SEAT_GAP
+ * at your home club, `home`), faster with more tables.
  */
-export function seatGap(tables) {
-  return Math.min(SEAT_GAP, Math.max(SEAT_GAP / 4, SEAT_GAP / Math.max(1, tables)));
+export function seatGap(tables, home = false) {
+  const gap = home ? HOME_SEAT_GAP : SEAT_GAP;
+  return Math.min(gap, Math.max(gap / 4, gap / Math.max(1, tables)));
 }
 
 /**
@@ -53,11 +57,12 @@ export function waitingAt(seed, roomId, game, minutes) {
 
 /**
  * Every game in every room right now with its list: [{room, games: [{...game,
- * key, waiting, gap}]}], from quest-rooms.js `lobby`.
+ * key, waiting, gap}]}], from quest-rooms.js `lobby`. `homeRoomId`, your
+ * home club, where seats come quickest.
  */
-export function listsNow(seed, minutes) {
+export function listsNow(seed, minutes, homeRoomId = null) {
   return lobby(seed, minutes).map(r => ({
     room: r.room,
-    games: r.games.map(g => ({...g, key: listKey(g), waiting: waitingAt(seed, r.room.id, g, minutes), gap: seatGap(g.tables)})),
+    games: r.games.map(g => ({...g, key: listKey(g), waiting: waitingAt(seed, r.room.id, g, minutes), gap: seatGap(g.tables, r.room.id === homeRoomId)})),
   }));
 }

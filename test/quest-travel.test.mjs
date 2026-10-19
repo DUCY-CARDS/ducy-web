@@ -72,9 +72,14 @@ test('waitlists: busier small games have more names; the list is the same for a 
   assert.equal(rooms.length, ROOMS.length);
   for (const r of rooms) for (const g of r.games) {
     assert.ok(Array.isArray(g.waiting) && g.gap > 0);
-    // Even a full list calls you in under a game minute (~15 real seconds).
-    assert.ok((5 + 1) * g.gap < 1, `${r.room.id} ${g.key} waits ${(5 + 1) * g.gap} game min`);
+    // A full list calls you in within about five game minutes.
+    assert.ok((5 + 1) * g.gap <= 5, `${r.room.id} ${g.key} waits ${(5 + 1) * g.gap} game min`);
   }
+  // At your home club, under a game minute.
+  const home = listsNow(4, 4 * 1440 + 20 * 60, 'mesquite').find(r => r.room.id === 'mesquite');
+  assert.ok(home.games.length);
+  for (const g of home.games) assert.ok((5 + 1) * g.gap < 1, `home ${g.key} waits ${(5 + 1) * g.gap} game min`);
+  assert.ok(seatGap(1, true) < seatGap(1));
 });
 
 test('joining a list: called once those ahead are seated, then a short time to take the seat', () => {
