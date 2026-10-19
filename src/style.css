@@ -2184,6 +2184,10 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .qw-you b, .qw-called b[data-qcount], .qw-left b { font-variant-numeric: tabular-nums; }
 .qw-called { margin-top: 12px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 3px 0 #0f2219; }
 .qw-called .qt-meta { color: #5a6b5f; }
+/* Home (#299): the room you're in, when it's in your home town, says so. */
+.qw-at-home { box-shadow: inset 4px 0 0 var(--amber); padding-left: 14px; }
+.qw-home-badge { display: inline-block; margin-bottom: 6px; padding: 3px 10px; border-radius: 999px; background: var(--amber); color: #1d3a2c; font: 700 12px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; }
+.qw-gohome { margin: 6px 0 4px; }
 .qw-called .cc-btn { color: #1d3a2c; border-color: rgba(29,58,44,0.35); background: transparent; }
 .qw-region-name { font: 600 12px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); margin: 14px 0 0; }
 .qw-trip { margin-top: 14px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 3px 0 #0f2219; }
