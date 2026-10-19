@@ -144,6 +144,28 @@ export const ROOMS = [
       {stakes: '2/5', game: 'plo4', tables: 1},
     ],
   },
+  // A small local club in every city (`local`): one $1/$2 table most of the
+  // day, now and then an Omaha game. Only the people who live there know it,
+  // so it's listed only in your home city, and going home takes you there.
+  ...[
+    ['mesquite', 'Dot’s Back Room'],
+    ['austin', 'Eastside Social Club'],
+    ['houston', 'Westheimer Social Club'],
+    ['cactus', 'The Yucca Lodge'],
+    ['losangeles', 'Silver Lake Social Club'],
+    ['palmetto', 'The Bait Shop Game'],
+    ['miami', 'Little Havana Social Club'],
+  ].map(([city, name]) => ({
+    id: `club${city}`,
+    city,
+    name,
+    kind: 'Your local club',
+    local: true,
+    games: [
+      {stakes: '1/2', tables: 1},
+      {stakes: '1/2', game: 'plo4', tables: 1, chance: 0.25},
+    ],
+  })),
 ];
 
 // Game minutes to get from one room to another: across town, to another
@@ -196,6 +218,13 @@ export function moveCost(fromCity, room) {
 export const homeCityOf = q => q.homeCity || startRoom(q.home)?.city || null;
 /** A city by id: {id, name, small, region}. */
 export const cityNamed = id => cityById(id);
+/** Where going home takes you: your home city's local club. */
+export const homeRoomOf = q => {
+  const city = homeCityOf(q);
+  return ROOMS.find(r => r.local && r.city === city) || ROOMS.find(r => r.city === city) || null;
+};
+/** Whether quest `q` knows of room `room`: every room but other cities' local clubs. */
+export const knownRoom = (q, room) => !room.local || room.city === homeCityOf(q);
 // Big games run in blocks of this many game hours once they start.
 const BLOCK_HOURS = 4;
 

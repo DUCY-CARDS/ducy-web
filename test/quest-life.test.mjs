@@ -134,9 +134,12 @@ test('the lobby shows home, hours at the tables, fares, rest and moving', () => 
   assert.match(html, /Home<\/span><b>[^<]+<\/b>/);
   assert.match(html, /At the tables<\/span><b[^>]*>0m of 12h/);
   assert.match(html, /data-qsleep="hotel"/);
-  assert.match(html, /data-qgohome="1"/);
+  assert.match(html, /data-qgohome="sleep"/);
   assert.match(html, /data-qmovehome="1"/);
-  assert.match(html, /Go there · [\d:]+ · \$300/);
+  // Times are game time, like the clock: another region is 6 hours away.
+  assert.match(html, /Go there · 6:00:00 · \$300/);
+  // Away from home, you can go home any time, to your local club.
+  assert.match(html, /data-qgohome="go"[^>]*>Go home to Dot’s Back Room · 2:00:00 · \$40</);
   // Played out: the rest card says so, and no names go down.
   const tired = questLobbyHtml({...q, tableMinutes: MAX_TABLE_MINUTES}, T0);
   assert.match(tired, /You’re exhausted/);
