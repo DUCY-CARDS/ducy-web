@@ -1101,6 +1101,7 @@ async function prepareGto(bots = setup.bots) {
 let quest = null; // the quest (quest.js), once loaded
 let questTable = null; // {id, stakes, room, buyIn} while sitting at one
 let questNote = ''; // a line for the lobby, e.g. how the last session went
+let questConfirmNew = false; // asked to start a new run: confirm it
 let questReview = null; // the last session's reads (quest-reads.js reviewReads rows)
 let questTimer = null; // redraws the lobby as the clock moves
 let questOpen = null; // the table opened in the lobby, to choose a buy-in
@@ -1142,7 +1143,7 @@ function questLobbyPage() {
   const html = questLobbyHtml(q, Date.now(), {
     names: regularName, have: personalities.map(p => p.id), note: questNote, open: questOpen, amount: questAmount,
     generic: genericPlayers, review: questReview, study: questStudy,
-    backerTest: questTestView(q), testResult: questTestResult, mastered: questTrainerMastered(),
+    backerTest: questTestView(q), testResult: questTestResult, mastered: questTrainerMastered(), confirmNew: questConfirmNew,
   });
   // The inbox's news has been shown: it's read now (offers stay until answered).
   const read = questMarkRead(q);
@@ -1519,6 +1520,9 @@ function questTestView(q) {
 
 function questNewRun(result) {
   quest = newRun(questNow(), Date.now(), result);
+  questConfirmNew = false;
+  // Starting over by choice puts you back at home.
+  if (result === 'quit') { const home = questHomeRoomOf(quest); if (home) quest = {...quest, room: home.id, trip: null}; }
   saveQuest(quest);
   questNote = '';
   render();
@@ -3691,9 +3695,10 @@ function onClick(e) {
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
   // Bankroll quest's lobby (quest-ui.js).
-  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome],[data-qsc],[data-qbt],[data-qbtdone]');
+  const q = e.target.closest('[data-qopen],[data-qclose],[data-qamt],[data-qsit],[data-qgo],[data-qnew],[data-qstart],[data-qlist],[data-qunlist],[data-qpass],[data-qans],[data-qsleep],[data-qgohome],[data-qmovehome],[data-qsc],[data-qbt],[data-qbtdone],[data-qquit]');
   if (q && !q.disabled) {
-    if (q.dataset.qsc) { const [msg, answer] = q.dataset.qsc.split(':'); questScenario(msg, answer); }
+    if (q.dataset.qquit) { questConfirmNew = q.dataset.qquit === 'ask'; render(); }
+    else if (q.dataset.qsc) { const [msg, answer] = q.dataset.qsc.split(':'); questScenario(msg, answer); }
     else if (q.dataset.qbt != null) questTestAnswer(+q.dataset.qbt);
     else if (q.dataset.qbtdone) { questTestResult = null; render(); }
     else if (q.dataset.qstart) questStart(q.dataset.qstart);

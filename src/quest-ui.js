@@ -97,7 +97,7 @@ function openTableHtml(q, room, game, id, minutes, names, have, amount, generic)
  * `generic` whether the engine seats generic players; `review` the last
  * session's reads (quest-reads.js `reviewReads` rows).
  */
-export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null, study = null, backerTest = null, testResult = null, mastered = 0} = {}) {
+export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = null, note = '', open = null, amount = 0, generic = false, review = null, study = null, backerTest = null, testResult = null, mastered = 0, confirmNew = false} = {}) {
   const minutes = gameMinutes(q, now);
   const st = status(q, cheapestBuyIn());
   const room = currentRoom(q);
@@ -170,7 +170,17 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   h += otherRoomsHtml(rooms, room, q);
   const opened = open && here?.games.find(g => g.ids.includes(open));
   if (opened) h += openTableHtml(q, room, opened, open, minutes, names, have, amount, generic);
-  return h + statsHtml(q, names) + runsHtml(q);
+  return h + statsHtml(q, names) + runsHtml(q) + newRunHtml(q, confirmNew);
+}
+
+// Start over (#299): a new run at $1,000 at home. This one goes into the
+// records first, and what carries over after going broke carries over here.
+// Asks once before it does it.
+function newRunHtml(q, confirm) {
+  let h = '<section class="qt-newrun">';
+  if (!confirm) return h + '<button class="link-btn" data-qquit="ask">Start a new run</button></section>';
+  h += `<p><b>Start over at ${money(START_BANKROLL)}?</b> This run (${money(q.bankroll)} now, best ${money(q.best)}, ${q.history.length} session${q.history.length === 1 ? '' : 's'}) is saved to your records. Your reads, stats and backers carry over.</p>`;
+  return h + '<div class="qt-open-acts"><button class="tr-start" data-qnew="quit">Start a new run</button><button class="cc-btn" data-qquit="no">Keep playing</button></div></section>';
 }
 
 const gameLabel = g => `${g.stakes} ${GAMES[g.game]?.name || GAMES.nlhe.name}`;
@@ -406,7 +416,10 @@ function runsHtml(q) {
   if (!q.runs?.length) return '';
   let h = '<section class="qt-runs"><h2>Hall of records</h2><ul>';
   for (const r of hallOfRecords(q.runs)) {
-    const parts = [r.result === 'won' ? `Won in ${durationText(r.minutes)}` : `Broke · peak ${money(r.peak)}`, `${r.sessions} session${r.sessions === 1 ? '' : 's'}`];
+    const how = r.result === 'won' ? `Won in ${durationText(r.minutes)}`
+      : r.result === 'quit' ? `Ended at ${money(r.final ?? 0)} · best ${money(r.peak)}`
+      : `Broke · peak ${money(r.peak)}`;
+    const parts = [how, `${r.sessions} session${r.sessions === 1 ? '' : 's'}`];
     if (r.hands) parts.push(`${r.hands.toLocaleString('en-US')} hands`);
     h += `<li>${esc(parts.join(' · '))}</li>`;
   }
