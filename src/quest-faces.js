@@ -211,9 +211,31 @@ const BGS = ['#dde6ea', '#cfe0ec', '#f3e3cf', '#e6dccb', '#f6e3c4', '#f2d6cf', '
  * gender, age, gear, o} with `o` the drawing options. A base and a gear that
  * lean to the style, then the rest at random.
  */
+/** The base a person with `family` and `seed` is drawn from. */
+const baseWeights = new Map();
+export const baseFor = (family, seed) => {
+  if (!baseWeights.has(family)) baseWeights.set(family, Object.fromEntries(BASES.map(b => [b.id, AGE_LEAN[b.age]?.[family] ?? 1])));
+  return BASES[+pick(baseWeights.get(family), roll(seed, 'face', 'base'))];
+};
+
+/**
+ * A base's background, for who you meet where (quest-people.js
+ * REGION_MIX): 'white', 'hispanic', 'black', 'eastasian', 'southasian' or
+ * 'mideast'. Black Americans are the English-named bases with the darkest
+ * skins; Filipinos count with East and Southeast Asians.
+ */
+export function backgroundOf(base) {
+  if (base.skin === 's5' || base.skin === 's6') return 'black';
+  if (['english', 'irish', 'italian', 'polish', 'greek'].includes(base.pool)) return 'white';
+  if (base.pool === 'hispanic') return 'hispanic';
+  if (base.pool === 'indian') return 'southasian';
+  if (['arabic', 'persian'].includes(base.pool)) return 'mideast';
+  return 'eastasian';
+}
+
 export function lookFor(family, seed) {
   const r = key => roll(seed, 'face', key);
-  const base = BASES[+pick(Object.fromEntries(BASES.map(b => [b.id, AGE_LEAN[b.age]?.[family] ?? 1])), r('base'))];
+  const base = baseFor(family, seed);
   const gears = GEARS.filter(g => !(base.wear && ['headphones', 'cap', 'beanie'].includes(g)) && !(base.wear && g === 'tourist'));
   const gear = pick(Object.fromEntries(gears.map(g => [g, GEAR_SHARE[g] * (GEAR_LEAN[g][family] ?? 1)])), r('gear'));
   const {gender, age} = base;
