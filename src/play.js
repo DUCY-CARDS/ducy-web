@@ -74,12 +74,32 @@ function call(op, ...args) {
       pending.delete(e.data.id);
       if ('error' in e.data) p.reject(new Error(e.data.error)); else p.resolve(e.data.result);
     };
+    // The worker itself failed (it crashed, or couldn't load): nothing in
+    // flight will be answered, so say so to everything waiting rather than
+    // leave it (and the table) hanging.
+    worker.onerror = e => {
+      for (const p of pending.values()) p.reject(new Error(e.message || 'The table engine stopped'));
+      pending.clear();
+    };
   }
   const id = ++nextId;
   return new Promise((resolve, reject) => {
     pending.set(id, {resolve, reject});
     worker.postMessage({id, op, args});
   });
+}
+
+// A table engine that's stopped answering (a bot's turn stuck, see pace):
+// a fresh worker, with nothing in flight and the bots' models to load again.
+function restartWorker() {
+  worker?.terminate();
+  worker = null;
+  for (const p of pending.values()) p.reject(new Error('The table engine was restarted'));
+  pending.clear();
+  busy = false;
+  gtoReady = false;
+  gto6Ready = false;
+  for (const plo of Object.values(GTO_PLOS)) plo.ready = false;
 }
 
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
@@ -1822,15 +1842,39 @@ function syncDeal() {
 // Lets bots act one at a time until it's the player's turn or the hand is
 // over. The bot starts thinking right away; its action is shown once at least
 // BOT_DELAY has passed, so fast decisions still read one at a time.
+// A bot's turn never just stops: with another request to the table in
+// flight it tries again once that's done, and when the engine doesn't
+// answer (an error) it tries a few more times, then says the table has
+// stopped, with Leave. A turn that takes far too long says so too.
+let paceFails = 0;
+let stuckNote = ''; // shown in place of "… is thinking" when a bot's turn is stuck
+const PACE_RETRIES = 3;
+const PACE_SLOW_MS = 20000;
 async function pace() {
   clearTimeout(timer);
-  if (!open || !seated || !botToAct || busy) return;
+  if (!open || !seated || !botToAct) return;
+  if (busy) { timer = setTimeout(pace, 150); return; }
   const started = performance.now();
+  const mine = session;
   // A generic player takes the time their style does (a clue, #306).
   const family = questTable && state ? personOf(seatId(state.to_act ?? 0))?.family : null;
   const wait = family ? thinkMs(family) : BOT_DELAY;
+  const slow = setTimeout(() => {
+    if (mine !== session || !seated) return;
+    stuckNote = 'This is taking too long. The table may have stopped: you can leave and sit down again.';
+    render();
+  }, PACE_SLOW_MS);
   const snap = await request('advance');
-  if (!snap || !open) return;
+  clearTimeout(slow);
+  if (!open || mine !== session) return;
+  if (!snap) {
+    if (++paceFails <= PACE_RETRIES) { timer = setTimeout(pace, 400 * paceFails); return; }
+    stuckNote = 'The table stopped responding. Leave the table and sit down again.';
+    render();
+    return;
+  }
+  paceFails = 0;
+  if (stuckNote) { stuckNote = ''; render(); }
   timer = setTimeout(() => show(snap), Math.max(0, wait - (performance.now() - started)));
 }
 
@@ -2649,6 +2693,11 @@ function leaveTable(note = '') {
   foldQueued = false;
   leaveAtBB = false;
   turnEnds = 0;
+  // Leaving a stuck table: start the engine afresh, so the next table isn't
+  // stuck behind it.
+  if (stuckNote) restartWorker();
+  stuckNote = '';
+  paceFails = 0;
   netNote = note;
   const hook = leaveHook;
   leaveHook = null;
@@ -3190,6 +3239,9 @@ function controlsHtml() {
     } else {
       status = asked ? `You said ${answer ? 'twice' : 'once'}; waiting for the others…` : 'The players are choosing whether to run it twice…';
     }
+  } else if (!L && stuckNote) {
+    status = `<span class="pl-result">${esc(stuckNote)}</span>`;
+    call = '<button class="tr-btn" data-act="leave">Leave the table</button>';
   } else if (!L) {
     status = `${esc(nameOf(s.to_act))} is thinking…`;
     if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
