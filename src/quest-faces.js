@@ -104,7 +104,7 @@ export const NAMES = {
   // African-American names, by generation.
   black: {
     f: {young: n('Aaliyah Jada Imani Destiny Kiara Jasmine Nia Tiana Brianna'), middle: n('Keisha Tamika Latoya Shanice Monique Ebony Tanisha Yolanda Kendra'), older: n('Gladys Bernice Mattie Odessa Hattie Ernestine Loretta Earline Mavis')},
-    m: {young: n('DeShawn Jaylen Malik Darius Isaiah Terrell Xavier Andre Jalen'), middle: n('Darnell Jamal Tyrone Reggie Marcus Terrence Cedric Lamont Dwayne'), older: n('Otis Willie Leroy Clarence Roosevelt Booker Alonzo Cleveland Thaddeus')},
+    m: {young: n('Deshawn Jaylen Malik Darius Isaiah Terrell Xavier Andre Jalen'), middle: n('Darnell Jamal Tyrone Reggie Marcus Terrence Cedric Lamont Dwayne'), older: n('Otis Willie Leroy Clarence Roosevelt Booker Alonzo Cleveland Thaddeus')},
   },
   irish: {
     f: {young: n('Aoife Ciara Niamh Erin Saoirse Orla Caitlin Molly'), middle: n('Siobhan Maeve Sinead Fiona Colleen Bridget Nora Deirdre'), older: n('Maureen Eileen Kathleen Margaret Mary Agnes Bernadette Rosaleen')},
