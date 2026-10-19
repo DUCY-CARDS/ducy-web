@@ -105,7 +105,7 @@ function restartWorker() {
 const SUITS = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const BOT_DELAY = 650; // ms between bot actions
 // Seconds before auto-dealing the next hand, picked in the table bar.
-const DEAL_DELAYS = [0.5, 1, 2, 3];
+const DEAL_DELAYS = [0.5, 1, 2, 3, 5];
 const SETUP_KEY = 'ducyPlaySetup';
 const STATS_KEY = 'ducyPlayStats';
 const REVIEW_KEY = 'ducyPlayReview';
@@ -341,7 +341,7 @@ let peeling = false;
 // to, and no auto-deal switch. GTO training keeps both, and so do tables of
 // people.
 // Against bots (the GTO bot too) the next hand always comes on its own,
-// with no button, countdown or pause: "Wait before dealing" sets the gap.
+// with no button, countdown or pause: "Time between hands" sets the gap.
 const alwaysAuto = () => mode === 'solo';
 const autoDealOn = () => alwaysAuto() || !!(gtoTable ? setup.gtoAutoDeal : setup.autoDeal);
 function setAutoDeal(on) {
@@ -2403,11 +2403,12 @@ export function setTableName(n) {
 }
 
 // Table settings shown on the You page (player-settings.js, V3 #225), and a
-// way to change each: auto-deal and sounds on or off, run it twice cycling
-// ask, always, never.
-export const tablePrefs = () => ({autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds, gameSounds: !!setup.gameSounds});
+// way to change each: the time between hands, auto-deal and sounds on or
+// off, run it twice cycling ask, always, never.
+export const tablePrefs = () => ({dealSecs: DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1, autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds, gameSounds: !!setup.gameSounds});
 export function cycleTablePref(key) {
-  if (key === 'autoDeal') setup.autoDeal = !setup.autoDeal;
+  if (key === 'dealSecs') { setup.dealSecs = DEAL_DELAYS[(DEAL_DELAYS.indexOf(tablePrefs().dealSecs) + 1) % DEAL_DELAYS.length]; armDeal(); }
+  else if (key === 'autoDeal') setup.autoDeal = !setup.autoDeal;
   else if (key === 'sounds') setup.sounds = !setup.sounds;
   else if (key === 'gameSounds') setup.gameSounds = !setup.gameSounds;
   else if (key === 'runTwice') setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(tablePrefs().runTwice) + 1) % RUN_PREFS.length];
@@ -3016,7 +3017,7 @@ function renderTable() {
   h += '<span class="pl-tools">';
   h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
   if (!alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
-  if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="Wait before the next hand"><span>Wait before dealing</span><b>${setup.dealSecs}s</b></button>`;
+  if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="How long the last hand stays up before the next is dealt"><span>Time between hands</span><b>${setup.dealSecs}s</b></button>`;
   if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
   if (reviewTable() && mode === 'solo') {
     h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against Ducybot as soon as you make it');

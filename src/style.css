@@ -1209,14 +1209,16 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-sizes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; height: 100%; }
 .pl-sizes .btn-small { justify-content: center; padding: 4px 6px; }
 .pl-size-slot { display: block; }
-.pl-tools { display: flex; gap: 8px; align-items: center; }
+/* At the right even when the bar wraps on a phone; the ⋯ menu opens under
+   it, lined up with its right edge (Leave's), so it stays on screen. */
+.pl-tools { position: relative; display: flex; gap: 8px; align-items: center; margin-left: auto; }
 .pl-tools .link-btn { margin-left: 6px; }
 /* The table's ⋯ menu and Leave (V3, #225). */
-.pl-menu { position: relative; }
+.pl-menu { position: static; }
 .pl-menu > summary { list-style: none; cursor: pointer; font-weight: 700; font-size: 18px; line-height: 1; padding: 7px 14px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--fg-strong); user-select: none; }
 .pl-menu > summary::-webkit-details-marker { display: none; }
 .pl-menu[open] > summary { background: var(--bg-inset); }
-.pl-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 230px; display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--bg-raised); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,0.25); }
+.pl-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: min(230px, calc(100vw - 32px)); max-width: calc(100vw - 32px); display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--bg-raised); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,0.25); }
 .pl-menu-item { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 12px; border: 0; border-radius: 8px; background: none; color: var(--fg-strong); font: 600 14px var(--font-ui); cursor: pointer; text-align: left; }
 .pl-menu-item:hover, .pl-menu-item:focus-visible { background: var(--bg-inset); }
 .pl-menu-item b { font-weight: 600; color: var(--fg-muted); }
