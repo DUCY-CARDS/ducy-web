@@ -2,7 +2,7 @@
 // on the page from a seed with ducy's avatar code (avatar-draw.js), so there
 // are thousands of different people, not a fixed set of pictures.
 //
-// - **Bases:** 60 people set by hand: gender, age band, skin, face shape,
+// - **Bases:** 64 people set by hand: gender, age band, skin, face shape,
 //   natural hair colour, and the name pool (the background their names come
 //   from), chosen by hand for each base and never worked out from looks.
 // - **Variants:** each person adds to their base a hairstyle for their gender
@@ -30,9 +30,9 @@ const BASE_ROWS = [
   ['english', 'm', 'middle', 's2', 'square', H.brown],
   ['english', 'f', 'older', 's1', 'round', H.light],
   ['english', 'm', 'young', 's2', 'long', H.red],
-  ['english', 'm', 'young', 's5', 'oval', H.black],
-  ['english', 'f', 'middle', 's6', 'heart', H.black],
-  ['english', 'm', 'older', 's5', 'wide', H.black],
+  ['black', 'm', 'young', 's5', 'oval', H.black],
+  ['black', 'f', 'middle', 's6', 'heart', H.black],
+  ['black', 'm', 'older', 's5', 'wide', H.black],
   ['english', 'f', 'young', 's4', 'oval', H.dark],
   ['irish', 'f', 'young', 's1', 'heart', H.red],
   ['irish', 'm', 'middle', 's1', 'wide', H.auburn],
@@ -86,6 +86,10 @@ const BASE_ROWS = [
   ['japanese', 'f', 'young', 'ea', 'oval', H.black],
   ['japanese', 'm', 'middle', 'ea', 'long', H.black],
   ['japanese', 'm', 'older', 'ea', 'square', H.black],
+  ['black', 'f', 'young', 's5', 'oval', H.black],
+  ['black', 'm', 'middle', 's6', 'square', H.black],
+  ['black', 'f', 'older', 's6', 'round', H.black],
+  ['black', 'm', 'young', 's6', 'long', H.black],
 ];
 export const BASES = BASE_ROWS.map(([pool, gender, age, skin, face, hairC, wear], i) => ({id: i, pool, gender, age, skin, face, hairC, wear: wear || ''}));
 
@@ -95,7 +99,12 @@ const n = s => s.split(' ');
 export const NAMES = {
   english: {
     f: {young: n('Emma Olivia Chloe Lily Grace Hannah Ava Zoe Maddie'), middle: n('Lisa Michelle Karen Amy Heather Julie Wendy Dana Tanya'), older: n('Dorothy Barbara Joan Shirley Betty Carol Judy Peggy Lois')},
-    m: {young: n('Tyler Ethan Jake Ryan Owen Cody Dylan Noah Marcus'), middle: n('Dave Mike Steve Rob Brian Greg Paul Jim Darnell'), older: n('Walt Harold Earl Stan Gene Herb Hank Norm Clyde')},
+    m: {young: n('Tyler Ethan Jake Ryan Owen Cody Dylan Noah Logan'), middle: n('Dave Mike Steve Rob Brian Greg Paul Jim Kevin'), older: n('Walt Harold Earl Stan Gene Herb Hank Norm Clyde')},
+  },
+  // African-American names, by generation.
+  black: {
+    f: {young: n('Aaliyah Jada Imani Destiny Kiara Jasmine Nia Tiana Brianna'), middle: n('Keisha Tamika Latoya Shanice Monique Ebony Tanisha Yolanda Kendra'), older: n('Gladys Bernice Mattie Odessa Hattie Ernestine Loretta Earline Mavis')},
+    m: {young: n('DeShawn Jaylen Malik Darius Isaiah Terrell Xavier Andre Jalen'), middle: n('Darnell Jamal Tyrone Reggie Marcus Terrence Cedric Lamont Dwayne'), older: n('Otis Willie Leroy Clarence Roosevelt Booker Alonzo Cleveland Thaddeus')},
   },
   irish: {
     f: {young: n('Aoife Ciara Niamh Erin Saoirse Orla Caitlin Molly'), middle: n('Siobhan Maeve Sinead Fiona Colleen Bridget Nora Deirdre'), older: n('Maureen Eileen Kathleen Margaret Mary Agnes Bernadette Rosaleen')},
@@ -221,11 +230,11 @@ export const baseFor = (family, seed) => {
 /**
  * A base's background, for who you meet where (quest-people.js
  * REGION_MIX): 'white', 'hispanic', 'black', 'eastasian', 'southasian' or
- * 'mideast'. Black Americans are the English-named bases with the darkest
- * skins; Filipinos count with East and Southeast Asians.
+ * 'mideast'. Black players are African-American (the 'black' pool) or
+ * Nigerian; Filipinos count with East and Southeast Asians.
  */
 export function backgroundOf(base) {
-  if (base.skin === 's5' || base.skin === 's6') return 'black';
+  if (base.pool === 'black' || base.pool === 'nigerian') return 'black';
   if (['english', 'irish', 'italian', 'polish', 'greek'].includes(base.pool)) return 'white';
   if (base.pool === 'hispanic') return 'hispanic';
   if (base.pool === 'indian') return 'southasian';

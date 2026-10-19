@@ -13,7 +13,7 @@
 //   players lean rock; headphones, a hoodie or sunglasses lean grinder, a
 //   cap or a tourist shirt lean loose; a jacket leans rock.
 // - **Looks and names** (quest-faces.js, #305): each person is drawn from
-//   one of 60 hand-set bases with their own hairstyle, clothes and gear,
+//   one of 64 hand-set bases with their own hairstyle, clothes and gear,
 //   leaning to their style, and named from that base's name pool, gender
 //   and age. Who a room gets follows its region (REGION_MIX).
 //
@@ -109,11 +109,11 @@ export const REGION_MIX = {
 
 // And within a background, which name pools (quest-faces.js): white Texans
 // mostly have English (Anglo) names; Black players are mostly
-// African-American (English-named), now and then Nigerian.
+// African-American, with African-American names, now and then Nigerian.
 export const POOL_MIX = {
-  tx: {white: {english: 0.72, irish: 0.12, italian: 0.07, polish: 0.05, greek: 0.04}, black: {english: 0.88, nigerian: 0.12}},
-  la: {white: {english: 0.52, irish: 0.1, italian: 0.16, polish: 0.08, greek: 0.14}, black: {english: 0.85, nigerian: 0.15}},
-  fl: {white: {english: 0.56, irish: 0.1, italian: 0.2, polish: 0.08, greek: 0.06}, black: {english: 0.8, nigerian: 0.2}},
+  tx: {white: {english: 0.72, irish: 0.12, italian: 0.07, polish: 0.05, greek: 0.04}, black: {black: 0.9, nigerian: 0.1}},
+  la: {white: {english: 0.52, irish: 0.1, italian: 0.16, polish: 0.08, greek: 0.14}, black: {black: 0.88, nigerian: 0.12}},
+  fl: {white: {english: 0.56, irish: 0.1, italian: 0.2, polish: 0.08, greek: 0.06}, black: {black: 0.86, nigerian: 0.14}},
 };
 
 const weighted = (weights, r) => {

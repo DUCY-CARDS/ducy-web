@@ -7,7 +7,7 @@ import { FAMILIES, botIdOf, personOf } from '../src/quest-people.js';
 const AGES = ['young', 'middle', 'older'];
 
 test('every base has a gender, an age band and a name pool, and every one in use has enough names', () => {
-  assert.equal(BASES.length, 60);
+  assert.equal(BASES.length, 64);
   for (const b of BASES) {
     assert.ok(['f', 'm'].includes(b.gender) && AGES.includes(b.age), `base ${b.id}`);
     assert.ok(NAMES[b.pool], `base ${b.id}: pool ${b.pool}`);
