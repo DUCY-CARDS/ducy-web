@@ -70,7 +70,11 @@ test('waitlists: busier small games have more names; the list is the same for a 
   assert.equal(listKey({stakes: '2/5', game: 'plo4'}), 'plo4 2/5');
   const rooms = listsNow(4, 4 * 1440 + 20 * 60);
   assert.equal(rooms.length, ROOMS.length);
-  for (const r of rooms) for (const g of r.games) assert.ok(Array.isArray(g.waiting) && g.gap >= 1);
+  for (const r of rooms) for (const g of r.games) {
+    assert.ok(Array.isArray(g.waiting) && g.gap > 0);
+    // Even a full list calls you in under a game minute (~15 real seconds).
+    assert.ok((5 + 1) * g.gap < 1, `${r.room.id} ${g.key} waits ${(5 + 1) * g.gap} game min`);
+  }
 });
 
 test('joining a list: called once those ahead are seated, then a short time to take the seat', () => {

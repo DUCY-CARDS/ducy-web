@@ -16,13 +16,18 @@ const MAX_WAITING = 5;
 /** A game's list key in a room: `nlhe 1/2`, `plo4 2/5`. */
 export const listKey = g => `${g.game || 'nlhe'} ${g.stakes}`;
 
+// Game minutes between seats opening at a single table. Kept short so the
+// whole list (MAX_WAITING ahead of you, plus your own seat) clears in under
+// a game minute, about 15 real seconds: waiting isn't the game.
+const SEAT_GAP = 0.15;
+
 /**
  * Game minutes between seats opening in a game spreading `tables` tables:
- * a seat comes free about every 4 game minutes at one table (a minute of
- * real time), faster with more tables.
+ * a seat comes free every SEAT_GAP game minutes (a couple of real seconds)
+ * at one table, faster with more tables.
  */
 export function seatGap(tables) {
-  return Math.min(4, Math.max(1, 4 / Math.max(1, tables)));
+  return Math.min(SEAT_GAP, Math.max(SEAT_GAP / 4, SEAT_GAP / Math.max(1, tables)));
 }
 
 /**
