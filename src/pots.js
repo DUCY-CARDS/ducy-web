@@ -88,3 +88,24 @@ export function shownPots(seats, events) {
   if (pots.length <= 1 && !uncalled) return null;
   return {pots, uncalled};
 }
+
+/**
+ * The table as it should look with an uncalled all-in already handed back
+ * (as a dealer would at once): the bettor's stack has it again, and their
+ * bet out and the pot are only what was matched. The same `state` when
+ * there's nothing uncalled, or the hand is over (the engine has paid it).
+ */
+export function returnUncalled(state) {
+  if (!state || state.complete) return state;
+  const split = shownPots(state.seats, state.events);
+  const u = split?.uncalled;
+  if (!u) return state;
+  const seats = state.seats.map((x, i) => {
+    if (i !== u.seat) return x;
+    const back = Math.min(amt(x.street_bet), u.amount);
+    // With chips behind again, they're not all-in any more.
+    return {...x, stack: amt(x.stack) + u.amount, street_bet: amt(x.street_bet) - back, all_in: false};
+  });
+  return {...state, seats, pot: Math.max(0, amt(state.pot) - u.amount)};
+}
+

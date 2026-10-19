@@ -26,7 +26,7 @@ import { dropTable, getTable, putTable } from './table-store.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
 import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
-import { shownPots } from './pots.js';
+import { returnUncalled, shownPots } from './pots.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
@@ -3143,7 +3143,8 @@ function summaryHtml() {
 }
 
 function renderTable() {
-  const s = state, n = s.seats.length;
+  // An all-in no one could match goes straight back to its bettor (pots.js).
+  const s = returnUncalled(state), n = s.seats.length;
   const last = lastActions();
   const shows = showdownShows(s);
   let h = '<div class="pl-wrap pl-play">';
@@ -3209,9 +3210,7 @@ function renderTable() {
   const split = !s.complete && shownPots(s.seats, s.events);
   if (split) {
     const many = split.pots.length > 2;
-    let amounts = split.pots.map((p, k) => `<span class="pl-amt">${k ? `Side pot${many ? ` ${k}` : ''}` : split.pots.length > 1 ? 'Main pot' : 'Pot'} ${c(p.amount)}</span>`).join('');
-    const u = split.uncalled;
-    if (u) amounts += `<span class="pl-total" title="Uncalled: no one could match it">${c(u.amount)} back to ${u.seat === 0 && !watching ? 'you' : esc(nameOf(u.seat))}</span>`;
+    const amounts = split.pots.map((p, k) => `<span class="pl-amt">${k ? `Side pot${many ? ` ${k}` : ''}` : split.pots.length > 1 ? 'Main pot' : 'Pot'} ${c(p.amount)}</span>`).join('');
     h += `<div class="pl-pot">${potChips}${amounts}</div></div>`;
   } else h += gathered > 0 || total ? `<div class="pl-pot">${potChips}${gathered > 0 ? `<span class="pl-amt">Pot ${c(gathered)}</span>` : ''}${total}</div></div>` : '</div>';
   s.seats.forEach((seat, i) => {
