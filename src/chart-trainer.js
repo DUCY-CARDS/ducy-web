@@ -199,7 +199,8 @@ function nextHand() {
   const pr = cs.practice;
   pr.feedback = null;
   const probe = pr.answered >= 4 && Math.random() < PROBE_RATE;
-  const i = pickCell(pr.spot, {band: chartLevel(pr.mode, pr.score).band, probe, ta: pr.ta, obvious: pr.obvious});
+  // Never the hand just played again, even in other suits.
+  const i = pickCell(pr.spot, {band: chartLevel(pr.mode, pr.score).band, probe, ta: pr.ta, obvious: pr.obvious, avoid: pr.current?.i ?? null});
   const mix = handMix(pr.spot, i, pr.ta);
   pr.current = {i, cards: cardsFor(i), mix, probe};
   // Mixed mode starts the sliders at an even split, so no answer is given away.
