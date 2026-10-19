@@ -14,7 +14,11 @@ set -euo pipefail
 TARGET="${1:?usage: upload-gto-sixmax.sh <rsync-target>}"
 REPO=allenpiscitello/ducy
 
-TAG="$(gh release list -R "$REPO" --limit 100 --json tagName,publishedAt \
+# The release gto-pins.json pins (a new model goes live when a PR moves the
+# pin), else the newest.
+PINS="$(dirname "$0")/../gto-pins.json"
+TAG="$( [ -f "$PINS" ] && jq -r '."gto-sixmax-" // empty' "$PINS" || true)"
+[ -n "$TAG" ] || TAG="$(gh release list -R "$REPO" --limit 100 --json tagName,publishedAt \
   -q '[.[] | select(.tagName | startswith("gto-sixmax-"))] | sort_by(.publishedAt) | last | .tagName // empty')"
 if [ -z "$TAG" ]; then echo "no gto-sixmax release yet"; exit 0; fi
 if ! [[ "$TAG" =~ ^[0-9a-zA-Z._-]+$ ]]; then echo "odd tag $TAG" >&2; exit 1; fi
