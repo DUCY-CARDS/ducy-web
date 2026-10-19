@@ -141,7 +141,12 @@ test('the lobby: bankroll, clock, goal; games and their lists; buy-ins; other ro
   assert.match(html, /Fri 6:00 pm/);
   assert.match(html, new RegExp(ROOMS[0].name));
   assert.match(html, /Austin, Texas/);
-  for (const r of ROOMS.slice(1)) assert.match(html, new RegExp(`data-qgo="${r.id}"`));
+  // Every other room is listed, but not the cities' local clubs: this quest
+  // has no home yet, so it knows none of them.
+  for (const r of ROOMS.slice(1)) {
+    if (r.local) assert.doesNotMatch(html, new RegExp(`data-qgo="${r.id}"`), r.id);
+    else assert.match(html, new RegExp(`data-qgo="${r.id}"`), r.id);
+  }
   // The buy-in you're asked for: the room's range, as far as the bankroll
   // goes, starting at 100 BB. $1,000 covers 200 BB at 2/5 but not at 5/10.
   const room = ROOMS[0];

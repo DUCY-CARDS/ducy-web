@@ -43,12 +43,12 @@ import {
 } from './quest.js';
 import {
   ROOMS, STAKES as QUEST_STAKES, lobby as questLobby, roomById as questRoomById, startRoom as questStartRoom, travelMinutes as questTravelMinutes,
-  tripCost as questTripCost, hotelCost as questHotelCost, moveCost as questMoveCost, homeCityOf as questHomeCityOf,
+  tripCost as questTripCost, hotelCost as questHotelCost, moveCost as questMoveCost, homeCityOf as questHomeCityOf, homeRoomOf as questHomeRoomOf,
 } from './quest-rooms.js';
 import { listsNow as questListsNow } from './quest-waitlist.js';
 import { question as questQuestion } from './quest-study.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { clock as questCountdown, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { gameClock as questCountdown, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import { SCENARIOS, answerStake, confront as questConfront, markRead as questMarkRead, maybeAskStake, owedBy, post as questPost, resolveStakes } from './quest-scenarios.js';
@@ -1346,13 +1346,14 @@ function questSleep(where) {
   render();
 }
 
-// Go home to sleep: the trip (and its fare), then bed on arrival.
-function questGoHome() {
+// Go home, to your local club (#299): the trip (and its fare), then bed on
+// arrival when `then` is 'sleep'.
+function questGoHome(then) {
   const q = questNow();
   const from = currentRoom(q);
-  const home = ROOMS.find(r => r.city === questHomeCityOf(q));
-  if (!home || !from) return;
-  quest = questTravel(q, home.id, questTravelMinutes(from, home), Date.now(), questTripCost(from, home), 'sleep');
+  const home = questHomeRoomOf(q);
+  if (!home || !from || home.id === from.id) return;
+  quest = questTravel(q, home.id, questTravelMinutes(from, home), Date.now(), questTripCost(from, home), then === 'sleep' ? 'sleep' : null);
   saveQuest(quest);
   questNote = '';
   questOpen = null;
@@ -3697,7 +3698,7 @@ function onClick(e) {
     else if (q.dataset.qbtdone) { questTestResult = null; render(); }
     else if (q.dataset.qstart) questStart(q.dataset.qstart);
     else if (q.dataset.qsleep) questSleep(q.dataset.qsleep);
-    else if (q.dataset.qgohome) questGoHome();
+    else if (q.dataset.qgohome) questGoHome(q.dataset.qgohome);
     else if (q.dataset.qmovehome) questMoveHome();
     else if (q.dataset.qlist) questList(q.dataset.qlist);
     else if (q.dataset.qunlist || q.dataset.qpass) questUnlist(q.dataset.qunlist || q.dataset.qpass);
