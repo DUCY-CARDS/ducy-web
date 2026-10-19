@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { START_BANKROLL, newQuest, newRun, sitDown, leave, travel, arrive, gameMinutes } from '../src/quest.js';
 import { REGIONS, ROOMS, STAKES, TRAVEL, lobby, roomById, travelMinutes } from '../src/quest-rooms.js';
-import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, lineupStacks, poolFor, replacementPool, stacksAt } from '../src/quest-lineup.js';
+import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, lineupStacks, poolFor, replacementPool, seatedHours, stacksAt } from '../src/quest-lineup.js';
 import { buyInAsk, currentRoom, goalProgress, questLobbyHtml } from '../src/quest-ui.js';
 import { betweenHands, startBank } from '../src/regulars.js';
 
@@ -39,6 +39,40 @@ test('a running game’s stacks are uneven: short buyers, deep winners', () => {
   // The same through the block.
   const bots = lineupFor(3, 'k', '1/2', 10);
   assert.deepEqual(lineupStacks(3, 'k', bots, stakes, room, 10).map(s => s.buyIn), lineupStacks(3, 'k', bots, stakes, room, 100).map(s => s.buyIn));
+});
+
+test('now and then a player who has been there a while sits on 2-3x, even 5-10x, the max buy-in', () => {
+  // The shares a hand-by-hand simulation of live tables gave (quest-lineup.js).
+  const stakes = STAKES['25/50'];
+  const room = ROOMS[0];
+  const max = 200 * stakes[1];
+  const marks = {1: 0, 2: 0, 3: 0, 5: 0, 10: 0};
+  let all = 0, cap = 0;
+  for (let t = 0; t < 4000; t++) {
+    const bots = lineupFor(5, `deep${t}`, '25/50', 120 * t);
+    for (const {stack} of lineupStacks(5, `deep${t}`, bots, stakes, room, 120 * t + 30)) {
+      all++;
+      for (const m of Object.keys(marks)) if (stack > m * max) marks[m]++;
+      cap = Math.max(cap, stack);
+    }
+  }
+  const share = m => marks[m] / all;
+  assert.ok(share(1) > 0.25 && share(1) < 0.55, `over 1x: ${share(1)}`);
+  assert.ok(share(2) > 0.04 && share(2) < 0.14, `over 2x: ${share(2)}`);
+  assert.ok(share(3) > 0.01 && share(3) < 0.05, `over 3x: ${share(3)}`);
+  assert.ok(share(5) > 0.001 && share(5) < 0.012, `over 5x: ${share(5)}`);
+  assert.ok(share(10) < 0.002, `over 10x: ${share(10)}`);
+  // Never past 12 max buy-ins.
+  assert.ok(cap <= 12 * max, `deepest ${cap}`);
+});
+
+test('how long players have been sitting: mostly a few hours, some all day', () => {
+  const hours = [];
+  for (let i = 0; i < 2000; i++) hours.push(seatedHours((i + 0.5) / 2000, ((i * 7919) % 2000 + 0.5) / 2000));
+  const share = f => hours.filter(f).length / hours.length;
+  assert.ok(Math.abs(share(h => h < 2) - 0.29) < 0.01);
+  assert.ok(Math.abs(share(h => h >= 12) - 0.178) < 0.01);
+  assert.ok(Math.max(...hours) <= 36 && Math.min(...hours) >= 0);
 });
 
 test('line-ups come from the stakes’ pool, whales only in big games', () => {
