@@ -72,14 +72,18 @@ test('waitlists: busier small games have more names; the list is the same for a 
   assert.equal(rooms.length, ROOMS.length);
   for (const r of rooms) for (const g of r.games) {
     assert.ok(Array.isArray(g.waiting) && g.gap > 0);
-    // A full list calls you in within about five game minutes.
-    assert.ok((5 + 1) * g.gap <= 5, `${r.room.id} ${g.key} waits ${(5 + 1) * g.gap} game min`);
+    // A full list at the small games calls you in within two real minutes
+    // (eight game minutes); the big games' shorter lists within four.
+    const small = ['1/2', '2/5'].includes(g.stakes);
+    const full = (small ? 5 + 1 : 3 + 1) * g.gap;
+    assert.ok(full <= (small ? 8 : 16), `${r.room.id} ${g.key} waits ${full} game min`);
   }
   // At your home club, under a game minute.
   const home = listsNow(4, 4 * 1440 + 20 * 60, 'mesquite').find(r => r.room.id === 'mesquite');
   assert.ok(home.games.length);
   for (const g of home.games) assert.ok((5 + 1) * g.gap < 1, `home ${g.key} waits ${(5 + 1) * g.gap} game min`);
   assert.ok(seatGap(1, true) < seatGap(1));
+  assert.ok(seatGap(1, false, '1/2') < seatGap(1, false, '50/100'), 'big games wait longer');
 });
 
 test('joining a list: called once those ahead are seated, then a short time to take the seat', () => {
@@ -114,6 +118,13 @@ test('joining a list: called once those ahead are seated, then a short time to t
   assert.equal(leaveList(q, 'nlhe 1/2').lists.length, 0);
   assert.equal(travel(q, 'deuce', 12, T0).lists.length, 0);
   assert.equal(sitDown(q, {id: 'mesquite-1/2-1', room: 'mesquite', stakes: STAKES['1/2']}, 20000).lists.length, 0);
+  // Sitting down at another game keeps your place in line for this one.
+  const playing = sitDown(q, {id: 'mesquite-2/5-1', room: 'mesquite', stakes: STAKES['2/5']}, 40000);
+  assert.deepEqual(playing.lists.map(l => l.key), ['nlhe 1/2']);
+  assert.ok(playing.seat);
+  // (At a table the clock moves with the hands played: nine game minutes of them.)
+  const played = {...playing, clock: {real: later(9), game: gameMinutes(q, later(9))}};
+  assert.deepEqual(unseenCalls(played, later(9)).map(l => l.key), ['nlhe 1/2'], 'called while you play');
   // The lobby shows your place, with a countdown, and study while you wait.
   const html = questLobbyHtml(q, T0);
   assert.match(html, /You’re 3rd on the list/);

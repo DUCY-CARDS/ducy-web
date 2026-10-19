@@ -1421,11 +1421,13 @@ function questAnswer(i) {
   render();
 }
 
-// In line while you do something else (the charts, drills, another table):
-// every few seconds, with your name on a list and the quest lobby not in
-// front, the clock is kept running (time on a list isn't time away) and a
-// call is passed to `onCall(text)` once, so the page can say your seat is
-// ready. The seat is held until you come back to the lobby (quest.js seeCalls).
+// In line while you do something else (the charts, drills, another table,
+// a quest table at another game): every few seconds, with your name on a
+// list and the quest lobby not in front, a call is passed to `onCall(text,
+// label)` once, so the page can say your seat is ready (and takeQuestSeat
+// goes to it). The seat is held until the lobby shows it (quest.js
+// seeCalls). Away from the tables the clock is kept running, since time on
+// a list isn't time away; at a quest table the hands move it (questHand).
 let questWatcher = null;
 const questAlerted = new Set();
 export function watchQuestSeat(onCall) {
@@ -1437,21 +1439,34 @@ export function watchQuestSeat(onCall) {
       if (!saved?.lists?.length) return;
       quest = saved;
     }
-    if (!quest.lists?.length || quest.seat || (open && view === 'quest' && !document.hidden)) return;
+    if (!quest.lists?.length || (open && view === 'quest' && !quest.seat && !document.hidden)) return;
     const q = questNow();
-    if (Date.now() - q.clock.real > 5_000) { quest = syncClock(q); saveQuest(quest); }
-    const rooms = questLobby(quest.seed, gameMinutes(quest));
-    const here = rooms.find(r => r.room.id === quest.room);
+    if (!q.seat && Date.now() - q.clock.real > 5_000) { quest = syncClock(q); saveQuest(quest); }
+    const here = questLobby(quest.seed, gameMinutes(quest)).find(r => r.room.id === quest.room);
     for (const l of questUnseenCalls(quest)) {
       const id = `${l.key}@${l.joined}`;
       if (questAlerted.has(id)) continue;
       questAlerted.add(id);
       const game = here?.games.find(g => (g.game || 'nlhe') === l.game && g.stakes === l.stakes) || l;
-      onCall(`Your seat is ready: ${questGameLabel(game)}. It's held until you go back to the quest.`);
+      if (quest.seat) onCall(`Your ${questGameLabel(game)} seat is ready. It’s held until you get up from this table.`, 'Move after this hand');
+      else onCall(`Your seat is ready: ${questGameLabel(game)}. It’s held until you go back to the quest.`, 'Take my seat');
     }
   };
   questWatcher = setInterval(check, 2000);
   check();
+}
+
+// Going to a seat you were called to: from a quest table, you get up once
+// this hand is over (regularsCheck), and the lobby has the seat for you.
+let questLeaveForSeat = false;
+export function takeQuestSeat() {
+  if (questTable && quest?.seat) {
+    if (!state?.complete) { questLeaveForSeat = true; return; }
+    leaveTable();
+    questNote = '';
+  }
+  if (location.hash !== '#quest') location.hash = 'quest';
+  else if (open) render();
 }
 
 // Ticks the lobby's countdowns (data-qcount, the real time each ends) every
@@ -1604,6 +1619,12 @@ function regularsCheck() {
       questNote = `You’ve been at the tables ${QUEST_MAX_TABLE / 60} hours. Get some sleep before you play again.`;
       render();
     }, 1500);
+    return;
+  }
+  if (questLeaveForSeat) {
+    // Called to a seat at another game: up after this hand, to take it.
+    questLeaveForSeat = false;
+    setTimeout(() => takeQuestSeat(), 1500);
     return;
   }
   regulars.pending = regularsBetween().catch(e => console.warn(e));

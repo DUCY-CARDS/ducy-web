@@ -112,9 +112,12 @@ export function sitDown(q, table, amount, room, now = Date.now()) {
   if (q.seat || q.bankroll < min || q.rest || q.trip || exhausted(q, now)) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
   const game = table.game || 'nlhe';
-  // Sitting down takes your name off every list.
+  // Sitting down takes your name off this game's list; you stay in line for
+  // the others while you play, and hear when a seat there is ready.
+  // (A list's stakes are "1/2", the table's its blinds in hundredths.)
+  const thisGame = l => (l.game || 'nlhe') === game && String(l.stakes).split('/').map(n => Math.round(n * 100)).join() === String(table.stakes);
   return {
-    ...q, bankroll: q.bankroll - chips, room: table.room, lists: [],
+    ...q, bankroll: q.bankroll - chips, room: table.room, lists: (q.lists || []).filter(l => l.room === table.room && !thisGame(l)),
     seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || [], since: gameMinutes(q, now)},
   };
 }

@@ -16,21 +16,23 @@ const MAX_WAITING = 5;
 /** A game's list key in a room: `nlhe 1/2`, `plo4 2/5`. */
 export const listKey = g => `${g.game || 'nlhe'} ${g.stakes}`;
 
-// Game minutes between seats opening at a single table. A full list
-// (MAX_WAITING ahead of you, plus your own seat) clears in about five game
-// minutes, a minute and a quarter of real time. At your home club, where
-// you're a regular, the floor gets you in almost straight away: under a
-// game minute for the whole list.
-const SEAT_GAP = 0.8;
+// Game minutes between seats opening at a single table, by stakes. The
+// small games turn over fast: a full list at 1/2 or 2/5 (MAX_WAITING ahead
+// of you, plus your own seat) clears in two real minutes at worst. The big
+// games, with shorter lists and fewer players who'll play them, are slower.
+// The clock runs QUEST_SPEED (4) times real time.
+const SEAT_GAPS = {'1/2': 1, '2/5': 1.3, '5/10': 2.5, '10/20': 3, '25/50': 3.5, '50/100': 4};
+// At your home club, where you're a regular, the floor gets you in almost
+// straight away: under a game minute for the whole list.
 const HOME_SEAT_GAP = 0.15;
 
 /**
- * Game minutes between seats opening in a game spreading `tables` tables:
- * a seat comes free every SEAT_GAP game minutes at one table (HOME_SEAT_GAP
- * at your home club, `home`), faster with more tables.
+ * Game minutes between seats opening in a game at `stakes` spreading
+ * `tables` tables: SEAT_GAPS at one table (HOME_SEAT_GAP at your home club,
+ * `home`), faster with more tables.
  */
-export function seatGap(tables, home = false) {
-  const gap = home ? HOME_SEAT_GAP : SEAT_GAP;
+export function seatGap(tables, home = false, stakes = '1/2') {
+  const gap = home ? HOME_SEAT_GAP : SEAT_GAPS[stakes] ?? 4;
   return Math.min(gap, Math.max(gap / 4, gap / Math.max(1, tables)));
 }
 
@@ -63,6 +65,6 @@ export function waitingAt(seed, roomId, game, minutes) {
 export function listsNow(seed, minutes, homeRoomId = null) {
   return lobby(seed, minutes).map(r => ({
     room: r.room,
-    games: r.games.map(g => ({...g, key: listKey(g), waiting: waitingAt(seed, r.room.id, g, minutes), gap: seatGap(g.tables, r.room.id === homeRoomId)})),
+    games: r.games.map(g => ({...g, key: listKey(g), waiting: waitingAt(seed, r.room.id, g, minutes), gap: seatGap(g.tables, r.room.id === homeRoomId, g.stakes)})),
   }));
 }
