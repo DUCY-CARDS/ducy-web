@@ -172,3 +172,19 @@ test('away with your name on a list: the wait goes on, up to the call, and the s
   assert.equal(resume(none, T0 + 60 * 60000).clock.game, none.clock.game);
 });
 
+
+test('from a table: your name down for another game in the room, and the room games panel', async () => {
+  const { roomGamesHtml } = await import('../src/quest-ui.js');
+  const { listsNow } = await import('../src/quest-waitlist.js');
+  let q = startIn(newQuest(T0, 2), 'tx', 'mesquite');
+  q = sitDown(q, {id: 'mesquite-1/2-1', room: 'mesquite', stakes: STAKES['1/2']}, 20000);
+  // Not the game you're in; any other game, yes.
+  assert.equal(joinList(q, {key: 'nlhe 1/2', stakes: '1/2', game: 'nlhe'}, 0, 1, T0), q);
+  const other = joinList(q, {key: 'nlhe 2/5', stakes: '2/5', game: 'nlhe'}, 1, 1, T0);
+  assert.deepEqual(other.lists.map(l => l.key), ['nlhe 2/5']);
+  const here = listsNow(2, gameMinutes(other, T0)).find(r => r.room.id === 'mesquite');
+  const html = roomGamesHtml(other, here, T0, gameMinutes(other, T0));
+  if (here.games.some(g => g.key === 'nlhe 1/2')) assert.match(html, /You’re playing here/);
+  if (here.games.some(g => g.key === 'nlhe 2/5')) assert.match(html, /data-qunlist="nlhe 2\/5"/);
+  assert.match(roomGamesHtml(other, null, T0, 0), /No other games/);
+});

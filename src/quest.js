@@ -292,8 +292,11 @@ export const CALL_MINUTES = 8;
 // Puts your name on a game's list in this room: `game` is {key, stakes,
 // game}, `ahead` the players waiting before you and `gap` the game minutes
 // between seats opening. Your name is called when they've all been seated.
+// Also from a table, for any other game in the room.
 export function joinList(q, game, ahead, gap, now = Date.now()) {
-  if (q.seat || q.trip || q.rest || exhausted(q, now) || !q.room || (q.lists || []).some(l => l.key === game.key)) return q;
+  // At a table you can put your name down for another game in the room (not the one you're in).
+  const playing = q.seat && (q.seat.game || 'nlhe') === (game.game || 'nlhe') && String(game.stakes).split('/').map(n => Math.round(n * 100)).join() === String(q.seat.stakes);
+  if (playing || q.trip || q.rest || exhausted(q, now) || !q.room || (q.lists || []).some(l => l.key === game.key)) return q;
   const at = gameMinutes(q, now);
   const entry = {key: game.key, stakes: game.stakes, game: game.game || 'nlhe', room: q.room, joined: at, gap, callAt: at + (ahead + 1) * gap};
   return {...q, lists: [...(q.lists || []), entry]};

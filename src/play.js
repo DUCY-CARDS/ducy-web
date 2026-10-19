@@ -50,7 +50,7 @@ import {
 import { listsNow as questListsNow } from './quest-waitlist.js';
 import { question as questQuestion } from './quest-study.js';
 import { buyInFor, lineupFor, replacementPool, stacksAt } from './quest-lineup.js';
-import { gameClock as questCountdown, gameLabel as questGameLabel, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
+import { gameClock as questCountdown, gameLabel as questGameLabel, roomGamesHtml as questRoomGamesHtml, currentRoom, faceOf, hoursText as questHours, nameOfBot, questLobbyHtml } from './quest-ui.js';
 import { isGeneric, isReg, personOf, wildness } from './quest-people.js';
 import { TAGS, TAG_NAMES, reviewReads, tagOf, tagPlayer, thinkMs } from './quest-reads.js';
 import { SCENARIOS, answerStake, confront as questConfront, markRead as questMarkRead, maybeAskStake, owedBy, post as questPost, resolveStakes } from './quest-scenarios.js';
@@ -1132,6 +1132,7 @@ let questOpen = null; // the table opened in the lobby, to choose a buy-in
 let questAmount = 0; // the buy-in typed there, kept as the lobby redraws
 let questTagFor = null; // the seat whose read menu is open
 let questMilestone = ''; // a milestone just reached, shown at the table
+let questRoomOpen = false; // the room's other games, open at a quest table
 let questTooTired = false; // twelve hours at the tables: stand up after this hand
 
 function questNow() {
@@ -1478,14 +1479,18 @@ let questWatcher = null;
 const questAlerted = new Set();
 export function watchQuestSeat(onCall) {
   clearInterval(questWatcher);
+  let tried = 0;
   const check = () => {
     if (!quest) {
-      // Not opened yet this visit: only a saved quest with your name down matters.
-      const saved = loadQuest();
-      if (!saved?.lists?.length) return;
-      quest = saved;
+      // Not opened yet this visit: a saved quest, if there is one (looked for now and then).
+      if (Date.now() - tried < 30_000) return;
+      tried = Date.now();
+      quest = loadQuest();
+      if (!quest) return;
     }
-    if (!quest.lists?.length || (open && view === 'quest' && !quest.seat && !document.hidden)) return;
+    const lobbyInFront = open && view === 'quest' && !quest.seat && !document.hidden;
+    questNewGames(onCall, lobbyInFront);
+    if (!quest.lists?.length || lobbyInFront) return;
     const q = questNow();
     if (!q.seat && Date.now() - q.clock.real > 5_000) { quest = syncClock(q); saveQuest(quest); }
     const here = questLobby(quest.seed, gameMinutes(quest)).find(r => r.room.id === quest.room);
@@ -1500,6 +1505,31 @@ export function watchQuestSeat(onCall) {
   };
   questWatcher = setInterval(check, 2000);
   check();
+}
+
+// A game that's started in your room since the last look: said once each,
+// with a way to see the room's games (not when the lobby's showing them
+// anyway). Moving rooms, or the first look, just takes note.
+let questKnownGames = null; // {room, keys: Set}
+function questNewGames(onCall, lobbyInFront) {
+  if (!quest?.room || quest.trip || quest.rest) { questKnownGames = null; return; }
+  const minutes = gameMinutes(quest);
+  const here = questListsNow(quest.seed, minutes).find(r => r.room.id === quest.room);
+  const keys = new Set((here?.games || []).map(g => g.key));
+  const known = questKnownGames?.room === quest.room ? questKnownGames.keys : null;
+  questKnownGames = {room: quest.room, keys};
+  if (!known || lobbyInFront) return;
+  for (const g of here.games) {
+    if (known.has(g.key)) continue;
+    onCall(`A new game just started at ${here.room.name}: ${questGameLabel(g)}.`, 'See games', 'games');
+  }
+}
+
+/** Shows your room's games: at a quest table, its Games here panel; otherwise the quest lobby. */
+export function showQuestGames() {
+  if (questTable) { questRoomOpen = true; if (open) render(); return; }
+  if (location.hash !== '#quest') location.hash = 'quest';
+  else if (open) render();
 }
 
 // Going to a seat you were called to: from a quest table, you get up once
@@ -1772,7 +1802,14 @@ function questBarHtml() {
   } else if (choices.length) {
     h += `<button class="tr-btn qt-topup" data-act="quest-topup" aria-expanded="${questTopUpOpen}">Top up</button>`;
   }
+  // The other games in the room, from your table: put your name down for one.
+  h += `<button class="tr-btn qt-topup" data-act="quest-room" aria-expanded="${questRoomOpen}">Games here</button>`;
   h += '</div>';
+  if (questRoomOpen && quest) {
+    const now = Date.now(), minutes = gameMinutes(quest);
+    const here = questListsNow(quest.seed, minutes, questHomeRoomOf(quest)?.id).find(r => r.room.id === quest.room);
+    h += `<div class="qt-roompanel"><b>Games at ${esc(here?.room.name || 'this room')}</b>${questRoomGamesHtml(quest, here, now, minutes)}<button class="tr-btn" data-act="quest-room">Close</button></div>`;
+  }
   if (questTopUpOpen && !questTopUpNext) {
     h += '<div class="qt-topup-choices" role="group" aria-label="Top up to">';
     for (const o of choices) {
@@ -4000,6 +4037,7 @@ function onClick(e) {
   else if (el.dataset.act === 'sitregulars') sitRegulars();
   else if (el.dataset.act === 'rebuy') rebuy();
   else if (el.dataset.act === 'quest-topup') { questTopUpOpen = !questTopUpOpen; render(); }
+  else if (el.dataset.act === 'quest-room') { questRoomOpen = !questRoomOpen; render(); }
   else if (el.dataset.act === 'quest-topup-to') questTopUpPick(Number(el.dataset.to));
   else if (el.dataset.act === 'quest-topup-cancel') { questTopUpNext = 0; render(); }
   else if (el.dataset.act === 'qchange') { tableMenuOpen = false; questChangeTable(); }

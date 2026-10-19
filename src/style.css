@@ -1972,6 +1972,12 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .qt-tablebar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; }
 .qt-tablebar .tr-btn { font-size: 12px; padding: 3px 10px; }
 .qt-topup-next { display: inline-flex; align-items: center; gap: 8px; color: var(--fg-muted); }
+/* The room's other games, from a quest table. */
+.qt-roompanel { align-self: center; display: flex; flex-direction: column; gap: 6px; width: min(100%, 520px); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); font-size: 13px; }
+.qt-roompanel > .tr-btn { align-self: flex-end; font-size: 12px; padding: 3px 10px; }
+.qt-roomgames { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.qt-roomgames li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.qt-roomgames .cc-btn { margin-left: auto; font-size: 12px; padding: 3px 10px; }
 .qt-topup-choices { align-self: center; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 100%; }
 .qt-topup-choices .tr-btn { font-size: 13px; padding: 5px 12px; }
 
