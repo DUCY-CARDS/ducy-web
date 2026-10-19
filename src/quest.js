@@ -55,19 +55,24 @@ export function syncClock(q, now = Date.now()) {
 // ---- Away from the game ----
 // The page keeps the clock's anchor fresh while you're here (syncClock), so a
 // gap longer than AWAY_MS since it was last moved is time away. Time away
-// stops the clock, except to finish a trip or a night's sleep you left on:
-// you come back where you were going, or rested, and the world has moved on
-// only that far.
+// stops the clock, except to finish a trip or a night's sleep you left on,
+// or the wait for a seat you'd put your name down for: you come back where
+// you were going, rested, or with your seat ready, and the world has moved
+// on only that far.
 export const AWAY_MS = 2 * 60000;
 
-/** The game minute time away may run the clock to: the end of a trip (and the sleep after it) or a night, else nowhere. */
+/** The game minute time away may run the clock to: the end of a trip (and the sleep after it), a night, or the first call on your lists, else nowhere. */
 export function awayUntil(q) {
   if (q.trip) return q.trip.end + (q.trip.then === 'sleep' ? SLEEP_MINUTES : 0);
   if (q.rest) return q.rest.end;
+  // Your name on a list: the wait goes on while you're away, as far as the
+  // first call, and the seat is held for you when you're back (seeCalls).
+  const calls = (q.lists || []).filter(l => l.room === q.room && l.callAt > q.clock.game).map(l => l.callAt);
+  if (!q.seat && calls.length) return Math.min(...calls);
   return q.clock.game;
 }
 
-/** Back after time away (or a hidden tab): the clock moved on only as far as a trip or a night needs. */
+/** Back after time away (or a hidden tab): the clock moved on only as far as a trip, a night or a seat's wait needs. */
 export function resume(q, now = Date.now()) {
   const away = now - q.clock.real;
   if (away <= AWAY_MS) return syncClock(q, now);
