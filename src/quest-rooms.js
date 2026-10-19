@@ -144,22 +144,20 @@ export const ROOMS = [
       {stakes: '2/5', game: 'plo4', tables: 1},
     ],
   },
-  // A small local club in every city (`local`): one $1/$2 table most of the
-  // day, now and then an Omaha game. Only the people who live there know it,
-  // so it's listed only in your home city, and going home takes you there.
+  // Home (#299): a small club in each region's small town (`local`), where a
+  // run starts and where going home takes you. One $1/$2 table most of the
+  // day, now and then Omaha; only the people who live there know it. Each
+  // place up the road has more games: the club, the town's card room, then
+  // the region's cities.
   ...[
     ['mesquite', 'Dot’s Back Room'],
-    ['austin', 'Eastside Social Club'],
-    ['houston', 'Westheimer Social Club'],
     ['cactus', 'The Yucca Lodge'],
-    ['losangeles', 'Silver Lake Social Club'],
     ['palmetto', 'The Bait Shop Game'],
-    ['miami', 'Little Havana Social Club'],
   ].map(([city, name]) => ({
     id: `club${city}`,
     city,
     name,
-    kind: 'Your local club',
+    kind: 'Your home club',
     local: true,
     games: [
       {stakes: '1/2', tables: 1},
@@ -180,10 +178,11 @@ const cityById = id => REGIONS.flatMap(r => r.cities.map(c => ({...c, region: r}
 export const cityOf = room => cityById(room?.city);
 /** A room's region. */
 export const regionOf = room => cityOf(room)?.region || null;
-/** The room a run starts in, in region `regionId`: its small town's. */
+/** The room a run starts in, in region `regionId`: home, its small town's club. */
 export const startRoom = regionId => {
   const town = REGIONS.find(r => r.id === regionId)?.cities.find(c => c.small);
-  return ROOMS.find(r => r.city === town?.id) || null;
+  // You start at home: the town's club.
+  return ROOMS.find(r => r.local && r.city === town?.id) || ROOMS.find(r => r.city === town?.id) || null;
 };
 
 /** How far room `to` is from room `from`: 'town', 'region', 'far', or null for the same room. */

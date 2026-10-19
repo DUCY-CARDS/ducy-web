@@ -141,9 +141,13 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   const rooms = all.filter(r => r.room.id === room.id || knownRoom(q, r.room));
   const mine = listStatus(q, now);
   const city = cityOf(room);
-  h += `<section class="qt-room"><h2>${esc(room.name)}</h2><p class="qt-meta">${esc(room.kind)}${city ? ` · ${esc(city.name)}, ${esc(city.region.name)}` : ''}</p>`;
-  // Away from home: go home whenever you like, to your local club (#299).
   const homeRoom = homeRoomOf(q);
+  const isHome = city?.id === homeCityOf(q);
+  h += `<section class="qt-room${isHome ? ' qw-at-home' : ''}">`;
+  // At home, it says so (#299).
+  if (isHome) h += `<span class="qw-home-badge">Home · ${esc(city.name)}</span>`;
+  h += `<h2>${esc(room.name)}</h2><p class="qt-meta">${esc(room.kind)}${city ? ` · ${esc(city.name)}, ${esc(city.region.name)}` : ''}</p>`;
+  // Away from home: go home whenever you like, to your home club (#299).
   if (homeRoom && homeRoom.id !== room.id) {
     const cost = tripCost(room, homeRoom);
     const atHome = cityOf(homeRoom)?.id === city?.id;
@@ -193,10 +197,11 @@ export const gameClock = realMs => clock(realMs * QUEST_SPEED);
 
 // Where to start a run: one card a region, with its small town.
 function regionPickerHtml() {
-  let h = '<section class="qt-room"><h2>Where do you want to start?</h2><p class="pl-desc">Every run starts in a small town with a few small games. Build your bankroll there, then move up to the cities.</p><ul class="qw-regions">';
+  let h = '<section class="qt-room"><h2>Where do you want to start?</h2><p class="pl-desc">Every run starts at home: a small club in a small town. Build your bankroll there, then head up the road, where every place has more games.</p><ul class="qw-regions">';
   for (const r of REGIONS) {
     const town = r.cities.find(c => c.small);
-    h += `<li class="qw-region"><b class="qt-stakes">${esc(r.name)}</b><span class="qt-note">${esc(r.blurb)}</span><span class="qt-meta">Start in ${esc(town.name)}</span>`;
+    const club = ROOMS.find(x => x.local && x.city === town.id);
+    h += `<li class="qw-region"><b class="qt-stakes">${esc(r.name)}</b><span class="qt-note">${esc(r.blurb)}</span><span class="qt-meta">Home: ${esc(club ? `${club.name}, ${town.name}` : town.name)}</span>`;
     h += `<button class="tr-start" data-qstart="${esc(r.id)}">Start in ${esc(r.name)}</button></li>`;
   }
   return h + '</ul></section>';
