@@ -377,8 +377,9 @@ export function newRun(q, now = Date.now(), result = 'broke') {
 }
 
 // Loads the saved quest, or null. A quest saved while seated comes back
-// with the stack returned to the bankroll (no hands are played away), and
-// the clock moved on for the time away.
+// still seated, with the stack it had after the last finished hand (the
+// clock doesn't run away from a table); otherwise the clock is moved on for
+// the time away.
 export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
   let q = null;
   try {
@@ -388,7 +389,10 @@ export function loadQuest(storage = globalThis.localStorage, now = Date.now()) {
   q = {...newQuest(now, q.seed), ...q, history: Array.isArray(q.history) ? q.history : [], runs: Array.isArray(q.runs) ? q.runs : []};
   // Time away stops the clock, but for a trip or a night under way.
   q = resume(q, now);
-  if (q.seat) q = leave(q, now);
+  // Saved at a table: still there (a refresh shouldn't stand you up). The
+  // page sits you back down with the stack you had after the last hand
+  // finished; a hand cut off in the middle doesn't count.
+  if (q.seat) return q;
   return wake(arrive(q, now), now);
 }
 

@@ -83,17 +83,24 @@ test('a seat needs the minimum buy-in', () => {
   assert.equal(status(newQuest(0, 3), cheapestBuyIn()), 'playing');
 });
 
-test('a save round trips, and a seat left open goes back to the bankroll', () => {
+test('a save round trips, and a refresh at a table keeps you in your seat', () => {
   const store = memory();
   let q = sitDown(newQuest(0, 9), {room: 'deuce', stakes: STAKES['1/2'], id: 'x'}, 20000);
   q = setStack(q, 26000);
   saveQuest(q, store);
   const back = loadQuest(store, 60 * MIN);
-  assert.equal(back.seat, null);
-  assert.equal(back.bankroll, START_BANKROLL + 6000);
+  assert.equal(back.seat.table, 'x');
+  assert.equal(back.seat.stack, 26000);
+  assert.equal(back.bankroll, START_BANKROLL - 20000);
   assert.equal(back.seed, 9);
-  // An hour away from the game doesn't move the clock (not on a trip or asleep).
-  assert.equal(Math.round(gameMinutes(back, 60 * MIN) - gameMinutes(q, 0)), 0);
+  // Getting up later: the stack goes back to the bankroll.
+  assert.equal(leave(back, 60 * MIN).bankroll, START_BANKROLL + 6000);
+  // An hour away from a table barely moves the clock (it waits for play).
+  assert.ok(gameMinutes(back, 60 * MIN) - gameMinutes(q, 0) <= 4);
+  // Away from the tables, an hour doesn't move it at all (not on a trip or asleep).
+  const up = leave(q, 0);
+  saveQuest(up, store);
+  assert.equal(Math.round(gameMinutes(loadQuest(store, 60 * MIN), 60 * MIN) - gameMinutes(up, 0)), 0);
   assert.equal(loadQuest(memory()), null);
   const bad = memory();
   bad.setItem('ducyQuest', '{broken');
