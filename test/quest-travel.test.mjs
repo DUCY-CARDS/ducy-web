@@ -2,7 +2,7 @@
 // waitlists you wait in, and study while you travel or wait.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, listStatus, newQuest, newRun, recordStudy, seeCalls, sitDown, startIn, travel, unseenCalls } from '../src/quest.js';
+import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, listStatus, newQuest, newRun, recordStudy, resume, seeCalls, sitDown, startIn, travel, unseenCalls } from '../src/quest.js';
 import { REGIONS, ROOMS, STAKES, TRAVEL, cityOf, regionOf, roomById, startRoom, travelMinutes } from '../src/quest-rooms.js';
 import { listKey, listsNow, seatGap, waitingAt } from '../src/quest-waitlist.js';
 import { question } from '../src/quest-study.js';
@@ -158,3 +158,17 @@ test('study questions: the same for a world, one right answer, four choices', ()
   q = recordStudy(recordStudy(q, true), false);
   assert.deepEqual(q.study, {n: 2, right: 1});
 });
+
+test('away with your name on a list: the wait goes on, up to the call, and the seat is held', () => {
+  let q = startIn(newQuest(T0, 2), 'tx', 'mesquite');
+  q = joinList(q, {key: 'nlhe 1/2', stakes: '1/2', game: 'nlhe'}, 2, 3, T0);
+  // Closed for an hour: the clock runs to the call (nine game minutes), no further.
+  const back = resume(q, T0 + 60 * 60000);
+  assert.equal(back.clock.game, q.clock.game + 9);
+  assert.deepEqual(unseenCalls(back, T0 + 60 * 60000).map(l => l.key), ['nlhe 1/2']);
+  // Called already, or no list: the clock waits for you, as before.
+  assert.equal(resume(back, T0 + 3 * 60 * 60000).clock.game, back.clock.game);
+  const none = startIn(newQuest(T0, 2), 'tx', 'mesquite');
+  assert.equal(resume(none, T0 + 60 * 60000).clock.game, none.clock.game);
+});
+

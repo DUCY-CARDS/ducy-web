@@ -168,7 +168,7 @@ export function questLobbyHtml(q, now = Date.now(), {names = id => id, have = nu
   }
   h += '</section>';
   h += restHtml(q, room, now);
-  h += '<p class="qt-meta qw-away">The clock stops while you’re away from the game, except to finish a trip or a night’s sleep, or while your name’s on a list: do something else and you’ll hear when your seat’s ready.</p>';
+  h += '<p class="qt-meta qw-away">The clock stops while you’re away from the game, except to finish a trip or a night’s sleep, or the wait for a seat: put your name down, close the page, and your seat is held for you when you’re back.</p>';
   // Waiting for a seat: study while you wait.
   if (mine.some(l => !l.called)) h += studyHtml(q, study, 'while you wait');
   h += otherRoomsHtml(rooms, room, q);
