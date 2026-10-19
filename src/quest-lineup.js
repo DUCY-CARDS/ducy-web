@@ -2,9 +2,11 @@
 // and time.
 //
 // - **1/2 and 2/5:** the room's generic players (quest-people.js), regs and
-//   tourists, more tourists on a weekend evening; rarely a soft Regular.
-// - **5/10 and 10/20:** two of the softer Regulars, and regs who play those
-//   stakes, with tourists in the evenings.
+//   tourists, more tourists on a weekend evening. Mostly ABC players
+//   (grinders), now and then a maniac, a rock or a calling station, now and
+//   then one of the softer Regulars, and rarely a crusher (STYLE_MIX).
+// - **5/10 and 10/20:** fewer ABC players, more Regulars, and crushers
+//   often.
 // - **25/50 and 50/100:** the tough Regulars (the top of the heads-up
 //   challenge's strength order, ladder.js), and sometimes a whale.
 //
@@ -17,7 +19,7 @@
 import { ORDER } from './ladder.js';
 import { ROOMS, lobby, regionOf, roll } from './quest-rooms.js';
 import { buyInRange } from './quest.js';
-import { personOf, roster, tourist, touristShare } from './quest-people.js';
+import { personOf, roster, tourist, touristShare, wildness } from './quest-people.js';
 
 export const LINEUP_SEATS = 5; // and you: 6-handed
 // The wild ones who sometimes sit in big games, and only there.
@@ -26,10 +28,14 @@ export const WHALES = ['milk_king', 'nik_airbag'];
 export const WHALE_CHANCE = 0.35;
 // A table keeps its line-up for this many game hours.
 const BLOCK_HOURS = 2;
-// At 1/2 and 2/5, the chance a seat goes to one of the softer Regulars.
-export const REGULAR_AT_LOW = 0.07;
-// The Regulars at a 5/10 or 10/20 table, with generic players.
-export const REGULARS_AT_MID = 2;
+// Who sits in a seat at a generic table, by stakes: the share of each
+// style. ABC players are the grinders; a crusher is one of the strongest
+// Regulars (CRUSHERS); a character one of the stakes' softer Regulars.
+// Maniacs come more often as the night gets wild (quest-people.js wildness).
+export const STYLE_MIX = {
+  low: {grinder: 0.66, rock: 0.09, maniac: 0.09, station: 0.08, character: 0.05, crusher: 0.03},
+  mid: {grinder: 0.4, rock: 0.07, maniac: 0.07, station: 0.04, character: 0.17, crusher: 0.25},
+};
 // The chance a reg is in the building in a block: at home, and visiting
 // another room.
 const AT_HOME = 0.5;
@@ -47,6 +53,8 @@ export const POOLS = {
   mid: ORDER.slice(5, 15).filter(notWhale),
   high: ORDER.slice(10).filter(notWhale),
 };
+// The crushers: the strongest Regulars (the top of the strength order).
+export const CRUSHERS = ORDER.slice(-6).filter(notWhale);
 export const poolFor = stakes => (['1/2', '2/5'].includes(stakes) ? 'low' : ['5/10', '10/20'].includes(stakes) ? 'mid' : 'high');
 export const bigGame = stakes => poolFor(stakes) === 'high';
 const blockOf = minutes => Math.floor(minutes / (60 * BLOCK_HOURS));
@@ -237,31 +245,51 @@ export function roomLineups(seed, roomId, minutes, have = null) {
     list.push(id);
   };
   const share = touristShare(minutes);
+  const wild = wildness(minutes);
   let slot = 0;
-  const nextTourist = () => {
+  // A tourist, of `family` if one is asked for.
+  const nextTourist = family => {
     for (let tries = 0; tries < 20; tries++) {
-      const t = tourist(seed, roomId, day, Math.floor(roll(seed, roomId, 'slot', block, slot++) * TOURISTS_A_DAY), minutes);
+      const t = tourist(seed, roomId, day, Math.floor(roll(seed, roomId, 'slot', block, slot++) * TOURISTS_A_DAY), minutes, family);
       if (free(t)) return t;
     }
     return null;
   };
-  const nextReg = (level, key) => {
-    const options = regs.filter(r => r.level === level && free(r.id));
+  // A reg in the building who plays these stakes, of `family` if asked.
+  const nextReg = (level, key, family = null) => {
+    const options = regs.filter(r => r.level === level && free(r.id) && (!family || personOf(r.id)?.family === family));
     return options.length ? options[Math.floor(roll(seed, key, block) * options.length)].id : null;
   };
-  const softRegular = (stakes, key) => {
-    const pool = POOLS[poolFor(stakes)].filter(id => (!have || have.includes(id)) && !taken.has(id));
-    return pool.length ? pool[Math.floor(roll(seed, key, block) * pool.length)] : null;
+  const named = (pool, key) => {
+    const options = pool.filter(id => (!have || have.includes(id)) && !taken.has(id));
+    return options.length ? options[Math.floor(roll(seed, key, block) * options.length)] : null;
+  };
+  // The stakes' softer Regulars (not the crushers), and the crushers.
+  const character = (stakes, key) => named(POOLS[poolFor(stakes)].filter(id => !CRUSHERS.includes(id)), key);
+  const crusher = key => named(CRUSHERS, key);
+  const styleFor = (t, r) => {
+    const mix = {...STYLE_MIX[t.low ? 'low' : 'mid']};
+    mix.maniac *= 1 + wild;
+    let x = r * Object.values(mix).reduce((a, w) => a + w, 0);
+    for (const [k, w] of Object.entries(mix)) if ((x -= w) < 0) return k;
+    return 'grinder';
   };
   const tables = here.games.filter(g => !bigGame(g.stakes)).flatMap(g => g.ids.map(id => ({id, stakes: g.stakes, low: poolFor(g.stakes) === 'low'})));
   const fill = (t, list, n, key) => {
     for (let i = 0; list.length < n && i < n * 8; i++) {
-      const r = roll(seed, t.id, key, block, i);
+      const k = `${t.id}|${key}|${i}`;
+      const style = styleFor(t, roll(seed, t.id, key, 'style', block, i));
       let who = null;
-      // At most two named Regulars at a low-stakes table.
-      if (t.low && r < REGULAR_AT_LOW && list.filter(x => !personOf(x)).length < 2) who = softRegular(t.stakes, `${t.id}|${key}|reg|${i}`);
-      else if (r < (t.low ? share : share / 2)) who = nextTourist();
-      else who = nextReg(t.low ? 'low' : 'mid', `${t.id}|${key}|${i}`) || nextTourist();
+      if (style === 'crusher') who = crusher(`${k}|crusher`);
+      else if (style === 'character') who = character(t.stakes, `${k}|reg`);
+      else {
+        // A tourist or a reg (more tourists on a busy night), of that style.
+        const touristFirst = roll(seed, t.id, key, block, i) < (t.low ? share : share / 2);
+        const level = t.low ? 'low' : 'mid', other = t.low ? 'mid' : 'low';
+        // A reg who usually plays the other stakes will sit in when theirs is short.
+        const reg = () => nextReg(level, k, style) || nextReg(other, `${k}|other`, style);
+        who = touristFirst ? nextTourist(style) || reg() : reg() || nextTourist(style);
+      }
       if (who && free(who)) take(who, list);
     }
   };
@@ -271,12 +299,6 @@ export function roomLineups(seed, roomId, minutes, have = null) {
   for (const t of tables) {
     names.clear();
     const seats = [];
-    if (!t.low) {
-      for (let i = 0; i < REGULARS_AT_MID; i++) {
-        const r = softRegular(t.stakes, `${t.id}|mid|${i}`);
-        if (r) take(r, seats);
-      }
-    }
     fill(t, seats, LINEUP_SEATS, 'seat');
     tableNames.set(t.id, new Set(names));
     out.set(t.id, {seats, bench: []});

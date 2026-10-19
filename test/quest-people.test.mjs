@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   FAMILIES, botIdOf, familyFor, isGeneric, isReg, lookFor, nameFor, parseBotId, personOf, roster, tourist, touristShare,
 } from '../src/quest-people.js';
-import { LINEUP_SEATS, POOLS, REGULARS_AT_MID, buyInFor, lineupFor, lineupStacks, replacementPool, roomLineups } from '../src/quest-lineup.js';
+import { CRUSHERS, LINEUP_SEATS, POOLS, buyInFor, lineupFor, lineupStacks, replacementPool, roomLineups } from '../src/quest-lineup.js';
 import { ROOMS, STAKES } from '../src/quest-rooms.js';
 import { READ_HANDS, accuracyText, reviewReads, suggestFamily, tagOf, tagPlayer, thinkMs } from '../src/quest-reads.js';
 import { MILESTONES, START_BANKROLL, checkMilestones, leave, newQuest, newRun, recordHand, sitDown } from '../src/quest.js';
@@ -67,9 +67,7 @@ test('low and mid stakes seat regs and tourists; no one sits at two tables, no s
         const names = t.seats.map(s => personOf(s)?.name).filter(Boolean);
         assert.equal(new Set(names).size, names.length, `names at ${id}`);
         const regulars = t.seats.filter(s => !isGeneric(s));
-        if (['5/10', '10/20'].includes(stakes)) assert.equal(regulars.length, REGULARS_AT_MID, id);
-        else assert.ok(regulars.length <= 2, `${id}: few Regulars at low stakes`);
-        for (const r of regulars) assert.ok(POOLS.low.includes(r) || POOLS.mid.includes(r));
+        for (const r of regulars) assert.ok(POOLS.low.includes(r) || POOLS.mid.includes(r) || CRUSHERS.includes(r));
         assert.ok(t.bench.length > 0 && t.bench.every(b => !t.seats.includes(b)));
         checked++;
       }
@@ -223,3 +221,23 @@ test('the lobby shows generic players’ faces and names, and the run’s stats'
   assert.match(after, /class="qs-chart"/);
   assert.match(after, /You read Dave R\. as a maniac\. Dave R\. is a rock\./);
 });
+
+test('the mix: mostly ABC players at low stakes, a rare crusher; fewer ABC and more crushers higher up', () => {
+  const share = {low: {}, mid: {}};
+  for (const seed of [1, 2]) for (let h = 0; h < 24 * 7; h += 6) for (const room of ROOMS) {
+    for (const [id, t] of roomLineups(seed, room.id, h * 60)) {
+      const level = ['1/2', '2/5'].includes(id.split('-')[1]) ? 'low' : 'mid';
+      for (const s of t.seats) {
+        const k = personOf(s)?.family || (CRUSHERS.includes(s) ? 'crusher' : 'character');
+        share[level][k] = (share[level][k] || 0) + 1;
+      }
+    }
+  }
+  const pct = (l, k) => (share[l][k] || 0) / Object.values(share[l]).reduce((a, b) => a + b, 0);
+  assert.ok(pct('low', 'grinder') > 0.55, `low ABC ${pct('low', 'grinder')}`);
+  for (const k of ['maniac', 'rock']) assert.ok(pct('low', k) > 0.04 && pct('low', k) < 0.2, `low ${k} ${pct('low', k)}`);
+  assert.ok(pct('low', 'crusher') > 0 && pct('low', 'crusher') < 0.06, `low crushers ${pct('low', 'crusher')}`);
+  assert.ok(pct('mid', 'crusher') > 2 * pct('low', 'crusher'), 'more crushers at 5/10 and 10/20');
+  assert.ok(pct('mid', 'grinder') < pct('low', 'grinder') - 0.1, 'fewer ABC players at 5/10 and 10/20');
+});
+

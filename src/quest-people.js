@@ -151,8 +151,12 @@ export function touristShare(minutes) {
   return evening ? 0.55 : 0.45;
 }
 
-/** A tourist: made for a room, a game day and a slot, and gone after that day. */
-export function tourist(seed, roomId, day, slot, minutes) {
+/**
+ * A tourist: made for a room, a game day and a slot, and gone after that
+ * day. `family` gives them that style (the table asked for one), otherwise
+ * it's the tourists' usual mix.
+ */
+export function tourist(seed, roomId, day, slot, minutes, family = null) {
   const s = seedFrom(seed, roomId, 'tourist', day, slot);
-  return botIdOf(familyFor('tourist', wildness(minutes), roll(s, 'family')), s);
+  return botIdOf(family || familyFor('tourist', wildness(minutes), roll(s, 'family')), s);
 }
