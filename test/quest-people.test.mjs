@@ -258,3 +258,25 @@ test('10/20: four strong players, or three and a rock, and an ABC player or now 
   assert.ok(bad > 0 && bad / tables < 0.35, `bad players at ${bad} of ${tables} tables`);
 });
 
+
+test('people match the area: Texas mostly white and Hispanic, LA more mixed, Miami heavily Hispanic', async () => {
+  const { backgroundOf, baseFor } = await import('../src/quest-faces.js');
+  const { regionOf } = await import('../src/quest-rooms.js');
+  const share = {};
+  for (const seed of [1, 2]) for (const room of ROOMS) {
+    const reg = regionOf(room).id;
+    share[reg] ||= {};
+    const ids = [...roster(seed, room.id).map(r => r.id), ...Array.from({length: 40}, (_, i) => tourist(seed, room.id, 2, i, 2 * 1440 + 600))];
+    for (const id of ids) {
+      const p = parseBotId(id);
+      const b = backgroundOf(baseFor(p.family, p.seed));
+      share[reg][b] = (share[reg][b] || 0) + 1;
+    }
+  }
+  const pct = (r, b) => (share[r][b] || 0) / Object.values(share[r]).reduce((a, x) => a + x, 0);
+  assert.ok(pct('tx', 'white') + pct('tx', 'hispanic') > 0.7, 'Texas: mostly white and Hispanic');
+  assert.ok(pct('tx', 'black') > 0.06 && pct('tx', 'eastasian') < 0.1 && pct('tx', 'southasian') < 0.1);
+  assert.ok(pct('la', 'eastasian') > 2 * pct('tx', 'eastasian'), 'LA more mixed');
+  assert.ok(pct('la', 'white') < pct('tx', 'white'));
+  assert.ok(pct('fl', 'hispanic') > pct('fl', 'white'), 'Miami heavily Hispanic');
+});

@@ -15,13 +15,13 @@
 // - **Looks and names** (quest-faces.js, #305): each person is drawn from
 //   one of 60 hand-set bases with their own hairstyle, clothes and gear,
 //   leaning to their style, and named from that base's name pool, gender
-//   and age.
+//   and age. Who a room gets follows its region (REGION_MIX).
 //
 // Pure, and the same for the same seed. A person's look and name come from
 // their seed alone, so a bot id (`g-rock-123`) always shows the same person.
 
-import { roll } from './quest-rooms.js';
-import { faceUrl, lookFor, nameFor } from './quest-faces.js';
+import { ROOMS, regionOf, roll } from './quest-rooms.js';
+import { backgroundOf, baseFor, faceUrl, lookFor, nameFor } from './quest-faces.js';
 
 export { lookFor, nameFor };
 
@@ -96,6 +96,56 @@ export function usualBuyInBb(family, seed) {
 
 const seedFrom = (...keys) => Math.floor(roll(...keys) * 2 ** 31) + 1;
 
+// ---- Who you meet where ----
+// The backgrounds of the people in each region's rooms, roughly as its
+// card rooms look: Texas mostly white and Mexican-American, some Black
+// players, a few Indian and Asian; Los Angeles more mixed; Miami heavily
+// Hispanic.
+export const REGION_MIX = {
+  tx: {white: 0.47, hispanic: 0.31, black: 0.13, southasian: 0.04, eastasian: 0.04, mideast: 0.01},
+  la: {white: 0.27, hispanic: 0.3, eastasian: 0.22, black: 0.09, mideast: 0.07, southasian: 0.05},
+  fl: {hispanic: 0.42, white: 0.34, black: 0.17, southasian: 0.03, eastasian: 0.03, mideast: 0.01},
+};
+
+// And within a background, which name pools (quest-faces.js): white Texans
+// mostly have English (Anglo) names; Black players are mostly
+// African-American (English-named), now and then Nigerian.
+export const POOL_MIX = {
+  tx: {white: {english: 0.72, irish: 0.12, italian: 0.07, polish: 0.05, greek: 0.04}, black: {english: 0.88, nigerian: 0.12}},
+  la: {white: {english: 0.52, irish: 0.1, italian: 0.16, polish: 0.08, greek: 0.14}, black: {english: 0.85, nigerian: 0.15}},
+  fl: {white: {english: 0.56, irish: 0.1, italian: 0.2, polish: 0.08, greek: 0.06}, black: {english: 0.8, nigerian: 0.2}},
+};
+
+const weighted = (weights, r) => {
+  const entries = Object.entries(weights);
+  let x = r * entries.reduce((a, [, w]) => a + w, 0);
+  for (const [k, w] of entries) if ((x -= w) < 0) return k;
+  return entries.at(-1)[0];
+};
+
+/**
+ * A person for room `roomId` from `keys`: their seed, chosen so they come
+ * from a background the room's region has (REGION_MIX), with `familyOf(s)`
+ * their style. A person's looks still come from their id alone; only which
+ * id the room gets is chosen.
+ */
+function localPerson(roomId, familyOf, ...keys) {
+  const region = regionOf(ROOMS.find(r => r.id === roomId))?.id;
+  const first = seedFrom(...keys);
+  const mix = REGION_MIX[region];
+  if (!mix) return {seed: first, family: familyOf(first)};
+  const want = weighted(mix, roll(first, 'background'));
+  const pools = POOL_MIX[region]?.[want];
+  const pool = pools ? weighted(pools, roll(first, 'pool')) : null;
+  for (let k = 0; k < 120; k++) {
+    const s = k ? seedFrom(...keys, 'local', k) : first;
+    const family = familyOf(s);
+    const base = baseFor(family, s);
+    if (backgroundOf(base) === want && (!pool || base.pool === pool)) return {seed: s, family};
+  }
+  return {seed: first, family: familyOf(first)};
+}
+
 // ---- Regs and tourists ----
 
 /** Regs on each room's roster. */
@@ -106,13 +156,18 @@ export const ROSTER_SIZE = 40;
  * is the stakes they usually play: 'low' (1/2, 2/5) or 'mid' (5/10, 10/20);
  * a third of them play mid.
  */
+const rosters = new Map();
 export function roster(seed, roomId) {
+  // The same every time: worked out once (finding local faces takes a few tries).
+  const key = `${seed}|${roomId}`;
+  if (rosters.has(key)) return rosters.get(key);
+  if (rosters.size > 64) rosters.clear();
   const out = [];
   for (let i = 0; i < ROSTER_SIZE; i++) {
-    const s = seedFrom(seed, roomId, 'reg', i);
-    const family = familyFor('reg', 0, roll(s, 'family'));
+    const {seed: s, family} = localPerson(roomId, x => familyFor('reg', 0, roll(x, 'family')), seed, roomId, 'reg', i);
     out.push({id: botIdOf(family, s), home: roomId, level: roll(s, 'level') < 1 / 3 ? 'mid' : 'low'});
   }
+  rosters.set(key, out);
   return out;
 }
 
@@ -157,6 +212,6 @@ export function touristShare(minutes) {
  * it's the tourists' usual mix.
  */
 export function tourist(seed, roomId, day, slot, minutes, family = null) {
-  const s = seedFrom(seed, roomId, 'tourist', day, slot);
-  return botIdOf(family || familyFor('tourist', wildness(minutes), roll(s, 'family')), s);
+  const p = localPerson(roomId, x => family || familyFor('tourist', wildness(minutes), roll(x, 'family')), seed, roomId, 'tourist', day, slot);
+  return botIdOf(p.family, p.seed);
 }
