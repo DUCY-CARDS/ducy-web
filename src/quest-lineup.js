@@ -5,8 +5,9 @@
 //   tourists, more tourists on a weekend evening. Mostly ABC players
 //   (grinders), now and then a maniac, a rock or a calling station, now and
 //   then one of the softer Regulars, and rarely a crusher (STYLE_MIX).
-// - **5/10 and 10/20:** fewer ABC players, more Regulars, and crushers
-//   often.
+// - **5/10:** fewer ABC players, more Regulars, and crushers often.
+// - **10/20:** four strong Regulars, or three and a rock, and an ABC player
+//   or now and then a bad one.
 // - **25/50 and 50/100:** the tough Regulars (the top of the heads-up
 //   challenge's strength order, ladder.js), and sometimes a whale.
 //
@@ -55,6 +56,15 @@ export const POOLS = {
 };
 // The crushers: the strongest Regulars (the top of the strength order).
 export const CRUSHERS = ORDER.slice(-6).filter(notWhale);
+// The strong Regulars who make up a 10/20 game: the crushers and the next
+// few below them.
+export const STRONG = ORDER.slice(-10).filter(notWhale);
+// 10/20 is a tough game: four strong players, or three and a rock, and
+// in the last seat an ABC player, or now and then (BAD_AT_10_20) a bad
+// one, a calling station or a maniac. Its bench runs the same way.
+export const ROCK_AT_10_20 = 0.5;
+export const BAD_AT_10_20 = 0.2;
+const MIX_10_20 = {strong: 0.6, rock: 0.15, grinder: 0.17, station: 0.04, maniac: 0.04};
 export const poolFor = stakes => (['1/2', '2/5'].includes(stakes) ? 'low' : ['5/10', '10/20'].includes(stakes) ? 'mid' : 'high');
 export const bigGame = stakes => poolFor(stakes) === 'high';
 const blockOf = minutes => Math.floor(minutes / (60 * BLOCK_HOURS));
@@ -267,8 +277,16 @@ export function roomLineups(seed, roomId, minutes, have = null) {
   // The stakes' softer Regulars (not the crushers), and the crushers.
   const character = (stakes, key) => named(POOLS[poolFor(stakes)].filter(id => !CRUSHERS.includes(id)), key);
   const crusher = key => named(CRUSHERS, key);
+  const strong = key => named(STRONG, key);
+  // A 10/20 table's five seats, in order.
+  const plan1020 = t => {
+    const r = k => roll(seed, t.id, '10/20', k, block);
+    const rock = r('rock') < ROCK_AT_10_20;
+    const last = r('bad') < BAD_AT_10_20 ? (r('which') < 0.5 ? 'station' : 'maniac') : 'grinder';
+    return [...Array(rock ? 3 : 4).fill('strong'), ...(rock ? ['rock'] : []), last];
+  };
   const styleFor = (t, r) => {
-    const mix = {...STYLE_MIX[t.low ? 'low' : 'mid']};
+    const mix = {...(t.stakes === '10/20' ? MIX_10_20 : STYLE_MIX[t.low ? 'low' : 'mid'])};
     mix.maniac *= 1 + wild;
     let x = r * Object.values(mix).reduce((a, w) => a + w, 0);
     for (const [k, w] of Object.entries(mix)) if ((x -= w) < 0) return k;
@@ -276,11 +294,16 @@ export function roomLineups(seed, roomId, minutes, have = null) {
   };
   const tables = here.games.filter(g => !bigGame(g.stakes)).flatMap(g => g.ids.map(id => ({id, stakes: g.stakes, low: poolFor(g.stakes) === 'low'})));
   const fill = (t, list, n, key) => {
+    const plan = t.stakes === '10/20' && key === 'seat' ? plan1020(t) : null;
     for (let i = 0; list.length < n && i < n * 8; i++) {
       const k = `${t.id}|${key}|${i}`;
-      const style = styleFor(t, roll(seed, t.id, key, 'style', block, i));
+      // A planned seat's style, if the table has a plan (no strong player
+      // left in the building: an ABC player instead).
+      let style = plan ? plan[list.length] : styleFor(t, roll(seed, t.id, key, 'style', block, i));
+      if (style === 'strong' && !STRONG.some(id => (!have || have.includes(id)) && !taken.has(id))) style = 'grinder';
       let who = null;
-      if (style === 'crusher') who = crusher(`${k}|crusher`);
+      if (style === 'strong') who = strong(`${k}|strong`);
+      else if (style === 'crusher') who = crusher(`${k}|crusher`);
       else if (style === 'character') who = character(t.stakes, `${k}|reg`);
       else {
         // A tourist or a reg (more tourists on a busy night), of that style.

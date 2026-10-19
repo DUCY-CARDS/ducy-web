@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   FAMILIES, botIdOf, familyFor, isGeneric, isReg, lookFor, nameFor, parseBotId, personOf, roster, tourist, touristShare,
 } from '../src/quest-people.js';
-import { CRUSHERS, LINEUP_SEATS, POOLS, buyInFor, lineupFor, lineupStacks, replacementPool, roomLineups } from '../src/quest-lineup.js';
+import { CRUSHERS, LINEUP_SEATS, POOLS, STRONG, buyInFor, lineupFor, lineupStacks, replacementPool, roomLineups } from '../src/quest-lineup.js';
 import { ROOMS, STAKES } from '../src/quest-rooms.js';
 import { READ_HANDS, accuracyText, reviewReads, suggestFamily, tagOf, tagPlayer, thinkMs } from '../src/quest-reads.js';
 import { MILESTONES, START_BANKROLL, checkMilestones, leave, newQuest, newRun, recordHand, sitDown } from '../src/quest.js';
@@ -67,7 +67,7 @@ test('low and mid stakes seat regs and tourists; no one sits at two tables, no s
         const names = t.seats.map(s => personOf(s)?.name).filter(Boolean);
         assert.equal(new Set(names).size, names.length, `names at ${id}`);
         const regulars = t.seats.filter(s => !isGeneric(s));
-        for (const r of regulars) assert.ok(POOLS.low.includes(r) || POOLS.mid.includes(r) || CRUSHERS.includes(r));
+        for (const r of regulars) assert.ok(POOLS.low.includes(r) || POOLS.mid.includes(r) || CRUSHERS.includes(r) || STRONG.includes(r));
         assert.ok(t.bench.length > 0 && t.bench.every(b => !t.seats.includes(b)));
         checked++;
       }
@@ -239,5 +239,22 @@ test('the mix: mostly ABC players at low stakes, a rare crusher; fewer ABC and m
   assert.ok(pct('low', 'crusher') > 0 && pct('low', 'crusher') < 0.06, `low crushers ${pct('low', 'crusher')}`);
   assert.ok(pct('mid', 'crusher') > 2 * pct('low', 'crusher'), 'more crushers at 5/10 and 10/20');
   assert.ok(pct('mid', 'grinder') < pct('low', 'grinder') - 0.1, 'fewer ABC players at 5/10 and 10/20');
+});
+
+test('10/20: four strong players, or three and a rock, and an ABC player or now and then a bad one', () => {
+  let tables = 0, bad = 0;
+  for (const seed of [1, 2]) for (let h = 0; h < 24 * 7; h += 4) for (const room of ROOMS) {
+    for (const [id, t] of roomLineups(seed, room.id, h * 60)) {
+      if (!id.includes('-10/20-')) continue;
+      tables++;
+      const strong = t.seats.filter(s => STRONG.includes(s)).length;
+      const fam = f => t.seats.filter(s => personOf(s)?.family === f).length;
+      assert.ok(strong >= 3, `${id}: ${strong} strong`);
+      assert.ok(strong === 4 || fam('rock') >= 1 || fam('grinder') === 2, `${id}: three strong and a rock`);
+      if (fam('station') || fam('maniac')) bad++;
+    }
+  }
+  assert.ok(tables > 20);
+  assert.ok(bad > 0 && bad / tables < 0.35, `bad players at ${bad} of ${tables} tables`);
 });
 
