@@ -409,7 +409,8 @@ function cardHtml(c) {
   return `<span class="pl-card s-${c[1]}${red ? ' r' : ''}">${c[0]}${SUITS[c[1]]}</span>`;
 }
 
-const nameOf = seat => (state ? state.seats[seat].name : '');
+// A seat's name ('' for none: no one to act while the cards run out).
+const nameOf = seat => (state?.seats[seat]?.name ?? '');
 
 // ---- setup ----
 
@@ -1030,7 +1031,8 @@ function show(snap) {
   const L = state.legal;
   const auto = foldQueued && L ? (L.can_fold ? 'fold' : L.can_check ? 'check' : null) : null;
   if (L && !auto) foldQueued = false;
-  render();
+  // A drawing error must never stop the table: the bots play on regardless.
+  try { render(); } catch (e) { console.warn(e); }
   armDeal();
   if (!auto) { turnChime(); pace(); return; }
   act(auto).then(ok => { if (!ok) { foldQueued = false; render(); } });
@@ -1938,8 +1940,17 @@ let paceFails = 0;
 let stuckNote = ''; // shown in place of "… is thinking" when a bot's turn is stuck
 const PACE_RETRIES = 3;
 const PACE_SLOW_MS = 20000;
+// And a watchdog: a bot's turn with nothing under way for a few seconds
+// (whatever the reason) is started again.
+let paceAt = 0;
+const PACE_WATCH_MS = 5000;
+setInterval(() => {
+  if (!open || !seated || !botToAct || busy || peeling || stuckNote || mode === 'guest') return;
+  if (performance.now() - paceAt > PACE_WATCH_MS) pace();
+}, 1000);
 async function pace() {
   clearTimeout(timer);
+  paceAt = performance.now();
   if (!open || !seated || !botToAct) return;
   if (busy) { timer = setTimeout(pace, 150); return; }
   const started = performance.now();
@@ -1963,6 +1974,7 @@ async function pace() {
   }
   paceFails = 0;
   if (stuckNote) { stuckNote = ''; render(); }
+  paceAt = performance.now();
   timer = setTimeout(() => show(snap), Math.max(0, wait - (performance.now() - started)));
 }
 
@@ -3340,6 +3352,9 @@ function controlsHtml() {
   } else if (!L && stuckNote) {
     status = `<span class="pl-result">${esc(stuckNote)}</span>`;
     call = '<button class="tr-btn" data-act="leave">Leave the table</button>';
+  } else if (!L && s.to_act == null) {
+    // Everyone left is all-in: no one to act, the rest of the board to come.
+    status = 'All in. Dealing the rest of the board…';
   } else if (!L) {
     status = `${esc(nameOf(s.to_act))} is thinking…`;
     if (canPrefold()) fold = `<button class="tr-btn no" data-act="prefold">${checkIsFree() ? 'Check/Fold' : 'Fold'} <kbd>F</kbd></button>`;
