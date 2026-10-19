@@ -13,7 +13,7 @@
 // of things waiting for you on Clubs, a dot on it when a table you can sit
 // at opens, and the count in the window title.
 
-import { openPlay, closePlay, joinTable, tableGroup, tableName } from './play.js';
+import { openPlay, closePlay, joinTable, tableGroup, tableName, takeQuestSeat, watchQuestSeat } from './play.js';
 import {
   anyClubs, closeClubs, clubCrumb, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
@@ -79,6 +79,17 @@ export function startBackground() {
   onClubsChange(changed);
   anyClubs().then(yes => { if (yes) startClubs(); });
   changed();
+  // Your name on a Bankroll Quest list: say so when the seat is ready,
+  // whatever you're doing, and from the system while the page isn't in front.
+  watchQuestSeat((text, label) => {
+    toast(text, label, takeQuestSeat, 0);
+    if (document.hidden && notifyOn()) {
+      try {
+        const note = new Notification('ducy', {body: text, tag: 'ducy-quest-seat'});
+        note.onclick = () => { window.focus(); takeQuestSeat(); note.close(); };
+      } catch {}
+    }
+  });
 }
 
 // ---- tabs and badges ----
@@ -142,9 +153,11 @@ function changed() {
   lastNeeds = n;
 }
 
-// A notice at the bottom of the page for a new request, with a way to it.
+// A notice at the bottom of the page, with a way to what it's about: by
+// default a new club request and See requests, gone after `ms`.
 let toastTimer = null;
-function toast(text) {
+let toastAction = null;
+function toast(text, label = 'See requests', action = showClubPlayers, ms = 10_000) {
   let t = el('pt-toast');
   if (!t) {
     t = document.createElement('div');
@@ -152,15 +165,17 @@ function toast(text) {
     t.className = 'pt-toast';
     t.setAttribute('role', 'status');
     t.addEventListener('click', e => {
-      if (e.target.closest('[data-toast=open]')) showClubPlayers();
+      if (e.target.closest('[data-toast=open]')) toastAction?.();
       t.hidden = true;
     });
     document.body.append(t);
   }
-  t.innerHTML = `<span>${esc(text)}</span><button class="btn-small primary" data-toast="open">See requests</button><button class="link-btn" aria-label="Dismiss">✕</button>`;
+  toastAction = action;
+  t.innerHTML = `<span>${esc(text)}</span><button class="btn-small primary" data-toast="open">${esc(label)}</button><button class="link-btn" aria-label="Dismiss">✕</button>`;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 10_000);
+  // `ms` 0: it stays until it's answered or closed.
+  if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
 // ---- Start a game (#152, #209) ----

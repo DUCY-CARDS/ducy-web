@@ -112,9 +112,12 @@ export function sitDown(q, table, amount, room, now = Date.now()) {
   if (q.seat || q.bankroll < min || q.rest || q.trip || exhausted(q, now)) return null;
   const chips = Math.max(min, Math.min(max, q.bankroll, Math.round(amount)));
   const game = table.game || 'nlhe';
-  // Sitting down takes your name off every list.
+  // Sitting down takes your name off this game's list; you stay in line for
+  // the others while you play, and hear when a seat there is ready.
+  // (A list's stakes are "1/2", the table's its blinds in hundredths.)
+  const thisGame = l => (l.game || 'nlhe') === game && String(l.stakes).split('/').map(n => Math.round(n * 100)).join() === String(table.stakes);
   return {
-    ...q, bankroll: q.bankroll - chips, room: table.room, lists: [],
+    ...q, bankroll: q.bankroll - chips, room: table.room, lists: (q.lists || []).filter(l => l.room === table.room && !thisGame(l)),
     seat: {table: table.id, room: table.room, stakes: table.stakes, game, stack: chips, bought: chips, hands: 0, bigWin: 0, bigLoss: 0, with: table.with || [], since: gameMinutes(q, now)},
   };
 }
@@ -277,7 +280,8 @@ export function arrive(q, now = Date.now()) {
 // ---- Waitlists ----
 // Every game has a list of players waiting for a seat; you join it in the
 // room you're in and wait your turn (study while you wait). When your name
-// is called you have CALL_MINUTES to take the seat, or you lose it.
+// is called you have CALL_MINUTES to take the seat, from when you see the
+// call, or you lose it.
 export const CALL_MINUTES = 8;
 
 // Puts your name on a game's list in this room: `game` is {key, stakes,
@@ -293,28 +297,50 @@ export function joinList(q, game, ahead, gap, now = Date.now()) {
 /** Takes your name off a game's list. */
 export const leaveList = (q, key) => ({...q, lists: (q.lists || []).filter(l => l.key !== key)});
 
+// A call you haven't seen (you were off doing something else, like the
+// charts) holds your seat: the CALL_MINUTES to take it only start once the
+// lobby shows it to you (seeCalls). Until then you keep your place.
+const expiresAt = l => (l.seenAt ?? Infinity) + CALL_MINUTES;
+
 /**
  * Where you stand on your lists at real time `now`: [{...entry, called,
- * ahead, wait}]: `called` once your seat is ready, `ahead` the players still
- * before you, `wait` game minutes until you're called (or, called, left to
- * take the seat). Lists in other rooms, and calls not taken in time, drop off.
+ * ahead, wait, expires}]: `called` once your seat is ready, `ahead` the
+ * players still before you, `wait` game minutes until you're called (or,
+ * called, left to take the seat: the full CALL_MINUTES until you've seen
+ * the call), `expires` the game minute the call runs out (Infinity unseen).
+ * Lists in other rooms, and seen calls not taken in time, drop off.
  */
 export function listStatus(q, now = Date.now()) {
   const at = gameMinutes(q, now);
   return (q.lists || [])
-    .filter(l => l.room === q.room && at < l.callAt + CALL_MINUTES)
+    .filter(l => l.room === q.room && at < expiresAt(l))
     .map(l => {
       const called = at >= l.callAt;
-      return {...l, called, ahead: called ? 0 : Math.max(0, Math.ceil((l.callAt - at) / l.gap) - 1), wait: called ? l.callAt + CALL_MINUTES - at : l.callAt - at};
+      const expires = expiresAt(l);
+      return {...l, called, expires, ahead: called ? 0 : Math.max(0, Math.ceil((l.callAt - at) / l.gap) - 1),
+        wait: !called ? l.callAt - at : Number.isFinite(expires) ? expires - at : CALL_MINUTES};
     });
 }
 
-/** Calls that ran out (you didn't take the seat in time): the lists without them. */
+/** Calls that ran out (seen, and you didn't take the seat in time): the lists without them. */
 export function dropMissed(q, now = Date.now()) {
   const at = gameMinutes(q, now);
-  const kept = (q.lists || []).filter(l => l.room === q.room && at < l.callAt + CALL_MINUTES);
+  const kept = (q.lists || []).filter(l => l.room === q.room && at < expiresAt(l));
   return kept.length === (q.lists || []).length ? q : {...q, lists: kept};
 }
+
+/** The lobby is showing your calls: their CALL_MINUTES to take the seat start now. */
+export function seeCalls(q, now = Date.now()) {
+  const at = gameMinutes(q, now);
+  if (!(q.lists || []).some(l => l.room === q.room && at >= l.callAt && l.seenAt == null)) return q;
+  return {...q, lists: q.lists.map(l => (l.room === q.room && at >= l.callAt && l.seenAt == null ? {...l, seenAt: at} : l))};
+}
+
+/** Calls you haven't seen yet: the entries whose seat is ready, waiting for you. */
+export const unseenCalls = (q, now = Date.now()) => {
+  const at = gameMinutes(q, now);
+  return (q.lists || []).filter(l => l.room === q.room && at >= l.callAt && l.seenAt == null);
+};
 
 // ---- Study ----
 // Questions answered while travelling or waiting (quest-study.js): how many,
