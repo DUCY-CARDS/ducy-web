@@ -1686,6 +1686,7 @@ async function regularsBetween() {
     stacks: state.seats.map(x => num(x.stack)), bank: regulars.bank, bots: tableBots,
     buyIn: regulars.buyIn, all: regulars.pool || personalities.map(p => p.id),
     buyIns: regulars.buyIns, buyInOf: regulars.buyInOf, leaveChance: regulars.leaveChance ?? LEAVE_CHANCE,
+    nameOf: regularName,
   });
   if (r.buyIns) regulars.buyIns = r.buyIns;
   for (const {seat, chips} of r.sets) await call('setStack', seat, chips);
@@ -1695,6 +1696,8 @@ async function regularsBetween() {
     if (await call('setBot', sw.seat, sw.id, sw.chips, crypto.getRandomValues(new Uint32Array(1))[0])) {
       seated[sw.seat - 1] = sw.id;
       notes.push(`${regularName(sw.from)} left. ${regularName(sw.id)} sat down.`);
+      // Who left is in the room still, and may sit down again later.
+      if (regulars.pool && !regulars.pool.includes(sw.from)) regulars.pool = [...regulars.pool, sw.from];
     } else {
       // An older ducy-wasm can't change who sits there: the same Regular
       // buys in again.

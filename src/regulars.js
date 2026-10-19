@@ -43,19 +43,25 @@ export function pickRegulars(ids, n, rng = Math.random) {
  * `buyIns` is each seat's own buy-in (seat 0 unused) and `buyInOf(id)` what a
  * newcomer buys in for; the result then has the new `buyIns` too.
  */
-export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random, leaveChance = LEAVE_CHANCE, buyIns = null, buyInOf = null}) {
+export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random, leaveChance = LEAVE_CHANCE, buyIns = null, buyInOf = null, nameOf = null}) {
   const nextBank = [...bank];
   const seated = [...bots];
   const nextBuyIns = buyIns ? [...buyIns] : null;
   const sets = [], swaps = [];
+  // Never two of the same player at a table (or, with `nameOf`, two of
+  // the same name): with no one else to sit down, the seat keeps its player.
+  const name = id => (nameOf ? nameOf(id) : id);
   const replace = seat => {
-    const free = all.filter(id => !seated.includes(id));
-    const id = pickRegulars(free.length ? free : all, 1, rng)[0];
+    const here = new Set(seated.map(name));
+    const free = all.filter(id => !seated.includes(id) && !here.has(name(id)));
+    if (!free.length) return false;
+    const id = pickRegulars(free, 1, rng)[0];
     const chips = buyInOf ? buyInOf(id) : buyIn;
     swaps.push({seat, from: seated[seat - 1], id, chips});
     seated[seat - 1] = id;
     if (nextBuyIns) nextBuyIns[seat] = chips;
     nextBank[seat] = (BANKROLL_BUY_INS - 1) * chips;
+    return true;
   };
   for (let seat = 1; seat < stacks.length; seat++) {
     const stack = stacks[seat];
@@ -71,7 +77,10 @@ export function betweenHands({stacks, bank, bots, buyIn, all, rng = Math.random,
       continue;
     }
     if (stack > 0) continue; // playing out the last of the bankroll
-    replace(seat);
+    if (replace(seat)) continue;
+    // Broke, and no one to take the seat: they buy in again.
+    sets.push({seat, chips: target});
+    nextBank[seat] = (BANKROLL_BUY_INS - 1) * target;
   }
   return {sets, swaps, bank: nextBank, bots: seated, ...(nextBuyIns ? {buyIns: nextBuyIns} : {})};
 }
