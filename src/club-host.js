@@ -24,6 +24,7 @@ import { canJoin, cashOutTable, chipsForTable, handsToStay, leftTable, limits, s
 import { refundTopUp } from './club-chips.js';
 import { logAction } from './club-roles.js';
 import { dropTable, getTable, putTable } from './table-store.js';
+import { dealClock, isDealing } from './club-overview.js';
 
 const NEXT_HAND_MS = 3000;
 const BOT_PACE_MS = 700;
@@ -87,11 +88,25 @@ export function createTableHost({
     const stop = !linkOk || !r.players.some(p => online(p.client_id));
     if (stop === !!r.stopped) return;
     r.stopped = stop;
+    if (dealingNow(tid)) save();
     if (stop) for (const k of Object.keys(r.timers)) clear(r, k);
     sweep(tid, r);
     r.chain = r.chain.then(() => call('clockPause', tid, stop)).catch(e => console.warn(e));
     // Restarted: the state's turn clock and next step set the timers again.
     if (!stop) run(tid, 'state');
+  }
+
+  // Table tid's dealing clock (#398, club-overview.js): it runs while a hand
+  // is being played, or between hands while two or more are in to deal to,
+  // and not while the table's clock is stopped or it's closing. Returns
+  // whether it started or stopped.
+  function dealingNow(tid) {
+    const r = running.get(tid), t = tableById(club(), tid);
+    if (!t) return false;
+    const on = !!r && !r.stopped && !r.paused && t.status === 'open' && (!r.complete || r.playersIn >= 2);
+    const was = isDealing(t.dealing);
+    t.dealing = dealClock(t.dealing, on);
+    return was !== on;
   }
 
   // The host's link to the relay is up (true) or down.
@@ -198,6 +213,8 @@ export function createTableHost({
       onHand?.(tid, state, r.players);
       r.publish = state;
     }
+    r.playersIn = num(res.playersIn) || 0;
+    if (dealingNow(tid)) changed = true;
     // Between hands the engine's count is the truth.
     if (r.complete) syncStacks(club(), r.players, r.handNumber);
     // The hand is over: anyone the manager is removing stands up now (#414).
@@ -414,6 +431,9 @@ export function createTableHost({
   // and closes, or, if it can't resume, is closed there and then.
   async function start(t, {resume = false} = {}) {
     if (running.has(t.id)) return;
+    // A clock left running when the club last stopped: the time since isn't
+    // known to have been dealt, so it starts again from here (#398).
+    if (isDealing(t.dealing)) t.dealing = {...t.dealing, since: null};
     const {min, max} = limits(t);
     const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true, results: new Map()};
     running.set(t.id, r);
@@ -497,6 +517,7 @@ export function createTableHost({
     const r = running.get(tid);
     if (r) { for (const k of Object.keys(r.timers)) clear(r, k); timers.clear(r.sweep); r.sweep = null; }
     running.delete(tid);
+    if (dealingNow(tid)) save();
     call('clubDrop', tid).catch(() => {});
     store.drop(club().code, tid).catch(() => {});
     // Anyone watching is told the table closed.

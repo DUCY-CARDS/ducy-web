@@ -55,6 +55,8 @@ import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
 import { managerPage, NAV, navOf, pageHash } from './club-nav.js';
+import { durationText, FILTERS, memberFilter, overviewNumbers, tableSummaries, todaysTourneys } from './club-overview.js';
+import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -497,7 +499,8 @@ function answerHelpReq(code, id, reply, handled) {
 // New help requests for whoever runs a club here: a notice, once each.
 function noticeHelp() {
   const lists = [];
-  if (club) lists.push(openHelp(club));
+  // The manager's notifications show the club's own (#398).
+  if (club && mode !== 'manage') lists.push(openHelp(club));
   for (const m of memberships) if (m.role === 'assistant' && m.admin?.help) lists.push(m.admin.help);
   for (const x of lists.flat()) {
     if (helpNoticed.has(x.id)) continue;
@@ -542,10 +545,12 @@ function cashHtml() {
   return h + '</ul>';
 }
 
-// A table's line under its name: dealing or not (filled in with the
-// overview, #398).
+// A table's line under its name: its buy-in, and whether it's dealing and
+// for how long (club-overview.js, #398).
 function tableStatusHtml(t) {
-  return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}</span>`;
+  const [s] = tableSummaries({...club, tables: [t]}, {}, Date.now());
+  const deal = s.dealing ? `<span class="mg-dealing">Dealing ${durationText(s.ms)}</span>` : '<span class="mg-idle">Not dealing</span>';
+  return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)} · ${deal}</span>`;
 }
 
 // Who's at table `tid` ([{id, name, stack, removing, now}]), each with a ⋯
@@ -693,6 +698,16 @@ function onSubmit(e) {
     try { settings = readPromoForm(promoF); } catch (err) { promoNote = err.message; render(); return; }
     const id = promoF.dataset.promoform;
     promoCmd(promoF.dataset.code, id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
+    return;
+  }
+  // A notification's form (#398): another amount, a reply, a new credit limit.
+  const notef = e.target.closest('form[data-noteform]');
+  if (notef) {
+    e.preventDefault();
+    const kind = notef.dataset.noteform, id = notef.dataset.id;
+    const done = ok => { if (ok) { noteForm = ''; render(); } };
+    if (kind === 'reply') { answerHelpReq(null, id, notef.elements.reply.value, true); done(true); return; }
+    hostAct(kind === 'raise' ? 'raise_credit' : 'grant', {id, amount: parseChips(notef.elements.amount.value)}).then(done);
     return;
   }
   // Asking for help, or replying to a request (#192).
@@ -1374,6 +1389,12 @@ function render() {
   // And a lobby chat line being typed.
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
+  // And what's typed in a notification's form or the Club info editor (#398).
+  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform}|${fm.dataset.id || ''}`;
+  const typed = [...root.querySelectorAll('form[data-noteform], form[data-infoform]')].map(fm => ({
+    key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
+    values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.value])),
+  }));
   // And the Members search (#398), where it was being typed.
   const search = root.querySelector('[data-msearch]');
   const searchKept = search && document.activeElement === search && {start: search.selectionStart, end: search.selectionEnd};
@@ -1386,6 +1407,12 @@ function render() {
   if (clFresh) { clFresh.replaceWith(clForm); if (clFocus) clFocus.focus({preventScroll: true}); }
   const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
   if (lobbyInput) { lobbyInput.value = lobbyKept.v; if (lobbyKept.focus) lobbyInput.focus({preventScroll: true}); }
+  for (const k of typed) {
+    const fm = [...root.querySelectorAll('form[data-noteform], form[data-infoform]')].find(f => keepKey(f) === k.key);
+    if (!fm) continue;
+    for (const [name, v] of Object.entries(k.values)) if (fm.elements[name] && !(fm.elements[name] instanceof RadioNodeList)) fm.elements[name].value = v;
+    if (k.focus) fm.elements[k.focus]?.focus({preventScroll: true});
+  }
   const searchInput = searchKept && root.querySelector('[data-msearch]');
   if (searchInput) { searchInput.focus({preventScroll: true}); searchInput.setSelectionRange(searchKept.start, searchKept.end); }
   // The lobby chat shows its newest lines.
@@ -1829,19 +1856,53 @@ function pageHtml({page, member}) {
   return overviewHtml();
 }
 
-// Overview, the manager's home (#398): never a list of members.
+// Overview, the manager's home (#398, club-overview.js): the numbers (the
+// member ones open Members, filtered), the tables with how long each has
+// been dealing, today's tournaments, and what's owed each way (#404).
 function overviewHtml() {
-  let h = pageHead('Overview');
-  const counts = seatedCounts();
-  const tables = openTables(club);
-  h += '<section class="mg-sec"><h2>Tables</h2>';
+  const now = Date.now();
+  const n = overviewNumbers(club, now);
+  const stat = (label, value, f = '', cls = '') => (f
+    ? `<button type="button" class="mg-stat green" data-cl="mfilter" data-f="${f}"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls}">${value}</b></button>`
+    : `<div class="mg-stat green"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls}">${value}</b></div>`);
+  let h = pageHead('Overview') + '<div class="mg-stats">';
+  h += stat('Tables active', `${n.tablesActive} <span class="mg-of">of ${n.tables}</span>`);
+  h += stat('Chips outstanding', chips(n.chipsOut));
+  h += stat('Members', n.members, 'all');
+  h += stat('Joined, last 7 days', n.joined ? `+${n.joined}` : '0', 'new');
+  h += stat('Inactive, 30+ days', n.inactive, 'inactive');
+  if (n.owedToClub) h += stat('Owed to the club', chips(n.owedToClub), 'owes');
+  h += stat('Owed to players', chips(n.owedToPlayers));
+  const waiting = noteCount();
+  if (waiting) h += `<button type="button" class="mg-stat mg-needs" data-cl="mg-notes"><span class="mg-stat-label">Needs you</span><b class="mg-stat-val">${waiting} ›</b></button>`;
+  h += '</div>';
+  const tables = tableSummaries(club, seatedCounts(), now);
+  h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Tables</h2><a href="#${pageHash('cash')}">Cash games ›</a></div>`;
   if (!tables.length) h += `<p class="pl-meta cl-empty">No tables open. <a class="btn-small primary" href="#${pageHash('cash')}">New table</a></p>`;
   else {
-    h += '<ul class="mg-rows">';
-    for (const t of tables) h += `<li><a href="#${pageHash('cash')}"><b>${esc(t.name)}</b><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)}</span><span class="mg-row-end">${counts[t.id] || 0}/${t.seats}</span></a></li>`;
-    h += '</ul>';
+    h += '<div class="mg-table-wrap"><table class="mg-table"><thead><tr><th>Table</th><th>Game</th><th>Status</th><th>Dealing for</th><th>Seats</th></tr></thead><tbody>';
+    for (const t of tables) {
+      const status = t.status === 'closing' ? '<span class="mg-pill idle">Closing</span>' : t.dealing ? '<span class="mg-pill on">Dealing</span>' : '<span class="mg-pill idle">Not dealing</span>';
+      const time = t.dealing ? durationText(t.ms) : `<span class="pl-meta">${t.ms ? durationText(t.ms) : '–'}${t.stoppedAt ? ` · stopped ${ago(t.stoppedAt)}` : ''}</span>`;
+      h += `<tr><th><a href="#${pageHash('cash')}">${esc(t.name)}</a></th><td>${esc(SHORT[t.game] || gameLabel(t.game))} ${chips(t.sb)}/${chips(t.bb)}</td><td>${status}</td><td class="mg-num">${time}</td><td class="mg-num">${t.taken} / ${t.seats}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
   }
-  return h + '</section>';
+  h += '</section>';
+  const tours = todaysTourneys(club, now);
+  if (tours.length) {
+    const live = tourneyLive();
+    h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Tournaments today</h2><a href="#${pageHash('tourneys')}">Tournaments ›</a></div><div class="mg-stats">`;
+    for (const t of tours) {
+      const l = live[t.id];
+      const line = t.status === 'running'
+        ? `Running${l ? ` · level ${l.level + 1} · ${l.playersLeft} left` : ''}`
+        : `${new Date(t.startsAt).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})} · ${new Set(t.entries.map(e => e.member)).size} registered`;
+      h += `<a class="mg-stat green" href="#${pageHash('tourneys')}"><b>${esc(t.name)}</b><span class="mg-stat-label">${line}</span></a>`;
+    }
+    h += '</div></section>';
+  }
+  return h;
 }
 
 // Requests (#398): help, people asking to join, chip requests, then the
@@ -1875,14 +1936,19 @@ function askRowHtml(m) {
   return h + '</li>';
 }
 
-// Members (#398): everyone, with a search; each opens their own page.
-let memberQuery = '';
+// Members (#398): everyone, with a search and the Overview's filters
+// (club-overview.js); each opens their own page.
+let memberQuery = '', memberFilterOn = 'all';
+const FILTER_TEXT = {all: 'All', new: 'Joined, 7 days', inactive: 'Inactive, 30+ days', owes: 'Owes'};
 function membersPageHtml() {
-  const list = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
+  const now = Date.now();
+  const f = FILTERS.includes(memberFilterOn) ? memberFilterOn : 'all';
+  const list = memberFilter(club, f, now).sort((a, b) => a.name.localeCompare(b.name));
   let h = '<div class="mg-tools-row">';
   h += `<input class="pl-text mg-search" type="search" data-msearch="1" placeholder="Search" aria-label="Search members" value="${esc(memberQuery)}">`;
   h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy invite link'}</button></div>`;
-  if (!list.length) return h + '<p class="pl-meta cl-empty">No members yet.</p>';
+  h += `<div class="mg-filters" role="group" aria-label="Show">${FILTERS.map(x => `<button class="cc-btn${x === f ? ' on' : ''}" data-cl="mfilter-here" data-f="${x}" aria-pressed="${x === f}">${FILTER_TEXT[x]} <span class="pl-meta">${memberFilter(club, x, now).length}</span></button>`).join('')}</div>`;
+  if (!list.length) return h + '<p class="pl-meta cl-empty">No one.</p>';
   h += '<ul class="mg-rows mg-members">';
   const q = memberQuery.trim().toLowerCase();
   for (const m of list) {
@@ -1978,19 +2044,64 @@ function historyHtml() {
   return h + '</ul></details>';
 }
 
-// The notifications (#398): what needs the manager, each answered right
-// there. Beside the page on a wide screen, behind the bell on a phone.
+// The notifications (#398, club-notices.js): what needs the manager, each
+// answered right there. Beside the page on a wide screen, behind the bell
+// on a phone. `noteForm`: the notice whose Other, Reply or limit form is
+// open; Clear puts away the ones that need no answer (kept per browser).
+let noteForm = '';
+const clearedNotes = () => new Set(hostNotes().cleared || []);
+const notices = () => (club ? managerNotices(club, {cleared: clearedNotes(), seated: seatedCounts()}) : []);
+const noteCount = () => notices().length;
+
 function notesHtml() {
-  const pending = membersByStatus(club, 'pending');
-  const asking = membersByStatus(club, 'member').filter(m => m.request && !m.agentOf);
-  let h = '<aside class="mg-notes" aria-label="Notifications"><div class="mg-notes-head"><h2>Notifications</h2><button class="link-btn mg-notes-x" data-cl="mg-close" aria-label="Close">✕</button></div>';
-  const items = [];
-  for (const m of pending) items.push(`<li class="mg-note"><span><b>${esc(m.name)}</b> asks to join</span><span class="mg-note-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></li>`);
-  for (const m of asking) items.push(`<li class="mg-note"><span><b>${esc(m.name)}</b> asks for ${chips(m.request.amount)}</span><span class="mg-note-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">No</button></span></li>`);
-  h += items.length ? `<ul class="mg-note-list">${items.join('')}</ul>` : '<p class="pl-meta mg-quiet">Nothing new.</p>';
+  const list = notices();
+  let h = '<aside class="mg-notes" aria-label="Notifications"><div class="mg-notes-head"><h2>Notifications</h2>';
+  if (clearableKeys(list).length) h += '<button class="link-btn" data-cl="notes-clear">Clear</button>';
+  h += '<button class="link-btn mg-notes-x" data-cl="mg-close" aria-label="Close">✕</button></div>';
+  h += list.length ? `<ul class="mg-note-list">${list.map(noteHtml).join('')}</ul>` : '<p class="pl-meta mg-quiet">Nothing new.</p>';
   return h + hostLobbyHtml() + '</aside>';
 }
-const noteCount = () => (club ? hostWaiting() : 0);
+
+function noteHtml(n) {
+  const id = esc(n.member || '');
+  const btn = (act, label, extra = '', primary = false) => `<button class="btn-small${primary ? ' primary' : ''}" data-cl="${act}"${extra}>${label}</button>`;
+  const who = `<b>${esc(n.name)}</b>`;
+  const form = (kind, input, submit) => `<form class="mg-note-acts" data-noteform="${kind}" data-id="${esc(n.id || n.member)}">${input}<button class="btn-small primary" type="submit">${submit}</button><button class="btn-small" type="button" data-cl="note-cancel">Cancel</button></form>`;
+  const amount = (v, label) => `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(v))}" aria-label="${label}">`;
+  let top = '', body = '', acts = '';
+  const open = noteForm === n.key;
+  if (n.kind === 'join') {
+    top = `${who} asks to join${n.via ? ` <span class="pl-meta">via ${esc(n.via)}</span>` : ''}`;
+    acts = btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('decline', 'No', ` data-id="${id}"`);
+  } else if (n.kind === 'chips') {
+    top = `${who} asks for <b>${chips(n.amount)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
+    if (n.note) body = `<span class="pl-meta">“${esc(n.note)}”</span>`;
+    acts = open ? form('grant', amount(n.amount, 'Chips to give'), 'Give')
+      : btn('grant', `Give ${chips(n.amount)}`, ` data-id="${id}"`, true) + btn('note-open', 'Other', ` data-key="${esc(n.key)}"`) + btn('deny-now', 'No', ` data-id="${id}"`);
+  } else if (n.kind === 'at_limit') {
+    // Credit is never given past the limit (#404): raise it, or no.
+    top = `${who} asks for <b>${chips(n.asked)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
+    body = `<span class="pl-meta">At their credit limit (${chips(n.credit)})</span>`;
+    acts = `<form class="mg-note-acts" data-noteform="raise" data-id="${id}"><label class="pl-meta">New limit ${amount(raiseTo(n), 'New credit limit')}</label><button class="btn-small primary" type="submit">Raise limit</button>${btn('deny-now', 'No', ` type="button" data-id="${id}"`)}</form>`;
+  } else if (n.kind === 'help') {
+    top = `<b>Help</b>${n.table ? ` · ${esc(n.table)}` : ''} · ${esc(n.name)}`;
+    body = `<span>“${esc(n.text)}”</span>`;
+    acts = open ? form('reply', `<input class="pl-text mg-note-wide" name="reply" maxlength="${MAX_HELP_REPLY}" required aria-label="Reply">`, 'Send')
+      : btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`) + btn('watch', 'Watch', ` data-table="${esc(n.watch)}"${n.watch && tableRunning(n.watch) ? '' : ' disabled'}`);
+  } else if (n.kind === 'prize') {
+    top = `<b>${esc(n.promo)}</b> · ${esc(n.name)} · ${chips(n.amount)}`;
+    if (n.handName) body = `<span class="pl-meta">${esc(n.handName)}</span>`;
+    acts = btn('promo-approve', 'Pay', ` data-id="${esc(n.id)}"`, true) + (n.hand ? btn('promo-replay', 'Replay hand', ` data-code="${esc(club.code)}" data-who="host" data-hand="${esc(n.hand)}"`) : '');
+  } else if (n.kind === 'stopped') {
+    top = `<b>${esc(n.name)}</b> stopped dealing`;
+    acts = btn('close-table-yes', 'Close table', ` data-table="${esc(n.table)}"`);
+  } else if (n.kind === 'left_owing') {
+    const t = tableById(club, n.table)?.name || 'a table';
+    top = `<a href="#${pageHash('member', n.member)}">${who}</a> left ${esc(t)} owing <b>${chips(n.owesNow)}</b>`;
+  }
+  const quiet = ['help', 'prize', 'stopped', 'left_owing'].includes(n.kind);
+  return `<li class="mg-note${quiet ? ' quiet' : ''}"><span class="mg-note-top"><span>${top}</span>${when(n.at)}</span>${body}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : ''}</li>`;
+}
 
 // Rules (#398): how the club's tables and members work.
 function rulesHtml() {
@@ -2051,6 +2162,7 @@ function promoCmd(code, op, args) {
   render();
   return Promise.resolve(true);
 }
+
 // The Accounting tab: where the club's chips are, each member's balance and
 // results, and every chip movement (the ledger).
 function accountingHtml() {
@@ -2560,6 +2672,14 @@ async function onClick(e) {
   else if (act === 'mg-nav') { navOpen = !navOpen; notesOpen = false; render(); }
   else if (act === 'mg-notes') { notesOpen = !notesOpen; navOpen = false; render(); }
   else if (act === 'mg-close') { navOpen = notesOpen = false; render(); }
+  // Notifications' quick actions (#398).
+  else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
+  else if (act === 'note-cancel') { noteForm = ''; render(); }
+  else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
+  else if (act === 'notes-clear') { setHostNote('cleared', [...clearedNotes(), ...clearableKeys(notices())].slice(-300)); render(); }
+  // Overview's numbers open Members, filtered.
+  else if (act === 'mfilter') { memberFilterOn = b.dataset.f; location.hash = pageHash('members'); render(); }
+  else if (act === 'mfilter-here') { memberFilterOn = b.dataset.f; render(); }
   // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).
   else if (act === 'promo-new') { promoForm = 'new'; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
   else if (act === 'promo-edit') { promoForm = b.dataset.id; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
@@ -2871,7 +2991,8 @@ export function startClubs() {
     setInterval(() => {
       updateCalls();
       const live = memberships.some(m => (m.tourneys || []).some(t => t.status === 'scheduled' || t.status === 'running'));
-      if (open && live) render();
+      // The manager's dealing times move too (#398).
+      if (open && (live || (mode === 'manage' && club))) render();
     }, 30_000);
     owner = createOwner({
       identity: me,
