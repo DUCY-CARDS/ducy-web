@@ -46,7 +46,7 @@ import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableBy
 import { createTableHost } from './club-host.js';
 import { cancelTourney, newTourney, register, setPayout, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
-import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
+import { adminBody, answerRole, isAssistant, logAction, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
 } from './club-agents.js';
@@ -60,6 +60,7 @@ import {
   approveAward, editPromo, newPromo, nextSettle, processHand, promosAdmin, promosBody, setPromoStatus, settlePeriods, voidAward,
 } from './club-promos.js';
 import { chipText } from './chip-format.js';
+import { cleanInfo, infoBody } from './club-info.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -465,6 +466,7 @@ export function createClubServer({
       if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
+      if (club.info) sendToPlayer({to: msg.from, body: infoBody(club)});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
       if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
       if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminView()});
@@ -606,12 +608,20 @@ export function createClubServer({
     // hand in play, or `now`; keep_player is Undo.
     remove_player: async ({table, id, now = false}) => {
       if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
-      await tableHost.removePlayer(table, String(id), {now: !!now, by: club.ownerId || club.hostId});
+      await tableHost.removePlayer(table, String(id), {now: !!now, by: actor()});
       changed();
     },
     keep_player: async ({table, id}) => {
       await tableHost?.keepPlayer(table, String(id));
       changed();
+    },
+    // Club info (#398): its sections, sent to every member online.
+    set_info: ({info}) => {
+      club.info = cleanInfo(info || {}, club.info);
+      logAction(club, actor(), 'Updated the club info');
+      changed();
+      const body = infoBody(club);
+      for (const id of memberIds()) sendToPlayer({to: id, body});
     },
     close_table: ({table}) => {
       const t = tableById(club, table);
@@ -622,6 +632,10 @@ export function createClubServer({
       broadcastTables();
     },
   };
+
+  // Who the action running now is by, for the activity log.
+  let acting = null;
+  const actor = () => acting || club.ownerId || club.hostId;
 
   // `extraOps`: actions only where the club runs can do them (an always-on
   // club's room: deleting the club, #98).

@@ -44,6 +44,7 @@
 //                                        help requests (club-help.js, #192)
 //   {type: 'lobby', club, online, chat}  who's online, and the lobby chat
 //                                        (club-lobby.js)
+//   {type: 'info', club, info}           the club info (club-info.js, #398)
 // Join and hello carry the player's session key ({key}). Table updates go
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
@@ -52,6 +53,7 @@ import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 import { readLobby } from './club-lobby.js';
+import { readInfo } from './club-info.js';
 
 export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
@@ -313,6 +315,12 @@ export async function playerReceive(mem, env) {
   if (b.type === 'promos') {
     mem.hostSeq = env.seq;
     mem.promos = {promos: Array.isArray(b.promos) ? b.promos : [], recent: Array.isArray(b.recent) ? b.recent : []};
+    return true;
+  }
+  // Club info (#398, club-info.js).
+  if (b.type === 'info') {
+    mem.hostSeq = env.seq;
+    mem.info = readInfo(b.info);
     return true;
   }
   if (b.type === 'promo_event') {

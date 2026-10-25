@@ -80,12 +80,13 @@ export function useLocalRelay(r) {
 // What code `code` is, asked of the relay (#393): {kind: 'club', ask, name,
 // hostId} for a club (name and hostId only when it lets people ask to join
 // with its code), {kind: 'game'} for anything else, or null when the relay
-// can't be asked.
-export async function lookupCode(code, get = globalThis.fetch) {
-  if (localRelay) return localRelay.lookup(code);
+// can't be asked. With the `invite` token of an invite link, a club's About
+// the club comes too (`about`, #398).
+export async function lookupCode(code, get = globalThis.fetch, invite = '') {
+  if (localRelay) return localRelay.lookup(code, invite);
   const base = relayUrl().replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
   try {
-    const r = await get(`${base}/code/${encodeURIComponent(code)}`);
+    const r = await get(`${base}/code/${encodeURIComponent(code)}${invite ? `?invite=${encodeURIComponent(invite)}` : ''}`);
     if (!r.ok) return null;
     const v = await r.json();
     return v?.kind === 'club' || v?.kind === 'game' ? v : null;

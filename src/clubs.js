@@ -59,6 +59,7 @@ import { durationText, FILTERS, memberFilter, overviewNumbers, tableSummaries, t
 import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
 import { chipLines, leftSummary } from './club-member-view.js';
 import { creditRow } from './club-credit.js';
+import { changedSince, formatInfo, isEmpty, MAX_EVENT_TEXT, MAX_INFO_TEXT, nextEvent, sectionName, SECTIONS } from './club-info.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -712,6 +713,9 @@ function onSubmit(e) {
     hostAct(kind === 'raise' ? 'raise_credit' : 'grant', {id, amount: parseChips(notef.elements.amount.value)}).then(done);
     return;
   }
+  // Club info (#398).
+  const inf = e.target.closest('form[data-infoform]');
+  if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}).then(ok => { if (ok) { infoSaved = Date.now(); render(); } }); return; }
   // A member's credit limit (#404).
   const cf = e.target.closest('form[data-creditform]');
   if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: parseChips(cf.elements.amount.value)}); return; }
@@ -2220,9 +2224,36 @@ function backupPageHtml() {
   return h;
 }
 
-// Club info (#398): filled in with the info editor.
+// Club info (#398, club-info.js): its sections as the managers write them;
+// members see them formatted (bold, lists, links), About also on the invite.
+const localInput = t => { const d = new Date(t); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 function infoEditHtml() {
-  return '<p class="pl-meta">Coming next.</p>';
+  const info = club.info || {};
+  const area = (k, rows) => `<label class="mg-field"><span>${sectionName(k)}</span><textarea class="pl-text" name="${k}" rows="${rows}" maxlength="${MAX_INFO_TEXT}" placeholder="**bold**, - lists, links">${esc(info[k] || '')}</textarea></label>`;
+  let h = '<form class="mg-info-form" data-infoform="1">';
+  h += area('about', 5);
+  const evs = [...(info.events || []), {}, {}];
+  h += `<fieldset class="mg-field"><legend>${sectionName('events')}</legend>`;
+  evs.forEach((e, i) => {
+    h += `<div class="mg-event"><input class="pl-text" type="datetime-local" name="evat${i}" aria-label="When" value="${e.at ? localInput(e.at) : ''}">`;
+    h += `<input class="pl-text" name="evtext${i}" maxlength="${MAX_EVENT_TEXT}" aria-label="What" placeholder="Event" value="${esc(e.text || '')}"></div>`;
+  });
+  h += '</fieldset>';
+  h += area('chips', 3) + area('rules', 5);
+  h += `<div class="pl-actions"><button class="btn-small primary" type="submit">Save</button>${Date.now() - infoSaved < 4000 ? '<span class="pl-meta">Saved ✓</span>' : ''}</div></form>`;
+  return h;
+}
+let infoSaved = 0;
+
+// The Club info form, as club info.
+function readInfoForm(f) {
+  const events = [];
+  for (let i = 0; f.elements[`evat${i}`]; i++) {
+    const at = f.elements[`evat${i}`].value ? new Date(f.elements[`evat${i}`].value).getTime() : 0;
+    const text = f.elements[`evtext${i}`].value.trim();
+    if (at && text) events.push({at, text});
+  }
+  return {about: f.elements.about.value, chips: f.elements.chips.value, rules: f.elements.rules.value, events};
 }
 
 // The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
@@ -2381,24 +2412,32 @@ function memberHomeHtml(m, manage = '') {
   }
   h += manage;
   const tab = memberTab(m.code);
+  // Club info changed since you last looked (#398): which parts, until you do.
+  const changed = changedSince(m.info, infoSeen(m.code));
+  if (tab === 'info') markInfoSeen(m);
+  else if (changed.length) h += `<p class="cl-updated"><button class="link-btn" data-cl="mtab" data-code="${code}" data-tab="info">Updated: ${changed.map(k => sectionName(k).toLowerCase()).join(', ')}</button></p>`;
+  // The tabs (#398): Cash games · Tournaments · Club info · My chips · My hands.
+  const tabBtn = (id, label) => `<button class="pl-tab${tab === id ? ' on' : ''}" role="tab" aria-selected="${tab === id}" data-cl="mtab" data-code="${code}" data-tab="${id}">${label}${id === 'info' && changed.length && tab !== 'info' ? '<span class="cl-dot" aria-label="updated"></span>' : ''}</button>`;
+  h += `<div class="pl-tabs cl-dash-tabs cl-member-tabs" role="tablist">${MEMBER_TAB_NAMES.map(([id, label]) => tabBtn(id, label)).join('')}</div>`;
   h += '<div class="cl-home"><section class="cl-home-main">';
-  if (tab === 'chips' || tab === 'history') {
-    h += `<div class="cl-home-title"><h2>${tab === 'chips' ? 'Your chips' : 'Your hands'}</h2><button class="link-btn" data-cl="mtab" data-code="${code}" data-tab="tables">‹ Tables</button></div>`;
-    if (tab === 'chips') {
-      h += myChipsHtml(m);
-    } else {
-      h += handsHtml(m.code, me.id, 'Your hands');
-      const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
-      h += resultsHtml(m.entries || [], null, tableNames);
-    }
+  const ev = nextEvent(m.info);
+  const evLine = ev ? `<p class="cl-next-event"><b>Next:</b> ${esc(ev.text)} <span class="pl-meta">${esc(new Date(ev.at).toLocaleString(undefined, {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}))}</span></p>` : '';
+  if (tab === 'chips') h += myChipsHtml(m);
+  else if (tab === 'history') {
+    h += handsHtml(m.code, me.id, 'Your hands');
+    const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
+    h += resultsHtml(m.entries || [], null, tableNames);
+  } else if (tab === 'info') h += memberInfoHtml(m);
+  else if (tab === 'tourneys') {
+    h += evLine + (memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null}) || '<p class="pl-meta cl-empty">No tournaments.</p>');
   } else {
-    h += '<h2>Tables</h2>' + memberTablesHtml(m, hostHere);
-    const tours = memberTourneysHtml(m, me.id, {hostHere, playing: seatedAt?.code === m.code && seatedAt.table.startsWith('tourney:') ? seatedAt.table.slice(8) : null});
-    if (tours) h += '<h2>Tournaments</h2>' + tours;
+    h += evLine + memberTablesHtml(m, hostHere);
     const promos = memberPromosHtml(m.promos);
     if (promos) h += '<h2>Promotions</h2>' + promos;
   }
-  h += '</section><aside class="cl-home-side"><h2>You here</h2><div class="cl-side-card">';
+  h += '</section><aside class="cl-home-side"><div class="cl-side-card">';
+  // Getting chips, from the club info (#398), beside Ask for chips.
+  if (m.info?.chips) h += `<div class="cl-info-text cl-getting">${formatInfo(m.info.chips)}</div>`;
   // New and without chips: the first step, with the biggest buy-in at the
   // club's tables to ask for (#185).
   const fresh = !m.request && !m.balance && !m.entries?.length && !m.credit;
@@ -2422,9 +2461,6 @@ function memberHomeHtml(m, manage = '') {
     h += `<input class="pl-text" maxlength="${MAX_NOTE}" placeholder="Note (optional)" aria-label="Note" data-ask-note="${code}">`;
     h += `<button class="btn-small primary" data-cl="ask" data-code="${code}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>Ask for chips</button></div>`;
   }
-  const row = (t, label, value) => `<button type="button" class="cl-side-row${tab === t ? ' on' : ''}" data-cl="mtab" data-code="${code}" data-tab="${tab === t ? 'tables' : t}"><span>${label}</span><b>${value} ›</b></button>`;
-  h += row('chips', 'Chips history', m.entries?.length || 0);
-  h += row('history', 'Your hands', '');
   h += '</div>';
   h += memberHelpHtml(m, hostHere);
   if (m.lobby) h += lobbyHtml(m.lobby.online, m.lobby.chat, m.code, hostHere);
@@ -2475,9 +2511,32 @@ const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', recl
 // The member sees their own (#404): a settlement is their debt settled.
 const MEMBER_KIND = {...KIND_TEXT, settle: 'Debt settled'};
 
-// What a member's club page shows in its main column (#193, #225): the
-// tables and tournaments, or your chips history or hands. Remembered per club.
-const MEMBER_TABS = ['tables', 'chips', 'history'];
+// Club info for a member (#398): each section written, formatted.
+function memberInfoHtml(m) {
+  if (isEmpty(m.info)) return '<p class="pl-meta cl-empty">Nothing here yet.</p>';
+  let h = '';
+  for (const [k, name] of SECTIONS) {
+    if (k === 'events') {
+      const evs = (m.info.events || []).filter(e => e.at > Date.now() - 6 * 3600e3);
+      if (evs.length) h += `<section class="cl-info"><h2>${name}</h2><ul class="mg-rows">${evs.map(e => `<li class="mg-row"><b>${esc(e.text)}</b><span class="mg-row-end">${esc(new Date(e.at).toLocaleString(undefined, {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}))}</span></li>`).join('')}</ul></section>`;
+    } else if (m.info[k]) h += `<section class="cl-info"><h2>${name}</h2><div class="cl-info-text">${formatInfo(m.info[k])}</div></section>`;
+  }
+  return h;
+}
+
+// When this browser last saw each part of a club's info (#398): {section: time}.
+const infoSeen = code => load(`ducyInfoSeen:${code}`, {});
+function markInfoSeen(m) {
+  const at = m.info?.at || {};
+  const seen = infoSeen(m.code);
+  if (Object.keys(at).every(k => (seen[k] || 0) >= at[k])) return;
+  save(`ducyInfoSeen:${m.code}`, {...seen, ...at});
+}
+
+// What a member's club page shows in its main column (#193, #225, #398):
+// a tab each. Remembered per club.
+const MEMBER_TAB_NAMES = [['tables', 'Cash games'], ['tourneys', 'Tournaments'], ['info', 'Club info'], ['chips', 'My chips'], ['history', 'My hands']];
+const MEMBER_TABS = MEMBER_TAB_NAMES.map(([id]) => id);
 function memberTab(code) {
   let t = '';
   try { t = localStorage.getItem(`ducyMemberTab:${code}`) || ''; } catch {}
@@ -3306,7 +3365,7 @@ function updateCalls() {
 function answerCall(c) {
   if (c.kind === 'started' && !seatedAt) { sitAt(c.mem.code, `tourney:${c.t.id}`); return; }
   // The club's Tournaments tab (#193), on Clubs (#209).
-  setMemberTab(c.mem.code, 'tables');
+  setMemberTab(c.mem.code, 'tourneys');
   location.hash = clubHash(c.mem.code);
   render();
 }

@@ -2322,6 +2322,26 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .mg-id { font-family: var(--font-data); color: var(--fg-muted); }
 .pl-actions.mg-acts { margin: 0; align-items: center; }
 .cl-seated-list { overflow-wrap: anywhere; }
+/* Club info (#398): the managers' editor; members' tab, its "updated" dot
+   and line, the next event, Getting chips, and About on the invite. */
+.mg-info-form { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.mg-field { display: flex; flex-direction: column; gap: 6px; border: 0; padding: 0; margin: 0; font-weight: 600; color: var(--fg-strong); }
+.mg-field legend { padding: 0 0 6px; }
+.mg-field textarea { width: 100%; font: 400 15px/1.45 var(--font-ui); padding: 8px 10px; resize: vertical; }
+.mg-event { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.mg-event .pl-text { width: auto; flex: 1 1 160px; font-size: 14px; }
+.mg-event .pl-text[type=datetime-local] { flex: 0 1 220px; }
+.cl-member-tabs { margin: 0 0 14px; }
+.cl-dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--teal); vertical-align: middle; }
+.cl-updated { margin: 0 0 8px; }
+.cl-next-event { margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-raised); }
+.cl-info { display: flex; flex-direction: column; gap: 6px; }
+.cl-info-text { line-height: 1.5; overflow-wrap: anywhere; }
+.cl-info-text p, .cl-info-text ul { margin: 0 0 8px; }
+.cl-info-text ul { padding-left: 20px; }
+.cl-getting { font-size: 14px; padding-bottom: 8px; border-bottom: 1px solid #d9caa3; }
+.cl-getting a, .pj-about a { color: #b0391f; }
+.pj-about { margin-top: 8px; font-size: 14px; }
 /* Credit players (#404): a manager's Credit and Settle debt cards; a
    player's Sit down and Add chips panels, You left, and Debt settled. */
 .mg-card, .cl-left, .cl-sitform { background: #f3e7c9; color: #1d3a2c; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 0 #0f2219; max-width: 420px; }

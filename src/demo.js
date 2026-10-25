@@ -220,7 +220,7 @@ if (demo) {
         healthy: () => !!conn?.healthy(),
       };
     },
-    lookup: code => relay().then(r => r.lookup(code)),
+    lookup: (code, invite) => relay().then(r => r.lookup(code, invite)),
   });
   if (!demo.setUp) setUp().catch(e => { console.warn('demo: not set up:', e); settingUp = false; drawSoon(); });
   // This person's player ID, for the switcher.

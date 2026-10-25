@@ -163,7 +163,8 @@ export default {
       if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
       const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
       if (!has) return new Response(JSON.stringify({kind: 'game'}), {headers});
-      const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}`);
+      const invite = (url.searchParams.get('invite') || '').slice(0, 64);
+      const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
       return new Response(res.body, {headers});
     }
     const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
@@ -494,7 +495,7 @@ export class Room {
       return Response.json(out || {});
     }
     // What anyone may learn from the club's code (#393), from the Worker.
-    if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club')));
+    if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club'), url.searchParams.get('invite') || ''));
     // A service's request, from the Worker (serviceHttp checked its shape).
     if (url.pathname.startsWith('/service/')) {
       const club = await this.club(code).catch(() => null);

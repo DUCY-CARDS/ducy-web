@@ -19,6 +19,7 @@ import {
   anyClubs, closeClubs, clubCrumb, clubPage, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
 import { MAX_CLUB_NAME, parseInvite } from './club.js';
+import { formatInfo } from './club-info.js';
 import { isPlayerId } from './identity.js';
 import { linkedHost, lookupCode, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
@@ -263,6 +264,8 @@ export async function enterCode(text) {
 }
 
 const knownName = () => tableName() || memberName();
+// A club's About the club for its invite screen (#398), by code, once asked.
+const aboutOf = new Map();
 
 function renderJoin() {
   const link = linked();
@@ -288,7 +291,15 @@ function renderJoin() {
   if (club) {
     h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
     h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
-    h += '<p class="pj-meta">The host sees your name, lets you in, and gives you chips (play money) for the club’s tables.</p></div>';
+    h += '<p class="pj-meta">The manager sees your name, lets you in, and gives you chips (play money) for the club’s tables.</p>';
+    // About the club, from the club itself (#398).
+    const about = aboutOf.get(club.code);
+    if (about) h += `<div class="pj-about cl-info-text">${formatInfo(about)}</div>`;
+    h += '</div>';
+    if (club.invite && !aboutOf.has(club.code)) {
+      aboutOf.set(club.code, '');
+      lookupCode(club.code, globalThis.fetch, club.invite).then(info => { if (info?.about) { aboutOf.set(club.code, info.about); if (linked()?.inv?.code === club.code) renderJoin(); } });
+    }
   }
   if (!club) h += `<p class="pj-meta">Game <b>${esc(link.code)}</b></p>`;
   h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
