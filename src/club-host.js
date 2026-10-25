@@ -594,7 +594,7 @@ export function createTableHost({
   function removed(t, id, how, chips, put) {
     const c = club();
     const name = c.members[id]?.name || id;
-    const who = !how.by || how.by === c.hostId || how.by === c.ownerId ? 'The host' : c.members[how.by]?.name || how.by;
+    const who = !how.by || how.by === c.hostId || how.by === c.ownerId ? 'The manager' : c.members[how.by]?.name || how.by;
     logAction(c, how.by || c.hostId, `${who} removed ${name} from ${t.name}`);
     sendTable(id, {type: 'table', table: t.id, update: {type: 'removed', name: t.name, chips, ...(put != null ? {net: chips - put} : {})}});
   }

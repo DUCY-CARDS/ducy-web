@@ -21,8 +21,14 @@ export const OLD_PAGES = {
 // The page of the club you run that address `hash` names: {page, member,
 // old} (member: a member's page; old: an older address), or null when it
 // names none (the list of clubs, a club you help run).
+// A club you manage (#417) has the same pages under its own address,
+// #clubs/c/CODE/<page>: then `code` says which.
 export function managerPage(hash) {
   const p = String(hash || '').replace(/^#/, '').split('/');
+  if (p[0] === 'clubs' && p[1] === 'c' && p[2] && p[3]) {
+    const r = managerPage(`clubs/${p.slice(3).join('/')}`);
+    return r && !r.old ? {...r, code: decodeURIComponent(p[2])} : null;
+  }
   if (p[0] !== 'clubs' || !p[1]) return null;
   if (p[1] === 'member' && p[2]) return {page: 'member', member: decodeURIComponent(p[2]), old: false};
   if (PAGES.includes(p[1])) return {page: p[1], member: '', old: false};
@@ -30,8 +36,12 @@ export function managerPage(hash) {
   return null;
 }
 
-// The address of page `page` (or member `member`'s page), without the '#'.
-export const pageHash = (page, member = '') => (page === 'member' ? `clubs/member/${encodeURIComponent(member)}` : `clubs/${page}`);
+// The address of page `page` (or member `member`'s page), without the '#';
+// in club `code` you manage, when given.
+export function pageHash(page, member = '', code = '') {
+  const tail = page === 'member' ? `member/${encodeURIComponent(member)}` : page;
+  return code ? `clubs/c/${encodeURIComponent(code)}/${tail}` : `clubs/${tail}`;
+}
 
 // The sidebar entry a page sits under: a member's page under Members.
 export const navOf = page => (page === 'member' ? 'members' : page);

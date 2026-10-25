@@ -24,6 +24,16 @@ test('the older addresses still open the right page', () => {
   for (const p of ['tourneys', 'promos', 'history']) assert.equal(managerPage(`#clubs/${p}`).page, p);
 });
 
+test('a club you manage has the same pages under its own address (#417)', () => {
+  assert.equal(pageHash('members', '', 'AB/CD'), 'clubs/c/AB%2FCD/members');
+  assert.equal(pageHash('member', 'x y', 'ABCD-EFGH'), 'clubs/c/ABCD-EFGH/member/x%20y');
+  assert.deepEqual(managerPage('#clubs/c/ABCD-EFGH/cash'), {page: 'cash', member: '', old: false, code: 'ABCD-EFGH'});
+  assert.deepEqual(managerPage('#clubs/c/ABCD-EFGH/member/x%20y'), {page: 'member', member: 'x y', old: false, code: 'ABCD-EFGH'});
+  // The club's own page (its tools) and older names aren't pages here.
+  assert.equal(managerPage('#clubs/c/ABCD-EFGH'), null);
+  assert.equal(managerPage('#clubs/c/ABCD-EFGH/players'), null);
+});
+
 test('addresses that aren’t the club you run name no page', () => {
   for (const h of ['', '#clubs', '#clubs/c/ABCD-EFGH', '#play', '#clubs/nope', '#clubs/member/', '#clubs/constructor', '#clubs/__proto__']) assert.equal(managerPage(h), null, h);
 });

@@ -72,8 +72,8 @@ export function createTourneyHost({
     const tid = t.id;
     let rec = null;
     try { rec = await store?.get(club().code, tourneyTable(tid)); } catch (e) { console.warn(`tournament ${tid}: not loaded:`, e); }
-    if (!rec?.json) return abandon(tid, 'the club’s host restarted, and its tables weren’t saved');
-    if (rec.entries !== t.entries.length || rec.out !== outCount(t)) return abandon(tid, 'the club’s host restarted, and its saved tables were out of step with the club');
+    if (!rec?.json) return abandon(tid, 'the club restarted, and its tables weren’t saved');
+    if (rec.entries !== t.entries.length || rec.out !== outCount(t)) return abandon(tid, 'the club restarted, and its saved tables were out of step with it');
     const r = {chain: Promise.resolve(), step: rec.step ?? 0, onBreak: false, level: rec.level ?? 0, timers: {}, live: null, savedSeq: rec.seq};
     running.set(tid, r);
     try {
@@ -81,7 +81,7 @@ export function createTourneyHost({
     } catch (e) {
       console.warn(`tournament ${tid}: not resumed:`, e);
       running.delete(tid);
-      return abandon(tid, 'the club’s host restarted, and its saved tables couldn’t be loaded');
+      return abandon(tid, 'the club restarted, and its saved tables couldn’t be loaded');
     }
     // The level clock goes on with the time it had left.
     startStep(tid, r.step, rec.stepLeftMs);
@@ -311,7 +311,7 @@ export function createTourneyHost({
 
   return {
     startAll, schedule, begin, handle, enter, disconnected, tableView,
-    cancel: (tid, why = 'the host cancelled it') => abandon(tid, why),
+    cancel: (tid, why = 'the manager cancelled it') => abandon(tid, why),
     live: () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.live])),
     running: tid => running.has(tid),
   };

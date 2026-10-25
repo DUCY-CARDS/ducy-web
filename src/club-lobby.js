@@ -12,8 +12,8 @@ export const LOBBY_MAX_AGE_MS = 24 * 3600e3;
 
 const fresh = (club, now) => (club.lobby || []).filter(x => now - x.at < LOBBY_MAX_AGE_MS);
 
-// The host's name in the lobby: an always-on club's owner's, or "Host".
-const hostName = club => club.members[club.ownerId]?.name || 'Host';
+// The host's name in the lobby: an always-on club's owner's, or "Manager" (#417).
+const hostName = club => club.members[club.ownerId]?.name || 'Manager';
 
 // `from` says `text` in the lobby: a member, or the host (the club's
 // hostId or ownerId). Returns the message, or throws why not.

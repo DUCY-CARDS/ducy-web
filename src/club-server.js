@@ -46,7 +46,7 @@ import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableBy
 import { createTableHost } from './club-host.js';
 import { cancelTourney, newTourney, register, setPayout, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
-import { adminBody, answerRole, isAssistant, logAction, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
+import { adminBody, answerRole, checkManagerOp, isAssistant, logAction, managerLogText, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
 } from './club-agents.js';
@@ -146,30 +146,39 @@ export function createClubServer({
     }, 200);
   }
 
-  // An always-on club's owner sees the whole club, as their page's copy.
-  // It carries the club's key for encrypted table updates, for watching a
-  // table (#125).
+  // An always-on club's owner and its managers (#417) see the whole club,
+  // as their page's copy. It carries the club's key for encrypted table
+  // updates, for watching a table (#125).
+  const managers = () => [club.ownerId, ...Object.values(club.members).filter(m => m.status === 'member' && m.role === 'assistant').map(m => m.id)].filter(id => id && online.has(id));
   async function sendOwnerView() {
-    if (!club.ownerId || !online.has(club.ownerId)) return;
+    const to = club.ownerId ? managers() : [];
+    if (!to.length) return;
     const running = (club.tables || []).filter(t => tableHost?.running(t.id)).map(t => t.id);
     // A copy: signing waits on WebCrypto, and the club may change before the
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
     const hostKey = (await hostKeys()).pub;
-    sendToPlayer({to: club.ownerId, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo()}});
+    for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId}});
   }
 
-  // The owner watching a table (#73, #125): its spectator view, encrypted to
-  // them like a member's table updates.
-  let stopWatch = null;
-  function unwatch() { stopWatch?.(); stopWatch = null; }
+  // The owner or a manager watching a table (#73, #125): its spectator view,
+  // encrypted to them like a member's table updates. One table each.
+  const watching = new Map(); // who → stop
+  function unwatch(who = club.ownerId) { watching.get(who)?.(); watching.delete(who); }
 
-  // The owner's check-in, or one of their host actions (run): they get the
-  // result, then the club as it is now.
+  // The owner's or a manager's check-in, or one of their actions (run):
+  // they get the result, then the club as it is now. Managers do all but
+  // the owner's own (OWNER_ONLY); what they do is logged as theirs.
   async function handleOwner({type, from, body}) {
     if (type === 'owner_cmd') {
       let error = '', value = null;
-      try { value = (await run(String(body.op), body.args && typeof body.args === 'object' ? body.args : {})) ?? null; } catch (e) { error = e.message || String(e); }
+      const op = String(body.op), args = body.args && typeof body.args === 'object' ? body.args : {};
+      const owner = from === club.ownerId;
+      try {
+        if (!owner && !isAssistant(club, from)) throw new Error('Only the club’s managers can do that.');
+        if (!owner) checkManagerOp(club, from, op, args);
+        value = (await runAs(owner ? null : from, op, args)) ?? null;
+      } catch (e) { error = e.message || String(e); }
       // Results are plain data (e.g. the list of hands, #125).
       value = value === undefined ? null : JSON.parse(JSON.stringify(value));
       await sendToPlayer({to: from, body: {type: 'owner_result', club: club.code, id: body.id ?? null, error, value}});
@@ -423,7 +432,7 @@ export function createClubServer({
       online.delete(msg.from);
       broadcastLobby();
       if (isStaff(msg.from)) broadcastHelp();
-      if (msg.from === club.ownerId) unwatch();
+      unwatch(msg.from);
       tableHost?.disconnected(msg.from);
       tableHost?.presence(msg.from);
       tourneyHost?.disconnected(msg.from);
@@ -443,7 +452,7 @@ export function createClubServer({
     // without a key: their cards would have to cross the relay in the clear.
     if (r.table && r.table.from === msg.from) {
       if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
-        sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the host. Reload and try again.'}});
+        sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the club. Reload and try again.'}});
       } else if (r.table.id.startsWith('tourney:')) tourneyHost?.handle(r.table.id.slice(8), r.table.from, r.table.cmd);
       else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
     }
@@ -526,12 +535,12 @@ export function createClubServer({
     revoke_role: ({id}) => { reply(revokeRole(club, id)); broadcastHelp(); },
     // Answering a help request (#192): a reply, and/or marking it handled.
     help_answer: ({id, reply: text = '', handled = true}) => {
-      const h = answerHelp(club, club.ownerId || club.hostId, String(id), {reply: text, handled});
+      const h = answerHelp(club, actor(), String(id), {reply: text, handled});
       changed();
       if (online.has(h.from)) sendHelp(h.from);
     },
     // The host's line in the lobby chat.
-    lobby_say: ({text}) => lobbySay(club.ownerId || club.hostId, text),
+    lobby_say: ({text}) => lobbySay(actor(), text),
     // Services (club-services.js): outside servers that give chips within
     // limits. Only an always-on club has them: its room answers their requests.
     service_add: async args => { const s = await addService(club, args || {}); changed(); return s.id; },
@@ -553,13 +562,14 @@ export function createClubServer({
     // The owner of an always-on club watches table `table` from their page
     // (#125); in a host's tab, watching goes through `watch` below instead.
     watch: ({table}) => {
-      if (!club.ownerId) throw new Error('Only an always-on club’s owner watches this way.');
+      if (!club.ownerId) throw new Error('Only an always-on club’s managers watch this way.');
       if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
-      if (!memberKeys.has(club.ownerId)) throw new Error('This page couldn’t set up encryption with the club. Reload and try again.');
-      unwatch();
-      stopWatch = tableHost.watch(table, u => sendSealed(club.ownerId, {table, update: u}));
+      if (!memberKeys.has(actor())) throw new Error('This page couldn’t set up encryption with the club. Reload and try again.');
+      const who = actor();
+      unwatch(who);
+      watching.set(who, tableHost.watch(table, u => sendSealed(who, {table, update: u})));
     },
-    unwatch: () => unwatch(),
+    unwatch: () => unwatch(actor()),
     // Tournaments (#77, #79): a new one (it starts at its time), cancelling
     // one (every buy-in refunded), and the host's payouts (null: defaults).
     new_tourney: ({tourney}) => {
@@ -574,7 +584,7 @@ export function createClubServer({
       if (!t) throw new Error('No such tournament.');
       const who = [...new Set(t.entries.map(e => e.member))];
       if (tourneyHost) tourneyHost.cancel(id);
-      else { cancelTourney(club, id, Date.now(), 'the host cancelled it'); changed(); }
+      else { cancelTourney(club, id, Date.now(), 'the manager cancelled it'); changed(); }
       for (const m of who) accountTo(m);
       broadcastTourneys();
     },
@@ -643,6 +653,26 @@ export function createClubServer({
     if (Object.hasOwn(extraOps, op)) return extraOps[op](args);
     if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
     return OPS[op](args);
+  }
+
+  // Runs `op` for manager `by` (#417; null: the owner or host). Everything
+  // a manager does goes in the activity log as theirs: the lines the op
+  // writes itself, or else one saying what they did (managerLogText).
+  async function runAs(by, op, args) {
+    if (!by) return run(op, args);
+    club.log ??= [];
+    const before = club.log.length;
+    acting = by;
+    try {
+      const value = await run(op, args);
+      const added = club.log.slice(before);
+      for (const l of added) if (l.by === club.hostId || l.by === club.ownerId) l.by = by;
+      const text = !added.length && managerLogText(club, by, op, args);
+      if (text) { logAction(club, by, text); changed(); }
+      return value;
+    } finally {
+      acting = null;
+    }
   }
 
   // A service's signed request (club-services.js), from the relay's HTTP

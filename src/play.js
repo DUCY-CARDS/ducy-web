@@ -2860,7 +2860,7 @@ function guestMessage(m) {
     // Our action didn't count (e.g. the turn moved on): back to the last view.
     if (lastView) { state = lastView; render(); }
   } else if (m.type === 'host_gone') {
-    netNote = 'The host is reconnecting…';
+    netNote = clubTable && !joinedByCode ? 'Reconnecting to the club…' : 'The host is reconnecting…';
     render();
   }
 }
@@ -3534,7 +3534,7 @@ function controlsHtml() {
       fold = o.fold;
       raise = o.raise;
     } else if (mode === 'guest') {
-      status += ' <span class="pl-meta">· The host deals the next hand</span>';
+      status += ` <span class="pl-meta">· ${clubTable && !joinedByCode ? 'Next hand soon' : 'The host deals the next hand'}</span>`;
     } else if (mode === 'host' && hostInfo.playersIn < 2) {
       status += ' <span class="pl-meta">· Dealing needs two players with chips</span>';
     } else {

@@ -35,12 +35,12 @@ export function askHelp(club, from, text, table = '', now = Date.now()) {
 // The host (`by` = the club's hostId) or an assistant answers request `id`:
 // a reply, and/or marking it handled. Returns the request, or throws.
 export function answerHelp(club, by, id, {reply = '', handled = true} = {}, now = Date.now()) {
-  if (by !== club.hostId && by !== club.ownerId && !isAssistant(club, by)) throw new Error('Only the host and game assistants answer help requests.');
+  if (by !== club.hostId && by !== club.ownerId && !isAssistant(club, by)) throw new Error('Only the club’s managers answer help requests.');
   const h = (club.help || []).find(x => x.id === id);
   if (!h) throw new Error('No such help request.');
   const r = clean(reply, MAX_HELP_REPLY);
   if (r) h.reply = r;
-  if (handled) h.handled = {by: club.members[by]?.name || 'Host', at: now};
+  if (handled) h.handled = {by: club.members[by]?.name || 'Manager', at: now};
   return h;
 }
 
@@ -51,7 +51,7 @@ export const openHelp = club => (club.help || []).filter(h => !h.handled);
 // [{name, role: 'host' | 'assistant'}].
 export function staffOnline(club, online, hostHere = false) {
   const out = [];
-  if (hostHere || (club.ownerId && online.has(club.ownerId))) out.push({name: club.members[club.ownerId]?.name || 'Host', role: 'host'});
+  if (hostHere || (club.ownerId && online.has(club.ownerId))) out.push({name: club.members[club.ownerId]?.name || 'Manager', role: 'host'});
   for (const id of online) if (isAssistant(club, id)) out.push({name: club.members[id].name, role: 'assistant'});
   return out;
 }

@@ -27,7 +27,7 @@ test('members and the host chat; old and extra lines go', () => {
   const a = sayInLobby(club, 'p', 'anyone   up for\nPLO?', 1);
   assert.deepEqual([a.name, a.text, a.host], ['P', 'anyone up for PLO?', undefined]);
   const h = sayInLobby(club, 'HOSTHOST', 'Opening a table at 8', 2);
-  assert.deepEqual([h.name, h.host], ['Host', true]);
+  assert.deepEqual([h.name, h.host], ['Manager', true]);
   for (let i = 0; i < LOBBY_KEEP + 5; i++) sayInLobby(club, 'q', `line ${i}`, 10 + i);
   assert.equal(club.lobby.length, LOBBY_KEEP);
   assert.equal(club.lobby.at(-1).text, `line ${LOBBY_KEEP + 4}`);
@@ -111,12 +111,12 @@ test('in an always-on club, members online get who’s here and the chat; the ow
   await wait();
   const lastLobby = who => sent.filter(s => s.to === who.id && s.data.body?.type === 'lobby').at(-1)?.data.body;
   const b = lastLobby(bob);
-  assert.deepEqual(b.online.map(x => [x.name, x.role]), [['Host', 'host'], ['Ann', ''], ['Bob', '']]);
-  assert.deepEqual(b.chat.map(x => [x.name, x.text, !!x.host]), [['Ann', 'Anyone for PLO?', false], ['Host', 'Table at 8', true]]);
+  assert.deepEqual(b.online.map(x => [x.name, x.role]), [['Manager', 'host'], ['Ann', ''], ['Bob', '']]);
+  assert.deepEqual(b.chat.map(x => [x.name, x.text, !!x.host]), [['Ann', 'Anyone for PLO?', false], ['Manager', 'Table at 8', true]]);
   // Bob leaves: Ann hears.
   await server.message({from: bob.id, event: 'close'});
   await wait();
-  assert.deepEqual(lastLobby(ann).online.map(x => x.name), ['Host', 'Ann']);
+  assert.deepEqual(lastLobby(ann).online.map(x => x.name), ['Manager', 'Ann']);
   // Flooding is cut off.
   for (let i = 0; i < 8; i++) await say(ann, {type: 'lobby_say', text: `spam ${i}`});
   await wait();
