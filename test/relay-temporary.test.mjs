@@ -11,14 +11,15 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { TEMP_DAYS } from '../relay/src/registry.js';
+import { adminFetch, testAdmin } from './admin-helper.mjs';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
-const TOKEN = 'test-admin-token-0123456789abcdef';
 
 // A dev relay on its own port, with `env` added, for test `t`.
 async function relay(t, env = {}) {
   const port = 22000 + Math.floor(Math.random() * 1000);
-  const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(port)], {stdio: ['ignore', 'pipe', 'inherit'], env: {...process.env, ADMIN_TOKEN: TOKEN, ...env}});
+  const adm = await testAdmin();
+  const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(port)], {stdio: ['ignore', 'pipe', 'inherit'], env: {...process.env, ADMINS_FILE: adm.file, ...env}});
   await new Promise(resolve => server.stdout.once('data', resolve));
   t.after(() => server.kill());
   const open = path => {
@@ -34,7 +35,8 @@ async function relay(t, env = {}) {
     }
     return {ws, closed, next, ready: new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); }), send: obj => ws.send(JSON.stringify(obj))};
   };
-  const clubs = () => fetch(`http://localhost:${port}/admin/clubs`, {headers: {authorization: `Bearer ${TOKEN}`}}).then(r => r.json()).then(b => b.clubs);
+  const api = adminFetch(port, adm.ident);
+  const clubs = () => api('/admin/clubs').then(r => r.body.clubs);
   return {open, clubs};
 }
 

@@ -4,7 +4,7 @@
 //
 // Creating a club takes the super admin's permission (a grant), except for
 // each player's one trial club: free for TRIAL_DAYS, with the free limits.
-// The admin API (worker.js, behind ADMIN_TOKEN) grants and revokes
+// The admin API (admin.js, for the keys in admins.json) grants and revokes
 // permission, suspends clubs and changes their plan and limits.
 //
 // storage: {get(key), put(key, value), delete(key)}, async.
@@ -12,6 +12,8 @@
 //   grants        {playerId: {at, note, maxClubs, limits}}: who may create clubs
 //   trials        {playerId: code}: each player's trial club, used once
 //   day:<date>    {minutes: club-minutes of play that day (UTC)}
+//   adminSeq      {adminId: {seq: at}}: admin requests seen lately (#401)
+//   adminLog      [{at, by, name, action, target, detail}]: admin actions (#401)
 //
 // A Record: {owner, at, name, plan: 'trial' | 'club', expires (trials; ms),
 //   limits: {tables, tourneysPerDay}, suspended, lastActive, minutes (all
@@ -38,6 +40,8 @@ export const TRIAL_DAYS = 14;
 const DAYS_KEPT = 30;
 // A temporary club this long without activity is deleted (#395).
 export const TEMP_DAYS = 7;
+// Admin actions kept in the admin log (#401): about 150 KB, in one value.
+export const ADMIN_LOG = 1000;
 
 // When temporary club `rec` will be deleted if no one uses it, or null.
 export const removesAt = rec => (rec?.temporary ? (rec.lastActive || rec.at || 0) + TEMP_DAYS * 864e5 : null);
@@ -184,7 +188,31 @@ export function registry(storage, limits) {
       return {clubs: Object.keys(all).length, limits: {perOwner: limits.perOwner, total: limits.total, inviteOnly: true, trialDays: TRIAL_DAYS, free: FREE_LIMITS}, freeGBsPerDay: FREE_GBS_PER_DAY, days: out};
     },
 
-    // ---- the super admin's (worker.js /admin, behind ADMIN_TOKEN) ----
+    // ---- the super admin's (admin.js: signed by a key in admins.json) ----
+
+    // Admin `id`'s request numbered `seq` (the time it was signed): throws if
+    // it was seen before, so a copied request can't be sent again (#401).
+    // Each admin's seqs are kept for twice the window they're accepted in.
+    async adminSeen(id, seq, now = Date.now(), windowMs = 5 * 60_000) {
+      const all = (await storage.get('adminSeq')) || {};
+      const mine = all[id] || {};
+      for (const [k, at] of Object.entries(mine)) if (now - at > 2 * windowMs) delete mine[k];
+      if (mine[seq]) throw new Error('This request was already received.');
+      mine[seq] = now;
+      all[id] = mine;
+      await storage.put('adminSeq', all);
+    },
+    // The admin log (#401): {at, by, name, action, target, detail}, newest
+    // last, the last ADMIN_LOG kept.
+    async adminLog(entry) {
+      const log = (await storage.get('adminLog')) || [];
+      log.push(entry);
+      if (log.length > ADMIN_LOG) log.splice(0, log.length - ADMIN_LOG);
+      await storage.put('adminLog', log);
+    },
+    async adminLogList() {
+      return (await storage.get('adminLog')) || [];
+    },
 
     // Every club with its record, who has permission, and who used a trial.
     async list(now = Date.now()) {

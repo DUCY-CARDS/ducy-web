@@ -27,13 +27,9 @@
 // says which), 4004 no such table, 4008 sending too fast, 4009 replaced by a
 // newer connection with the same id, 4029 the room is full.
 //
-// The super admin's API (#265), when the ADMIN_TOKEN secret is set, with
-// `Authorization: Bearer <token>`:
-//   GET  /admin/clubs                 every club, who has permission, trials, limits
-//   GET  /admin/club/<code>           a club's record, and a look inside it
-//   POST /admin/grant   {id, note, maxClubs, limits}   lets a player create clubs
-//   POST /admin/revoke  {id}
-//   POST /admin/club/<code> {suspended, limits, plan, expires}
+// The super admin's API (#265, #401): POST /admin/…, each request signed by
+// a key listed in admins.json (bundled at build time). admin.js has the
+// routes and the checks.
 //
 // What a code is (#393), for Play's Enter a code, public:
 //   GET /code/<code>   {kind: 'club', ask, name, hostId} for an always-on
@@ -49,7 +45,9 @@
 // allowed, over a limit, or the club is paused), 404 (no such club or
 // member), 409 (refused, e.g. not enough chips) or 429 (too fast).
 
-import { codeInfo, createClub, importClub, openClub } from './club-room.js';
+import { adminView, codeInfo, createClub, importClub, openClub } from './club-room.js';
+import { adminApi, adminsFrom } from './admin.js';
+import adminList from '../../admins.json';
 import { limitsFrom, registry, removesAt } from './registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
@@ -98,42 +96,40 @@ const CLEANUP_EVERY_MS = 6 * 3600e3;
 const registryOf = env => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
 const roomOf = (env, code) => env.ROOMS.get(env.ROOMS.idFromName(code));
 
-// Same length and characters, compared without stopping early.
-function sameToken(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
-}
+// The admins (#401): admins.json at the repo root, bundled when the relay is built.
+const ADMINS = adminsFrom(adminList);
 
-// The super admin's API (#265): see the top of this file.
+// The super admin's API (#265, #401): admin.js says what it answers.
 async function admin(req, env, url, cors) {
   const json = (v, status = 200) => Response.json(v, {status, headers: cors});
-  if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 24) return json({error: 'The admin API isn’t set up (ADMIN_TOKEN).'}, 403);
-  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!sameToken(token, env.ADMIN_TOKEN)) return json({error: 'Wrong admin token.'}, 401);
-  const reg = (path, body) => registryOf(env).fetch(`https://registry${path}`, {method: 'POST', body: JSON.stringify(body || {})}).then(r => r.json());
-  const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
-  const path = url.pathname;
-  let out;
-  if (path === '/admin/clubs' && req.method === 'GET') out = await reg('/list');
-  else if (path === '/admin/grant' && req.method === 'POST') out = await reg('/grant', body);
-  else if (path === '/admin/revoke' && req.method === 'POST') out = await reg('/revoke', body);
-  else {
-    const m = path.match(/^\/admin\/club\/([^/]+)$/);
-    const code = m && decodeURIComponent(m[1]);
-    if (!code || !CODE.test(code)) return json({error: 'not found'}, 404);
-    if (req.method === 'POST') {
-      out = await reg('/set-club', {code, change: body});
-      // The room picks up the change at once: new limits, or members let go.
-      if (!out.error) await roomOf(env, code).fetch(`https://room/admin/refresh/${encodeURIComponent(code)}`).catch(e => console.warn(e));
-    } else {
-      const status = await reg('/status', {code});
-      const inside = await roomOf(env, code).fetch(`https://room/admin/info/${encodeURIComponent(code)}`).then(r => r.json()).catch(e => ({error: e.message}));
-      out = {...status, inside};
-    }
-  }
-  return json(out, out?.error ? 409 : 200);
+  if (req.method !== 'POST') return json({error: 'Admin requests are signed POSTs.'}, 405);
+  const signed = await req.json().catch(() => null);
+  // The registry's answer, or throws its error.
+  const reg = async (path, body) => {
+    const out = await registryOf(env).fetch(`https://registry${path}`, {method: 'POST', body: JSON.stringify(body || {})}).then(r => r.json());
+    if (out?.error) throw new Error(out.error);
+    return out;
+  };
+  const room = async (code, what, params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+    const out = await roomOf(env, code).fetch(`https://room/admin/${what}/${encodeURIComponent(code)}?${q}`).then(r => r.json());
+    if (out?.error) throw new Error(out.error);
+    return out;
+  };
+  const out = await adminApi(url.pathname, signed, ADMINS, {
+    seen: (id, seq) => reg('/admin-seen', {id, seq}),
+    log: entry => reg('/admin-log', {entry}),
+    logList: () => reg('/admin-log-list').then(r => r.log),
+    list: () => reg('/list'),
+    grant: (id, body) => reg('/grant', {...body, id}),
+    revoke: id => reg('/revoke', {id}),
+    setClub: (code, change) => reg('/set-club', {code, change}),
+    status: code => reg('/status', {code}),
+    room,
+    // The room picks up the change at once: new limits, or members let go.
+    refresh: code => roomOf(env, code).fetch(`https://room/admin/refresh/${encodeURIComponent(code)}`).catch(e => console.warn(e)),
+  });
+  return json(out.body, out.status);
 }
 
 export default {
@@ -142,9 +138,9 @@ export default {
     const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
     if (url.pathname.startsWith('/admin/')) {
       const origin = req.headers.get('Origin');
-      // The admin page on the site, or a script (no Origin) with the token.
+      // The admin page on the site, or a script (no Origin), signing as an admin.
       const cors = origin && (!allowed.length || allowed.includes(origin))
-        ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST', vary: 'Origin'}
+        ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST', vary: 'Origin'}
         : {};
       if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
       return admin(req, env, url, cors);
@@ -222,6 +218,9 @@ export class Registry {
       else if (path === '/grant') return Response.json(await this.reg.grant(String(body.id), body));
       else if (path === '/revoke') await this.reg.revoke(String(body.id));
       else if (path === '/set-club') return Response.json(await this.reg.setClub(String(body.code), body.change || {}));
+      else if (path === '/admin-seen') await this.reg.adminSeen(String(body.id), Number(body.seq));
+      else if (path === '/admin-log') await this.reg.adminLog(body.entry || {});
+      else if (path === '/admin-log-list') return Response.json({log: await this.reg.adminLogList()});
       else return new Response('not found', {status: 404});
       return Response.json({ok: true});
     } catch (e) {
@@ -488,6 +487,12 @@ export class Room {
     // /room/<code> WebSockets alone.
     const adm = url.pathname.match(/^\/admin\/(refresh|info|expire)\//);
     if (adm) return this.adminRequest(adm[1], code);
+    // The club as the admin page shows it, from storage (#401).
+    const view = url.pathname.match(/^\/admin\/(full|people|person)\//);
+    if (view) {
+      const out = await adminView(this.storage(), view[1], {reveal: url.searchParams.get('reveal') === 'true', id: url.searchParams.get('id') || ''});
+      return Response.json(out || {});
+    }
     // What anyone may learn from the club's code (#393), from the Worker.
     if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club')));
     // A service's request, from the Worker (serviceHttp checked its shape).

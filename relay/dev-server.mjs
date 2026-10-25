@@ -6,7 +6,8 @@ import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { pingReply } from './src/ping.js';
 import { createServer } from 'node:http';
-import { codeInfo, createClub, importClub, openClub } from './src/club-room.js';
+import { adminView, codeInfo, createClub, importClub, openClub } from './src/club-room.js';
+import { adminApi, adminsFrom } from './src/admin.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
@@ -152,44 +153,48 @@ function enqueue(room, from, raw) {
   return true;
 }
 
-// The super admin's API (#265), as in the Worker, when ADMIN_TOKEN is set
-// in the environment.
+// The admins (#401): admins.json at the repo root, read once at start as
+// the Worker bundles it; ADMINS_FILE (for tests) names another file.
+const ADMINS = adminsFrom(JSON.parse(readFileSync(process.env.ADMINS_FILE || new URL('../admins.json', import.meta.url), 'utf8')));
+
+// The super admin's API (#265, #401), as in the Worker (admin.js).
 async function admin(req, res, url) {
   const out = (v, status = 200) => {
-    res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST'});
-    res.end(JSON.stringify(v));
+    res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST'});
+    res.end(status === 204 ? '' : JSON.stringify(v));
   };
   if (req.method === 'OPTIONS') return out({}, 204);
-  const token = process.env.ADMIN_TOKEN || '';
-  if (token.length < 24) return out({error: 'The admin API isn’t set up (ADMIN_TOKEN).'}, 403);
-  if ((req.headers.authorization || '').replace(/^Bearer\s+/i, '') !== token) return out({error: 'Wrong admin token.'}, 401);
-  let body = {};
-  if (req.method === 'POST') {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    try { body = JSON.parse(raw || '{}'); } catch {}
-  }
-  try {
-    const path = url.pathname;
-    if (path === '/admin/clubs' && req.method === 'GET') return out(await reg.list());
-    if (path === '/admin/grant' && req.method === 'POST') return out(await reg.grant(String(body.id), body));
-    if (path === '/admin/revoke' && req.method === 'POST') { await reg.revoke(String(body.id)); return out({ok: true}); }
-    const m = path.match(/^\/admin\/club\/([^/]+)$/);
-    const code = m && decodeURIComponent(m[1]);
-    if (!code || !CODE.test(code)) return out({error: 'not found'}, 404);
-    const room = rooms.get(code);
-    if (req.method === 'POST') {
-      const rec = await reg.setClub(code, body);
+  if (req.method !== 'POST') return out({error: 'Admin requests are signed POSTs.'}, 405);
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  let signed = null;
+  try { signed = JSON.parse(raw); } catch {}
+  const answer = await adminApi(url.pathname, signed, ADMINS, {
+    seen: (id, seq) => reg.adminSeen(id, seq),
+    log: entry => reg.adminLog(entry),
+    logList: () => reg.adminLogList(),
+    list: () => reg.list(),
+    grant: (id, body) => reg.grant(id, body),
+    revoke: id => reg.revoke(id),
+    setClub: (code, change) => reg.setClub(code, change),
+    status: code => reg.status(code),
+    room: async (code, what, params) => {
+      const room = rooms.get(code);
+      if (what === 'info') {
+        const club = room ? await clubOf(room, code) : null;
+        return {online: room?.guests.size || 0, host: !!room?.host, queued: room?.queued.length || 0, club: club ? await club.adminInfo() : null};
+      }
+      return (room && await adminView(storageOf(room), what, params)) || {};
+    },
+    // The room picks up the change at once: new limits, or members let go.
+    refresh: async code => {
+      const room = rooms.get(code);
       const st = await reg.status(code);
       if (room?.club) (await room.club).setRecord(st.record);
       if (st.blocked && room) for (const [gid, g] of room.guests) if (gid !== st.record?.owner) g.ws.close(4003, st.blocked.slice(0, 120));
-      return out(rec);
-    }
-    const club = room ? await clubOf(room, code) : null;
-    return out({...(await reg.status(code)), inside: {online: room?.guests.size || 0, host: !!room?.host, queued: room?.queued.length || 0, club: club ? await club.adminInfo() : null}});
-  } catch (e) {
-    return out({error: e.message}, 409);
-  }
+    },
+  });
+  return out(answer.body, answer.status);
 }
 
 // A service's request (POST /club/<code>/service), as in the Worker.

@@ -14,6 +14,8 @@
 //   hostKey              its key pair for encrypted table updates (e2e.js)
 //   memberPubs           members' public keys for those, {id: pub}
 //   table:<id>           a table saved mid-hand (club-host.js)
+//   hands, hand:<…>      finished hands, as the host saw them (#125)
+//   seen                 when each player was last heard from, {id: ms} (#401)
 
 import { checkSignature, createIdentity, exportIdentity, importIdentity, signMessage, Verifier } from '../../src/identity.js';
 import { newClub } from '../../src/club.js';
@@ -27,6 +29,10 @@ import { FREE_LIMITS, removesAt } from './registry.js';
 const CREATE_WINDOW_MS = 5 * 60_000;
 // Hands kept for the owner's history (#125); about 1–2 KB each.
 const MAX_HANDS = 500;
+// How often a player's last-seen time is saved (#401).
+const SEEN_EVERY_MS = 60_000;
+// Finished hands the admin page shows (#401).
+const ADMIN_HANDS = 100;
 
 // A signed request to create an always-on club in room `code`:
 // {type: 'create_club', club: code, name}. Returns {hostId, invite}, or
@@ -90,6 +96,63 @@ export async function importClub(storage, env, code, claim = async () => {}) {
 export function codeInfo(club) {
   if (club?.codeJoin !== true) return {kind: 'club', ask: false};
   return {kind: 'club', ask: true, name: String(club.name || ''), hostId: club.hostId};
+}
+
+// A finished hand without its cards (#401): no one's hole cards, board or
+// events (which name cards), unless the admin chose to see them.
+const handNoCards = h => ({...h, board: [], board2: undefined, events: [], seats: (h.seats || []).map(s => ({...s, cards: null})), hidden: true});
+
+// What the super admin sees of the club in `storage` (#401), read from
+// storage, so the club needn't be opened:
+//   'full'    everything it stores, read-only; the lobby chat and the
+//             cards in finished hands only with `reveal`
+//   'people'  each player it knows: [{id, name, status, role, agent,
+//             balance, lastSeen}], the owner too
+//   'person'  player `id`'s part in it: their member record, ledger
+//             entries, chip requests, help requests and log lines
+// null when the room holds no club.
+export async function adminView(storage, what, {reveal = false, id = ''} = {}) {
+  const club = await storage.get('club');
+  if (!club) return null;
+  const seen = (await storage.get('seen')) || {};
+  const members = Object.values(club.members || {});
+  const nameOf = mid => club.members?.[mid]?.name || '';
+  if (what === 'people') {
+    const people = members.map(m => ({id: m.id, name: m.name, status: m.status, role: m.role || null, agent: m.agent || null, balance: m.balance ?? 0, lastSeen: seen[m.id] || null}));
+    if (club.ownerId && !club.members?.[club.ownerId]) people.push({id: club.ownerId, name: '', status: null, role: 'owner', balance: null, lastSeen: seen[club.ownerId] || null});
+    return {name: club.name, people};
+  }
+  if (what === 'person') {
+    const m = club.members?.[id] || null;
+    const log = club.log || [];
+    return {
+      member: m && {...m, lastSeen: seen[id] || null},
+      lastSeen: seen[id] || null,
+      ledger: (club.chips?.ledger || []).filter(e => e.member === id),
+      requests: (club.requestLog || []).filter(r => r.member === id),
+      help: (club.help || []).filter(h => h.from === id),
+      log: log.filter(e => e.by === id || (m?.name && String(e.text || '').includes(m.name))),
+    };
+  }
+  const index = (await storage.get('hands')) || [];
+  const hands = [];
+  for (const h of index.slice(-ADMIN_HANDS).reverse()) {
+    const rec = await storage.get(h.key);
+    if (rec) hands.push(reveal ? rec : handNoCards(rec));
+  }
+  const {lobby, members: _, chips, promos, ...rest} = club;
+  return {
+    ...rest,
+    members: members.map(m => ({...m, lastSeen: seen[m.id] || null})),
+    ownerSeen: seen[club.ownerId] || null,
+    chips: {issued: chips?.issued || 0, reclaimed: chips?.reclaimed || 0},
+    ledger: (chips?.ledger || []).map(e => ({...e, name: nameOf(e.member)})),
+    promos: promos && {...promos, hands: reveal ? promos.hands : undefined},
+    hands,
+    revealed: reveal,
+    lobby: reveal ? lobby || [] : null,
+    lobbyCount: (lobby || []).length,
+  };
 }
 
 // The club server's plan and limits from its registry record (#265). An
@@ -160,7 +223,7 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     deleted = true;
     await saving;
     const hands = ((await storage.get('hands')) || []).map(h => h.key);
-    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
+    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', 'seen', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
     for (const k of keys) await storage.delete(k);
     await onDeleted();
   }
@@ -237,8 +300,17 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
   // which members need before they'll accept this room's messages. It's
   // kept, and given to everyone as they connect.
   let handoff = (await storage.get('handoff')) || null;
+  // When each player was last heard from, for the admin page's People
+  // (#401): saved at most once a minute per player.
+  const seen = (await storage.get('seen')) || {};
+  const noteSeen = id => {
+    if (typeof id !== 'string' || Date.now() - (seen[id] || 0) < SEEN_EVERY_MS) return;
+    seen[id] = Date.now();
+    later(() => storage.put('seen', {...seen}));
+  };
   const message = server.message;
   server.message = async msg => {
+    noteSeen(msg?.from);
     if (msg?.event === 'open' && handoff) send(msg.from, handoff);
     if (msg?.data?.body?.type === 'host_moved') {
       if (!handoff && msg.from === club.ownerId && await isHandoff(club, msg.data)) {

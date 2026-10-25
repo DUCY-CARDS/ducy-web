@@ -7,9 +7,10 @@
   <title>ducy admin</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <style>
-    /* The super admin's page (#265): clubs, who may create them, their
-       plans and limits, pausing, and a look inside. Talks to the relay's
-       /admin API with the ADMIN_TOKEN secret; nothing works without it. */
+    /* The super admin's page (#265, #401): clubs, who may create them, their
+       plans and limits, pausing, everything a club stores, people, and the
+       admin log. Requests are signed with this browser's identity
+       (src/admin.js); the relay lets in only the keys in admins.json. */
     :root {
       --bg: #edeef0; --bg-raised: #f7f7f8; --fg: #3e4248; --fg-muted: #848890;
       --line: #d3d5d9; --teal: #2e7888; --red: #b0443c; --amber: #9a6a12;
@@ -21,216 +22,72 @@
       }
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
     main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-    h1 { font-size: 20px; margin: 0 0 12px; }
+    h1 { font-size: 20px; margin: 0; }
     h2 { font-size: 16px; margin: 0 0 8px; }
+    h3 { font-size: 14px; margin: 12px 0 6px; }
     section { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
     input, select, button { font: inherit; color: inherit; }
     input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; }
     input[type=number] { width: 4.5em; }
     button { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; cursor: pointer; }
     button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+    button.link { background: none; border: none; padding: 0; color: var(--teal); text-align: left; }
     .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+    header.row { justify-content: space-between; margin-bottom: 12px; }
+    nav button[aria-current=page] { border-color: var(--teal); color: var(--teal); }
     .muted { color: var(--fg-muted); }
     .err { color: var(--red); }
     .warn { color: var(--amber); }
     .ok { color: var(--teal); }
     .scroll { overflow-x: auto; }
+    .tall { max-height: 420px; overflow-y: auto; }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { font-weight: 600; color: var(--fg-muted); font-size: 12px; }
+    th { font-weight: 600; color: var(--fg-muted); font-size: 12px; position: sticky; top: 0; background: var(--bg-raised); }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     code { font-size: 12px; word-break: break-all; }
-    .inside { background: var(--bg); border-radius: 6px; padding: 8px 10px; margin-top: 6px; }
-    .inside ul { margin: 4px 0; padding-left: 18px; }
+    pre { background: var(--bg); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 4px 0; }
+    dt { color: var(--fg-muted); }
+    dd { margin: 0; }
   </style>
 </head>
 <body>
 <main>
-  <h1>ducy admin</h1>
+  <header class="row">
+    <h1>ducy admin</h1>
+    <nav class="row" id="nav" hidden>
+      <button data-go="clubs">Clubs</button>
+      <button data-go="people">People</button>
+      <button data-go="log">Admin log</button>
+    </nav>
+  </header>
 
   <section>
     <div class="row">
       <label>Relay <input id="relay" size="34"></label>
-      <label>Admin token <input id="token" type="password" size="28" autocomplete="off"></label>
-      <label><input id="remember" type="checkbox"> Remember on this device</label>
       <button class="primary" id="load">Load</button>
+      <span id="me" class="muted"></span>
     </div>
     <p id="status" class="muted"></p>
   </section>
 
-  <section id="usage-card" hidden>
-    <h2>Use of Cloudflare’s free plan</h2>
-    <div id="usage"></div>
+  <section id="not-admin" hidden>
+    <h2>Not on the admin list</h2>
+    <dl>
+      <dt>Player ID</dt><dd><code id="na-id"></code></dd>
+      <dt>Public key</dt><dd><code id="na-pub"></code></dd>
+    </dl>
+    <h3>admins.json entry</h3>
+    <pre id="na-entry"></pre>
+    <button id="na-copy">Copy</button>
   </section>
 
-  <section id="grants-card" hidden>
-    <h2>Who may create clubs</h2>
-    <p class="muted">Anyone else gets one free trial club. A player’s ID is shown to them when a club is refused for want of permission.</p>
-    <div class="row">
-      <input id="g-id" placeholder="Player ID" size="30">
-      <input id="g-note" placeholder="Note (who, why)" size="24">
-      <label>Clubs <input id="g-max" type="number" min="0" placeholder="3"></label>
-      <label>Tables <input id="g-tables" type="number" min="0" placeholder="2"></label>
-      <label>Tournaments a day <input id="g-tourneys" type="number" min="0" placeholder="1"></label>
-      <button class="primary" id="grant">Grant</button>
-    </div>
-    <div class="scroll"><table id="grants"></table></div>
-  </section>
-
-  <section id="clubs-card" hidden>
-    <h2>Clubs</h2>
-    <div class="scroll"><table id="clubs"></table></div>
-  </section>
+  <div id="view"></div>
 </main>
-<script>
-  const DEFAULT_RELAY = 'https://ducy-relay.ducy.workers.dev';
-  const $ = id => document.getElementById(id);
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-  const store = () => ($('remember').checked ? localStorage : sessionStorage);
-  const ago = t => {
-    if (!t) return '—';
-    const s = (Date.now() - t) / 1000;
-    return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`;
-  };
-  const hours = m => (m >= 60 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`);
-  const short = id => (id && id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id || '');
-
-  try {
-    $('remember').checked = !!localStorage.getItem('ducyAdminToken');
-    $('token').value = localStorage.getItem('ducyAdminToken') || sessionStorage.getItem('ducyAdminToken') || '';
-    $('relay').value = localStorage.getItem('ducyAdminRelay') || DEFAULT_RELAY;
-  } catch { $('relay').value = DEFAULT_RELAY; }
-
-  const base = () => $('relay').value.trim().replace(/^ws/, 'http').replace(/\/$/, '');
-  async function api(path, body) {
-    const r = await fetch(base() + path, {
-      method: body ? 'POST' : 'GET',
-      headers: {authorization: `Bearer ${$('token').value.trim()}`, ...(body ? {'content-type': 'application/json'} : {})},
-      ...(body ? {body: JSON.stringify(body)} : {}),
-    });
-    const out = await r.json().catch(() => ({error: `HTTP ${r.status}`}));
-    if (!r.ok || out.error) throw new Error(out.error || `HTTP ${r.status}`);
-    return out;
-  }
-  const say = (text, cls = 'muted') => { $('status').className = cls; $('status').textContent = text; };
-  const num = id => { const v = $(id).value.trim(); return v === '' ? undefined : Number(v); };
-
-  let data = null;
-  const open = new Set(); // clubs whose inside is shown
-  const insides = {};
-
-  async function load() {
-    try {
-      try {
-        store().setItem('ducyAdminToken', $('token').value.trim());
-        (store() === localStorage ? sessionStorage : localStorage).removeItem('ducyAdminToken');
-        localStorage.setItem('ducyAdminRelay', $('relay').value.trim());
-      } catch {}
-      say('Loading…');
-      data = await api('/admin/clubs');
-      const usage = await fetch(base() + '/usage').then(r => r.json()).catch(() => null);
-      render(usage);
-      say(`Loaded at ${new Date().toLocaleTimeString()}.`, 'ok');
-    } catch (e) {
-      say(e.message, 'err');
-    }
-  }
-
-  function render(usage) {
-    $('usage-card').hidden = $('grants-card').hidden = $('clubs-card').hidden = false;
-    if (usage) {
-      $('usage').innerHTML = `<p class="muted">${usage.clubs} clubs · at most ${usage.limits.total} in all · trial ${usage.limits.trialDays} days</p><table><tr><th>Day</th><th>Club-hours</th><th>GB-s</th><th>Share of free</th></tr>`
-        + usage.days.map(d => `<tr><td>${esc(d.day)}</td><td>${d.clubHours}</td><td>${d.gbs}</td><td class="${d.share > 80 ? 'err' : d.share > 50 ? 'warn' : ''}">${d.share}%</td></tr>`).join('') + '</table>';
-    }
-    const g = Object.entries(data.grants);
-    $('grants').innerHTML = g.length
-      ? '<tr><th>Player</th><th>Note</th><th>Clubs</th><th>Limits</th><th>Since</th><th></th></tr>' + g.map(([id, x]) => `<tr><td><code>${esc(id)}</code></td><td>${esc(x.note || (x.fromEnv ? 'CLUB_CREATORS in wrangler.toml' : ''))}</td><td>${x.maxClubs || data.limits.perOwner}</td><td>${x.limits ? `${x.limits.tables} tables, ${x.limits.tourneysPerDay}/day` : 'free'}</td><td>${x.at ? new Date(x.at).toLocaleDateString() : ''}</td><td>${x.fromEnv ? '' : `<button data-revoke="${esc(id)}">Revoke</button>`}</td></tr>`).join('')
-      : '<tr><td class="muted">Nobody yet.</td></tr>';
-
-    const clubs = [...data.clubs].sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
-    let h = '<tr><th>Club</th><th>Owner</th><th>Plan</th><th>Limits</th><th>State</th><th>Last active</th><th>Play (7 days / all)</th><th></th></tr>';
-    for (const c of clubs) {
-      const week = Object.entries(c.days || {}).filter(([d]) => d >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10)).reduce((s, [, m]) => s + m, 0);
-      const plan = c.plan === 'trial'
-        ? `Trial, ${c.expires > Date.now() ? `${Math.ceil((c.expires - Date.now()) / 864e5)} days left` : 'ended'}`
-        : 'Club';
-      // No backup proved yet (#395): deleted once unused for a week.
-      const temp = c.temporary
-        ? `<br><span class="warn">Temporary</span> <span class="muted">· removed ${c.removesAt ? esc(new Date(c.removesAt).toLocaleString()) : 'soon'} if unused</span>`
-        : c.provedAt ? `<br><span class="muted">Backup proved ${esc(new Date(c.provedAt).toLocaleDateString())}</span>` : '';
-      const state = c.suspended ? '<span class="err">Paused</span>' : c.blocked ? '<span class="warn">Trial ended</span>' : '<span class="ok">Running</span>';
-      h += `<tr><td><b>${esc(c.name) || '<span class="muted">(no name)</span>'}</b><br><code>${esc(c.code)}</code></td>`
-        + `<td><code title="${esc(c.owner)}">${esc(short(c.owner))}</code>${data.grants[c.owner] ? ' <span class="ok">✓</span>' : ''}</td>`
-        + `<td>${plan}${temp}</td>`
-        + `<td><input type="number" min="0" value="${c.limits.tables}" data-lim-tables="${esc(c.code)}" aria-label="Tables"> tables<br><input type="number" min="0" value="${c.limits.tourneysPerDay}" data-lim-tourneys="${esc(c.code)}" aria-label="Tournaments a day"> / day <button data-limits="${esc(c.code)}">Set</button></td>`
-        + `<td>${state}</td><td>${ago(c.lastActive)}</td><td>${hours(week)} / ${hours(c.minutes || 0)}</td>`
-        + `<td><div class="row"><button data-inside="${esc(c.code)}">${open.has(c.code) ? 'Hide' : 'Look inside'}</button>`
-        + `<button data-pause="${esc(c.code)}" data-to="${c.suspended ? 'false' : 'true'}">${c.suspended ? 'Resume' : 'Pause'}</button>`
-        + (c.plan === 'trial' ? `<button data-plan="${esc(c.code)}">Make it a club</button><button data-extend="${esc(c.code)}">Trial +14 days</button>` : '')
-        + '</div></td></tr>';
-      if (open.has(c.code)) h += `<tr><td colspan="8">${insideHtml(insides[c.code])}</td></tr>`;
-    }
-    $('clubs').innerHTML = clubs.length ? h : '<tr><td class="muted">No clubs yet.</td></tr>';
-  }
-
-  function insideHtml(x) {
-    if (!x) return '<div class="inside muted">Loading…</div>';
-    if (x.error) return `<div class="inside err">${esc(x.error)}</div>`;
-    const c = x.inside?.club;
-    let h = `<div class="inside"><p>${x.inside?.online ?? 0} connected now${x.inside?.queued ? ` · ${x.inside.queued} messages waiting` : ''}${x.blocked ? ` · <span class="warn">${esc(x.blocked)}</span>` : ''}</p>`;
-    if (!c) return h + '<p class="muted">The club’s server isn’t open right now.</p></div>';
-    h += `<p>${c.members.member} members, ${c.members.pending} asking to join · ${c.members.seated} seated · created ${c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}</p>`;
-    h += `<p><b>Tables</b></p><ul>${c.tables.map(t => `<li>${esc(t.name)} · ${esc(t.game)} ${t.sb}/${t.bb} · ${t.seated}/${t.seats} seated · ${t.running ? 'running' : esc(t.status)}</li>`).join('') || '<li class="muted">None open</li>'}</ul>`;
-    h += `<p><b>Tournaments</b></p><ul>${c.tourneys.map(t => `<li>${esc(t.name)} · ${esc(t.status)} · ${t.entries} entries · starts ${new Date(t.startsAt).toLocaleString()}</li>`).join('') || '<li class="muted">None</li>'}</ul>`;
-    h += `<p>Hands: ${c.hands.lastDay} in the last day, ${c.hands.kept} kept, last ${ago(c.hands.last)}</p>`;
-    h += `<p><b>Latest chip moves</b></p><ul>${c.ledger.slice().reverse().map(e => `<li>${ago(e.at)} · ${esc(e.kind)} · ${esc(e.member)} · ${(e.amount / 100).toLocaleString()}</li>`).join('') || '<li class="muted">None</li>'}</ul>`;
-    return h + '</div>';
-  }
-
-  async function act(fn, done) {
-    try { await fn(); await load(); if (done) say(done, 'ok'); } catch (e) { say(e.message, 'err'); }
-  }
-
-  document.addEventListener('click', async e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    if (b.id === 'load') return load();
-    if (b.id === 'grant') {
-      const id = $('g-id').value.trim();
-      const tables = num('g-tables'), tourneysPerDay = num('g-tourneys');
-      const limits = tables !== undefined || tourneysPerDay !== undefined ? {tables: tables ?? 2, tourneysPerDay: tourneysPerDay ?? 1} : null;
-      return act(() => api('/admin/grant', {id, note: $('g-note').value.trim(), maxClubs: num('g-max') || 0, limits}), `Granted ${short(id)}.`);
-    }
-    if (b.dataset.revoke && confirm('Take away this player’s permission? Their clubs carry on until paused.')) return act(() => api('/admin/revoke', {id: b.dataset.revoke}), 'Revoked.');
-    const code = b.dataset.pause || b.dataset.plan || b.dataset.extend || b.dataset.limits || b.dataset.inside;
-    if (!code) return;
-    const path = `/admin/club/${encodeURIComponent(code)}`;
-    if (b.dataset.pause) {
-      const pause = b.dataset.to === 'true';
-      if (pause && !confirm('Pause this club? Everyone but its owner is disconnected until you resume it.')) return;
-      return act(() => api(path, {suspended: pause}), pause ? 'Paused.' : 'Resumed.');
-    }
-    if (b.dataset.plan) return act(() => api(path, {plan: 'club'}), 'It’s a club now, with no end date.');
-    if (b.dataset.extend) {
-      const c = data.clubs.find(x => x.code === code);
-      return act(() => api(path, {expires: Math.max(c.expires || 0, Date.now()) + 14 * 864e5}), 'Trial extended by 14 days.');
-    }
-    if (b.dataset.limits) {
-      const tables = Number(document.querySelector(`[data-lim-tables="${CSS.escape(code)}"]`).value);
-      const tourneysPerDay = Number(document.querySelector(`[data-lim-tourneys="${CSS.escape(code)}"]`).value);
-      return act(() => api(path, {limits: {tables, tourneysPerDay}}), 'Limits set.');
-    }
-    if (b.dataset.inside) {
-      if (open.has(code)) { open.delete(code); render(); return; }
-      open.add(code);
-      delete insides[code];
-      render();
-      insides[code] = await api(path).catch(err => ({error: err.message}));
-      render();
-    }
-  });
-  if ($('token').value) load();
-</script>
+<script type="module" src="src/admin.js"></script>
 </body>
 </html>

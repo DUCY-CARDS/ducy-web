@@ -30,8 +30,7 @@ ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
 # while on Cloudflare's free plan. Creating a club takes permission, granted
 # on the admin page (admin.html), except each player's one free trial club.
 # CLUB_CREATORS: a comma-separated list of player IDs granted here as well.
-# The admin API needs a secret: `wrangler secret put ADMIN_TOKEN` (24+
-# characters, e.g. `openssl rand -hex 24`).
+# Who may use the admin page: ../admins.json, bundled into the Worker (#401).
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
