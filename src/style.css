@@ -1535,7 +1535,7 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 }
 .demo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 16px; }
 .demo-tag { font: 400 16px var(--font-display); letter-spacing: 0.08em; background: #2a1d05; color: #f2b632; padding: 1px 8px; border-radius: 4px; }
-.demo-left { font: 600 13px 'Overpass Mono', monospace; }
+.demo-note { font-weight: 600; }
 .demo-who { position: relative; }
 .demo-who summary { list-style: none; cursor: pointer; background: #fff7e0; border: 1px solid #2a1d05; border-radius: 8px; padding: 3px 10px; }
 .demo-who summary::-webkit-details-marker { display: none; }
@@ -1563,6 +1563,13 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 .demo-over .cl-card { width: min(420px, 100%); background: #f3e7c9; color: #1d3a2c; border: 0; border-radius: 18px; padding: 24px; }
 .demo-over .cl-card h2 { margin: 0; font: 400 30px var(--font-display); color: #1d3a2c; }
 .demo-over .btn-small { background: transparent; color: #1d3a2c; border-color: #1d3a2c; }
+.demo-list-head { display: flex; justify-content: space-between; align-items: center; }
+.demo-list-head .link-btn { color: #1d3a2c; font-size: 18px; }
+.demo-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.demo-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid rgba(29, 58, 44, 0.2); }
+.demo-list li > span { display: flex; flex-direction: column; gap: 2px; font-size: 16px; }
+.demo-list .pl-meta { color: #4b5a4f; font-size: 13px; }
+.demo-list .tr-start { margin: 0; flex: none; }
 @media (max-width: 640px) { .demo-row { padding: 6px 16px; gap: 6px 8px; } .demo-acts { margin-left: 0; } }
 
 /* What a role means, on its offer and for the host making it (#190) */

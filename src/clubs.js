@@ -53,7 +53,7 @@ import { readServiceForm, servicesHtml } from './club-services-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
-import { demo, startDemo } from './demo.js';
+import { demo, showDemoList } from './demo.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -573,7 +573,8 @@ function connText(n, meanwhile) {
 // backup and proof steps. A club from before then has no such flag: it gets
 // the older reminder, until a backup is made here or proved.
 function backupNagHtml() {
-  if (!isRemote()) return '';
+  // A demo club (#406) is never kept: its backup means nothing.
+  if (!isRemote() || demo) return '';
   const plan = owner.view?.plan;
   if (plan?.temporary) {
     const until = plan.removesAt ? ` If no one uses it, it’s deleted on ${esc(new Date(plan.removesAt).toLocaleDateString())}.` : '';
@@ -2415,7 +2416,7 @@ async function onClick(e) {
   if (!b) return;
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
-  else if (act === 'demo') startDemo();
+  else if (act === 'demo') showDemoList();
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'dash') { setDash(b.dataset.tab); render(); }
   // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).

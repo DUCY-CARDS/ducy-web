@@ -36,9 +36,12 @@ import { keyPairFromJSON, keyPairToJSON, newKeyPair, open as openBox, sharedKey 
 import { fairPlayer } from './fair-check.js';
 import { limits as tableLimits, tableById } from './club-tables.js';
 import { tableChip, toChip } from './chip-format.js';
+import { newCode } from './play-net.js';
 
-// Not limited by plans (#406).
+// Not limited by plans (#406), and never temporary (#395): its backup
+// banner means nothing in a demo.
 const LIMITS = {tables: 5, tourneysPerDay: 5};
+const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, temporary: false, at: Date.now()});
 const MAX_BOTS = 5;
 // How long a bot (or the person, in a simulated hand) takes to act.
 const PACE_MS = 600, FAST_MS = 250;
@@ -97,10 +100,10 @@ export function createDemoRelay({storage, identity, ready}) {
 
   async function open(room) {
     const w = await wasmReady();
-    let record = (await room.store.get('demoRecord')) || {plan: 'club', limits: LIMITS, temporary: true, at: Date.now()};
+    let record = (await room.store.get('demoRecord')) || DEMO_RECORD();
     Object.assign(room.pubs, (await room.store.get('memberPubs')) || {});
     for (const b of (await room.store.get('demoBots')) || []) {
-      room.bots.set(b.id, {id: b.id, name: b.name, ident: await importIdentity(b.identity), fair: fairPlayer(), online: false, inbox: Promise.resolve(), asked: 0});
+      room.bots.set(b.id, {id: b.id, name: b.name, ident: await importIdentity(b.identity), fair: fairPlayer(), online: false, inbox: Promise.resolve(), asked: 0, tourneys: new Set(), home: b.home || null});
       room.pubs[b.id] = b.pub;
     }
     room.hostKP = await keyPairFromJSON(await room.store.get('hostKey'));
@@ -178,7 +181,7 @@ export function createDemoRelay({storage, identity, ready}) {
     try {
       if (msg.from !== id) throw new Error('The request must come from you.');
       const made = await createClub(room.store, msg, room.code);
-      await room.store.put('demoRecord', {plan: 'club', limits: LIMITS, temporary: true, at: Date.now()});
+      await room.store.put('demoRecord', DEMO_RECORD());
       await storage.put('demoClub', room.code);
       send(room, id, {type: 'club_created', ...made});
       await serverOf(room);
@@ -237,16 +240,19 @@ export function createDemoRelay({storage, identity, ready}) {
 
   // ---- bots ----
 
-  // Bots are online while a person in this page sits at a table, so a
-  // table doesn't play on by itself while the demo looks elsewhere.
+  // Bots are online while anyone in the demo has a page open, so its club
+  // goes on around them (tables, tournaments); with no page, nothing runs.
+  // They take their seats in a tournament once it's running.
   async function syncBots(room) {
     const server = await room.server;
     if (!server || !room.bots.size) return;
     const club = server.club;
-    const want = [...room.conns.keys()].some(id => !room.bots.has(id) && club.members[id]?.seat);
+    const want = [...room.conns.keys()].some(id => !room.bots.has(id));
+    const running = (club.tourneys || []).filter(t => t.status === 'running');
     for (const bot of room.bots.values()) {
       if (want && !bot.online) {
         bot.online = true;
+        bot.tourneys.clear();
         await server.message({from: bot.id, event: 'open'});
         const seat = club.members[bot.id]?.seat;
         if (seat) await botSends(room, bot, {type: 'table', table: seat.table, cmd: {type: 'join'}});
@@ -254,7 +260,28 @@ export function createDemoRelay({storage, identity, ready}) {
         bot.online = false;
         await server.message({from: bot.id, event: 'close'});
       }
+      if (!bot.online) continue;
+      const playing = running.some(t => t.entries.some(e => e.member === bot.id && e.place == null));
+      if (bot.home && !club.members[bot.id]?.seat && !playing) await sitHome(room, bot);
+      for (const t of running) {
+        if (bot.tourneys.has(t.id) || !t.entries.some(e => e.member === bot.id && e.place == null)) continue;
+        bot.tourneys.add(t.id);
+        await botSends(room, bot, {type: 'table', table: `tourney:${t.id}`, cmd: {type: 'join'}});
+      }
     }
+  }
+
+  // A bot that has a table of its own (a demo club's start) but isn't at it
+  // (the table started again without it) sits down there again.
+  async function sitHome(room, bot) {
+    const server = await room.server;
+    const t = bot.home && tableById(server.club, bot.home);
+    if (!t || t.status !== 'open' || server.club.members[bot.id]?.status !== 'member') return;
+    if ((server.seatedCounts()[t.id] || 0) >= t.seats - 1) return; // room for the person
+    const {max} = tableLimits(t);
+    if (num(server.club.members[bot.id].balance) < max) await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
+    await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
+    await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'request_chips', amount: max}});
   }
 
   async function botSends(room, bot, body) {
@@ -262,27 +289,34 @@ export function createDemoRelay({storage, identity, ready}) {
     await server.message({from: bot.id, data: await signMessage(bot.ident, {club: server.club.code, ...body})});
   }
 
-  // A bot asks to join with the club's invite, is let in, given chips and
-  // sat at table `t` with its maximum buy-in, all through the club.
-  async function addBot(room, t) {
+  // A bot asks to join with the club's invite and, unless it's left asking
+  // (`pending`), is let in and given `balance` chips; at table `t` it buys
+  // in for the table's maximum (given too). All through the club. A bot
+  // added while someone sits at its table (`online`) is there at once;
+  // otherwise it comes online with the people (syncBots).
+  async function addBot(room, t, {name = '', balance = null, pending = false, online = true} = {}) {
     const server = await room.server;
     const club = server.club;
     const ident = await createIdentity();
     const keys = await newKeyPair({keep: true});
     const saved = (await room.store.get('demoBots')) || [];
-    const name = `Bot ${saved.length + 1}`;
-    saved.push({id: ident.id, name, identity: await exportIdentity(ident), pub: keys.pub, keys: await keyPairToJSON(keys)});
+    name ||= `Bot ${saved.length + 1}`;
+    saved.push({id: ident.id, name, identity: await exportIdentity(ident), pub: keys.pub, keys: await keyPairToJSON(keys), home: t?.id || null});
     await room.store.put('demoBots', saved);
-    const bot = {id: ident.id, name, ident, fair: fairPlayer(), online: true, inbox: Promise.resolve(), asked: 0};
+    const bot = {id: ident.id, name, ident, fair: fairPlayer(), online, inbox: Promise.resolve(), asked: 0, tourneys: new Set(), home: t?.id || null};
     room.bots.set(bot.id, bot);
     room.pubs[bot.id] = keys.pub;
-    await server.message({from: bot.id, event: 'open'});
+    if (online) await server.message({from: bot.id, event: 'open'});
     await botSends(room, bot, {type: 'join', invite: club.invite, name, key: keys.pub});
+    if (pending) return bot;
     await server.run('approve', {id: bot.id});
-    const {max} = tableLimits(t);
-    await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
+    const max = t ? tableLimits(t).max : 0;
+    const amount = (balance ?? max * 4) + max;
+    if (amount > 0) await server.run('give', {id: bot.id, amount, note: 'Demo bot'});
+    if (!t) return bot;
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'request_chips', amount: max}});
+    return bot;
   }
 
   async function botReceive(room, bot, data) {
@@ -294,6 +328,8 @@ export function createDemoRelay({storage, identity, ready}) {
       bot.fair.message(u, cmd => inRoom(room, () => botSends(room, bot, {type: 'table', table: tid, cmd})), {});
       return;
     }
+    // Too soon for a tournament's table (it was still starting): try again.
+    if (u.type === 'rejected' && tid.startsWith('tourney:')) { bot.tourneys.delete(tid.slice(8)); return; }
     if (u.type !== 'state') return;
     bot.view = u;
     const v = u.view, me = v.seats[0];
@@ -383,6 +419,8 @@ export function createDemoRelay({storage, identity, ready}) {
     }
     if (!room.bots.has(who)) return range && Math.random() < 0.2 ? to(num(v.current_bet) + pot / 2) : passive;
     const r = Math.random();
+    // A tournament needs some all-ins to move along.
+    if (tid.startsWith('tourney:') && r < 0.1) return {kind: 'allin', amount: 0};
     if (range && r < 0.15) return to(num(v.current_bet) + pot * 0.6);
     if (!L.can_check && (r > 0.9 || (num(L.call) > num(v.seats[0].stack) / 2 && r > 0.5))) return {kind: 'fold', amount: 0};
     return passive;
@@ -468,9 +506,52 @@ export function createDemoRelay({storage, identity, ready}) {
     // with a club already running are the next step (#406): the manager's
     // signed create_club, then their tables (new_table), players (bots as
     // addBot, people as their join), balances (give) and requests.
-    async setUp(scenario) {
-      if (!scenario?.club) return;
-      throw new Error(`The ${scenario.name} demo isn’t ready yet.`);
+    // A brand new club has none (null): the manager makes it. Otherwise the
+    // club is made for `owner` (the manager's identity) and filled through
+    // the club itself, as people would: its tables, its bots, `people` (the
+    // scenario's people, each with the identity made for them), their
+    // requests, a tournament and a promotion. Resolves to {code, hostId,
+    // invite, name}.
+    async setUp(scenario, {owner, people = []} = {}) {
+      const c = scenario?.club;
+      if (!c) return null;
+      const code = newCode();
+      const room = roomFor(code);
+      return inRoom(room, async () => {
+        const made = await createClub(room.store, await signMessage(owner, {type: 'create_club', club: code, name: c.name}), code);
+        await room.store.put('demoRecord', DEMO_RECORD());
+        await storage.put('demoClub', code);
+        const server = await serverOf(room);
+        const as = async (ident, body) => server.message({from: ident.id, data: await signMessage(ident, {club: code, ...body})});
+        const tables = [];
+        for (const t of c.tables || []) tables.push(tableById(server.club, await server.run('new_table', {table: t})));
+        const asks = [], helps = [], registers = [];
+        for (const b of c.bots || []) {
+          const bot = await addBot(room, tables[b.table] ?? null, {name: b.name, balance: b.balance ?? 0, pending: b.status === 'pending', online: false});
+          if (b.ask) asks.push([bot.ident, b.ask]);
+          if (b.help) helps.push([bot.ident, b.help]);
+          if (b.register) registers.push(bot.ident);
+        }
+        for (const p of people) {
+          await as(p.ident, {type: 'join', invite: made.invite, name: p.name, key: (await newKeyPair()).pub});
+          if (p.status === 'pending') continue;
+          await server.run('approve', {id: p.ident.id});
+          if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
+          if (p.ask) asks.push([p.ident, p.ask]);
+          if (p.register) registers.push(p.ident);
+        }
+        for (const [ident, amount] of asks) await as(ident, {type: 'chip_request', amount});
+        for (const [ident, text] of helps) await as(ident, {type: 'help_ask', text});
+        if (c.tourney) {
+          const {startsIn, ...t} = c.tourney;
+          const now = Date.now();
+          const tid = await server.run('new_tourney', {tourney: {...t, opensAt: now, startsAt: now + startsIn}});
+          for (const ident of registers) await as(ident, {type: 'tourney', tourney: tid, op: 'register'});
+        }
+        if (c.promo) await server.run('new_promo', {promo: c.promo});
+        await server.flush();
+        return {code, hostId: made.hostId, invite: made.invite, name: c.name};
+      });
     },
     async lookup(code) {
       const club = await roomFor(code).store.get('club');

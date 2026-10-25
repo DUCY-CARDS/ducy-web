@@ -18,6 +18,9 @@ const { createDemoRelay } = haveWasm ? await import('../src/demo-relay.js') : {}
 const { fairPlayer } = haveWasm ? await import('../src/fair-check.js') : {};
 const { totals } = await import('../src/club-chips.js');
 
+// The demo clubs' tables keep their clocks going (club-host.js): done once the tests are.
+test.after(() => setTimeout(() => process.exit(process.exitCode ?? 0), 200));
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(what, fn, ms = 90_000) {
   const start = Date.now();
@@ -29,15 +32,17 @@ async function until(what, fn, ms = 90_000) {
   }
 }
 
-test('Reset puts the demo back to its scenario’s start, on the same session and clock', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('Reset puts the demo back to its scenario’s start, in the same session; it never runs out', {skip: !haveWasm && 'no wasm build'}, async () => {
   const { newDemo, resetDemo, demoStorage, isOn, MANAGER } = await import('../src/demo-state.js');
   const { scenarioById } = await import('../src/demo-scenarios.js');
-  const d = newDemo('abc123', 'new', 1_000);
+  const d = newDemo('abc123', 'busy');
   d.people.push({key: 'p1', name: 'Player 1', id: 'X'});
   d.current = 'p1';
   const r = resetDemo({...d, setUp: true, resetting: true});
-  assert.deepEqual(r, {id: 'abc123', scenario: 'new', setUp: false, endsAt: d.endsAt, people: [{key: MANAGER, name: 'Manager'}], current: MANAGER});
-  assert.ok(isOn(r, 2_000) && !isOn(r, d.endsAt));
+  assert.deepEqual(r, {id: 'abc123', scenario: 'busy', setUp: false, people: [{key: MANAGER, name: 'Manager'}], current: MANAGER});
+  // No clock: on until End demo.
+  assert.ok(isOn(r) && !('endsAt' in r));
+  assert.ok(!isOn({...r, ending: true}));
   // What Reset deletes: the club's database and each person's, and nothing else.
   const s = demoStorage(d);
   for (const n of ['ducyDemoRelay-abc123', 'ducy@demo-abc123-manager', 'ducy@demo-abc123-p1', 'ducy-tables@demo-abc123-p1', 'ducy-hands@demo-abc123-p1']) assert.ok(s.dbs.includes(n), n);
@@ -61,6 +66,68 @@ test('Reset puts the demo back to its scenario’s start, on the same session an
   await again.setUp(scenarioById('new'));
   assert.equal(await again.club(), null);
   assert.deepEqual(await again.lookup('HHHH-JJJJ'), {kind: 'game'});
+});
+
+// What a demo club's start looks like, without its ids or times.
+function shape(club) {
+  const table = id => club.tables.find(t => t.id === id)?.name ?? null;
+  return {
+    name: club.name, temporary: !!club.temporary,
+    tables: club.tables.map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status})),
+    members: Object.values(club.members).filter(m => m.id !== club.ownerId)
+      .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null}))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    help: (club.help || []).filter(h => !h.handled).map(h => h.text),
+    tourneys: (club.tourneys || []).map(t => ({name: t.name, status: t.status, entries: t.entries.length})),
+    promos: (club.promos?.list || []).map(p => ({name: p.name, status: p.status})),
+  };
+}
+
+test('each demo club starts in its scenario’s state, and starts again the same', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const { SCENARIOS } = await import('../src/demo-scenarios.js');
+  const { conservation } = {conservation: club => totals(club).conserved};
+  for (const s of SCENARIOS.filter(x => x.club)) {
+    const shapes = [];
+    for (let round = 0; round < 2; round++) {
+      const mem = new Map();
+      const storage = {get: async k => structuredClone(mem.get(k)), put: async (k, v) => { mem.set(k, structuredClone(v)); }, delete: async k => { mem.delete(k); }};
+      const owner = await createIdentity();
+      const people = [];
+      for (const p of s.club.people) people.push({...p, ident: await createIdentity()});
+      const relay = createDemoRelay({storage, identity: async () => owner, ready: async () => ducy});
+      const made = await relay.setUp(s, {owner, people});
+      assert.equal(made.name, s.club.name);
+      const seated = s.club.bots.filter(b => b.table != null).length;
+      await until(`${s.id}: bots seated`, async () => Object.values((await relay.club()).members).filter(m => m.seat).length === seated, 30_000);
+      await relay.flush();
+      const club = await relay.club();
+      assert.equal(club.ownerId, owner.id, 'run by the manager');
+      assert.ok(conservation(club), `${s.id}: chips conserved`);
+      for (const p of people) assert.equal(club.members[p.ident.id].status, p.status || 'member', `${s.id}: ${p.name}`);
+      shapes.push(shape(club));
+    }
+    assert.deepEqual(shapes[1], shapes[0], `${s.id} starts the same every time`);
+    const first = shapes[0];
+    assert.equal(first.temporary, false, 'no Temporary banner in a demo');
+    if (s.id === 'busy') {
+      const members = first.members.filter(m => m.status === 'member').length;
+      assert.ok(members >= 40 && members <= 50, `${members} members`);
+      assert.ok(first.members.filter(m => m.status === 'pending').length >= 3, 'people asking to join');
+      assert.ok(first.members.filter(m => m.ask).length >= 2, 'chip requests');
+      assert.equal(first.tables.length, 3);
+      for (const t of first.tables) {
+        const at = first.members.filter(m => m.seat?.[0] === t.name).length;
+        assert.ok(at >= 2 && at < t.seats, `${t.name}: ${at} bots, room to sit`);
+      }
+      assert.deepEqual(first.tourneys.map(t => t.status), ['scheduled']);
+      assert.equal(first.promos[0]?.status, 'running');
+      assert.equal(first.help.length, 1, 'a help request');
+    }
+    if (s.id === 'tourney') {
+      assert.equal(first.tourneys[0].status, 'scheduled');
+      assert.equal(first.tourneys[0].entries, 18, '17 bots and Player 1 registered');
+    }
+  }
 });
 
 test('only the demo loads the demo relay: no real club or relay code imports it', () => {
@@ -248,5 +315,4 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   for (const c of a.checks) assert.ok(c.ok, `hand ${c.hand}: ${c.why}`);
   await relay.flush();
   o.net.close(); a.net.close();
-  setTimeout(() => process.exit(0), 200).unref();
 });
