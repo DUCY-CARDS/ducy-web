@@ -14,7 +14,7 @@ function at(url) {
   globalThis.location = new URL(url);
 }
 at('https://ducy.example/');
-const { wsUrl, relayUrl, joinLink, normCode } = await import('../src/play-net.js');
+const { wsUrl, relayUrl, joinLink, lookupCode, normCode } = await import('../src/play-net.js');
 
 const SITE_RELAY = 'wss://ducy-relay.ducy.workers.dev';
 
@@ -49,6 +49,22 @@ test('?relay= is remembered, carried in invite links, and ?relay=default clears 
   assert.equal(relayUrl(), SITE_RELAY);
   at('https://ducy.example/#play');
   assert.equal(relayUrl(), SITE_RELAY);
+});
+
+test('looking up a code asks the relay over http, and trusts only what it should (#393)', async () => {
+  store.clear();
+  at('https://ducy.example/?relay=ws://localhost:8787#lobby');
+  const asked = [];
+  const answer = (body, ok = true) => async url => { asked.push(url); return {ok, json: async () => body}; };
+  assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'game'})), {kind: 'game'});
+  assert.equal(asked[0], 'http://localhost:8787/code/ABCD-EFGH');
+  assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'club', ask: false})), {kind: 'club', ask: false});
+  assert.equal(await lookupCode('ABCD-EFGH', answer({kind: 'what'})), null);
+  assert.equal(await lookupCode('ABCD-EFGH', answer({}, false)), null);
+  assert.equal(await lookupCode('ABCD-EFGH', async () => { throw new Error('offline'); }), null);
+  at('https://ducy.example/?relay=default#lobby');
+  await lookupCode('ABCD-EFGH', answer({kind: 'game'}));
+  assert.equal(asked.at(-1), 'https://ducy-relay.ducy.workers.dev/code/ABCD-EFGH');
 });
 
 test('table codes read in any case, and never contain I, L, O, 0 or 1', () => {

@@ -6,7 +6,7 @@ import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 import { openCharts, closeCharts, chartsOpen } from './charts.js';
-import { closeSection, openSection, readJoin, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
+import { closeSection, enterCode, openSection, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
 import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub } from './home.js';
 
@@ -1853,30 +1853,12 @@ function setMode(mode, shortcut) {
   else closeCharts();
   if (hub) {
     setTitleSection(HUB_TITLES[mode]);
-    openHub(document.getElementById('v3'), mode, joinFromLobby);
+    openHub(document.getElementById('v3'), mode, enterCode);
   } else closeHub();
   // The playing section titles and shows its own breadcrumb.
   if (!section && !hub) { setTitleSection(trainer ? 'Pre-flop ranges' : charts ? 'Pre-flop charts' : 'Equity'); showNav(mode); }
   if (section) openSection(mode, shortcut);
   else closeSection();
-}
-
-// Play's code box: a code or a link opens Join with it filled in, which
-// joins straight away when your name is known.
-function joinFromLobby(text) {
-  const what = readJoin(text);
-  const u = new URL(location.href);
-  for (const k of ['club', 'invite', 'host', 'table']) u.searchParams.delete(k);
-  if (what?.kind === 'table') {
-    u.searchParams.set('table', what.code);
-    if (what.hostId) u.searchParams.set('host', what.hostId);
-  } else if (what?.kind === 'club') {
-    location.href = text;
-    return;
-  }
-  u.hash = '';
-  history.replaceState(null, '', u.toString().replace(/#$/, '') + '#lobby');
-  location.hash = 'join';
 }
 
 // Straight to heads-up against the GTO bot at 100 big blinds: #codedoug for

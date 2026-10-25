@@ -83,6 +83,10 @@ test('the Play page shows the heads-up challenge and your rung', () => {
   const h = hubHtml('lobby', {mastered: 3, skills: 28, rung: 5, rungs: 20});
   assert.match(h, /Heads-up challenge/);
   assert.match(h, /Rung 5 of 20/);
+  // Enter a code (#393): one box for a game or a club, with room for a word back.
+  assert.match(h, /Game or club code/);
+  assert.match(h, /data-v3note[^>]*hidden/);
+  assert.doesNotMatch(h, /club manager|Start a club|trial/i);
 });
 
 test('every page but the landing page can cross between Study, Play and Quest', () => {

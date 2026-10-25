@@ -205,8 +205,10 @@ function challengePage(d) {
 function lobbyPage(d) {
   let h = '<div class="v3-page">' + head('Play', null, 'play');
   h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
-  h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
-  h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form></div>';
+  // Enter a code (#393): a game's or a club's, or a link to either.
+  h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game or club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
+  h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form>';
+  h += '<p class="v3-join-note" data-v3note role="status" hidden></p></div>';
   h += '<div class="v3-tiles">';
   h += '<a class="v3-tile v3-tile-cream" href="#clubs"><span class="v3-tile-name">Private clubs</span><span class="v3-members" aria-hidden="true">';
   for (const id of ['player-06', 'player-07', 'player-08', 'player-09', 'player-10']) h += `<img src="${avatarUrl(id)}" alt="">`;
@@ -238,16 +240,27 @@ let showing = null;
 
 export const hubOpen = () => !!showing;
 
-/** Shows hub `name` in `el`; `onJoin(code)` handles Play's code box. */
+/**
+ * Shows hub `name` in `el`; `onJoin(code)` handles Play's code box, and may
+ * resolve to a word to show under it (#393: a club's code that needs its
+ * invite link, say).
+ */
 export function openHub(el, name, onJoin) {
   showing = name;
   if (!root) {
     root = el;
-    root.addEventListener('submit', e => {
+    root.addEventListener('submit', async e => {
       const f = e.target.closest('form[data-v3join]');
       if (!f) return;
       e.preventDefault();
-      onJoin(String(f.elements.code.value || '').trim());
+      const btn = f.querySelector('button[type=submit]');
+      const note = root.querySelector('[data-v3note]');
+      // The relay may be asked what the code is: one at a time.
+      if (btn.disabled) return;
+      btn.disabled = true;
+      let msg = '';
+      try { msg = await onJoin(String(f.elements.code.value || '').trim()); } finally { btn.disabled = false; }
+      if (note) { note.textContent = msg || ''; note.hidden = !msg; }
     });
   }
   root.innerHTML = hubHtml(name, hubData());
