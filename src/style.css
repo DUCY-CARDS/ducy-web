@@ -1847,9 +1847,10 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-tables li.cl-tcard { gap: 14px; padding: 16px 18px; border-radius: 16px; background: #24472f; color: #f3e7c9; box-shadow: 0 6px 0 #0f2219; font-size: 14px; }
 .cl-tables li.cl-tcard.cream { background: #f3e7c9; color: #1d3a2c; }
 .cl-tcard-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.cl-tcard-text .cl-name { font-size: 18px; }
+/* The card's own colour, not the page's light .cl-name, so it reads on cream too. */
+.cl-tcard-text .cl-name { font-size: 18px; color: inherit; }
 .cl-tcard-meta { color: #a9b8a6; }
-.cl-tcard.cream .cl-tcard-meta, .cl-tcard.cream .cl-why { color: #5d6b55; }
+.cl-tcard.cream .cl-tcard-meta, .cl-tcard.cream .cl-why, .cl-tcard.cream .pl-meta { color: #5d6b55; }
 .cl-tcard .btn-small { padding: 9px 16px; font-size: 14px; border-radius: 10px; }
 .cl-tcard .btn-small:not(.primary) { background: transparent; color: inherit; border-color: currentColor; }
 .cl-side-card { background: #f3e7c9; color: #1d3a2c; border-radius: 16px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 6px 0 #0f2219; }
