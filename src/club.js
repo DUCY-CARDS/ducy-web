@@ -15,7 +15,8 @@
 //                                        club allows it (codeJoin, #393)
 //   {type: 'hello', club, name, since}   a member or applicant checking in; `since`
 //                                        is the last ledger entry they have
-//   {type: 'chip_request', club, amount, note}   ask the host for chips (#67)
+//   {type: 'chip_request', club, amount, note, table?}   ask the host for chips (#67),
+//                                        from a table when nothing's available (#404)
 //   {type: 'cancel_request', club}
 //   {type: 'table', club, table, cmd}    a command for a club table (#68): join, act,
 //                                        sit_in, leave, request_chips; a tournament's
@@ -30,7 +31,8 @@
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
 //                                        | 'invite_only' (asked by code, #393)
-//   {type: 'account', club, balance, request, entries}   see club-chips.js
+//   {type: 'account', club, balance, request, entries, credit, available}
+//                                        see club-chips.js (credit: #404)
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
 //   {type: 'tourney_error', club, tourney, reason}   why a tournament op was refused
@@ -196,7 +198,8 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   if (body.type === 'chip_request' || body.type === 'cancel_request') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     try {
-      if (body.type === 'chip_request') requestChips(club, id, body.amount, body.note, now);
+      // Asked from a table, when nothing's left to add there (#404).
+      if (body.type === 'chip_request') requestChips(club, id, body.amount, body.note, now, {table: body.table});
       else cancelRequest(club, id);
     } catch (e) {
       return {replies: [account(club, id, Infinity)], changed: false, reason: e.message};
@@ -366,6 +369,10 @@ export async function playerReceive(mem, env) {
   if (b.type === 'account') {
     mem.hostSeq = env.seq;
     mem.balance = Number(b.balance) || 0;
+    // A credit player's limit and what they may sit with (#404). From an
+    // older host without them: the balance.
+    mem.credit = Number(b.credit) || 0;
+    mem.available = b.available == null ? Math.max(0, mem.balance) : Number(b.available) || 0;
     mem.request = b.request || null;
     // A cancel sent while the host was away has reached them (#188).
     delete mem.cancelQueued;

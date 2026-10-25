@@ -50,6 +50,7 @@ import { adminBody, answerRole, isAssistant, offerAssistant, revokeRole, runAdmi
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
 } from './club-agents.js';
+import { raiseCredit, setCredit, settleDebt } from './club-credit.js';
 import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
 import { lobbyBody, sayInLobby } from './club-lobby.js';
 import { addService, checkRequest, revokeService, runRequest, ServiceError, updateService } from './club-services.js';
@@ -503,6 +504,12 @@ export function createClubServer({
     grant: ({id, amount}) => chips(id, () => grantRequest(club, id, amount)),
     deny: ({id, note = ''}) => chips(id, () => { declineRequest(club, id, note); return null; }),
     settle: ({id, amount, note = ''}) => chips(id, () => settle(club, id, amount, Date.now(), note)),
+    // Credit players (#404): a member's credit limit (0: none), raising it to
+    // answer a request at the limit (the other answer is deny), and money
+    // received from someone who owes.
+    set_credit: ({id, amount}) => chips(id, () => { setCredit(club, id, amount); return null; }),
+    raise_credit: ({id, amount}) => chips(id, () => { raiseCredit(club, id, amount); return null; }),
+    settle_debt: ({id, amount, note = ''}) => chips(id, () => settleDebt(club, id, amount, Date.now(), note)),
     offer_agent: ({id, amount}) => reply(offerAgent(club, id, amount)),
     credit_limit: ({id, amount}) => reply(setCreditLimit(club, id, amount)),
     revoke_agent: ({id}) => reply(revokeAgent(club, id)),

@@ -18,7 +18,7 @@
 
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
-import { answerRequest, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
+import { answerRequest, checkGrant, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
 import { logAction } from './club-roles.js';
 
 const whole = n => Number.isSafeInteger(n) && n >= 0;
@@ -157,6 +157,7 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       const p = mine(club, by, cmd.id);
       const amt = Number(cmd.op === 'grant' ? (cmd.amount ?? p.request?.amount) : cmd.amount);
       if (cmd.op === 'grant' && !p.request) throw new Error('There’s no request to grant.');
+      if (cmd.op === 'grant') checkGrant(club, cmd.id);
       if (!Number.isSafeInteger(amt) || amt <= 0) throw new Error('Enter a whole number of chips above 0.');
       // Inside the account: the agent's own balance may go negative, down to −limit.
       const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -(a.creditLimit || 0)});

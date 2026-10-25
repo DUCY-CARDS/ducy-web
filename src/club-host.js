@@ -211,7 +211,7 @@ export function createTableHost({
       if (r.asking.has(q.seat)) continue;
       r.asking.add(q.seat);
       const who = r.players.find(p => p.seat === q.seat)?.client_id;
-      let ok = false, why = '';
+      let ok = false, why = '', ask = false;
       try {
         if (!who) throw new Error('No one in that seat.');
         chipsForTable(club(), who, t, num(q.amount));
@@ -219,10 +219,12 @@ export function createTableHost({
         changed = true;
       } catch (e) {
         why = e.message;
+        // Too little available: the panel offers to ask the manager (#404).
+        ask = !!e.short;
       }
       run(tid, ok ? 'approveChips' : 'denyChips', q.seat).finally(() => r.asking.delete(q.seat));
       if (ok) chipsChanged(who);
-      else if (who) sendTable(who, {type: 'table', table: tid, update: {type: 'rejected', reason: why, chips: true}});
+      else if (who) sendTable(who, {type: 'table', table: tid, update: {type: 'rejected', reason: why, chips: true, ...(ask ? {ask: true} : {})}});
     }
     // Save when chips moved or a hand ended, not on every tick.
     if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }

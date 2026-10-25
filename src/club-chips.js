@@ -15,6 +15,15 @@
 // (club-promos.js) are issued, and voided ones reclaimed.
 //
 // Amounts are whole hundredths, shown divided by 100 (chip-format.js).
+//
+// Credit players (#404): a member's `credit` is how far below zero their
+// balance may go to sit at a table (0, the default: not at all). A negative
+// balance is what they owe the club. They buy in and top up from what's
+// available (balance + credit), their own chips first; entries that drew on
+// credit say how much (`credit`). Standing up adds the stack to the balance,
+// so what they owe is paid back first (`repaid` on the cash-out) and anything
+// still owed stays negative (`owes`). Conservation still holds: a negative
+// balance is offset by the chips it put on a table.
 
 import { chipInput, chipText } from './chip-format.js';
 
@@ -78,11 +87,47 @@ export function reclaim(club, id, amt, now = Date.now(), why = '') {
   return record(club, m, 'reclaim', amt, now, {note: note(why)});
 }
 
+// A credit player's limit and what they may bring to a table now (#404):
+// their balance plus their limit, never below 0 (a limit lowered under what
+// they owe leaves nothing).
+export const creditOf = m => m?.credit || 0;
+export const owedBy = m => Math.max(0, -(m?.balance || 0));
+export const available = m => Math.max(0, (m?.balance || 0) + creditOf(m));
+
+// An Error saying a player has too little available; the table offers to
+// ask the manager for more (#404).
+function short(msg) {
+  const e = new Error(msg);
+  e.short = true;
+  return e;
+}
+
+function tooMuch(m, amt) {
+  if (amt <= available(m)) return;
+  if (!creditOf(m)) throw short(`You have ${chipText(Math.max(0, m.balance))} chips in the club.`);
+  throw short(`You have ${chipText(available(m))} available (your chips and credit).`);
+}
+
+// What part of `amt`, taken from the balance, is drawn on credit.
+const drawn = (m, amt) => Math.max(0, amt - Math.max(0, m.balance));
+
 // A member asks the host for chips; a new request replaces an older one.
-export function requestChips(club, id, amt, why = '', now = Date.now()) {
+// `table`: asked from that table (#404). A credit player asking for more
+// than is available is at their limit (`atLimit`): the host may only raise
+// the limit or say no.
+export function requestChips(club, id, amt, why = '', now = Date.now(), {table = ''} = {}) {
   const m = member(club, id);
   m.request = {amount: amount(amt), note: note(why), at: now};
+  if (typeof table === 'string' && table) m.request.table = table.slice(0, 40);
+  if (creditOf(m) && amt > available(m)) m.request.atLimit = true;
   return m.request;
+}
+
+// Throws if a request may not be granted with chips: a credit player at
+// their limit is never given chips past it (#404).
+export function checkGrant(club, id) {
+  const m = club.members[id];
+  if (m?.request?.atLimit) throw new Error(`${m.name} is at their credit limit: raise it, or say no.`);
 }
 
 export function cancelRequest(club, id) {
@@ -99,11 +144,13 @@ export const REQUEST_LOG = 100;
 // (m.answer: {asked, given, outcome, note, at}), and the club keeps it in
 // club.requestLog (newest last, REQUEST_LOG at most). `outcome` is
 // 'granted' or 'declined'; `note` is the reason for a decline; `by` who
-// answered when it wasn't the host (an assistant or agent).
-export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', now = Date.now()} = {}) {
+// answered when it wasn't the host (an assistant or agent). `limit`: the
+// credit limit was raised to it instead of chips given (#404; `given` is
+// the extra credit, so older pages read it as granted).
+export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', limit = null, now = Date.now()} = {}) {
   const m = member(club, id);
   if (!m.request) return null;
-  const a = {asked: m.request.amount, given, outcome, note: note(why), at: now};
+  const a = {asked: m.request.amount, given, outcome, note: note(why), at: now, ...(limit != null ? {limit} : {})};
   m.answer = a;
   m.request = null;
   club.requestLog ??= [];
@@ -116,6 +163,7 @@ export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', 
 export function grantRequest(club, id, amt, now = Date.now()) {
   const m = member(club, id);
   if (!m.request) throw new Error('There’s no request to grant.');
+  checkGrant(club, id);
   const given = amt ?? m.request.amount;
   const e = issue(club, id, given, now, m.request.note, 'grant');
   answerRequest(club, id, 'granted', {given, now});
@@ -163,26 +211,31 @@ export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
   const floor = Math.max(min, ratholeMin(club, id, table, now));
   if (amt < floor) throw new Error(floor > min ? `You left this table with ${chipText(floor)} chips less than ${club.ratholeHours} hours ago, so buy in for at least that.` : `The minimum buy-in is ${min}.`);
   if (amt > max) throw new Error(`The maximum buy-in is ${chipText(max)}.`);
-  if (amt > m.balance) throw new Error(`You have ${chipText(m.balance)} chips in the club.`);
+  tooMuch(m, amt);
+  const credit = drawn(m, amt);
   m.balance -= amt;
   // `put`: what they've brought to the table in all (buy-in and top-ups), to
   // tell when they're up there (club-tables.js handsToStay).
   m.seat = {table, stack: amt, put: amt};
-  return record(club, m, 'buy_in', amt, now, {table});
+  return record(club, m, 'buy_in', amt, now, {table, ...(credit ? {credit} : {})});
 }
 
 // Adds chips to a seated member's stack between hands, capped so the stack
-// doesn't go over `max`. Returns null if nothing was moved.
+// doesn't go over `max`. Returns null if nothing was moved. More than is
+// available is refused, not cut down: the table adds what it asked for
+// (#404).
 export function topUp(club, id, amt, max, now = Date.now()) {
   const m = member(club, id);
   amount(amt);
   if (!m.seat) throw new Error('Not seated.');
-  const moved = Math.min(amt, max - m.seat.stack, m.balance);
+  const moved = Math.min(amt, max - m.seat.stack);
   if (moved <= 0) return null;
+  tooMuch(m, moved);
+  const credit = drawn(m, moved);
   m.balance -= moved;
   m.seat.stack += moved;
   if (m.seat.put != null) m.seat.put += moved;
-  return record(club, m, 'top_up', moved, now, {table: m.seat.table});
+  return record(club, m, 'top_up', moved, now, {table: m.seat.table, ...(credit ? {credit} : {})});
 }
 
 // The table handed back part of a top-up: added at the deal, it would have
@@ -207,17 +260,22 @@ export function setStack(club, id, stack) {
 }
 
 // Stands a member up: their stack goes back to their club balance, and the
-// rathole rule starts for that table.
+// rathole rule starts for that table. What they owed is paid back from it
+// first (`repaid`); what they still owe after is `owes` (#404).
 export function cashOut(club, id, now = Date.now()) {
   const m = club.members[id];
   if (!m?.seat) throw new Error('Not seated.');
   const {table, stack} = m.seat;
+  const repaid = Math.min(stack, owedBy(m));
   m.balance += stack;
   m.seat = null;
   m.left = {...m.left, [table]: {stack, at: now}};
-  return record(club, m, 'cash_out', stack, now, {table});
+  const owes = owedBy(m);
+  return record(club, m, 'cash_out', stack, now, {table, ...(repaid ? {repaid} : {}), ...(owes ? {owes} : {})});
 }
 
+// The club's books. `owedToClub` adds up negative balances (what credit
+// players and agents owe), `owedToPlayers` positive ones (#404).
 export function totals(club) {
   ensureChips(club);
   const ms = Object.values(club.members);
@@ -225,17 +283,21 @@ export function totals(club) {
   const onTables = ms.reduce((s, m) => s + (m.seat?.stack || 0), 0);
   // Buy-ins held by tournaments until they pay out or refund (club-tourneys.js).
   const inTourneys = (club.tourneys || []).reduce((s, t) => s + (t.held || 0), 0);
-  return {issued: club.chips.issued, reclaimed: club.chips.reclaimed, balances, onTables, inTourneys,
+  const owedToClub = ms.reduce((s, m) => s + owedBy(m), 0);
+  const owedToPlayers = ms.reduce((s, m) => s + Math.max(0, m.balance), 0);
+  return {issued: club.chips.issued, reclaimed: club.chips.reclaimed, balances, onTables, inTourneys, owedToClub, owedToPlayers,
     conserved: club.chips.issued - club.chips.reclaimed === balances + onTables + inTourneys};
 }
 
 // What a member is told about their account: balance, open request, and
-// their ledger entries after `since`.
+// their ledger entries after `since`, with their credit limit and what's
+// available to sit with (#404; older pages ignore them).
 export function accountBody(club, id, since = 0) {
   ensureChips(club);
   const m = club.members[id];
   return {
     type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null, answer: m?.answer || null,
+    credit: creditOf(m), available: available(m),
     entries: club.chips.ledger.filter(e => e.member === id && e.n > since),
   };
 }
