@@ -8,20 +8,19 @@
 //     name,
 //     tables:  [{name, game, sb, bb, minBB, maxBB, seats}]   as club-tables.js newTable
 //     people:  [{name, status, balance, ask, register}]       people you can switch to
-//     bots:    [{name, status, balance, table, ask, help, register}]  members the demo plays
+//     bots:    [{status, balance, table, ask, help, register}]  members the demo plays
 //     tourney: {name, buyIn, stack, structure, startsIn (ms), …}     as club-tourneys.js newTourney
 //     promo:   {kind: 'high_hand', …}                                as club-promos.js newPromo
 //   }
 // status: 'member' (the default) or 'pending' (asking to join); balance:
 // club chips (hundredths) once let in; table: the index of the table a bot
 // sits at (buying in for its maximum); ask: chips asked for; help: a help
-// request; register: entered in the tournament.
+// request; register: entered in the tournament. Each bot is one of Bankroll
+// Quest's players, with their name and face, picked for its table's stakes
+// (demo-bots.js, #415).
 
-const NAMES = [
-  'Ava', 'Ben', 'Cleo', 'Dev', 'Edie', 'Finn', 'Gus', 'Hana', 'Ivo', 'Jade', 'Kai', 'Lena', 'Milo', 'Nia', 'Omar',
-  'Pia', 'Quinn', 'Rosa', 'Sam', 'Tess', 'Uma', 'Vic', 'Wes', 'Xena', 'Yuri', 'Zoe', 'Abe', 'Bea', 'Cal', 'Dot',
-  'Eli', 'Fay', 'Gil', 'Hal', 'Ida', 'Jon', 'Kit', 'Lou', 'Mae', 'Ned', 'Ora', 'Pat', 'Roy', 'Sky', 'Ted', 'Val',
-];
+// `n` bots, the i-th from `each(i)`.
+const bots = (n, each) => Array.from({length: n}, (_, i) => each(i));
 
 // Balances that vary but are the same every time: 0 to 1,500 chips.
 const balance = i => ((i * 7919) % 31) * 5000;
@@ -46,8 +45,8 @@ export const SCENARIOS = [
       ],
       // 42 members: 13 at the tables, 3 asking to join, 2 asking for chips,
       // 1 asking for help, 12 registered for Sunday's tournament.
-      bots: NAMES.slice(0, 42).map((name, i) => ({
-        name, balance: balance(i),
+      bots: bots(42, i => ({
+        balance: balance(i),
         ...(i < 6 ? {table: 0} : i < 10 ? {table: 1} : i < 13 ? {table: 2} : {}),
         ...(i >= 39 ? {status: 'pending'} : {}),
         ...(i === 13 || i === 14 ? {ask: 10_000} : {}),
@@ -71,7 +70,7 @@ export const SCENARIOS = [
         {name: 'Player 2', balance: 10_000},
         {name: 'Player 3', status: 'pending'},
       ],
-      bots: NAMES.slice(0, 17).map(name => ({name, balance: 10_000, register: true})),
+      bots: bots(17, () => ({balance: 10_000, register: true})),
       // Starts on its own 3 minutes after the demo opens; late entry to level 3.
       tourney: {
         name: 'Thursday Turbo', game: 'nlhe', buyIn: 2_000, stack: 1500, startsIn: 3 * 60e3, minPlayers: 2, maxPlayers: 30, tableSize: 6, lateLevel: 3,

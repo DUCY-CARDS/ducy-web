@@ -3088,7 +3088,9 @@ function crowdedPos(n) {
 // its personality id (the GTO bot: the robot). Anyone else (other people at a
 // friends or club table) gets the first letter of their name.
 function avatarHtml(i) {
-  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' ? faceOf(seatId(i)) : '';
+  // A demo club's bots are Quest's players (demo.js, #415).
+  const demoBot = globalThis.ducyDemoBots?.get(state.seats[i].name);
+  const id = i === 0 && !watching ? tableAvatar() : mode === 'solo' ? faceOf(seatId(i)) : demoBot ? faceOf(demoBot) : '';
   if (id) return `<div class="pl-av"><img src="${avatarUrl(id)}" alt=""></div>`;
   const letter = [...String(state.seats[i].name || '?').trim()][0] || '?';
   return `<div class="pl-av none" aria-hidden="true">${esc(letter.toUpperCase())}</div>`;

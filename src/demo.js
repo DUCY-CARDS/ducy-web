@@ -121,6 +121,11 @@ function go(url) {
 // ---- the relay in the page ----
 
 let relayP = null;
+// Each bot member's Quest player by name (#415), for play.js to show their
+// face (a table's views name its players, and bots' names are the club's own).
+const demoBots = new Map();
+if (demo) globalThis.ducyDemoBots = demoBots;
+const pullBots = r => r.bots().then(list => { demoBots.clear(); for (const b of list) demoBots.set(b.name, b.quest); }).catch(e => console.warn(e));
 // The demo's relay (demo-relay.js), loaded only for a demo.
 const relay = () => (relayP ||= import('./demo-relay.js').then(m => {
   const storage = kv(relayDb(demo.id));
@@ -129,7 +134,8 @@ const relay = () => (relayP ||= import('./demo-relay.js').then(m => {
     identity: () => import('./identity.js').then(i => i.loadIdentity()),
     ready: async () => { const w = await import('../wasm/ducy_wasm.js'); await w.default(); return w; },
   });
-  r.onChange(() => drawSoon());
+  r.onChange(() => { pullBots(r); drawSoon(); });
+  pullBots(r);
   return r;
 }));
 
