@@ -313,6 +313,20 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   // The hands whose deal was chosen sent her no fair-deal result (it would
   // only say the deal wasn't fair); any other hand she checked is fair.
   for (const c of a.checks) assert.ok(c.ok, `hand ${c.hand}: ${c.why}`);
+
+  // Back at the table, the manager removes her (#414): she's told, with her
+  // result, and cashed out as when she leaves.
+  await a.table({type: 'join'});
+  await a.table({type: 'request_chips', amount: 20_000});
+  await until('her buy-in again', async () => (await stack()) === 20_000);
+  await cmd('remove_player', {table: tid, id: ann.id});
+  await until('removed', async () => !(await relay.club()).members[ann.id].seat);
+  const told = await until('her message', () => a.updates.find(u => u.type === 'removed' && u.chips != null));
+  assert.equal(told.name, 'Main');
+  const after = await relay.club();
+  assert.equal(after.members[ann.id].balance, 10_000 + told.chips);
+  assert.match(after.log.at(-1).text, /removed Ann from Main/);
+  assert.ok(totals(after).conserved);
   await relay.flush();
   o.net.close(); a.net.close();
 });

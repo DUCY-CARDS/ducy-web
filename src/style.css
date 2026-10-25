@@ -1924,6 +1924,18 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-lobby-form { display: flex; gap: 6px; }
 .cl-lobby-form .pl-text { flex: 1 1 auto; min-width: 0; width: auto; background: #fffaf0; color: #1d3a2c; border: 1px solid #c9b98f; }
 .cl-tcard .cl-acts { margin-left: auto; display: flex; gap: 6px; }
+/* Who's at a table, each with a ⋯ to remove them (#414). */
+.cl-at-table { flex-basis: 100%; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.cl-list .cl-at-table li, .cl-at-table li { display: flex; align-items: center; gap: 6px; padding: 0; border: 0; }
+.cl-tables .cl-at-table .btn-small { margin-left: 0; }
+.cl-at-table .cl-menu > summary { padding: 2px 8px; font-size: 13px; }
+.cl-at-table .link-btn { color: inherit; }
+.cl-tcard .cl-at-table .cl-menu-item { color: var(--fg); }
+.cl-at-table .cl-menu-items { left: 0; right: auto; }
+.pl-seat-tools { position: relative; display: inline-block; }
+.pl-seat-tools > summary { list-style: none; cursor: pointer; padding: 2px 8px; }
+.pl-seat-tools > summary::-webkit-details-marker { display: none; }
+.pl-seat-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 180px; display: flex; flex-direction: column; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 4px; }
 .cl-home-head .cl-badge { align-self: center; }
 @media (max-width: 640px) { .cl-home-name { font-size: 30px; } .cl-home-chips { margin-left: 0; } }
 

@@ -399,6 +399,12 @@ export function createClubServer({
       if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesNow()});
       if (r.table?.start && tableHost) started(tableHost.start(r.table.start));
       if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
+      // Removing a player from a table, or Undo (#414).
+      if (r.seat) {
+        if (!tableHost?.running(r.seat.table)) throw new Error('That table isn’t running.');
+        const p = r.seat.keep ? tableHost.keepPlayer(r.seat.table, r.seat.id) : tableHost.removePlayer(r.seat.table, r.seat.id, {now: r.seat.now, by: from});
+        Promise.resolve(p).catch(e => console.warn(e));
+      }
       if (r.table) broadcastTables();
       // An assistant's promotion command (#274).
       if (r.promos) { promoPaid(r.paid || []); broadcastPromos(); armPromos(); }
@@ -595,6 +601,17 @@ export function createClubServer({
       setPayout(club, id, places ?? null);
       changed();
       broadcastTourneys();
+    },
+    // Removing a player from a table without closing it (#414): after the
+    // hand in play, or `now`; keep_player is Undo.
+    remove_player: async ({table, id, now = false}) => {
+      if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
+      await tableHost.removePlayer(table, String(id), {now: !!now, by: club.ownerId || club.hostId});
+      changed();
+    },
+    keep_player: async ({table, id}) => {
+      await tableHost?.keepPlayer(table, String(id));
+      changed();
     },
     close_table: ({table}) => {
       const t = tableById(club, table);

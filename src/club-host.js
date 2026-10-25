@@ -22,6 +22,7 @@
 
 import { canJoin, cashOutTable, chipsForTable, handsToStay, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
 import { refundTopUp } from './club-chips.js';
+import { logAction } from './club-roles.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
 const NEXT_HAND_MS = 3000;
@@ -154,7 +155,11 @@ export function createTableHost({
   function send(tid, res) {
     for (const m of res.out) sendTable(m.to, {type: 'table', table: tid, update: m.data});
     // The host watching (#73): the engine's host view shows no hidden cards.
-    for (const fn of watchers.get(tid) || []) fn({type: 'state', seq: res.seq, view: res.state, turn_ms_left: res.turnMsLeft});
+    // Who sits where, and who's being removed, for the seats' ⋯ (#414).
+    const watching = watchers.get(tid);
+    if (!watching?.size) return;
+    const players = (res.players || []).map(p => ({id: p.client_id, seat: p.seat, ...removalOf(p.client_id, tid)}));
+    for (const fn of watching) fn({type: 'state', seq: res.seq, view: res.state, turn_ms_left: res.turnMsLeft, players});
   }
 
   // Takes in an engine result: who's seated, chips that came and went, the
@@ -170,7 +175,11 @@ export function createTableHost({
     // Chips people left with go back to their club balance.
     for (const d of res.departed || []) {
       if (at.get(d.client_id) === tid) at.delete(d.client_id);
+      r.removed?.delete(d.client_id);
+      const s = club().members[d.client_id]?.seat;
+      const removing = s?.table === tid ? s.removing : null, put = s?.put;
       if (leftTable(club(), d.client_id, num(d.chips))) { changed = true; chipsChanged(d.client_id); }
+      if (removing) removed(t, d.client_id, removing, num(d.chips), put);
     }
     // Top-ups the table capped at its maximum: the rest goes back to the balance.
     for (const f of res.refunds || []) {
@@ -180,6 +189,7 @@ export function createTableHost({
       chipsChanged(f.client_id);
     }
     const state = res.state;
+    r.view = state;
     r.complete = !!state.complete;
     r.handNumber = num(state.hand_number);
     // A hand just finished: for the host's hand history (#71).
@@ -190,12 +200,16 @@ export function createTableHost({
     }
     // Between hands the engine's count is the truth.
     if (r.complete) syncStacks(club(), r.players, r.handNumber);
+    // The hand is over: anyone the manager is removing stands up now (#414).
+    if (r.complete) for (const p of r.players) if (removalOf(p.client_id, tid).removing) standUp(tid, p);
     // The hit-and-run rule: each player hears how many hands they still owe
     // the table whenever that changes, so their Leave button can say so.
     if (t.stayHands) {
       r.stay ??= new Map();
       const done = completedHands(r);
       for (const p of r.players) {
+        // Being removed: the manager overrides the rule (#414).
+        if (removalOf(p.client_id, tid).removing) continue;
         const left = handsToStay(club(), p.client_id, t, done);
         const was = r.stay.get(p.client_id);
         if (was === left) continue;
@@ -496,6 +510,74 @@ export function createTableHost({
   // Hands finished at a table: the one shown counts once it's over.
   const completedHands = r => (r.complete ? r.handNumber : Math.max(0, r.handNumber - 1));
 
+  // ---- the manager removes a player (#414) ----
+  //
+  // Member `id` leaves table `tid` after the hand in play (at once if
+  // they're not in it), or `now`, folding out of it. They stand up through
+  // the engine's remove, as when they leave, so the cash-out (credit repaid
+  // first) and the rathole rule are the usual ones; the hit-and-run rule
+  // doesn't hold them. The pending removal is kept on their seat
+  // (seat.removing), so the manager's page shows it and a restart keeps it.
+  // `by`: who removed them, for the activity log.
+
+  // {removing: true, now?: true} while member `id` is being removed from `tid`, else {}.
+  function removalOf(id, tid) {
+    const s = club().members[id]?.seat;
+    return s?.table === tid && s.removing ? {removing: true, ...(s.removing.now ? {now: true} : {})} : {};
+  }
+
+  function removePlayer(tid, id, {now = false, by = null} = {}) {
+    const r = running.get(tid);
+    const m = club().members[id];
+    const p = r?.players.find(x => x.client_id === id);
+    if (!p || m?.seat?.table !== tid) throw new Error(`${m?.name || 'That player'} isn’t at that table.`);
+    m.seat.removing = {by, at: Date.now(), ...(now || m.seat.removing?.now ? {now: true} : {})};
+    save();
+    // Owing hands no longer blinds them off: they're going (#414).
+    Promise.resolve(call('clubMustPlay', tid, id, false)).catch(() => {});
+    const v = r.view?.seats?.[p.seat];
+    const inHand = !r.complete && !p.pending && v && !v.empty && !v.folded && !v.sitting_out;
+    if (now || !inHand) return standUp(tid, p);
+    // Watchers see "Leaving after this hand".
+    return run(tid, 'state');
+  }
+
+  // Undo, before the hand ends: they stay.
+  function keepPlayer(tid, id) {
+    const r = running.get(tid);
+    const s = club().members[id]?.seat;
+    if (!r || s?.table !== tid || !s.removing) return null;
+    if (s.removing.now || r.removed?.has(id)) throw new Error('They’re already leaving.');
+    delete s.removing;
+    // The hit-and-run count is told again, and holds again.
+    r.stay?.delete(id);
+    save();
+    return run(tid, 'state');
+  }
+
+  // The engine stands player `p` up: now between hands, else folding at
+  // their turn and gone when the hand ends. Once per removal.
+  function standUp(tid, p) {
+    const r = running.get(tid);
+    r.removed ??= new Set();
+    if (r.removed.has(p.client_id)) return null;
+    r.removed.add(p.client_id);
+    // Mid-hand the engine sends them nothing more: their page leaves now,
+    // rather than wait on a table that stopped for them.
+    if (!r.complete) sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'removed', name: tableById(club(), tid)?.name || ''}});
+    return run(tid, 'remove', p.seat);
+  }
+
+  // Member `id` was removed from table `t` with `chips`: the log, and their
+  // page (if it hasn't left yet).
+  function removed(t, id, how, chips, put) {
+    const c = club();
+    const name = c.members[id]?.name || id;
+    const who = !how.by || how.by === c.hostId || how.by === c.ownerId ? 'The host' : c.members[how.by]?.name || how.by;
+    logAction(c, how.by || c.hostId, `${who} removed ${name} from ${t.name}`);
+    sendTable(id, {type: 'table', table: t.id, update: {type: 'removed', name: t.name, chips, ...(put != null ? {net: chips - put} : {})}});
+  }
+
   // A member's command for table `tid`.
   async function handle(tid, id, cmd) {
     const t = tableById(club(), tid);
@@ -538,5 +620,5 @@ export function createTableHost({
 
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.players.length]));
 
-  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
+  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, removePlayer, keepPlayer, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
 }
