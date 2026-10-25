@@ -92,6 +92,8 @@ export function setClubsMode(m) {
 }
 const managerHref = hash => `manage.html${hash ? `#${hash}` : ''}`;
 const playerHref = hash => `./${hash ? `#${hash}` : ''}`;
+// Invite links open the player app, even when made on the club manager.
+const appBase = () => new URL('./', location.href).href;
 // Why the last create failed (the relay down or full), and the name it was
 // for: the form says so and offers to try again. New clubs are always on
 // (#152); a club run in a browser is still opened and moved as before.
@@ -823,7 +825,7 @@ async function deleteAlwaysOn() {
 
 function link() {
   const relay = relayUrl();
-  return inviteLink(club, location.href, relay !== wsUrl(DEFAULT_RELAY) ? relay : '', myName());
+  return inviteLink(club, appBase(), relay !== wsUrl(DEFAULT_RELAY) ? relay : '', myName());
 }
 
 // ---- joining ----
@@ -2196,7 +2198,7 @@ function agentFormHtml(code, x) {
 // The agent's link: like the club's, with their own invite token, so the
 // people who use it are their players.
 function agentLink(m) {
-  const u = new URL(location.href);
+  const u = new URL(appBase());
   u.search = '';
   u.searchParams.set('club', m.code);
   u.searchParams.set('invite', m.agentView.invite);
