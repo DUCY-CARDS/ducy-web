@@ -5,7 +5,10 @@
 // demo ends).
 //
 // Only the demo has this file, and with it two things no real club has:
-//   - demo bots: members this relay plays for, so one person can fill a table;
+//   - demo bots: members this relay plays for, so one person can fill a table.
+//     Each is one of Bankroll Quest's players, picked for the table's stakes
+//     and deciding as Quest's bots do (demo-bots.js, #415); they come and go
+//     now and then, and say a word in the lobby after a big pot;
 //   - Simulate: the next hand's outcome for the person playing (win, lose,
 //     bust), or ten hands played for them. The table, ledger and cash-out are
 //     the real ones (club-server.js, club-host.js); what's chosen here is only
@@ -22,6 +25,7 @@
 //   relay.fillSeats(id)       bots in the empty seats at member id's table
 //   relay.simulate(id, what)  'win' | 'lose' | 'bust' | 'play10' at id's table
 //   relay.status(id)          {table, plan, left}: for the Simulate panel
+//   relay.bots()              [{id, name, quest}]: their Quest players' faces
 //   relay.onChange(fn)        the status may have changed
 //   relay.flush()             resolves once everything is saved
 //
@@ -29,36 +33,52 @@
 // keys under `<code>|`, as club-room.js names them. `identity()` resolves to
 // the identity of the person in this page (identity.js), to act for them in
 // a simulated hand. `ready()` resolves to the initialised wasm module.
+// `think` (optional) decides for a bot as demo-bots.js thinker does; `churn`
+// {leave, come} is how often bots come and go (the tests hurry them).
 
 import { codeInfo, createClub, openClub } from '../relay/src/club-room.js';
+import { chatLine, fallbackMove, fits, pickPlayer, playerName, stakesOf, thinker } from './demo-bots.js';
+import { roll } from './quest-rooms.js';
 import { createIdentity, exportIdentity, importIdentity, signMessage } from './identity.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair, open as openBox, sharedKey } from './e2e.js';
 import { fairPlayer } from './fair-check.js';
 import { limits as tableLimits, tableById } from './club-tables.js';
 import { tableChip, toChip } from './chip-format.js';
+import { ratholeMin } from './club-chips.js';
 import { newCode } from './play-net.js';
 
 // Not limited by plans (#406), and never temporary (#395): its backup
 // banner means nothing in a demo.
 const LIMITS = {tables: 5, tourneysPerDay: 5};
 const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, temporary: false, at: Date.now()});
-const MAX_BOTS = 5;
+// Add bots fills a table's empty seats, up to a full nine-handed table.
+const MAX_BOTS = 8;
 // How long a bot (or the person, in a simulated hand) takes to act.
 const PACE_MS = 600, FAST_MS = 250;
 // Deals tried for a chosen outcome before giving up on that hand.
 const TRIES = 4000;
 const SIM = ['win', 'lose', 'bust', 'play10'];
 const GAME_BY_CARDS = {2: 'nlhe', 4: 'plo4', 5: 'plo5', 6: 'plo6'};
+// Bots come and go (#415): the chance one gets up after a hand, and that a
+// table short of its bots gets one back, each time they're checked (5 s).
+const LEAVE_CHANCE = 0.03, COME_CHANCE = 0.25;
 
 const num = v => Number(v) || 0;
 const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+// A scenario's dice, so its bots are the same people every time it starts.
+const seedOf = text => Math.floor(roll(0, 'demo', text) * 2 ** 31);
 
-export function createDemoRelay({storage, identity, ready}) {
+export function createDemoRelay({storage, identity, ready, think = null, churn = {leave: LEAVE_CHANCE, come: COME_CHANCE}}) {
   const rooms = new Map(); // code → room (see roomFor)
   const listeners = new Set();
   const changed = () => { for (const f of listeners) try { f(); } catch (e) { console.warn(e); } };
   let wasm = null;
   const wasmReady = () => (wasm ||= Promise.resolve(ready()));
+  think ||= thinker(wasmReady);
+  let thinkWarned = false;
+  // The Regulars' names (id → name), from the engine.
+  let regulars = null;
+  const regularNames = async () => (regulars ||= new Map(((await wasmReady()).botPersonalities?.() || []).map(p => [p.id, p.name])));
 
   function roomFor(code) {
     let room = rooms.get(code);
@@ -78,6 +98,7 @@ export function createDemoRelay({storage, identity, ready}) {
         plans: new Map(), // member id → {kind, left, hand, opp, tries}
         rigged: new Set(), // `${member}|${hand}`: hands whose deal was chosen here
         seen: new Map(), // member id → {table, view}: their last table update
+        targets: {}, // table id → how many bots it keeps (they come and go)
       };
       rooms.set(code, room);
     }
@@ -103,9 +124,10 @@ export function createDemoRelay({storage, identity, ready}) {
     let record = (await room.store.get('demoRecord')) || DEMO_RECORD();
     Object.assign(room.pubs, (await room.store.get('memberPubs')) || {});
     for (const b of (await room.store.get('demoBots')) || []) {
-      room.bots.set(b.id, {id: b.id, name: b.name, ident: await importIdentity(b.identity), fair: fairPlayer(), online: false, inbox: Promise.resolve(), asked: 0, tourneys: new Set(), home: b.home || null});
+      room.bots.set(b.id, newBot(b, await importIdentity(b.identity), false));
       room.pubs[b.id] = b.pub;
     }
+    Object.assign(room.targets, (await room.store.get('demoTargets')) || {});
     room.hostKP = await keyPairFromJSON(await room.store.get('hostKey'));
     const server = await openClub({
       storage: room.store,
@@ -269,7 +291,37 @@ export function createDemoRelay({storage, identity, ready}) {
         await botSends(room, bot, {type: 'table', table: `tourney:${t.id}`, cmd: {type: 'join'}});
       }
     }
+    if (want) await comeBack(room);
   }
+
+  // A table short of the bots it keeps (one got up) now and then gets one:
+  // a bot member who'd sit in that game and isn't playing, or a new one.
+  async function comeBack(room) {
+    const server = await room.server;
+    const club = server.club;
+    for (const [tid, keep] of Object.entries(room.targets)) {
+      const t = tableById(club, tid);
+      if (!t || t.status !== 'open' || Math.random() >= churn.come) continue;
+      const bots = [...room.bots.values()];
+      if (bots.filter(b => b.home === tid).length >= keep) continue;
+      if (full(room, server, t)) continue;
+      const busy = id => (club.tourneys || []).some(x => ['scheduled', 'running'].includes(x.status) && x.entries.some(e => e.member === id && e.place == null));
+      const idle = bots.filter(b => b.online && !b.home && b.quest && fits(b.quest, stakesOf(t)) && club.members[b.id]?.status === 'member' && !club.members[b.id].seat && !busy(b.id) && canBuyIn(club, b, t));
+      if (!idle.length) { await addBot(room, t); changed(); continue; }
+      const bot = idle[Math.floor(Math.random() * idle.length)];
+      bot.home = tid;
+      await saveBot(room, bot);
+      await sitHome(room, bot);
+      changed();
+    }
+  }
+
+  // Whether table `t` has no seat for another bot: one is kept for a person
+  // until someone who isn't a bot sits there.
+  const full = (room, server, t) => {
+    const people = Object.values(server.club.members).some(m => m.seat?.table === t.id && !room.bots.has(m.id));
+    return (server.seatedCounts()[t.id] || 0) >= t.seats - (people ? 0 : 1);
+  };
 
   // A bot that has a table of its own (a demo club's start) but isn't at it
   // (the table started again without it) sits down there again.
@@ -277,7 +329,8 @@ export function createDemoRelay({storage, identity, ready}) {
     const server = await room.server;
     const t = bot.home && tableById(server.club, bot.home);
     if (!t || t.status !== 'open' || server.club.members[bot.id]?.status !== 'member') return;
-    if ((server.seatedCounts()[t.id] || 0) >= t.seats - 1) return; // room for the person
+    if (full(room, server, t)) return;
+    if (!canBuyIn(server.club, bot, t)) { bot.home = null; await saveBot(room, bot); return; }
     const {max} = tableLimits(t);
     if (num(server.club.members[bot.id].balance) < max) await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
@@ -289,21 +342,40 @@ export function createDemoRelay({storage, identity, ready}) {
     await server.message({from: bot.id, data: await signMessage(bot.ident, {club: server.club.code, ...body})});
   }
 
+  // A bot as this relay keeps it, from its saved record: `quest` is the
+  // Quest player it is (demo-bots.js) and `seed` its bot's dice.
+  const newBot = (b, ident, online) => ({id: b.id, name: b.name, quest: b.quest || null, seed: b.seed || 1, ident, fair: fairPlayer(), online, inbox: Promise.resolve(), asked: 0, tourneys: new Set(), home: b.home || null, hand: 0});
+
+  // A bot's table of its own, kept for the next time the demo opens.
+  async function saveBot(room, bot) {
+    const saved = (await room.store.get('demoBots')) || [];
+    const b = saved.find(x => x.id === bot.id);
+    if (b) b.home = bot.home;
+    await room.store.put('demoBots', saved);
+  }
+
   // A bot asks to join with the club's invite and, unless it's left asking
   // (`pending`), is let in and given `balance` chips; at table `t` it buys
   // in for the table's maximum (given too). All through the club. A bot
   // added while someone sits at its table (`online`) is there at once;
-  // otherwise it comes online with the people (syncBots).
-  async function addBot(room, t, {name = '', balance = null, pending = false, online = true} = {}) {
+  // otherwise it comes online with the people (syncBots). It's one of
+  // Quest's players who'd sit at `t` (or the club's smallest game), picked
+  // with `r` (Math.random, or a scenario's dice).
+  async function addBot(room, t, {balance = null, pending = false, online = true, r = Math.random} = {}) {
     const server = await room.server;
     const club = server.club;
     const ident = await createIdentity();
     const keys = await newKeyPair({keep: true});
     const saved = (await room.store.get('demoBots')) || [];
-    name ||= `Bot ${saved.length + 1}`;
-    saved.push({id: ident.id, name, identity: await exportIdentity(ident), pub: keys.pub, keys: await keyPairToJSON(keys), home: t?.id || null});
+    const names = await regularNames();
+    const taken = new Set([...saved.map(b => b.quest), ...Object.values(club.members).map(m => m.name)]);
+    const stakes = stakesOf(t || [...club.tables || []].sort((a, b) => a.bb - b.bb)[0]);
+    const quest = pickPlayer(stakes, r, taken, names) || pickPlayer(stakes, r, new Set(), names);
+    const name = playerName(quest, names);
+    const rec = {id: ident.id, name, quest, seed: Math.floor(r('seed') * 2 ** 31) + 1, identity: await exportIdentity(ident), pub: keys.pub, keys: await keyPairToJSON(keys), home: t?.id || null};
+    saved.push(rec);
     await room.store.put('demoBots', saved);
-    const bot = {id: ident.id, name, ident, fair: fairPlayer(), online, inbox: Promise.resolve(), asked: 0, tourneys: new Set(), home: t?.id || null};
+    const bot = newBot(rec, ident, online);
     room.bots.set(bot.id, bot);
     room.pubs[bot.id] = keys.pub;
     if (online) await server.message({from: bot.id, event: 'open'});
@@ -333,6 +405,11 @@ export function createDemoRelay({storage, identity, ready}) {
     if (u.type !== 'state') return;
     bot.view = u;
     const v = u.view, me = v.seats[0];
+    const hand = num(v.hand_number);
+    if (v.complete && hand && hand !== bot.hand) {
+      bot.hand = hand;
+      afterHand(room, bot, tid, v);
+    }
     // Out of chips between hands: more from its club balance (topped up first).
     if (v.complete && !num(me.stack) && Date.now() - bot.asked > 10_000) {
       bot.asked = Date.now();
@@ -340,6 +417,8 @@ export function createDemoRelay({storage, identity, ready}) {
         const server = await room.server;
         const t = tableById(server.club, tid);
         if (!t) return;
+        // It can't buy in here yet (the rathole rule): it gets up instead.
+        if (!canBuyIn(server.club, bot, t)) { await getUp(room, bot, tid); return; }
         const {max} = tableLimits(t);
         if (num(server.club.members[bot.id]?.balance) < max) await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
         await botSends(room, bot, {type: 'table', table: tid, cmd: {type: 'request_chips', amount: max}});
@@ -348,15 +427,45 @@ export function createDemoRelay({storage, identity, ready}) {
     if (v.legal && !v.complete) later(room, bot.id, tid, u, cmd => botSends(room, bot, {type: 'table', table: tid, cmd}));
   }
 
-  // Acts for `who` after a moment, if the turn is still theirs then.
+  // After a hand a bot played (#415): a word in the lobby after a big pot,
+  // and now and then it gets up and goes (cashing out as anyone does), so a
+  // seat opens; comeBack fills it again later. Not while someone's
+  // simulating at its table, nor in a tournament.
+  function afterHand(room, bot, tid, v) {
+    const me = v.seats[0];
+    const line = bot.quest && me.cards && chatLine(bot.quest, num(me.net), num(v.big_blind));
+    if (line) inRoom(room, () => botSends(room, bot, {type: 'lobby_say', text: line}));
+    if (bot.home !== tid || !room.targets[tid] || Math.random() >= churn.leave) return;
+    // The game goes on: two bots stay, and no one gets up while someone simulates.
+    if ([...room.plans.values()].some(p => p.table === tid)) return;
+    if ([...room.bots.values()].filter(b => b.home === tid).length < 3) return;
+    inRoom(room, () => getUp(room, bot, tid));
+  }
+
+  async function getUp(room, bot, tid) {
+    if (bot.home === tid) bot.home = null;
+    await saveBot(room, bot);
+    await botSends(room, bot, {type: 'table', table: tid, cmd: {type: 'leave'}});
+    changed();
+  }
+
+  // Whether `bot` can buy in at `t`: someone who left it with more than its
+  // maximum can't, until the rathole rule's window has passed.
+  const canBuyIn = (club, bot, t) => ratholeMin(club, bot.id, t.id) <= tableLimits(t).max;
+
+  // Acts for `who` after a moment, if the turn is still theirs then. A bot
+  // thinks meanwhile (in a worker), so the room goes on.
   function later(room, who, tid, u, sendCmd) {
     const plan = planAt(room, tid, u.view);
-    setTimeout(() => inRoom(room, async () => {
-      const last = room.bots.get(who)?.view || room.seen.get(who)?.u;
-      if (last?.seq !== u.seq) return;
-      const a = decide(room, who, tid, u.view);
-      if (a) await sendCmd({type: 'act', seq: u.seq, ...a});
-    }), plan?.kind === 'play10' ? FAST_MS : PACE_MS);
+    const pace = plan?.kind === 'play10' ? FAST_MS : PACE_MS;
+    const start = Date.now();
+    decide(room, who, tid, u.view).catch(e => { console.warn('demo bot:', e); return null; }).then(a => {
+      setTimeout(() => inRoom(room, async () => {
+        const last = room.bots.get(who)?.view || room.seen.get(who)?.u;
+        if (last?.seq !== u.seq || !a) return;
+        await sendCmd({type: 'act', seq: u.seq, ...a});
+      }), Math.max(0, pace - (Date.now() - start)));
+    });
   }
 
   // ---- simulating (the person in this page) ----
@@ -378,7 +487,8 @@ export function createDemoRelay({storage, identity, ready}) {
     const v = u.view, hand = num(v.hand_number);
     if (v.complete && hand && hand !== plan.counted && (plan.kind === 'play10' ? !!v.seats[0].cards : hand === plan.hand)) {
       plan.counted = hand;
-      if (plan.kind === 'play10') plan.left--;
+      // Out of chips, she's dealt no more hands: Play 10 hands ends there.
+      if (plan.kind === 'play10') plan.left = num(v.seats[0].stack) > 0 ? plan.left - 1 : 0;
       else if (plan.kind === 'bust' && num(v.seats[0].stack) > 0 && ++plan.tries < 3) plan.hand = null;
       else plan.left = 0;
       if (plan.left <= 0) room.plans.delete(id);
@@ -399,8 +509,9 @@ export function createDemoRelay({storage, identity, ready}) {
 
   // What `who` does now: in a hand whose outcome is chosen, the person and
   // the bot against them bet it in and the rest get out of the way;
-  // otherwise bots mostly check and call, now and then betting or folding.
-  function decide(room, who, tid, v) {
+  // otherwise a bot plays as its Quest player would (#415), and the person
+  // (Play 10 hands) mostly checks and calls.
+  async function decide(room, who, tid, v) {
     const L = v.legal;
     if (!L) return null;
     const passive = L.can_check ? {kind: 'check', amount: 0} : {kind: 'call', amount: 0};
@@ -417,12 +528,26 @@ export function createDemoRelay({storage, identity, ready}) {
       const bettor = plan.kind === 'win' ? 'target' : 'opp';
       return role === bettor && L.bet ? to(pot * 0.75) : passive;
     }
-    if (!room.bots.has(who)) return range && Math.random() < 0.2 ? to(num(v.current_bet) + pot / 2) : passive;
-    const r = Math.random();
-    // A tournament needs some all-ins to move along.
-    if (tid.startsWith('tourney:') && r < 0.1) return {kind: 'allin', amount: 0};
-    if (range && r < 0.15) return to(num(v.current_bet) + pot * 0.6);
-    if (!L.can_check && (r > 0.9 || (num(L.call) > num(v.seats[0].stack) / 2 && r > 0.5))) return {kind: 'fold', amount: 0};
+    const bot = room.bots.get(who);
+    if (!bot) {
+      // Quest's players bet big: she lets a big bet go rather than call off her stack.
+      if (!L.can_check && num(L.call) > num(v.seats[0].stack) / 3) return {kind: 'fold', amount: 0};
+      return range && Math.random() < 0.2 ? to(num(v.current_bet) + pot / 2) : passive;
+    }
+    let m = null;
+    if (bot.quest) {
+      try {
+        m = await think(bot.id, bot.quest, bot.seed, v);
+      } catch (e) {
+        if (!thinkWarned) console.warn('demo bots play by style:', e.message);
+        thinkWarned = true;
+      }
+    }
+    m ||= fallbackMove(bot.quest, v);
+    // Kept legal, as the table would: in whole chips, within the range.
+    if (m.kind === 'allin') return {kind: 'allin', amount: 0};
+    if ((m.kind === 'bet' || m.kind === 'raise') && range) return to(num(m.amount));
+    if (m.kind === 'fold' && !L.can_check) return {kind: 'fold', amount: 0};
     return passive;
   }
 
@@ -526,8 +651,12 @@ export function createDemoRelay({storage, identity, ready}) {
         const tables = [];
         for (const t of c.tables || []) tables.push(tableById(server.club, await server.run('new_table', {table: t})));
         const asks = [], helps = [], registers = [];
-        for (const b of c.bots || []) {
-          const bot = await addBot(room, tables[b.table] ?? null, {name: b.name, balance: b.balance ?? 0, pending: b.status === 'pending', online: false});
+        // Its bots are Quest's players, the same ones every time it starts.
+        const seed = seedOf(scenario.id);
+        for (const [i, b] of (c.bots || []).entries()) {
+          const t = tables[b.table] ?? null;
+          const bot = await addBot(room, t, {balance: b.balance ?? 0, pending: b.status === 'pending', online: false, r: key => roll(seed, i, key)});
+          if (t) room.targets[t.id] = (room.targets[t.id] || 0) + 1;
           if (b.ask) asks.push([bot.ident, b.ask]);
           if (b.help) helps.push([bot.ident, b.help]);
           if (b.register) registers.push(bot.ident);
@@ -549,6 +678,7 @@ export function createDemoRelay({storage, identity, ready}) {
           for (const ident of registers) await as(ident, {type: 'tourney', tourney: tid, op: 'register'});
         }
         if (c.promo) await server.run('new_promo', {promo: c.promo});
+        await room.store.put('demoTargets', room.targets);
         await server.flush();
         return {code, hostId: made.hostId, invite: made.invite, name: c.name};
       });
@@ -570,7 +700,11 @@ export function createDemoRelay({storage, identity, ready}) {
         const server = await room.server;
         const free = t.seats - (server.seatedCounts()[t.id] || 0);
         const bots = [...room.bots.keys()].filter(b => server.club.members[b]?.seat?.table === t.id).length;
-        for (let i = 0; i < Math.min(free, MAX_BOTS - bots); i++) await addBot(room, t);
+        const n = Math.min(free, MAX_BOTS - bots);
+        for (let i = 0; i < n; i++) await addBot(room, t);
+        // The table keeps them as they come and go.
+        room.targets[t.id] = Math.max(room.targets[t.id] || 0, bots + Math.max(0, n));
+        await room.store.put('demoTargets', room.targets);
         changed();
       });
     },
@@ -589,6 +723,13 @@ export function createDemoRelay({storage, identity, ready}) {
       const t = room && await tableOf(room, id);
       const plan = room?.plans.get(id);
       return {table: t ? {id: t.id, name: t.name} : null, plan: plan ? {kind: plan.kind, left: plan.left, dealt: plan.hand != null} : null};
+    },
+    // Each bot member and its Quest player, for their face at the table
+    // (#415): [{id, name, quest}].
+    async bots() {
+      const room = await demoRoom();
+      const saved = room ? (await room.store.get('demoBots')) || [] : [];
+      return saved.filter(b => b.quest).map(({id, name, quest}) => ({id, name, quest}));
     },
     onChange(fn) { listeners.add(fn); },
     async flush() {

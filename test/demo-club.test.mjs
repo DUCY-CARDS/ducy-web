@@ -17,6 +17,12 @@ const { newKeyPair, open: openBox, sharedKey } = await import('../src/e2e.js');
 const { createDemoRelay } = haveWasm ? await import('../src/demo-relay.js') : {};
 const { fairPlayer } = haveWasm ? await import('../src/fair-check.js') : {};
 const { totals } = await import('../src/club-chips.js');
+const { fits, pickPlayer, playerName, stakesOf, thinker } = await import('../src/demo-bots.js');
+const { personOf } = await import('../src/quest-people.js');
+const { ORDER } = await import('../src/ladder.js');
+const { botAvatar } = await import('../src/avatars.js');
+// The Regulars' names, as the engine has them.
+const regulars = () => new Map((ducy?.botPersonalities?.() || []).map(p => [p.id, p.name]));
 
 // The demo clubs' tables keep their clocks going (club-host.js): done once the tests are.
 test.after(() => setTimeout(() => process.exit(process.exitCode ?? 0), 200));
@@ -130,20 +136,116 @@ test('each demo club starts in its scenario’s state, and starts again the same
   }
 });
 
+test('Quest’s players fill a demo club’s tables, play through the real table code, come and go, and the books add up', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const { scenarioById } = await import('../src/demo-scenarios.js');
+  const sc = scenarioById('busy');
+  const mem = new Map();
+  const storage = {get: async k => structuredClone(mem.get(k)), put: async (k, v) => { mem.set(k, structuredClone(v)); }, delete: async k => { mem.delete(k); }};
+  const owner = await createIdentity();
+  const people = [];
+  for (const p of sc.club.people) people.push({...p, ident: await createIdentity()});
+  // Their decisions: ducy's SeatBot, counted (a ducy-wasm without it plays by style).
+  const base = thinker(async () => ducy);
+  let thought = 0, failed = 0;
+  const think = async (...a) => { try { const m = await base(...a); thought++; return m; } catch (e) { failed++; throw e; } };
+  const relay = createDemoRelay({storage, identity: async () => people[0].ident, ready: async () => ducy, think, churn: {leave: 0.3, come: 1}});
+  const made = await relay.setUp(sc, {owner, people});
+  const seated = sc.club.bots.filter(b => b.table != null).length;
+  await until('bots seated', async () => Object.values((await relay.club()).members).filter(m => m.seat).length === seated, 30_000);
+
+  // Each is a Quest player who'd sit in that game, under their own name.
+  let club = await relay.club();
+  const quest = Object.fromEntries((await relay.bots()).map(b => [b.id, b.quest]));
+  assert.equal(Object.keys(quest).length, sc.club.bots.length, 'every bot is a Quest player');
+  // Their names are their own in the club: the table shows faces by name.
+  const names = Object.values(club.members).map(m => m.name);
+  assert.equal(new Set(names).size, names.length, 'no two members with one name');
+  for (const [id, q] of Object.entries(quest)) {
+    const m = club.members[id];
+    assert.equal(m.name, playerName(q, regulars()), q);
+    const t = m.seat && club.tables.find(x => x.id === m.seat.table);
+    if (t) assert.ok(fits(q, stakesOf(t)), `${q} at ${t.name}`);
+  }
+
+  // Player 1 opens the club and sits at High 5/10: the bots come online and play.
+  const p = await person(relay, made.code, people[0].ident, 'Player 1');
+  await p.send({type: 'hello', key: p.keys.pub});
+  await until('the host key', () => p.inbox.some(m => m.body?.type === 'host_key'));
+  const high = club.tables.find(t => t.name === 'High 5/10');
+  p.sit(high.id);
+  await p.table({type: 'join'});
+  await p.table({type: 'request_chips', amount: 40_000});
+  const done = () => p.updates.filter(u => u.type === 'state' && u.view.complete && u.view.seats[0].cards);
+  await until('four hands played', () => new Set(done().map(u => u.view.hand_number)).size >= 4, 180_000);
+  const acts = done().flatMap(u => u.view.events).filter(e => e.seat !== 0 && ['call', 'bet', 'raise', 'fold', 'check'].includes(e.type));
+  assert.ok(acts.length > 0, 'the bots act');
+  if (typeof ducy.SeatBot === 'function') assert.ok(thought > 0 && failed === 0, `SeatBot decided: ${thought}, failed: ${failed}`);
+
+  // One gets up (cashing out as anyone does) and a seat opens; one sits down in it later.
+  const isBot = e => e.member in quest || (e.member !== people[0].ident.id && !people.some(x => x.ident.id === e.member));
+  await until('a bot to leave and one to sit back down', async () => {
+    const ledger = (await relay.club()).chips.ledger;
+    const out = ledger.findIndex(e => e.kind === 'cash_out' && isBot(e));
+    return out >= 0 && ledger.slice(out + 1).some(e => e.kind === 'buy_in' && isBot(e) && e.table === ledger[out].table);
+  }, 120_000);
+
+  await p.table({type: 'leave'});
+  await until('Player 1 cashed out', async () => !(await relay.club()).members[people[0].ident.id].seat);
+  await relay.flush();
+  club = await relay.club();
+  assert.ok(totals(club).conserved, 'every chip accounted for');
+  p.net.close();
+  await relay.flush();
+});
+
 test('only the demo loads the demo relay: no real club or relay code imports it', () => {
   const files = [
     ...readdirSync(new URL('../src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `src/${f}`),
     ...readdirSync(new URL('../relay/src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `relay/src/${f}`),
     'relay/dev-server.mjs',
   ];
-  const importers = files.filter(f => /['"][./]*(?:src\/)?demo-relay\.js['"]/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')));
-  assert.deepEqual(importers, ['src/demo.js']);
+  const using = name => files.filter(f => new RegExp(`['"][./]*(?:src/)?${name.replace('.', '\\.')}['"]`).test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')));
+  assert.deepEqual(using('demo-relay.js'), ['src/demo.js']);
   // demo.js loads it only for a demo, when it runs.
   const demo = readFileSync(new URL('../src/demo.js', import.meta.url), 'utf8');
   assert.doesNotMatch(demo, /^import .*demo-relay/m);
-  for (const f of ['relay/src/club-room.js', 'relay/src/worker.js', 'relay/dev-server.mjs', 'src/club-server.js', 'src/club-host.js', 'src/club-engine.js']) {
-    assert.doesNotMatch(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /simulate|riggable|pickSeed/i, f);
+  // The demo's bot players (#415): only the demo relay and their worker.
+  assert.deepEqual(using('demo-bots.js'), ['src/demo-bot-worker.js', 'src/demo-relay.js']);
+  assert.deepEqual(files.filter(f => /demo-bot-worker/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'))), ['src/demo-bots.js']);
+  for (const f of ['relay/src/club-room.js', 'relay/src/worker.js', 'relay/dev-server.mjs', 'src/club-server.js', 'src/club-host.js', 'src/club-engine.js', 'src/club-roles.js', 'src/club.js']) {
+    assert.doesNotMatch(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /simulate|riggable|pickSeed|demo-bots|SeatBot|pickPlayer/i, f);
   }
+});
+
+test('demo bots are Quest’s players, picked as Quest’s line-ups pick them for the stakes', () => {
+  const regs = new Set([...ORDER]);
+  for (const [stakes, bb] of [['1/2', 200], ['2/5', 500], ['5/10', 1000], ['10/20', 2000], ['25/50', 5000], ['50/100', 10000]]) {
+    assert.equal(stakesOf({bb}), stakes);
+    const picks = [];
+    for (let table = 0; table < 20; table++) {
+      // A table of nine, no one twice.
+      const taken = new Set();
+      for (let i = 0; i < 9; i++) {
+        const id = pickPlayer(stakes, Math.random, taken);
+        assert.ok(id, `${stakes}: someone to sit`);
+        assert.ok(fits(id, stakes), `${stakes}: ${id}`);
+        assert.ok(!taken.has(playerName(id)), `${stakes}: one ${playerName(id)}`);
+        taken.add(id).add(playerName(id));
+        picks.push(id);
+      }
+    }
+    const generic = picks.filter(id => personOf(id)).length / picks.length;
+    // Low stakes are mostly the rooms' own players; big games all Regulars.
+    if (stakes === '1/2') assert.ok(generic > 0.75, `1/2: ${generic} generic`);
+    if (stakes === '5/10') assert.ok(generic > 0.3 && generic < 0.75, `5/10: ${generic} generic`);
+    if (stakes === '25/50') assert.equal(generic, 0);
+    // Everyone has a face: a generic player's drawn one, or a Regular's.
+    for (const id of picks) assert.ok(personOf(id)?.avatar || botAvatar(id) || regs.has(id), id);
+  }
+  // A scenario's dice give the same line-up every time.
+  const r = key => [0.1, 0.5, 0.9][key.length % 3];
+  assert.equal(pickPlayer('1/2', r), pickPlayer('1/2', r));
+  assert.ok(stakesOf({bb: 100}) === '1/2' && stakesOf(null) === '1/2');
 });
 
 test('a real club room refuses the demo’s simulate and bot commands', {skip: !haveWasm && 'no wasm build'}, async () => {
@@ -245,7 +347,8 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   const mem = new Map();
   const storage = {get: async k => structuredClone(mem.get(k)), put: async (k, v) => { mem.set(k, structuredClone(v)); }, delete: async k => { mem.delete(k); }};
   const owner = await createIdentity(), ann = await createIdentity();
-  const relay = createDemoRelay({storage, identity: async () => ann, ready: async () => ducy});
+  // The bots play by style here, as with a ducy-wasm without SeatBot (#415).
+  const relay = createDemoRelay({storage, identity: async () => ann, ready: async () => ducy, think: async () => { throw new Error('no SeatBot'); }});
   const code = 'DDDD-EEEE';
 
   // The manager makes the club, as club-owner.js does, and opens a table.
@@ -279,8 +382,10 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   await relay.simulate(ann.id, 'win');
   assert.equal((await relay.club()).members[ann.id].seat.table, tid);
   await until('the hand won', async () => !(await relay.status(ann.id)).plan);
-  const bots = Object.values((await relay.club()).members).filter(m => m.name.startsWith('Bot '));
-  assert.equal(bots.length, 2, 'two bots for the two empty seats');
+  // Add bots: two of Quest's players, under their names (#415).
+  const added = await relay.bots();
+  assert.equal(added.length, 2, 'two bots for the two empty seats');
+  for (const b of added) assert.equal((await relay.club()).members[b.id].name, playerName(b.quest, regulars()), b.quest);
   const won = await until('the stack after it', async () => (await relay.club()).members[ann.id].seat?.stack !== 20_000 && stack());
   assert.ok(won > 20_000, `won: ${won}`);
 
@@ -295,11 +400,15 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   const before = hands();
   await relay.simulate(ann.id, 'play10');
   await until('ten hands played', async () => !(await relay.status(ann.id)).plan, 240_000);
-  assert.ok(hands() - before >= 10, `${hands() - before} hands`);
+  // Quest's players bet big: losing it all ends the ten hands early.
+  const out = (await stack()) === 0;
+  assert.ok(out || hands() - before >= 10, `${hands() - before} hands`);
 
   // Bust: all of it, in up to three hands.
-  await relay.simulate(ann.id, 'bust');
-  await until('busted', async () => !(await relay.status(ann.id)).plan);
+  if (!out) {
+    await relay.simulate(ann.id, 'bust');
+    await until('busted', async () => !(await relay.status(ann.id)).plan);
+  }
   await until('the stack at 0', async () => (await stack()) === 0);
 
   // Leaving cashes her out through the real ledger: what she has left is
