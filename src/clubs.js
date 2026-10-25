@@ -8,8 +8,9 @@
 //   'play'   Bots (Train), and the table you're at: nothing from here
 //   'join'   your join requests and how they're going
 //   'host'   Start a game (Play): nothing from here
-//   'clubs'  Private clubs: the list of your clubs, joining one and creating
-//            one (#225); then a club's page (the address says which, see
+//   'clubs'  Private clubs: the list of your clubs (#225; joining one is
+//            Play's Enter a code, and creating one is on the club manager,
+//            #393); then a club's page (the address says which, see
 //            shownClub): the club you run, assistant and agent tools, or the
 //            one you belong to (balance, chips, tables to sit at)
 // The connections start with the page (startClubs), whichever tab is open,
@@ -27,7 +28,7 @@ import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './p
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
-  newClub, newMembership, parseInvite, playerReceive,
+  newClub, newMembership, playerReceive,
 } from './club.js';
 import { ensureChips, issue, ledgerCsv, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
@@ -44,7 +45,7 @@ import { bigMove, isBigMove } from './club-roles.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
-import { celebrateAtTable, joinTableVia, showFairCheck, tableName } from './play.js';
+import { celebrateAtTable, joinTableVia, showFairCheck } from './play.js';
 import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { hostPromosHtml, memberPromosHtml, promosPartHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { readServiceForm, servicesHtml } from './club-services-ui.js';
@@ -139,6 +140,7 @@ const STATUS_TEXT = {
   declined: 'The host declined your request',
   removed: 'You were removed from this club',
   bad_invite: 'That invite link isn’t valid any more; ask the host for a new one',
+  invite_only: 'This club takes requests by invite link only; ask the host for theirs',
   closed: 'The owner closed this club',
 };
 
@@ -541,8 +543,9 @@ const CONN = {on: 'Connected', unreachable: 'Club unreachable', reconnecting: 'R
 // A member's connection to a club (`n`, its playerNets entry), with what
 // still holds while it's down.
 function connText(n, meanwhile) {
-  // Paused by ducy, or a trial that ended (#265): the relay's reason.
-  if (n?.blocked) return esc(n.blocked);
+  // Paused by ducy, or a trial that ended (#265): the relay's reason. Plans
+  // and trials are the owner's business, on the club manager (#393).
+  if (n?.blocked) return mode === 'play' && /trial/i.test(n.blocked) ? 'This club is closed for now.' : esc(n.blocked);
   if (n?.online && n.hostHere) return CONN.on;
   if (n?.online) return `${CONN.unreachable}. ${meanwhile}`;
   if (n) return `${CONN.reconnecting} ${meanwhile}`;
@@ -627,9 +630,6 @@ function onSubmit(e) {
     promoCmd(promoF.dataset.code, id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
     return;
   }
-  // An invite link pasted on the list (#225).
-  const jf = e.target.closest('form[data-joinclub]');
-  if (jf) { e.preventDefault(); joinPasted(jf); return; }
   // Asking for help, or replying to a request (#192).
   const hf = e.target.closest('form[data-helpform]');
   if (hf) {
@@ -1390,7 +1390,7 @@ export function clubCrumb() {
 }
 
 // The list (#225): a card for each club (the ones you run or help run in
-// cream), each opening its page; then joining one and starting one.
+// cream), each opening its page; then where joining one is (#393).
 function clubListHtml() {
   const own = club || isRemote();
   const card = c => {
@@ -1412,15 +1412,9 @@ function clubListHtml() {
       h += card({href: clubHash(m.code), cream: helps(m), name: m.name || m.code, who, tables: (m.tables || []).length, waiting: helperWaiting(m), chips: m.balance || 0, quiet: true});
     } else h += card({href: 'join', name: m.name || m.code, who: STATUS_TEXT[m.status] || m.status, go: 'Your request'});
   }
-  h += '</div><div class="cl-club-acts">';
-  const named = myName() || tableName();
-  h += '<form class="cl-act-card" data-joinclub><span class="cl-act-title">Join a club</span>';
-  h += `<span class="cl-act-row"><input class="pl-text" name="link" aria-label="Invite link" placeholder="Invite link" autocomplete="off" spellcheck="false"><button class="btn-small" type="submit">Ask to join</button></span>`;
-  if (named) h += `<span class="cl-act-desc">As ${esc(named)}.</span>`;
-  h += '</form>';
-  // Starting and running a club are on the club manager.
-  if (!own) h += `<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Clubs are started and run on the club manager, a page of its own.</span><span class="cl-act-row"><a class="tr-start" href="${managerHref('clubs')}">Open the club manager</a></span></section>`;
-  return h + '</div>';
+  h += '</div>';
+  // Joining is Play's Enter a code, or the invite link itself (#393).
+  return h + '<p class="pl-desc">To join a club, enter its code on <a href="#lobby">Play</a>, or open the invite link its host sent you.</p>';
 }
 
 // What's waiting for you at the club you run: join and chip requests, and
@@ -1436,28 +1430,6 @@ function helperWaiting(m) {
   if (m.role === 'assistant' && m.admin) n += m.admin.pending.length + m.admin.members.filter(x => x.request).length + (m.admin.help?.length || 0);
   if (m.agent === 'yes' && m.agentView) n += m.agentView.recruits.length + m.agentView.players.filter(x => x.request).length;
   return n;
-}
-
-// Join a club's invite link, pasted on the list: with your name known, the
-// request goes straight away and Join shows how it's going; else Join asks
-// for your name first.
-function joinPasted(f) {
-  let inv = null;
-  try { inv = parseInvite(new URL(f.elements.link.value.trim(), location.href).href); } catch {}
-  if (!inv) { note = 'That isn’t a club invite link. Ask the club’s host for theirs.'; render(); return; }
-  if (!me) return;
-  const name = myName() || tableName();
-  if (name) {
-    invite = inv;
-    joinFromInvite(name);
-    location.hash = 'join';
-    return;
-  }
-  const u = new URL(f.elements.link.value.trim(), location.href);
-  const here = new URL(location.href);
-  for (const k of ['club', 'invite', 'host', 'name', 'by']) if (u.searchParams.has(k)) here.searchParams.set(k, u.searchParams.get(k));
-  history.replaceState(null, '', here.toString());
-  location.hash = 'join';
 }
 
 // Under the club tabs: only a warning when a local page uses the live relay
@@ -1878,6 +1850,14 @@ function settingsHtml() {
   h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
   h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
   h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
+  // Asking to join with the club code alone (#393): off by default, so only
+  // the invite link gets a request in. Play's Enter a code finds always-on
+  // clubs only (the relay's lookup).
+  if (remote) {
+    h += '<div class="pl-row"><span class="pl-label">Join by code</span><div class="pl-opts">';
+    h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${(club.codeJoin === true) === on ? ' on' : ''}" data-cl="code-join" data-on="${on ? 1 : 0}">${text}</button>`).join('');
+    h += `</div><span class="pl-desc">Let people ask to join with the club code, ${esc(club.code)}, as well as the invite link. You still let everyone in.</span></div>`;
+  }
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div><span class="pl-desc">How long the hands at your tables are kept for the history.</span></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
   if (remote) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
@@ -2422,6 +2402,7 @@ async function onClick(e) {
   else if (act === 'quick') { const f = b.closest('form'); if (f?.elements.amount) f.elements.amount.value = b.dataset.v; }
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
   else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
+  else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The host: agents.
@@ -2858,8 +2839,21 @@ export function openSeats() {
     .reduce((n, m) => n + (m.tables || []).filter(t => t.taken < t.seats).length, 0);
 }
 
-// Asks to join the club in invite `inv` (from a pasted invite link, on the
-// Join tab), as `name`.
+// Where Play's Enter a code (#393) goes for club code `code` (as normCode
+// gives it), without asking the relay: the club you run is on the club
+// manager, one you're in opens its page, and a request you sent shows on
+// Join. '' when it isn't one of yours.
+export function clubPage(code) {
+  const own = started ? myClubCode() : load(CLUB_KEY, null)?.code || load('ducyClubRemote', null)?.code || '';
+  if (code && code === own) return managerHref('clubs/own');
+  const m = (started ? memberships : load(MEMBERSHIPS_KEY, [])).find(x => x.code === code);
+  if (m?.status === 'member') return `#clubs/c/${encodeURIComponent(code)}`;
+  if (m?.status === 'new' || m?.status === 'pending') return '#join';
+  return '';
+}
+
+// Asks to join the club in invite `inv` (from an invite link, or by the
+// club's code with no invite token, #393), as `name`.
 export async function joinClub(inv, name) {
   await startClubs();
   if (!me) return;

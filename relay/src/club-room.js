@@ -84,6 +84,14 @@ export async function importClub(storage, env, code, claim = async () => {}) {
   return {hostId: identity.id};
 }
 
+// What anyone may learn from a club's code (GET /code/<code>, #393): that
+// it's a club; and, only when it lets people ask to join with the code,
+// its name and host ID, so they can. Nothing about its members or tables.
+export function codeInfo(club) {
+  if (club?.codeJoin !== true) return {kind: 'club', ask: false};
+  return {kind: 'club', ask: true, name: String(club.name || ''), hostId: club.hostId};
+}
+
 // The club server's plan and limits from its registry record (#265). An
 // older club with no record keeps the free limits.
 function planOf(record) {

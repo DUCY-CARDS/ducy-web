@@ -35,6 +35,12 @@
 //   POST /admin/revoke  {id}
 //   POST /admin/club/<code> {suspended, limits, plan, expires}
 //
+// What a code is (#393), for Play's Enter a code, public:
+//   GET /code/<code>   {kind: 'club', ask, name, hostId} for an always-on
+//                      club (name and hostId only when it lets people ask
+//                      to join with the code: club-room.js codeInfo), else
+//                      {kind: 'game'} (a friends table, or nothing)
+//
 // Services (src/club-services.js, service-http.js): an always-on club's
 // outside servers send
 //   POST /club/<code>/service   a signed envelope (identity.js), as JSON
@@ -43,7 +49,7 @@
 // allowed, over a limit, or the club is paused), 404 (no such club or
 // member), 409 (refused, e.g. not enough chips) or 429 (too fast).
 
-import { createClub, importClub, openClub } from './club-room.js';
+import { codeInfo, createClub, importClub, openClub } from './club-room.js';
 import { limitsFrom, registry } from './registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
@@ -148,6 +154,20 @@ export default {
       const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
       return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
     }
+    // What a code is (#393): a club (the registry knows it, its room says
+    // what it may tell), or else a game.
+    const look = url.pathname.match(/^\/code\/([^/]+)$/);
+    if (look && req.method === 'GET') {
+      const origin = req.headers.get('Origin');
+      const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
+      const headers = {'content-type': 'application/json', vary: 'Origin', ...(cors ? {'access-control-allow-origin': cors} : {})};
+      const code = decodeURIComponent(look[1]);
+      if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
+      const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
+      if (!has) return new Response(JSON.stringify({kind: 'game'}), {headers});
+      const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}`);
+      return new Response(res.body, {headers});
+    }
     const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
     if (svc) {
       const code = decodeURIComponent(svc[1]);
@@ -164,7 +184,8 @@ export default {
 };
 
 // The registry of always-on clubs (registry.js), one for the relay: limits
-// on creating them, and their usage. Only rooms reach it, except /usage.
+// on creating them, and their usage. Only rooms reach it, except /usage
+// and the /has behind /code (#393).
 export class Registry {
   constructor(state, env) {
     const s = state.storage;
@@ -434,6 +455,8 @@ export class Room {
     // /room/<code> WebSockets alone.
     const adm = url.pathname.match(/^\/admin\/(refresh|info)\//);
     if (adm) return this.adminRequest(adm[1], code);
+    // What anyone may learn from the club's code (#393), from the Worker.
+    if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club')));
     // A service's request, from the Worker (serviceHttp checked its shape).
     if (url.pathname.startsWith('/service/')) {
       const club = await this.club(code).catch(() => null);

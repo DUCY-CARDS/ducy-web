@@ -816,7 +816,6 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .sg-form.pj-form { flex: none; max-width: 480px; }
 .pj-field { display: flex; flex-direction: column; gap: 8px; }
 .pj-field .pl-text { width: 100%; box-sizing: border-box; }
-.sg-form .pl-text.pj-code { font: 600 22px var(--font-data); letter-spacing: 0.04em; padding: 12px 14px; text-transform: none; }
 .pj-meta { margin: 0; font-size: 14px; color: #5d6b55; }
 .pj-meta .link-btn { color: #b0391f; }
 /* A club invite: what you're joining (#185) */
@@ -1698,6 +1697,9 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .v3-join button { background: var(--v3-cream); color: var(--v3-felt); }
 .v3-btn-red { background: var(--v3-red); color: var(--v3-red-ink) !important; }
 .v3-or { color: var(--v3-muted); }
+.v3-join button:disabled { opacity: .6; cursor: progress; }
+/* What Enter a code found, when it can't go anywhere (#393). */
+.v3-join-note { margin: 12px 0 0; color: var(--v3-cream); max-width: 40em; }
 .v3-record { font-family: var(--v3-display); font-size: 28px; line-height: 1.1; }
 .v3-record.down { color: #e9836f; }
 .v3-record.none { font-size: 20px; color: var(--v3-muted); }

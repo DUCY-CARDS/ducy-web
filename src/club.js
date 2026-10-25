@@ -10,7 +10,9 @@
 // check the host's against the ID in the link.
 //
 // Player → host bodies:
-//   {type: 'join', club, invite, name}   ask to join (or update a pending request)
+//   {type: 'join', club, invite, name}   ask to join (or update a pending request);
+//                                        no invite: by the club's code, when the
+//                                        club allows it (codeJoin, #393)
 //   {type: 'hello', club, name, since}   a member or applicant checking in; `since`
 //                                        is the last ledger entry they have
 //   {type: 'chip_request', club, amount, note}   ask the host for chips (#67)
@@ -27,6 +29,7 @@
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
+//                                        | 'invite_only' (asked by code, #393)
 //   {type: 'account', club, balance, request, entries}   see club-chips.js
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
@@ -136,9 +139,13 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
       m.name = name;
       return {replies: [reply(club, id)], changed};
     }
+    // Asking with the club's code alone, no invite (#393): only when the club
+    // lets people (codeJoin, off by default). Otherwise they're told to ask
+    // for the invite link, and not the club's name.
+    if (!body.invite && club.codeJoin !== true) return {replies: [{to: id, body: {type: 'status', club: club.code, status: 'invite_only'}}], changed: false, reason: 'no invite'};
     // The club's link, or an agent's (#74): their recruits wait for the agent.
     const agent = body.invite && Object.values(club.members).find(a => a.agent === 'yes' && a.status === 'member' && a.agentInvite === body.invite);
-    if (body.invite !== club.invite && !agent) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
+    if (body.invite && body.invite !== club.invite && !agent) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
     // New, or asking again after being declined or removed.
     club.members[id] = {...m, id, name, status: 'pending', requestedAt: now};
     if (agent) club.members[id].agentOf = agent.id;

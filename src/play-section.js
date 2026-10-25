@@ -3,10 +3,11 @@
 //   #play / #practice   Bots (Train): a game you can resume, or the bots;
 //                       and whichever table you're at
 //   #ladder Ladder (Train): heads-up against the bots, easiest first (#212)
-//   #join   Join (Play): a code or a pasted link, for a table or a club
+//   #join   Join (Play): what a link or Play's Enter a code (#393) asks to
+//           join, a table or a club, and your club requests
 //   #host   Start a game (Play): a table for friends
-//   #clubs  Clubs: the club you run or help run, the clubs you're in, and
-//           creating a club
+//   #clubs  Clubs: the club you run or help run (on the club manager), and
+//           the clubs you're in
 // Train's other tabs are main.js's: Drills (#trainer) and Equity.
 // play.js and clubs.js each draw their part of every tab (their `view`);
 // this file draws the tabs, the Join form, and the badges (#145): the count
@@ -15,10 +16,11 @@
 
 import { openPlay, closePlay, joinTable, tableGroup, tableName, showQuestGames, takeQuestSeat, watchQuestSeat } from './play.js';
 import {
-  anyClubs, closeClubs, clubCrumb, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
+  anyClubs, closeClubs, clubCrumb, clubPage, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
-import { parseInvite } from './club.js';
-import { linkedHost, normCode, relayUrl } from './play-net.js';
+import { MAX_CLUB_NAME, parseInvite } from './club.js';
+import { isPlayerId } from './identity.js';
+import { linkedHost, lookupCode, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
 import { crumbFor, sideOf, sideSwitch } from './home.js';
@@ -191,10 +193,16 @@ function renderHost() {
 
 // ---- the Join tab (#141) ----
 
-// What the page address asks to join: a club invite, or a friends table.
+// A club found by its code on Play (#393): {code, hostId, name}. Join shows
+// it like an invite, and asking to join sends no invite token.
+let codeClub = null;
+
+// What the page address asks to join: a club invite, or a friends table;
+// or the club Enter a code found.
 function linked() {
   const inv = parseInvite(location.href);
   if (inv) return {kind: 'club', inv, text: location.href};
+  if (codeClub) return {kind: 'club', inv: {...codeClub, invite: ''}, text: codeClub.code};
   const code = normCode(new URLSearchParams(location.search).get('table') || '');
   if (code) return {kind: 'table', code, hostId: linkedHost(), text: code};
   return null;
@@ -218,6 +226,39 @@ export function readJoin(text) {
   return code ? {kind: 'table', code, hostId: ''} : null;
 }
 
+// Play's Enter a code (#393). A link goes where it did. A code: a club of
+// yours opens (no network needed); else the relay says what it is: a club
+// that takes requests by code shows on Join as an invite, with Ask to join;
+// one that doesn't is said so here; anything else is joined as a game.
+// Resolves to a word for under the code box, or '' once it has gone on.
+export async function enterCode(text) {
+  const what = readJoin(text);
+  if (!what) return 'That isn’t a code or a link. Codes look like ABCD-EFGH.';
+  codeClub = null;
+  if (what.kind === 'club') { location.href = String(text).trim(); return ''; }
+  const bare = !!normCode(text);
+  if (bare) {
+    const page = clubPage(what.code);
+    if (page) { location.href = page; return ''; }
+    const info = await lookupCode(what.code);
+    if (info?.kind === 'club') {
+      if (!info.ask || !isPlayerId(info.hostId)) return 'That’s a club’s code. To join the club, ask its host for the invite link.';
+      codeClub = {code: what.code, hostId: info.hostId, name: String(info.name || '').slice(0, MAX_CLUB_NAME)};
+    }
+  }
+  // Join, with it filled in: a game joins straight away when your name is known.
+  const u = new URL(location.href);
+  for (const k of ['club', 'invite', 'host', 'table', 'name', 'by']) u.searchParams.delete(k);
+  if (!codeClub) {
+    u.searchParams.set('table', what.code);
+    if (what.hostId) u.searchParams.set('host', what.hostId);
+  }
+  u.hash = '';
+  history.replaceState(null, '', u.toString().replace(/#$/, '') + '#lobby');
+  location.hash = 'join';
+  return '';
+}
+
 const knownName = () => tableName() || memberName();
 
 function renderJoin() {
@@ -230,7 +271,14 @@ function renderJoin() {
     joinRoot.hidden = false;
     return;
   }
-  const club = link?.kind === 'club' ? link.inv : null;
+  // Codes are entered on Play (#393): with nothing to join here, Join is
+  // your club requests (clubs.js) and why a game didn't join (play.js).
+  if (!link) {
+    joinRoot.innerHTML = h + '<p class="pl-meta">To join a game or a club, enter its code on <a href="#lobby">Play</a>.</p></div>';
+    joinRoot.hidden = false;
+    return;
+  }
+  const club = link.kind === 'club' ? link.inv : null;
   h += '<form class="pj-form sg-form" data-joinform>';
   // An invite says what you're joining, and who sent it (#185); joining is
   // always your click.
@@ -239,7 +287,7 @@ function renderJoin() {
     h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
     h += '<p class="pj-meta">The host sees your name, lets you in, and gives you chips (play money) for the club’s tables.</p></div>';
   }
-  h += `<label class="pj-field"${club ? ' hidden' : ''}><span class="sg-label">Code</span><input class="pl-text pj-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" value="${esc(link?.text || '')}"></label>`;
+  if (!club) h += `<p class="pj-meta">Game <b>${esc(link.code)}</b></p>`;
   h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
   if (joinNote) h += `<p class="pl-neterr">${esc(joinNote)}</p>`;
   h += `<button class="tr-start sg-open" type="submit">${club ? 'Ask to join' : 'Join'}</button>`;
@@ -253,11 +301,11 @@ function renderJoin() {
     f.hidden = false;
     f.querySelector('input').select();
   });
-  const input = joinRoot.querySelector('[name=code]');
-  if (input && !input.value && !matchMedia('(pointer: coarse)').matches) input.focus();
+  const input = joinRoot.querySelector('[name=name]');
+  if (!name && !matchMedia('(pointer: coarse)').matches) input.focus();
   // A friends table's link, with a name already known: join straight away.
   // A club invite waits for Ask to join (#185).
-  if (link?.kind === 'table' && name && !autoJoined.has(link.text)) {
+  if (link.kind === 'table' && name && !autoJoined.has(link.text)) {
     autoJoined.add(link.text);
     go(link, name);
   }
@@ -268,9 +316,9 @@ function onJoin(e) {
   const f = e.target.closest('form[data-joinform]');
   if (!f) return;
   e.preventDefault();
-  const what = readJoin(f.elements.code.value);
+  const what = linked();
   const name = String(f.elements.name.value || '').trim();
-  if (!what) { joinNote = 'That isn’t a code or a link to a game. Codes look like ABCD-EFGH.'; renderJoin(); return; }
+  if (!what) { renderJoin(); return; }
   if (!name) {
     joinNote = 'Enter your name: it’s what the others see.';
     renderJoin();
@@ -283,6 +331,7 @@ function onJoin(e) {
 
 function go(what, name) {
   joinNote = '';
+  codeClub = null;
   clearLink();
   if (what.kind === 'club') {
     joinClub(what.inv, name);

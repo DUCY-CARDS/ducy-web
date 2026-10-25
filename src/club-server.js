@@ -66,6 +66,8 @@ const SETTINGS = {
   ratholeHours: n => Number.isSafeInteger(n) && n >= 0 && n <= 24 * 30,
   sitOutMins: n => Number.isSafeInteger(n) && n >= 0 && n <= 240,
   keepDays: n => Number.isSafeInteger(n) && n >= 1 && n <= 3650,
+  // Let people ask to join with the club code, no invite link (#393).
+  codeJoin: v => typeof v === 'boolean',
 };
 
 export function createClubServer({

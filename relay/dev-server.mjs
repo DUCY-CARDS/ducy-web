@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { pingReply } from './src/ping.js';
 import { createServer } from 'node:http';
-import { createClub, importClub, openClub } from './src/club-room.js';
+import { codeInfo, createClub, importClub, openClub } from './src/club-room.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
@@ -193,10 +193,19 @@ async function service(req, res, code) {
 }
 
 // Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
-// GET /usage and /admin/…, as the Worker answers them; everything else is WebSockets.
+// GET /usage, /code/… and /admin/…, as the Worker answers them; everything else is WebSockets.
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
+  // What a code is (#393): a club, or else a game.
+  const look = url.pathname.match(/^\/code\/([^/]+)$/);
+  if (look && req.method === 'GET') {
+    const code = decodeURIComponent(look[1]);
+    const out = (v, status = 200) => { res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*'}); res.end(JSON.stringify(v)); };
+    if (!CODE.test(code)) return out({error: 'bad code'}, 400);
+    if (!(await reg.has(code))) return out({kind: 'game'});
+    return out(codeInfo(rooms.get(code)?.store.get('club')));
+  }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
   if (svc) return service(req, res, decodeURIComponent(svc[1]));
   if (req.url !== '/usage') { res.writeHead(404); res.end('ducy relay'); return; }

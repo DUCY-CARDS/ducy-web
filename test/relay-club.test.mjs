@@ -81,3 +81,36 @@ test('a room becomes an always-on club: members join and the owner runs it, with
   assert.match((await b.next('club_error')).reason, /in use/);
   b.ws.close(); c.ws.close();
 });
+
+test('what a code is: a club tells its name only when it takes requests by code (#393)', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const owner = await createIdentity(), bob = await createIdentity();
+  const code = 'EEEE-EEEE';
+  const look = c => fetch(`http://localhost:${PORT}/code/${c}`).then(async r => ({status: r.status, body: await r.json()}));
+  assert.deepEqual((await look('FFFF-FFFF')).body, {kind: 'game'});
+  assert.equal((await look('nope')).status, 400);
+
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Code Night'}));
+  const made = await o.next('club_created');
+  // Off by default: a club, and nothing more.
+  assert.deepEqual((await look(code)).body, {kind: 'club', ask: false});
+  const b = open(`/room/${code}?role=guest&id=${bob.id}&queue=1`);
+  await b.ready;
+  b.send(await signMessage(bob, {club: code, type: 'join', invite: '', name: 'Bob'}));
+  const refused = await b.next('status');
+  assert.equal(refused.body.status, 'invite_only');
+  assert.equal(refused.body.name, undefined);
+
+  // The owner turns it on (the manager's Settings tab).
+  o.send(await signMessage(owner, {club: code, type: 'owner_hello'}));
+  await o.next('owner_view');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'settings', args: {codeJoin: true}, id: 1}));
+  assert.equal((await o.next('owner_result')).body.error, '');
+  assert.deepEqual((await look(code)).body, {kind: 'club', ask: true, name: 'Code Night', hostId: made.hostId});
+  b.send(await signMessage(bob, {club: code, type: 'join', invite: '', name: 'Bob'}));
+  assert.equal((await b.next('status')).body.status, 'pending');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'settings', args: {codeJoin: 'yes'}, id: 2}));
+  assert.match((await o.next('owner_result')).body.error, /codeJoin/);
+  o.ws.close(); b.ws.close();
+});

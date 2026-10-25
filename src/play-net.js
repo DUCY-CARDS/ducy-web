@@ -70,6 +70,22 @@ export function normCode(s) {
   return c.length === 8 && [...c].every(ch => CODE_CHARS.includes(ch)) ? c.slice(0, 4) + '-' + c.slice(4) : '';
 }
 
+// What code `code` is, asked of the relay (#393): {kind: 'club', ask, name,
+// hostId} for a club (name and hostId only when it lets people ask to join
+// with its code), {kind: 'game'} for anything else, or null when the relay
+// can't be asked.
+export async function lookupCode(code, get = globalThis.fetch) {
+  const base = relayUrl().replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+  try {
+    const r = await get(`${base}/code/${encodeURIComponent(code)}`);
+    if (!r.ok) return null;
+    const v = await r.json();
+    return v?.kind === 'club' || v?.kind === 'game' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 // Identifies this tab to the host, so a reload gets the same seat back.
 export function clientId() {
   try {

@@ -97,6 +97,32 @@ test('declined and removed players can ask again with a valid invite', async () 
   assert.equal(removeMember(club, ann.id), null);
 });
 
+test('asking with the club code alone needs the club to allow it (#393)', async () => {
+  const {host, club, verifier} = await setup();
+  const ann = await createIdentity(), bob = await createIdentity();
+  // Off by default: told to ask for the invite link, and not the club's name.
+  const no = await hostReceive(club, verifier, await signMessage(ann, join(club, '')));
+  assert.deepEqual(no.replies, [{to: ann.id, body: {type: 'status', club: club.code, status: 'invite_only'}}]);
+  assert.equal(no.changed, false);
+  assert.equal(club.members[ann.id], undefined);
+  const mem = newMembership({code: club.code, hostId: host.id, invite: ''});
+  assert.ok(await playerReceive(mem, await signMessage(host, no.replies[0].body)));
+  assert.equal(mem.status, 'invite_only');
+  assert.equal(mem.name, '');
+  // On: a request like any other, which the host still answers.
+  club.codeJoin = true;
+  const yes = await hostReceive(club, verifier, await signMessage(ann, join(club, '')));
+  assert.equal(yes.replies[0].body.status, 'pending');
+  assert.ok(approve(club, ann.id));
+  // A wrong token is still a bad invite, not a code request.
+  const bad = await hostReceive(club, verifier, await signMessage(bob, join(club, 'nope')));
+  assert.equal(bad.replies[0].body.status, 'bad_invite');
+  // Turned off again: members carry on.
+  club.codeJoin = false;
+  const again = await hostReceive(club, verifier, await signMessage(ann, join(club, '')));
+  assert.equal(again.replies[0].body.status, 'member');
+});
+
 test('hello reports status and updates the display name', async () => {
   const {club, verifier} = await setup();
   const ann = await createIdentity(), eve = await createIdentity();
