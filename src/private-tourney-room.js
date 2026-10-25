@@ -33,8 +33,10 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { createTourneyHost } from './club-tourney-host.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { structureEditor } from './tourney-structure-ui.js';
-import { HOST_ID, PAYOUTS, cleanName, joinPrivate, leavePrivate, lobbyBody, newPrivateTourney, privateClub, theTourney } from './private-tourney.js';
-import { bannerText, pageHtml, setupHtml } from './private-tourney-ui.js';
+import { HOST_ID, MAX_POINTS, PAYOUTS, cleanName, joinPrivate, leavePrivate, lobbyBody, newPrivateTourney, privateClub, setPrizes, theTourney, tourneySettle, tourneyStandings } from './private-tourney.js';
+import { bannerText, pageHtml, setupHtml, totalsText } from './private-tourney-ui.js';
+import { download, fileName } from './oneoff-standings-ui.js';
+import { standingsCsv } from './oneoff-standings.js';
 import { joinTableVia, setTableName, setTourneyPage, tableName } from './play.js';
 
 const FORM_KEY = 'ducyPrivateTourney';
@@ -46,8 +48,9 @@ const LIVE_MS = 3000; // standings go out at most this often
 function loadForm() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(FORM_KEY) || 'null'); } catch {}
-  const f = {name: '', game: 'nlhe', stack: 10000, tableSize: 9, payout: 'default', ...(s || {})};
+  const f = {name: '', game: 'nlhe', stack: 10000, tableSize: 9, payout: 'default', buyIn: 100, ...(s || {})};
   if (!PAYOUTS.some(p => p.id === f.payout)) f.payout = 'default';
+  if (!Number.isSafeInteger(f.buyIn) || f.buyIn < 0 || f.buyIn > MAX_POINTS) f.buyIn = 100;
   f.tableSize = Math.min(f.tableSize, maxSeats(f.game));
   return f;
 }
@@ -61,8 +64,8 @@ document.addEventListener('toggle', e => { if (e.target.matches?.('[data-tzlevel
 const ed = () => (editor ||= structureEditor({stack: form.stack, tableSize: form.tableSize}));
 
 function saveForm() {
-  const {game, stack, tableSize, payout} = form;
-  try { localStorage.setItem(FORM_KEY, JSON.stringify({game, stack, tableSize, payout})); } catch {}
+  const {game, stack, tableSize, payout, buyIn} = form;
+  try { localStorage.setItem(FORM_KEY, JSON.stringify({game, stack, tableSize, payout, buyIn})); } catch {}
 }
 
 // Reads the typed fields into the form.
@@ -71,6 +74,8 @@ function readForm(wrap) {
   if (v('[data-tzform] [name=name]') != null) form.name = String(v('[data-tzform] [name=name]')).trim().slice(0, 40);
   const stack = Number(v('[data-tzform] [name=stack]'));
   if (Number.isSafeInteger(stack) && stack >= 20 && stack !== form.stack) { form.stack = stack; ed().setStack(stack); }
+  const buyIn = v('[data-tzform] [name=buyin]');
+  if (buyIn != null) form.buyIn = buyIn === '' ? 0 : Number(buyIn);
 }
 
 // ---- where things are ----
@@ -99,12 +104,61 @@ const ctx = (client, hostPub, guestPub) => ({context: `tourney:${code}`, hostId:
 const tid = () => theTourney(club)?.id;
 const mine = () => body?.players.find(p => p.id === myId()) || null;
 
-const redraw = setTourneyPage({
+// The prizes the host is typing, not saved yet (#403): kept over redraws.
+let draft = null;
+
+const redrawPage = setTourneyPage({
   active: () => !!role,
-  html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting, watching: watching?.table ?? null}),
+  html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting, watching: watching?.table ?? null, draft}),
   setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
   click, change, join: joinPrivateTourney,
 });
+
+// Redraws, the host's place in a prize box kept: the standings redraw the
+// page every few seconds while it runs (#403).
+function redraw() {
+  const el = document.activeElement;
+  const i = el?.matches?.('[data-tzprize]') ? el.dataset.tzprize : null;
+  const at = i != null ? [el.selectionStart, el.selectionEnd] : null;
+  redrawPage();
+  if (i == null) return;
+  const box = document.querySelector(`[data-tzprize="${i}"]`);
+  if (!box) return;
+  box.focus();
+  try { box.setSelectionRange(...at); } catch {} // (number inputs have no selection)
+}
+
+// Typing a prize: the totals follow, without a redraw.
+document.addEventListener('input', e => {
+  if (!e.target.matches?.('[data-tzprize]') || role !== 'host') return;
+  draft = readPrizes();
+  const t = document.querySelector('[data-tztotals]');
+  if (t && body) t.textContent = totalsText(body, draft);
+});
+
+// The prize boxes as typed: whole points, an empty or bad box 0.
+function readPrizes() {
+  return [...document.querySelectorAll('[data-tzprize]')].map(el => {
+    const n = Number(el.value);
+    return Number.isSafeInteger(n) && n >= 0 ? Math.min(n, MAX_POINTS) : 0;
+  });
+}
+
+// Saves the host's prizes (null: back to the split of the buy-ins).
+function savePrizes(list, quiet = false) {
+  draft = null;
+  try { setPrizes(club, list); note = ''; } catch (e) { note = e.message; quiet = false; }
+  publish(quiet);
+}
+
+// The standings and settle-up list as a file (#403).
+function downloadStandings() {
+  if (!body) return;
+  const csv = standingsCsv(tourneyStandings(body), tourneySettle(body), [
+    ['Player', r => r.name], ['Buy-in', r => r.buyIn], ['Won', r => r.won], ['Added', r => r.added], ['Net', r => r.net],
+  ], String);
+  download(fileName(body.name), csv);
+}
 
 // The clock on the page (the next level) moves while it runs.
 setInterval(() => { if (role && body?.status === 'running' && location.hash === '#host') redraw(); }, 20_000);
@@ -136,7 +190,7 @@ async function openLobby(wrap) {
   ident = loadIdentity().then(i => { linkHost = i?.id || ''; redraw(); return i; }).catch(() => null);
   runner = createTourneyHost({
     club: () => club, save() {}, sendTable, chipsChanged() {}, store: null,
-    tourneysChanged: publish, liveChanged: liveSoon, online: id => id === HOST_ID || online.has(id),
+    tourneysChanged: () => publish(), liveChanged: liveSoon, online: id => id === HOST_ID || online.has(id),
     observe: (id, res) => watched(res),
   });
   const s = session;
@@ -218,7 +272,9 @@ function sendTable(to, msg) {
 }
 
 // The tournament changed: everyone in it is told, and this page follows.
-function publish() {
+// `quiet`: this page is left as it is (a prize just typed, #403: redrawing
+// now would swallow a click on the page that blurred the box).
+function publish(quiet = false) {
   if (role !== 'host' || !club) return;
   const b = lobbyBody(club, runner?.live()[tid()] || null);
   if (!b) return;
@@ -226,7 +282,7 @@ function publish() {
   body = b;
   for (const p of b.players) if (p.id !== HOST_ID) sendTo(p.id, b);
   follow();
-  redraw();
+  if (!quiet) redraw();
 }
 
 // Only the standings moved: told now and then, not after every action.
@@ -457,6 +513,7 @@ function start(r) {
   session++;
   role = r;
   body = null;
+  draft = null;
   note = '';
   connecting = true;
   seat = null;
@@ -531,6 +588,11 @@ function click(e) {
   else if (d.tz === 'done') end();
   else if (d.tz === 'table') { stood = false; if (seat) location.hash = 'play'; else sit(); }
   else if (d.tz === 'copy') copyLink();
+  // The host's prizes (#403): a place more (of 0) or less, or back to the split.
+  else if (d.tz === 'addplace' && role === 'host') savePrizes([...readPrizes(), 0]);
+  else if (d.tz === 'unplace' && role === 'host') savePrizes(readPrizes().filter((_, i) => i !== Number(d.i)));
+  else if (d.tz === 'autoprizes' && role === 'host') savePrizes(null);
+  else if (d.tz === 'download') downloadStandings();
   else return false;
   return true;
 }
@@ -538,10 +600,12 @@ function click(e) {
 // A field changed on the form: the blind levels and the starting stack
 // redraw it; true when it was ours.
 function change(e) {
+  // A prize typed and left (#403): saved, and everyone sees it.
+  if (e.target.matches('[data-tzprize]')) { if (role === 'host') savePrizes(readPrizes(), true); return true; }
   const wrap = e.target.closest('[data-tzform]');
   if (!wrap) return false;
   readForm(wrap.closest('.pl-wrap') || document);
   if (e.target.closest('[data-ts-k]')) { if (ed().input(e)) redraw(); return true; }
-  if (e.target.matches('[data-tzstack]')) { saveForm(); redraw(); }
+  if (e.target.matches('[data-tzstack],[data-tzbuyin]')) { saveForm(); redraw(); }
   return true;
 }

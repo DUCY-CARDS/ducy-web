@@ -34,6 +34,8 @@ import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from '.
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
+import { atTable, cashOut, cashStandings, give, handBack, newLedger, settleUp, standingsCsv } from './oneoff-standings.js';
+import { download, fileName, settleHtml, standingsHtml } from './oneoff-standings-ui.js';
 import {
   checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
@@ -454,7 +456,8 @@ let view = 'play';
 
 function renderSetup() {
   let h = '';
-  const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
+  // A one-off cash game just over (#403): its final standings come first.
+  const err = (netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '') + (['play', 'host', 'join'].includes(view) ? finalStandingsHtml() : '');
   if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
   else if (view === 'ladder') h = err + ladderHtml();
   // Start a game (Play, #209): a table for friends.
@@ -1037,6 +1040,8 @@ function show(snap) {
   ladderKeep(state);
   ladderOfferCheck();
   regularsCheck();
+  // The host ended the game during a hand (#403): now it's over.
+  if (mode === 'host' && endAfterHand && betweenHandsNow(state)) { endGame(); return; }
   if (armRunChoice()) return;
   // A club or friends table deals on its own: leave as soon as the hand
   // before your big blind is over.
@@ -2334,9 +2339,11 @@ function hostCall(op, ...args) {
   const p = hostChain.then(() => call(op, ...args)).then(async r => {
     // Saved before anyone is told, so a resumed table is never behind what
     // players were shown (#117).
+    keepLedger(r, op, args);
     await saveHostTable(r);
     for (const m of r.out) sendToGuest(m.to, m.data);
     guestsSeated = r.players || [];
+    sendStandings();
     syncHostClock();
     openSeats = r.openSeats;
     hostInfo = {
@@ -2349,6 +2356,116 @@ function hostCall(op, ...args) {
   });
   hostChain = p.catch(() => {});
   return p;
+}
+
+// ---- a one-off cash game's standings (#403) ----
+//
+// The host keeps what it gave each player (ledger, oneoff-standings.js),
+// what they left with, and what they have at the table, and sends everyone
+// the standings as they change. Ending the game (the host's End game, after
+// the hand in play) sends the final standings, which everyone keeps on
+// screen with who owes whom and a download. Nothing carries over to another
+// game.
+
+let ledger = null; // the host's
+let guestStandings = null; // a guest's: the rows the host sent
+let endAfterHand = false; // the host ends the game once this hand is over
+let finalStandings = null; // after a game: {title, rows, me}
+let standingsOpen = false;
+document.addEventListener('toggle', e => { if (e.target.matches?.('[data-standings]')) standingsOpen = e.target.open; }, true);
+
+const HOST_KEY = 'host'; // the host's row in the ledger (relay ids are UUIDs)
+const betweenHandsNow = s => !!s && (s.complete || !num(s.hand_number));
+
+// After each host call: chips given (an approved request, the host's own),
+// handed back, taken away, and between hands everyone's chips.
+function keepLedger(r, op, args) {
+  if (!ledger || !r?.state) return;
+  const seats = r.state.seats || [];
+  if (op === 'hostApprove') {
+    const req = hostInfo.chipRequests.find(x => x.seat === args[0]);
+    const who = guestsSeated.find(p => p.seat === args[0]) || (r.players || []).find(p => p.seat === args[0]);
+    if (req && who) give(ledger, who.client_id, req.name, num(req.amount));
+  } else if (op === 'hostChips') give(ledger, HOST_KEY, setup.name, num(args[0]));
+  for (const x of r.refunds || []) handBack(ledger, x.client_id, num(x.chips));
+  for (const x of r.departed || []) cashOut(ledger, x.client_id, num(x.chips));
+  if (betweenHandsNow(r.state)) {
+    atTable(ledger, [
+      {id: HOST_KEY, name: seats[0]?.name, chips: num(seats[0]?.stack || 0) + num(r.hostPendingChips || 0)},
+      ...(r.players || []).map(p => ({id: p.client_id, name: seats[p.seat]?.empty ? '' : seats[p.seat]?.name, chips: num(p.chips)})),
+    ]);
+  }
+}
+
+// The rows from the host, checked.
+function readStandings(rows) {
+  const n = v => (Number.isSafeInteger(Number(v)) ? Number(v) : 0);
+  return (Array.isArray(rows) ? rows : []).slice(0, 100).map(r => ({id: String(r?.id || '').slice(0, 8), name: String(r?.name || '?').slice(0, 20), given: n(r?.given), now: n(r?.now), net: n(r?.net)}));
+}
+
+// The rows as guest `to` sees them: no one's relay id, theirs marked 'me'.
+const rowsFor = (rows, to) => rows.map((r, i) => ({id: r.id === to ? 'me' : `p${i}`, name: r.name, given: r.given, now: r.now, net: r.net}));
+
+// Everyone connected is sent the standings when they change, or when they
+// haven't had them yet (`final`: the game is over).
+function sendStandings(final = false) {
+  if (!ledger || mode !== 'host') return;
+  const rows = cashStandings(ledger);
+  const json = JSON.stringify(rows);
+  for (const [to, g] of e2eHost?.guests || []) {
+    if (!g.key || (g.standings === json && !final)) continue;
+    g.standings = json;
+    sendToGuest(to, {type: 'standings', rows: rowsFor(rows, to), final});
+  }
+}
+
+// The host ends the game: the final standings go to everyone, then the table closes.
+async function endGame() {
+  endAfterHand = false;
+  if (ledger && state && betweenHandsNow(state)) {
+    atTable(ledger, [{id: HOST_KEY, name: setup.name, chips: num(state.seats[0].stack) + hostInfo.hostPendingChips}, ...guestsSeated.map(p => ({id: p.client_id, chips: num(p.chips)}))]);
+  }
+  if (ledger) {
+    finalStandings = {title: hostTitle, rows: cashStandings(ledger), me: HOST_KEY};
+    sendStandings(true);
+    await Promise.all([...(e2eHost?.guests.values() || [])].map(g => g.sends));
+    await new Promise(r => setTimeout(r, 300)); // (the last messages go before the close)
+  }
+  ledger = null;
+  forgetSavedTable();
+  leaveTable();
+  // Back to Start a private game, the final standings at its top.
+  if (location.hash !== '#host') location.hash = 'host';
+}
+
+// The standings under the table: what each was given, has now, and who owes whom.
+function cashStandingsHtml() {
+  const rows = mode === 'host' && ledger ? cashStandings(ledger) : mode === 'guest' && joinedByCode ? guestStandings : null;
+  if (!rows?.length) return '';
+  const me = mode === 'host' ? HOST_KEY : 'me';
+  return `<div class="pl-chips"><details class="oo-details" data-standings${standingsOpen ? ' open' : ''}><summary><b>Standings</b></summary><div class="oo-body">${standingsPart(rows, me)}</div></details></div>`;
+}
+
+function standingsPart(rows, me) {
+  const h = standingsHtml(rows, [['Given', r => r.given], ['Chips', r => r.now]], c, me);
+  return h + `<div class="pl-chips-head"><b>Settle up</b></div>${settleHtml(settleUp(rows), c, me)}`;
+}
+
+// After a game: its final standings, until closed.
+function finalStandingsHtml() {
+  const f = finalStandings;
+  if (!f) return '';
+  let h = `<section class="cl-card oo-card"><h2>${esc(f.title || 'Final standings')}</h2>${standingsPart(f.rows, f.me)}`;
+  return h + '<div class="pl-actions"><button class="btn-small primary" data-act="standings-csv">Download</button><button class="btn-small" data-act="standings-close">Close</button></div></section>';
+}
+
+function downloadStandings() {
+  const f = finalStandings;
+  if (!f) return;
+  const csv = standingsCsv(f.rows, settleUp(f.rows), [
+    ['Player', r => r.name], ['Given', r => chipInput(r.given)], ['Chips', r => chipInput(r.now)], ['Net', r => chipInput(r.net)],
+  ], chipInput);
+  download(fileName(f.title), csv);
 }
 
 // Stops or restarts the friends table's clock to match who can be reached.
@@ -2383,6 +2500,7 @@ async function hostTable() {
   // The host starts with 100 BB, kept within the table's limits.
   const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
+  give(ledger, HOST_KEY, setup.name, hostChips);
   const bombs = f.bomb ? bombEvery(f.bombEvery) : 0;
   request('friends', Math.min(f.seats, maxSeats(f.game)), setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
     .then(async snap => {
@@ -2401,6 +2519,9 @@ function startHosting(code, game) {
   hostGame = game;
   mode = 'host';
   hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
+  ledger = newLedger();
+  endAfterHand = false;
+  finalStandings = null;
   resetChat();
   gtoTable = false;
   review = null;
@@ -2467,7 +2588,7 @@ async function saveHostTable(r) {
   try {
     const json = await call('hostSave');
     if (json == null) { noSave = true; return; }
-    await putTable(...SAVED, {json, room, game: hostGame, title: hostTitle, seq: r.seq, at: Date.now()});
+    await putTable(...SAVED, {json, room, game: hostGame, title: hostTitle, seq: r.seq, at: Date.now(), ledger});
     savedSeq = r.seq;
   } catch (e) {
     console.warn('table: not saved:', e);
@@ -2491,6 +2612,8 @@ async function resumeHosting() {
   noSave = false;
   startHosting(rec.room, rec.game);
   hostTitle = rec.title || '';
+  // The standings so far come back with it (#403).
+  if (rec.ledger?.players) ledger = rec.ledger;
   location.hash = 'play';
   resuming = setTimeout(() => wake(), RESUME_GRACE_MS);
   try {
@@ -2650,6 +2773,8 @@ function promoLineHtml() {
 
 function startGuest(code) {
   mode = 'guest';
+  guestStandings = null;
+  finalStandings = null;
   bannerHook = null;
   celebration = null;
   resetChat();
@@ -2679,6 +2804,17 @@ function startGuest(code) {
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
   if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
+  // A one-off cash game's standings (#403); final: the host ended the game.
+  if (m.type === 'standings' && joinedByCode) {
+    guestStandings = readStandings(m.rows);
+    if (m.final) {
+      finalStandings = {title: tableTitle || room, rows: guestStandings, me: 'me'};
+      leaveTable('The host ended the game.');
+      return;
+    }
+    render();
+    return;
+  }
   // The hit-and-run rule (club-host.js): hands left before you may leave.
   if (m.type === 'stay') {
     stayLeft = Math.max(0, num(m.hands) || 0);
@@ -2790,7 +2926,8 @@ function gameSounds() {
   const later = (ms, fn) => (ms ? setTimeout(fn, ms) : fn());
   if (chips) { chipsSound(chips); at += 220; }
   if (cards) { later(at, () => cardSound(cards)); at += 120 * cards + 100; }
-  if (pot) later(at, () => potSound(num(state.seats[0]?.won) > 0));
+  // (The table may be gone by then: a game ended after its last hand, #403.)
+  if (pot) later(at, () => potSound(num(state?.seats[0]?.won) > 0));
 }
 
 // A chime once when the turn comes to this person.
@@ -2851,6 +2988,8 @@ function leaveTable(note = '') {
   clockStopped = 0;
   holds.delete('offline');
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
+  ledger = null;
+  endAfterHand = false;
   watching = false;
   clubTable = true;
   handHook = null;
@@ -3204,7 +3343,7 @@ function renderTable() {
   h += '</div></details>';
   // Up at a club table with the hit-and-run rule: the button says how long.
   const stay = mode === 'guest' && !watching && stayLeft > 0;
-  h += `<button class="pl-leave" data-act="leave"${stay ? ` title="${esc(stayText(stayLeft))}"` : ''}>${watching ? 'Stop watching' : stay ? `Leave in ${stayLeft} ${stayLeft === 1 ? 'hand' : 'hands'}` : 'Leave'}</button></span></div>`;
+  h += `<button class="pl-leave" data-act="leave"${stay ? ` title="${esc(stayText(stayLeft))}"` : ''}>${watching ? 'Stop watching' : mode === 'host' ? (endAfterHand ? 'End now' : 'End game') : stay ? `Leave in ${stayLeft} ${stayLeft === 1 ? 'hand' : 'hands'}` : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
   if (questTable && !(celebration && Date.now() < celebration.until)) h += questBarHtml();
   else if (mode === 'guest' || questTable) h += promoLineHtml();
@@ -3301,6 +3440,7 @@ function renderTable() {
   h += sitOutHtml();
   h += leaveBBHtml();
   h += chipsHtml();
+  h += cashStandingsHtml();
   h += liveHtml();
   h += reviewHtml();
   h += ladderReviewHtml();
@@ -4093,7 +4233,14 @@ function onClick(e) {
     // A club table's hit-and-run rule: up, you play its hands first.
     if (mode === 'guest' && !watching && stayLeft > 0) { netNote = stayText(stayLeft); noteUntil = Date.now() + 6000; render(); return; }
     if (ladder && !ladder.over && state && !state.complete && !confirm('Leave in the middle of a hand? It folds this hand; the game picks up later with the chips you have behind.')) return;
-    if (mode === 'host') forgetSavedTable();
+    // The host ends the game for everyone (#403): after the hand in play,
+    // so no chips are in a pot; again, at once.
+    if (mode === 'host') {
+      if (!endAfterHand && !confirm('End the game for everyone?')) return;
+      if (endAfterHand || betweenHandsNow(state)) endGame();
+      else { endAfterHand = true; render(); }
+      return;
+    }
     leaveTable();
   }
   else if (el.dataset.act === 'ladder-play') startLadderGame();
@@ -4111,6 +4258,8 @@ function onClick(e) {
     ladderNote = '';
     render();
   }
+  else if (el.dataset.act === 'standings-csv') downloadStandings();
+  else if (el.dataset.act === 'standings-close') { finalStandings = null; render(); }
   else if (el.dataset.act === 'resumehost') resumeHosting();
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();

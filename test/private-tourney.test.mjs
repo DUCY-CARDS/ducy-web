@@ -130,11 +130,10 @@ test('the page: the lobby for the host and a player, then the results', () => {
   t.entries.find(e => e.member === 'g1').place = 1;
   t.status = 'finished';
   const done = lobbyBody(club);
-  assert.deepEqual(results(done).map(r => [r.place, r.name, r.share]), [[1, 'Bo', 10000], [2, 'Ann', 0]]);
+  assert.deepEqual(results(done).map(r => [r.place, r.name, r.share, r.amount]), [[1, 'Bo', 10000, 0], [2, 'Ann', 0, 0]]);
   h = pageHtml(done, {me: 'g1'});
   assert.match(h, /You won!/);
   assert.match(h, /Results/);
-  assert.match(h, /100%/);
   assert.match(h, /data-tz="done">Done/);
   h = pageHtml(done, {me: HOST_ID, host: true});
   assert.match(h, /<b>Bo<\/b> won\. You finished 2nd\./);
@@ -170,7 +169,8 @@ test('the page for a host who runs it without playing: progress, a table to watc
 
 test('the form: game, stack, table size, blinds and payouts', () => {
   const ed = structureEditor({stack: 10000, tableSize: 9});
-  const h = setupHtml({name: '', game: 'plo6', stack: 10000, tableSize: 6, payout: 'top2'}, ed, {lead: '<i>lead</i>'});
+  const h = setupHtml({name: '', game: 'plo6', stack: 10000, tableSize: 6, payout: 'top2', buyIn: 100}, ed, {lead: '<i>lead</i>'});
+  assert.match(h, /name="buyin" min="0" step="1" value="100"/);
   assert.match(h, /^<div class="sg-wrap"><div class="sg-form pz-form" data-tzform><i>lead<\/i>/);
   assert.match(h, /data-tzgame="plo6" aria-pressed="true"/);
   assert.doesNotMatch(h, /data-tzsize="8"/, 'PLO6 deals to 6 at most');

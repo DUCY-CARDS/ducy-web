@@ -5,15 +5,16 @@
 // end. HTML builders only; private-tourney-room.js owns the state and the
 // clicks (data-tz="…").
 //
-// Tournament chips are whole numbers; payouts are shares of the places paid.
+// Tournament chips are whole numbers; the buy-in and prizes are points
+// (#403), which the host can change until the end.
 
 import { GAMES, maxSeats } from './club-tables.js';
 import { levelText } from './club-tourneys-ui.js';
-import { PAYOUTS, results } from './private-tourney.js';
+import { PAYOUTS, results, tourneySettle, tourneyStandings } from './private-tourney.js';
+import { settleHtml, standingsHtml } from './oneoff-standings-ui.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const whole = n => Number(n || 0).toLocaleString('en-US');
-const pct = bp => `${(bp / 100).toFixed(bp % 100 ? 2 : 0)}%`;
 export const ordinal = n => `${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3 ^ 1) && n % 10] || 'th'}`;
 const gameName = id => (id === 'nlhe' ? 'Hold’em' : GAMES.find(g => g.id === id)?.label || id);
 // "in 4 min", "in 1 h 5 min", "now"
@@ -43,9 +44,10 @@ export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Frida
   const mins = [...new Set(levels.map(s => s.minutes))];
   const sum = `${levels.length} levels${mins.length === 1 ? ` of ${mins[0]} min` : ''}, from ${whole(levels[0]?.sb)}/${whole(levels[0]?.bb)}`;
   h += field('Blinds', `<details class="pz-levels" data-tzlevels${levelsOpen || editor.errors().length ? ' open' : ''}><summary>${esc(sum)}</summary><div class="pz-editor" data-tseditor>${editor.html()}</div></details>`);
+  h += field('Buy-in, in points', `<div class="sg-nums"><input class="pl-text" type="number" name="buyin" min="0" step="1" value="${esc(f.buyIn)}" data-tzbuyin></div>`);
   h += field('Payouts', `<div class="sg-chips">${PAYOUTS.map(p => chip(f.payout === p.id, 'data-tzpay', p.id, esc(p.label))).join('')}</div>`);
   h += field('Name it', `<input class="pl-text" name="name" maxlength="40" placeholder="${esc(placeholder)}" value="${esc(f.name)}">`);
-  h += '<p class="pl-desc">Any number of players: with more than a table seats, it runs on several tables and moves players to keep them even. Everyone starts with the same tournament chips; there are no buy-ins.</p>';
+  h += '<p class="pl-desc">Any number of players: with more than a table seats, it runs on several tables and moves players to keep them even. Everyone starts with the same tournament chips.</p>';
   if (note) h += `<p class="pl-desc pl-neterr">${esc(note)}</p>`;
   h += '<button class="tr-start sg-open" type="button" data-tz="open">Open the lobby</button></div>';
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
@@ -73,24 +75,64 @@ function liveHtml(b, me, now) {
   return h;
 }
 
-// The places so far (or final), with the payout shares.
+// The places so far (or final), with the prizes in points.
 function placesHtml(b, me, final) {
   const rows = results(b);
   if (!rows.length) return '';
   let h = `<span class="sg-label">${final ? 'Results' : 'Knocked out'}</span><table class="cl-acct pz-places"><tbody>`;
   for (const r of rows) {
-    h += `<tr${r.id === me ? ' class="pz-me"' : ''}><th>${ordinal(r.place)}</th><td>${esc(r.name)}${r.id === me ? ' (you)' : ''}</td><td>${r.share ? pct(r.share) : ''}</td></tr>`;
+    h += `<tr${r.id === me ? ' class="pz-me"' : ''}><th>${ordinal(r.place)}</th><td>${esc(r.name)}${r.id === me ? ' (you)' : ''}</td><td>${r.amount ? whole(r.amount) : ''}</td></tr>`;
   }
   return h + '</tbody></table>';
 }
 
+// "Prizes 1,200 · entries 1,000 · 200 added" (#403), for prizes `list`.
+export function totalsText(b, list = b.prizes) {
+  const prizes = list.reduce((s, v) => s + (Number(v) || 0), 0), entries = b.totals?.entries ?? 0, added = prizes - entries;
+  return `Prizes ${whole(prizes)} · entries ${whole(entries)}${added > 0 ? ` · ${whole(added)} added` : added < 0 ? ` · ${whole(-added)} under` : ''}`;
+}
+
+// The prizes in points (#403): everyone sees them as they are now; the host
+// can change any, add or take away places, until the end. `draft`: what the
+// host is typing, not yet saved.
+function prizesHtml(b, host, draft) {
+  const edit = host && (b.status === 'scheduled' || b.status === 'running');
+  const list = edit && draft ? draft : b.prizes || [];
+  let h = '<span class="sg-label">Prizes, in points</span>';
+  h += `<p class="pl-meta">Buy-in ${whole(b.buyIn)} · ${b.players.length} ${b.players.length === 1 ? 'entry' : 'entries'}</p>`;
+  h += '<table class="cl-acct pz-prizes"><tbody>';
+  list.forEach((v, i) => {
+    h += `<tr><th>${ordinal(i + 1)}</th><td>`;
+    if (edit) {
+      h += `<input class="pl-text" type="number" min="0" step="1" value="${esc(v)}" data-tzprize="${i}" aria-label="${ordinal(i + 1)} prize">`;
+      if (list.length > 1) h += `<button type="button" class="link-btn" data-tz="unplace" data-i="${i}" aria-label="Remove ${ordinal(i + 1)} place">✕</button>`;
+    } else h += whole(v);
+    h += '</td></tr>';
+  });
+  h += `</tbody></table><p class="pl-meta pz-totals" data-tztotals>${esc(totalsText(b, list))}</p>`;
+  if (edit) {
+    h += '<div class="pl-actions"><button class="btn-small" data-tz="addplace">Add a place</button>';
+    if (b.custom || draft) h += '<button class="btn-small" data-tz="autoprizes">Split the buy-ins</button>';
+    h += '</div>';
+  }
+  return h;
+}
+
+// The standings and who owes whom, at the end (#403).
+function standingsPart(b, me) {
+  const rows = tourneyStandings(b);
+  if (!rows.length) return '';
+  const cols = [['Buy-in', r => r.buyIn], ['Won', r => r.won]];
+  if (rows.some(r => r.added)) cols.push(['Added', r => r.added]);
+  let h = `<span class="sg-label">Standings, in points</span>${standingsHtml(rows, cols, whole, me)}`;
+  h += `<span class="sg-label">Settle up</span>${settleHtml(tourneySettle(b), whole, me)}`;
+  return h + '<div class="pl-actions"><button class="btn-small" data-tz="download">Download</button></div>';
+}
+
 function blindsHtml(b) {
-  let h = `<details class="cl-tdetails"><summary>Blinds and payouts</summary><div class="cl-tlobby">`;
+  let h = `<details class="cl-tdetails"><summary>Blinds</summary><div class="cl-tlobby">`;
   h += `<p class="pl-meta">${esc(gameName(b.game))} · starting stack ${whole(b.stack)} · ${b.tableSize} a table</p>`;
-  h += `<span class="pl-label">Payouts${b.status === 'scheduled' ? ' (for the players so far)' : ''}</span><table class="cl-acct"><tbody>`;
-  h += b.paid.map(p => `<tr><th>${ordinal(p.place)}</th><td>${pct(p.share)}</td></tr>`).join('');
-  h += '</tbody></table>';
-  h += '<span class="pl-label">Blinds</span><table class="cl-acct"><thead><tr><th>Level</th><th>Blinds</th><th>Ante</th><th>Minutes</th></tr></thead><tbody>';
+  h += '<table class="cl-acct"><thead><tr><th>Level</th><th>Blinds</th><th>Ante</th><th>Minutes</th></tr></thead><tbody>';
   let n = 0;
   for (const s of b.structure || []) {
     if (s.break) { h += `<tr><td colspan="3" class="pl-meta">Break</td><td>${s.minutes}</td></tr>`; continue; }
@@ -102,9 +144,9 @@ function blindsHtml(b) {
 
 // The page: `b` the lobby body (private-tourney.js lobbyBody); `ui` = {me,
 // host (this tab runs it), link, note, atTable, connecting, watching (the
-// table the host is watching, if any)}.
+// table the host is watching, if any), draft (the host's prizes being typed)}.
 export function pageHtml(b, ui, now = Date.now()) {
-  const {me, host = false, link = '', note = '', atTable = false, watching = null} = ui;
+  const {me, host = false, link = '', note = '', atTable = false, watching = null, draft = null} = ui;
   let h = `<div class="pl-head"><h1>${esc(b?.name || 'Tournament')}</h1></div>`;
   const err = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
   if (!b) {
@@ -131,6 +173,7 @@ export function pageHtml(b, ui, now = Date.now()) {
       h += `<div class="pl-actions"><button class="tr-start sg-open" data-tz="start"${enough ? '' : ' disabled'}>Start</button>${play}<button class="btn-small" data-tz="cancel">Cancel tournament</button></div>`;
       if (!enough) h += `<p class="pl-desc">It needs at least 2 players${mine ? '' : ', and you aren’t one unless you play in it'}.</p>`;
     } else h += '<div class="pl-actions"><button class="btn-small" data-tz="leave">Leave</button></div>';
+    h += prizesHtml(b, host, draft);
   } else if (b.status === 'running') {
     if (mine?.place) h += `<p class="pz-status">You finished <b>${ordinal(mine.place)}</b>. Stay to watch how it ends.</p>`;
     else if (mine) h += `<div class="pl-actions"><button class="tr-start sg-open" data-tz="table">${atTable ? 'Back to the table' : 'Go to your table'}</button></div>`;
@@ -142,10 +185,12 @@ export function pageHtml(b, ui, now = Date.now()) {
       h += `<span class="sg-label">Watch a table</span><div class="sg-chips">${tables.map(x => chip(watching === x.id, 'data-tz="watch" data-table', x.id, `Table ${x.id + 1} (${x.players} ${x.players === 1 ? 'player' : 'players'})`)).join('')}</div>`;
     }
     h += placesHtml(b, me, false);
+    h += prizesHtml(b, host, draft);
   } else if (b.status === 'finished') {
     const win = b.players.find(p => p.place === 1);
     h += `<p class="pz-status">${win ? `${win.id === me ? '<b>You won!</b>' : `<b>${esc(win.name)}</b> won.`}` : 'It’s over.'}${mine?.place && mine.place > 1 ? ` You finished ${ordinal(mine.place)}.` : ''}</p>`;
     h += placesHtml(b, me, true);
+    h += standingsPart(b, me);
   } else {
     h += `<p class="pz-status">The tournament was cancelled${b.why ? `: ${esc(b.why)}` : ''}.</p>`;
   }
