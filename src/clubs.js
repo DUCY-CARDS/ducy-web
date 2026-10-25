@@ -53,6 +53,7 @@ import { readServiceForm, servicesHtml } from './club-services-ui.js';
 import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
+import { demo, startDemo } from './demo.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -1392,7 +1393,7 @@ function managerHtml() {
   }
   for (const m of helped) h += card({href: clubHash(m.code), name: m.name || m.code, who: m.role === 'assistant' ? 'Game assistant' : 'Agent', waiting: helperWaiting(m)});
   h += '</div>';
-  if (!own) h += `<div class="cl-club-acts">${createHtml()}</div>`;
+  if (!own) h += `<div class="cl-club-acts">${createHtml()}${demo ? '' : demoCardHtml()}</div>`;
   return h + footHtml();
 }
 
@@ -1534,17 +1535,24 @@ function notice(text, go = 'play') {
 // Since V3 (#225), a card beside Join a club on the list.
 function createHtml() {
   if (club || isRemote()) return '';
-  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span><span class="cl-act-desc">Free for 14 days: 2 tables and 1 tournament a day.</span>';
-  h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || '')}">`;
+  let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span>';
+  if (!demo) h += '<span class="cl-act-desc">Free for 14 days: 2 tables and 1 tournament a day.</span>';
+  h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || (demo ? 'Demo Club' : ''))}">`;
   h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create a club'}</button></span>`;
   if (alwaysFailed) {
     h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
     // Asking for permission (#265): ducy needs this player's ID to grant it.
     if (/permission/.test(alwaysFailed.reason) && me?.id) h += `<p class="pl-meta">Your player ID, for ducy: <code class="cl-id">${esc(me.id)}</code></p>`;
   }
-  // Already have one (#191): its backup brings it back, here or on another device.
-  h += '<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
+  // Already have one (#191): its backup brings it back, here or on another
+  // device. Not in a demo (#406), which starts empty.
+  if (!demo) h += '<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
   return h + '</section>';
+}
+
+// A demo club (#406, demo.js): be its manager and its players, in this window.
+function demoCardHtml() {
+  return '<section class="cl-act-card"><span class="cl-act-title">Try a demo club</span><span class="cl-act-row"><button class="tr-start" data-cl="demo">Start demo</button></span></section>';
 }
 
 // Setting up a club (#152, #395), one step at a time (see WIZARD_STEPS):
@@ -1648,6 +1656,8 @@ async function backupClub(password) {
 // Which relay this page uses. A page served locally but using the site's
 // relay is almost always a mistake when testing, so it says so.
 function relayWarningHtml() {
+  // A demo's club runs in the page (#406).
+  if (demo) return '';
   const relay = relayUrl();
   const live = relay === wsUrl(DEFAULT_RELAY);
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
@@ -1658,7 +1668,7 @@ function relayWarningHtml() {
 // The club's plan (#265), from the relay: a free trial with its days left,
 // or a club; and what it allows.
 function planHtml(p) {
-  if (!p?.limits) return '';
+  if (!p?.limits || demo) return '';
   const n = (k, one, many) => `${p.limits[k]} ${p.limits[k] === 1 ? one : many}`;
   const allows = `up to ${n('tables', 'table', 'tables')} open, ${n('tourneysPerDay', 'tournament', 'tournaments')} a day`;
   if (p.plan === 'trial' && p.expires) {
@@ -2403,6 +2413,7 @@ async function onClick(e) {
   if (!b) return;
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
+  else if (act === 'demo') startDemo();
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   else if (act === 'dash') { setDash(b.dataset.tab); render(); }
   // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).

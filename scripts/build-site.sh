@@ -6,6 +6,7 @@
 #     icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
+#   OUT_DIR/v/<version>/relay/src/club-room.js, registry.js (a demo club's)
 #
 # Only index.html and manage.html (the club manager) are rewritten (to point
 # at v/<version>/src/). The JS loads
@@ -34,6 +35,9 @@ mkdir -p "$REL/src" "$REL/wasm"
 cp src/*.js src/*.css "$REL/src/"
 cp -r src/avatars "$REL/src/"
 cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
+# A demo club runs the relay's club room in the page (src/demo-relay.js, #406).
+mkdir -p "$REL/relay/src"
+cp relay/src/club-room.js relay/src/registry.js "$REL/relay/src/"
 cp favicon.svg apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest .htaccess "$OUT/"
 # The super admin's page (#265): self-contained, unlinked, and useless
 # without the relay's ADMIN_TOKEN.

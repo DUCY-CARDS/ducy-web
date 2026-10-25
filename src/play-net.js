@@ -70,11 +70,19 @@ export function normCode(s) {
   return c.length === 8 && [...c].every(ch => CODE_CHARS.includes(ch)) ? c.slice(0, 4) + '-' + c.slice(4) : '';
 }
 
+// A relay inside the page (a demo club, #406): connect() and lookupCode()
+// use it instead of the network. {connect, lookup}, as those take them.
+let localRelay = null;
+export function useLocalRelay(r) {
+  localRelay = r;
+}
+
 // What code `code` is, asked of the relay (#393): {kind: 'club', ask, name,
 // hostId} for a club (name and hostId only when it lets people ask to join
 // with its code), {kind: 'game'} for anything else, or null when the relay
 // can't be asked.
 export async function lookupCode(code, get = globalThis.fetch) {
+  if (localRelay) return localRelay.lookup(code);
   const base = relayUrl().replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
   try {
     const r = await get(`${base}/code/${encodeURIComponent(code)}`);
@@ -114,6 +122,7 @@ export function clientId() {
 export const PING_MS = 5_000, SILENT_MS = 12_000;
 
 export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, retryInUse = false, inUse = 'That table code is in use.', heartbeat = false, persistent = false} = {}) {
+  if (localRelay) return localRelay.connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth});
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
   let heard = 0, pongs = false, healthy = false, beat = null;
   const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '') + (queue ? '&queue=1' : '');
