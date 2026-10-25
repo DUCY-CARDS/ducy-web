@@ -2,13 +2,13 @@
 # Assemble the deployable site into OUT_DIR with every asset under
 # v/<version>/, so a page only ever loads files from a single release.
 #
-#   OUT_DIR/index.html, manage.html, admin.html, favicon.svg, apple-touch-icon.png,
-#     icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
+#   OUT_DIR/index.html, manage.html, admin.html, admins.json, favicon.svg,
+#     apple-touch-icon.png, icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #   OUT_DIR/v/<version>/relay/src/club-room.js, registry.js (a demo club's)
 #
-# Only index.html and manage.html (the club manager) are rewritten (to point
+# Only index.html, manage.html (the club manager) and admin.html are rewritten (to point
 # at v/<version>/src/). The JS loads
 # mc.js, the workers and the WASM relative to its own URL, so those resolve
 # inside the same release folder.
@@ -39,9 +39,9 @@ cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
 mkdir -p "$REL/relay/src"
 cp relay/src/club-room.js relay/src/registry.js "$REL/relay/src/"
 cp favicon.svg apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest .htaccess "$OUT/"
-# The super admin's page (#265): self-contained, unlinked, and useless
-# without the relay's ADMIN_TOKEN.
-cp admin.html "$OUT/"
+# Who may use the admin page (#401): public keys, so public. The relay
+# bundles its own copy.
+cp admins.json "$OUT/"
 # The pre-flop charts' data (charts.js): Ducybot's and the Regulars', as JSON.
 cp -r charts "$OUT/"
 
@@ -70,5 +70,10 @@ if grep -nE '(src|href)="(src|wasm)/' "$OUT/manage.html"; then
   echo "manage.html still references unversioned assets (above)" >&2
   exit 1
 fi
+
+# The super admin's page (#265, #401): unlinked, pointed at the same
+# release. The relay answers only requests signed by a key in admins.json.
+sed -e "s#src=\"src/admin.js\"#src=\"v/$VERSION/src/admin.js\"#" admin.html > "$OUT/admin.html"
+grep -qF "src=\"v/$VERSION/src/admin.js\"" "$OUT/admin.html" || { echo "admin.html is missing v/$VERSION/src/admin.js" >&2; exit 1; }
 
 echo "Built release $VERSION in $OUT"
