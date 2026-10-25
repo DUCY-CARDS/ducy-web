@@ -361,7 +361,22 @@ function submitTable(f) {
 function watchTable(id) {
   const t = tableById(club, id);
   if (!t || !tableRunning(id)) return;
-  const toPage = handlers => u => (u.type === 'closed' ? handlers.onFail('The table closed.') : handlers.onMessage(u));
+  // Who sits where, from the host's updates, for Remove from table (#414).
+  let seats = {players: [], view: null};
+  const toPage = handlers => u => {
+    if (u.type === 'closed') return handlers.onFail('The table closed.');
+    if (u.type === 'state') seats = {players: u.players || [], view: u.view};
+    handlers.onMessage(u);
+  };
+  const seatTools = {
+    rows: () => seats.players.map(p => ({
+      key: p.id, name: club.members[p.id]?.name || '', stack: seats.view?.seats?.[p.seat]?.stack ?? 0,
+      note: p.removing ? 'Leaving after this hand' : '',
+      buttons: p.removing && !p.now ? [['keep', 'Undo']] : [],
+      items: p.removing ? (p.now ? [] : [['now', 'Remove now']]) : [['after', 'Remove from table'], ['now', 'Remove now']],
+    })),
+    run: (pid, tool) => hostAct(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid, now: tool === 'now'}),
+  };
   joinTableVia(handlers => {
     // An always-on club's table runs in its room: its view comes encrypted
     // over the owner's connection (#125).
@@ -374,6 +389,7 @@ function watchTable(id) {
   }, {
     label: `${club.name} · ${t.name} (watching)`,
     watch: true,
+    seatTools,
     onLeave: why => { note = why || ''; location.hash = 'clubs/own'; },
   });
   location.hash = 'play';
@@ -498,7 +514,7 @@ function tablesHtml() {
         h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close it</button><button class="btn-small" data-cl="close-table-no">Keep it open</button></span>`;
       } else h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
       const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
-      if (seated.length) h += `<span class="cl-tcard-meta cl-err">${seated.map(m => `${esc(m.name)} ${chips(m.seat.stack)}`).join(' · ')}</span>`;
+      h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now})));
       h += '</li>';
     }
     h += '</ul>';
@@ -506,6 +522,30 @@ function tablesHtml() {
   h += tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
   // The invite link is in Manage beside it (#225), and on Members.
   return h;
+}
+
+// Who's at table `tid` ([{id, name, stack, removing, now}]), each with a ⋯
+// to remove them (#414): after this hand, or now; "Leaving after this hand"
+// with Undo meanwhile. `code`: an assistant's club, else the host's.
+function seatedHtml(tid, players, code = '', dis = '') {
+  if (!players.length) return '';
+  const at = ` data-table="${esc(tid)}"${code ? ` data-code="${esc(code)}"` : ''}`;
+  let h = '<ul class="cl-at-table">';
+  for (const p of players) {
+    h += `<li><span>${esc(p.name)} ${chips(p.stack)}</span>`;
+    if (p.removing) {
+      h += '<span class="pl-meta">Leaving after this hand</span>';
+      if (!p.now) h += `<button class="link-btn" data-cl="seat-keep" data-id="${esc(p.id)}"${at}${dis}>Undo</button>`;
+    } else if (!dis) h += menuHtml(`More for ${p.name}`, [['seat-remove', 'Remove from table'], ['seat-remove-now', 'Remove now']], p.id, '', at);
+    h += '</li>';
+  }
+  return h + '</ul>';
+}
+
+// Removing a player from a table, or Undo (#414): the host's, or an assistant's.
+function seatAct(code, op, args) {
+  if (code) adminCmd(code, {op, ...args});
+  else hostAct(op, args);
 }
 
 // The invite link with Copy and Share, on the Tables and Players tabs.
@@ -1233,6 +1273,9 @@ function tableUpdate(u) {
   }
   // Refused for good (not a member, at another table, table closed).
   if (u.type === 'rejected' && u.fatal) { seatedAt.handlers.onFail(u.reason); return; }
+  // The manager removed you (#414). The club page shows your result under
+  // it (Last session), as when you leave.
+  if (u.type === 'removed') { seatedAt.handlers.onFail(`The manager removed you from ${String(u.name || 'the table')}.`); return; }
   seatedAt.handlers.onMessage(u);
 }
 
@@ -2354,6 +2397,7 @@ function adminHtml(m, hostHere) {
       for (const t of open) {
         h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
         if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
+        if (t.status === 'open') h += seatedHtml(t.id, t.players || [], m.code, dis);
         h += '</li>';
       }
       for (const t of closed) h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">closed</span><span class="cl-acts"><button class="btn-small" data-cl="a-hide-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Remove</button></span></li>`;
@@ -2541,6 +2585,10 @@ async function onClick(e) {
   else if (act === 'a-new-table') { tableForm = b.dataset.code; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'close-table') { closingTable = b.dataset.table; render(); }
   else if (act === 'watch') watchTable(b.dataset.table);
+  else if (act === 'seat-remove' || act === 'seat-remove-now' || act === 'seat-keep') {
+    b.closest('details')?.removeAttribute('open');
+    seatAct(b.dataset.code, act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id, now: act === 'seat-remove-now'});
+  }
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
   else if (act === 'replay') openReplay(b.dataset.id);

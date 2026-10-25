@@ -2723,10 +2723,15 @@ let leaveHook = null;
 // promotions, #278), or ''.
 // `club`: false for a one-off tournament's table (#394), which belongs under
 // Play and isn't a club's.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true} = {}) {
+// `seatTools` (watching a club table, #414): {rows() → [{key, name, stack,
+// note, buttons, items: [[tool, label]]}], run(key, tool)}, the players and
+// what the watcher can do to each.
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
   clubTable = club;
+  seatToolsHook = seatTools;
+  seatToolsOpen = '';
   bannerHook = banner;
   wholeChips = whole;
   watching = watch;
@@ -2746,6 +2751,7 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   startClock();
 }
 let watching = false;
+let seatToolsHook = null; // joinTableVia's seatTools
 let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 let bannerHook = null; // joinTableVia's banner()
@@ -2991,6 +2997,7 @@ function leaveTable(note = '') {
   ledger = null;
   endAfterHand = false;
   watching = false;
+  seatToolsHook = null;
   clubTable = true;
   handHook = null;
   net?.close();
@@ -3440,6 +3447,7 @@ function renderTable() {
   h += sitOutHtml();
   h += leaveBBHtml();
   h += chipsHtml();
+  h += seatToolsHtml();
   h += cashStandingsHtml();
   h += liveHtml();
   h += reviewHtml();
@@ -3663,6 +3671,27 @@ function chipsHtml() {
   if (mode === 'host' && hostInfo.buyIn) return hostChipsHtml();
   if (mode === 'guest' && myChips) return guestChipsHtml();
   return '';
+}
+
+// A club table its manager watches (#414): the players, each with a ⋯ of
+// what the manager can do (joinTableVia's seatTools). Which ⋯ is open
+// survives the redraw on every update.
+let seatToolsOpen = '';
+function seatToolsHtml() {
+  const rows = watching && seatToolsHook?.rows() || [];
+  if (!rows.length) return '';
+  let h = '<div class="pl-chips"><div class="pl-chips-head"><b>Players</b></div><ul class="pl-chip-list">';
+  for (const r of rows) {
+    h += `<li><span>${esc(r.name)} <span class="pl-meta">${c(r.stack)} chips${r.note ? ` · ${esc(r.note)}` : ''}</span></span><span class="pl-chip-acts">`;
+    for (const [tool, label] of r.buttons || []) h += `<button class="link-btn" data-act="seattool" data-key="${esc(r.key)}" data-tool="${esc(tool)}">${esc(label)}</button>`;
+    if (r.items?.length) {
+      h += `<details class="pl-seat-tools"${seatToolsOpen === r.key ? ' open' : ''}><summary class="btn-small" data-act="seattools" data-key="${esc(r.key)}" aria-label="More for ${esc(r.name)}">⋯</summary><div class="pl-seat-items">`;
+      for (const [tool, label] of r.items) h += `<button class="pl-menu-item" data-act="seattool" data-key="${esc(r.key)}" data-tool="${esc(tool)}">${esc(label)}</button>`;
+      h += '</div></details>';
+    }
+    h += '</span></li>';
+  }
+  return h + '</ul></div>';
 }
 
 function hostChipsHtml() {
@@ -4172,6 +4201,8 @@ function onClick(e) {
   if (d.act === 'sitin') { net?.send({type: 'sit_in', wait_for_big_blind: d.wait === '1'}); return; }
   if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
   if (d.act === 'timebank') { useTimeBank(); return; }
+  if (d.act === 'seattools') { e.preventDefault(); seatToolsOpen = seatToolsOpen === d.key ? '' : d.key; render(); return; }
+  if (d.act === 'seattool') { seatToolsOpen = ''; seatToolsHook?.run(d.key, d.tool); render(); return; }
   if (el.dataset.scope) { setup.statsScope = el.dataset.scope; saveSetup(); render(); }
   else if (el.dataset.sort) {
     const key = el.dataset.sort;
