@@ -1921,6 +1921,24 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .sg-invite-title { font-family: var(--font-display); font-size: 24px; color: var(--fg-strong); }
 .sg-code { font-family: var(--font-display); font-size: 28px; letter-spacing: 0.08em; color: var(--fg-muted); background: var(--bg); border: 2px dashed var(--border); border-radius: 12px; padding: 12px 16px; text-align: center; }
 .sg-note { font-size: 14px; }
+/* A one-off tournament (#394): its form's blind levels scroll sideways on a
+   phone; its page is the same cream card, the code beside it. */
+.pz-editor { overflow-x: auto; max-width: 100%; }
+:is(.pz-form, .pz-page) :is(.ts-levels th, .pl-meta, .pl-desc:not(.pl-neterr), .pl-label) { color: #4d5f55; }
+.pz-form .ts-levels .pl-text { width: 72px; padding: 4px 6px; font-size: 14px; }
+.pz-levels > summary { cursor: pointer; font-size: 14px; }
+.pz-levels .pz-editor { margin-top: 10px; }
+:is(.pz-form, .pz-page) :is(.cc-btn, .btn-small) { color: #1d3a2c; border-color: #c9b98f; background: #fffaf0; }
+.pz-places td:nth-child(2) { text-align: left; font-family: var(--font-ui); }
+.pz-form .cc-btn.on { background: #1d3a2c; border-color: #1d3a2c; color: #f3e7c9; }
+.pz-page :is(.cl-acct th, .cl-acct td, .cl-standings) { color: #1d3a2c; }
+.pz-status { margin: 0; font-size: 16px; }
+.pz-live { margin: 0; }
+.pz-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pz-players li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.pz-places .pz-me td, .pz-places .pz-me th { font-weight: 700; }
+.pz-code { color: var(--fg-strong); border-style: solid; user-select: all; }
+.pz-link { word-break: break-all; margin: 0; }
 
 /* Practice (trainer.js, V3 #225): score bar marked at 90, the spade, the
    question over the hand, and the last hand's line. */

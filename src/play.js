@@ -789,15 +789,31 @@ let fstep = 1;
 let fnote = '';
 const FRIENDS_TURN_SECS = 30;
 
+// A one-off tournament (#394): private-tourney-room.js draws its form and,
+// while there is one, its page on Start a game, takes its clicks first, and
+// takes over a join whose code turns out to be a tournament's. `page` =
+// {active(), html(), setupHtml(lead), click(e), change(e), join({code, name,
+// hostId})}. Returns a redraw.
+let tourneyPage = null;
+export function setTourneyPage(page) {
+  tourneyPage = page;
+  return () => render();
+}
+
 // V3 (#225): everything on one form, with the invite panel beside it.
 function friendsSetupHtml() {
   const f = setup.friends;
   const chip = (on, attr, value, text) => `<button type="button" class="sg-chip${on ? ' on' : ''}" ${attr}="${value}" aria-pressed="${on}">${text}</button>`;
   const field = (label, body) => `<div class="sg-field"><span class="sg-label">${label}</span>${body}</div>`;
-  let h = '<div class="pl-head"><h1>Start a game</h1></div><div class="sg-wrap"><div class="sg-form">';
+  let h = '<div class="pl-head"><h1>Start a private game</h1></div>';
   // Your name, the first time; after that it's in Player settings (#144).
-  if (!setup.name) h += field('Your name', '<input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see">');
-  h += field('Game', `<div class="sg-chips">${GAMES.filter(g => !g.bomb).map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
+  let lead = setup.name ? '' : field('Your name', '<input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see">');
+  // A cash game, or a one-off tournament (#394), whose form is its own.
+  const tourney = f.kind === 'tourney' && !!tourneyPage;
+  if (tourneyPage) lead += field('Kind', `<div class="sg-chips">${chip(!tourney, 'data-fkind', 'cash', 'Cash game')}${chip(tourney, 'data-fkind', 'tourney', 'Tournament')}</div>`);
+  if (tourney) return h + tourneyPage.setupHtml(lead);
+  h += '<div class="sg-wrap"><div class="sg-form">' + lead;
+  h += field('Game',`<div class="sg-chips">${GAMES.filter(g => !g.bomb).map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
   const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
   let blinds = `<div class="sg-chips">${FRIENDS_BLINDS.map(([sb, bb]) => chip(preset?.[1] === bb && !f.customBlinds, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)).join('')}${chip(!preset || !!f.customBlinds, 'data-fblinds', 'custom', 'Custom')}</div>`;
   if (!preset || f.customBlinds) {
@@ -2282,6 +2298,13 @@ function sendToGuest(to, data) {
 // updates. Relay notices (host_gone) come in the clear; anything else
 // unencrypted is ignored, since only the host can make an update that opens.
 function guestIncoming(m) {
+  // The code is a one-off tournament's (#394): its page takes the join over.
+  if (m?.type === 'tourney_room' && joinedByCode && tourneyPage) {
+    const to = {code: room, name: setup.name, hostId: e2eGuest.hostId};
+    leaveTable();
+    tourneyPage.join(to);
+    return;
+  }
   e2eGuest.inbox = e2eGuest.inbox.then(async () => {
     if (m?.type === 'host_key' || m?.body?.type === 'host_key') {
       const signed = !!m.sig;
@@ -2532,7 +2555,7 @@ let joinedByCode = false; // at a table joined with its code (joinTable)
 // Where the table you're at belongs in the navigation (#209): bots under
 // Train, a friends table under Play, a club's table under Clubs; null when
 // you're not at one.
-export const tableGroup = () => (!seated ? null : mode === 'solo' ? 'train' : mode === 'host' || joinedByCode ? 'play' : 'clubs');
+export const tableGroup = () => (!seated ? null : mode === 'solo' ? 'train' : mode === 'host' || joinedByCode || !clubTable ? 'play' : 'clubs');
 
 // The name this browser plays friends tables as (Player settings, #144).
 export const tableName = () => setup.name;
@@ -2574,9 +2597,12 @@ let leaveHook = null;
 // act on, and the hands aren't added to your stats.
 // `banner()`: a line to show above the felt while seated (a club's running
 // promotions, #278), or ''.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null} = {}) {
+// `club`: false for a one-off tournament's table (#394), which belongs under
+// Play and isn't a club's.
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true} = {}) {
   if (seated) leaveTable();
   startGuest(label);
+  clubTable = club;
   bannerHook = banner;
   wholeChips = whole;
   watching = watch;
@@ -2584,7 +2610,7 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   hookedHand = 0;
   leaveHook = onLeave;
   // Shows the clubs' testing notice above the table (style.css).
-  document.body.classList.add('club-table');
+  if (club) document.body.classList.add('club-table');
   const mine = session;
   net = open({
     onMessage(m) { if (mine === session) guestMessage(m); },
@@ -2596,6 +2622,7 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   startClock();
 }
 let watching = false;
+let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 let bannerHook = null; // joinTableVia's banner()
 
@@ -2824,6 +2851,7 @@ function leaveTable(note = '') {
   holds.delete('offline');
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
   watching = false;
+  clubTable = true;
   handHook = null;
   net?.close();
   net = null;
@@ -3569,6 +3597,12 @@ function render() {
   document.body.classList.toggle('pl-seated', seated);
   syncChat();
   if (!open) return;
+  // In a one-off tournament (#394), Start a game is its page, at its table or not.
+  if (view === 'host' && tourneyPage?.active()) {
+    root.hidden = false;
+    root.innerHTML = `<div class="pl-wrap">${tourneyPage.html()}</div>`;
+    return;
+  }
   // A ladder game shows on the Ladder tab as well as Bots.
   if (seated && view !== 'play' && !(ladder && view === 'ladder') && !(questTable && view === 'quest')) {
     // At a table, the other tabs can't start another one.
@@ -3895,6 +3929,8 @@ function reviewTotalsHtml() {
 function onClick(e) {
   // Browsers play sound only after the person has interacted with the page.
   unlockSounds();
+  // A one-off tournament's form and page (#394).
+  if (view === 'host' && tourneyPage?.click(e)) return;
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
@@ -3937,9 +3973,10 @@ function onClick(e) {
     render();
     return;
   }
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb],[data-fkind]');
   if (!el) return;
   const d = el.dataset;
+  if (d.fkind) { readFriendsStep(); setup.friends.kind = d.fkind; fnote = ''; saveSetup(); render(); return; }
   if (d.bomb) { setup.bomb = d.bomb === 'on'; saveSetup(); render(); return; }
   if (d.fbomb) { readFriendsStep(); setup.friends.bomb = d.fbomb === 'on'; fnote = ''; saveSetup(); render(); return; }
   if (d.rev != null) {
@@ -4120,6 +4157,7 @@ function onInput(e) {
 }
 
 function onChange(e) {
+  if (view === 'host' && tourneyPage?.change(e)) return;
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
 }
 

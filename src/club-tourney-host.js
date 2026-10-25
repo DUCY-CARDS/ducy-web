@@ -16,7 +16,8 @@
 //   liveChanged()        only the live standings moved (the caller throttles it)
 //   online(id)           whether a member is connected
 //   call, timers, store  the engine, timers and where tournaments are saved
-//                        (an always-on club's room passes its own)
+//                        (an always-on club's room passes its own; null:
+//                        not saved, as for a one-off tournament, #394)
 //   turnMs, nextHandMs, botPaceMs, levelMs   pacing (tests use short ones;
 //                        levelMs replaces each level's minutes)
 //   observe(tid, res)    sees every engine result (tests)
@@ -70,7 +71,7 @@ export function createTourneyHost({
   async function resume(t) {
     const tid = t.id;
     let rec = null;
-    try { rec = await store.get(club().code, tourneyTable(tid)); } catch (e) { console.warn(`tournament ${tid}: not loaded:`, e); }
+    try { rec = await store?.get(club().code, tourneyTable(tid)); } catch (e) { console.warn(`tournament ${tid}: not loaded:`, e); }
     if (!rec?.json) return abandon(tid, 'the club’s host restarted, and its tables weren’t saved');
     if (rec.entries !== t.entries.length || rec.out !== outCount(t)) return abandon(tid, 'the club’s host restarted, and its saved tables were out of step with the club');
     const r = {chain: Promise.resolve(), step: rec.step ?? 0, onBreak: false, level: rec.level ?? 0, timers: {}, live: null, savedSeq: rec.seq};
@@ -97,7 +98,7 @@ export function createTourneyHost({
   async function persist(tid, res) {
     const r = running.get(tid);
     const t = tourneyById(club(), tid);
-    if (!r || !t || r.noSave || res?.seq === r.savedSeq) return;
+    if (!store || !r || !t || r.noSave || res?.seq === r.savedSeq) return;
     try {
       const json = await call('tourneySave', tid);
       if (json == null) { r.noSave = true; return; }
@@ -164,7 +165,7 @@ export function createTourneyHost({
       running.delete(tid);
       call('tourneyDrop', tid).catch(() => {});
     }
-    store.drop(club().code, tourneyTable(tid)).catch(() => {});
+    store?.drop(club().code, tourneyTable(tid)).catch(() => {});
     timers.clear(scheduled.get(tid));
     scheduled.delete(tid);
   }

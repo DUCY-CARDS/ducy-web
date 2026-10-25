@@ -130,9 +130,13 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
   const open = () => {
     ws = new WebSocket(url);
     // onOpen first: it may reset what was known before the health change.
-    ws.onopen = () => { tries = 0; joined = true; heard = Date.now(); onStatus(''); onOpen(); check(); };
+    ws.onopen = () => { tries = 0; heard = Date.now(); onStatus(''); onOpen(); check(); };
     ws.onmessage = e => {
       heard = Date.now();
+      // Joined once something comes through: the relay opens a socket for a
+      // code with no table behind it before closing it with 4004, which then
+      // fails at once instead of reconnecting for ever.
+      joined = true;
       let m;
       try { m = JSON.parse(e.data); } catch (err) { console.warn(err); return; }
       if (m?.type === 'pong') { pongs = true; check(); return; }

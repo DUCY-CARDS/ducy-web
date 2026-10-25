@@ -114,3 +114,19 @@ test('what a code is: a club tells its name only when it takes requests by code 
   assert.match((await o.next('owner_result')).body.error, /codeJoin/);
   o.ws.close(); b.ws.close();
 });
+
+test('a game hosted in a tab, cash game or one-off tournament, is a game to the lookup (#394)', async () => {
+  const look = c => fetch(`http://localhost:${PORT}/code/${c}`).then(r => r.json());
+  const h = open('/room/GGGG-GGGG?role=host');
+  await h.ready;
+  assert.deepEqual(await look('GGGG-GGGG'), {kind: 'game'});
+  // A guest joining as for a cash game reaches the tournament's host, which
+  // says what it is (private-tourney-room.js), so the one join path serves both.
+  const g = open('/room/GGGG-GGGG?role=guest&id=g1');
+  await g.ready;
+  g.send({type: 'join', name: 'Bo'});
+  for (let m = await h.next(); ; m = await h.next()) if (m.data?.type === 'join') { assert.equal(m.from, 'g1'); break; }
+  h.send({to: 'g1', data: {type: 'tourney_room'}});
+  assert.equal((await g.next('tourney_room')).type, 'tourney_room');
+  h.ws.close(); g.ws.close();
+});

@@ -24,6 +24,9 @@ import { linkedHost, lookupCode, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
 import { crumbFor, sideOf, sideSwitch } from './home.js';
+// One-off tournaments (#394): their form and page on Start a game, and a
+// code that turns out to be one's.
+import './private-tourney-room.js';
 
 export const TABS = ['play', 'ladder', 'quest', 'join', 'host', 'clubs'];
 // Each tab's window title (#195): "Private clubs · DUCY".
