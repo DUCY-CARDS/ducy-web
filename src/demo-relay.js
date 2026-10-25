@@ -43,6 +43,7 @@ import { createIdentity, exportIdentity, importIdentity, signMessage } from './i
 import { keyPairFromJSON, keyPairToJSON, newKeyPair, open as openBox, sharedKey } from './e2e.js';
 import { fairPlayer } from './fair-check.js';
 import { limits as tableLimits, tableById } from './club-tables.js';
+import { buyIn, cashOut, setStack } from './club-chips.js';
 import { tableChip, toChip } from './chip-format.js';
 import { ratholeMin } from './club-chips.js';
 import { newCode } from './play-net.js';
@@ -650,12 +651,13 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
         const as = async (ident, body) => server.message({from: ident.id, data: await signMessage(ident, {club: code, ...body})});
         const tables = [];
         for (const t of c.tables || []) tables.push(tableById(server.club, await server.run('new_table', {table: t})));
-        const asks = [], helps = [], registers = [];
+        const asks = [], helps = [], registers = [], botIds = [];
         // Its bots are Quest's players, the same ones every time it starts.
         const seed = seedOf(scenario.id);
         for (const [i, b] of (c.bots || []).entries()) {
           const t = tables[b.table] ?? null;
           const bot = await addBot(room, t, {balance: b.balance ?? 0, pending: b.status === 'pending', online: false, r: key => roll(seed, i, key)});
+          botIds.push(bot.id);
           if (t) room.targets[t.id] = (room.targets[t.id] || 0) + 1;
           if (b.ask) asks.push([bot.ident, b.ask]);
           if (b.help) helps.push([bot.ident, b.help]);
@@ -666,9 +668,21 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
           if (p.status === 'pending') continue;
           await server.run('approve', {id: p.ident.id});
           if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
+          if (p.credit) await server.run('set_credit', {id: p.ident.id, amount: p.credit});
           if (p.ask) asks.push([p.ident, p.ask]);
           if (p.register) registers.push(p.ident);
         }
+        // Table sessions played before the demo starts (a credit player who
+        // stood up owing, #404): the ledger's own buy-in and cash-out, the
+        // chips lost at one seat won at another.
+        const idOf = x => (x.bot != null ? botIds[x.bot] : Object.values(server.club.members).find(m => m.name === x.name)?.id);
+        for (const s of c.sessions || []) {
+          const t = tables[s.table], at = Date.now() - (s.ago || 0);
+          if (s.seats.reduce((n, x) => n + x.buyIn - x.cashOut, 0) !== 0) throw new Error('A demo session’s chips must add up.');
+          for (const x of s.seats) buyIn(server.club, idOf(x), t.id, x.buyIn, tableLimits(t), at);
+          for (const x of s.seats) { setStack(server.club, idOf(x), x.cashOut); cashOut(server.club, idOf(x), at + 1800e3); }
+        }
+        if (c.sessions?.length) await server.run('settings', {});
         for (const [ident, amount] of asks) await as(ident, {type: 'chip_request', amount});
         for (const [ident, text] of helps) await as(ident, {type: 'help_ask', text});
         if (c.tourney) {

@@ -11,13 +11,15 @@
 //     bots:    [{status, balance, table, ask, help, register}]  members the demo plays
 //     tourney: {name, buyIn, stack, structure, startsIn (ms), …}     as club-tourneys.js newTourney
 //     promo:   {kind: 'high_hand', …}                                as club-promos.js newPromo
+//     sessions: [{table, ago, seats: [{name | bot, buyIn, cashOut}]}]  table sessions already played
 //   }
 // status: 'member' (the default) or 'pending' (asking to join); balance:
-// club chips (hundredths) once let in; table: the index of the table a bot
-// sits at (buying in for its maximum); ask: chips asked for; help: a help
-// request; register: entered in the tournament. Each bot is one of Bankroll
-// Quest's players, with their name and face, picked for its table's stakes
-// (demo-bots.js, #415).
+// club chips (hundredths) once let in; credit: a credit limit (#404); table:
+// the index of the table a bot sits at (buying in for its maximum); ask:
+// chips asked for; help: a help request; register: entered in the
+// tournament. Each bot is one of Bankroll Quest's players, with their name
+// and face, picked for its table's stakes (demo-bots.js, #415). A session's
+// seat is a person (`name`) or a bot (`bot`, its index).
 
 // `n` bots, the i-th from `each(i)`.
 const bots = (n, each) => Array.from({length: n}, (_, i) => each(i));
@@ -77,6 +79,27 @@ export const SCENARIOS = [
         structure: [{sb: 10, bb: 20, minutes: 2}, {sb: 20, bb: 40, minutes: 2}, {sb: 50, bb: 100, minutes: 2}, {break: true, minutes: 1},
           {sb: 100, bb: 200, minutes: 2}, {sb: 200, bb: 400, minutes: 2}, {sb: 500, bb: 1000, minutes: 2}, {sb: 1000, bb: 2000, minutes: 2}],
       },
+    },
+  },
+  {
+    // Credit players (#404): sitting on credit, asking at the limit, and
+    // settling a debt.
+    id: 'credit', name: 'Credit players',
+    club: {
+      name: 'Friday Night Club',
+      tables: [{...NLH, name: 'Main 1/2', sb: 100, bb: 200, seats: 6}],
+      people: [
+        // No chips of their own: sits on credit, up to 500.
+        {name: 'Player 1', credit: 50_000},
+        // At their limit: asks for 400 with 200 of credit.
+        {name: 'Player 2', credit: 20_000, ask: 40_000},
+        // Stood up owing 200 (the session below).
+        {name: 'Player 3', credit: 20_000},
+      ],
+      bots: bots(5, i => ({balance: 20_000, ...(i < 3 ? {table: 0} : {})})),
+      // A table session played before the demo starts: each seat's buy-in
+      // and what they stood up with (adding up), `ago` ms back.
+      sessions: [{table: 0, ago: 3600e3, seats: [{name: 'Player 3', buyIn: 20_000, cashOut: 0}, {bot: 3, buyIn: 20_000, cashOut: 40_000}]}],
     },
   },
 ];
