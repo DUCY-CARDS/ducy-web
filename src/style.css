@@ -1979,6 +1979,25 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .pz-places .pz-me td, .pz-places .pz-me th { font-weight: 700; }
 .pz-code { color: var(--fg-strong); border-style: solid; user-select: all; }
 .pz-link { word-break: break-all; margin: 0; }
+/* Prizes in points, the host's boxes in place of the amounts (#403). */
+.pz-prizes td { white-space: nowrap; }
+.pz-prizes .pl-text { width: 96px; padding: 4px 6px; font-size: 14px; text-align: right; }
+.pz-prizes .link-btn { margin-left: 6px; }
+.pz-totals { margin: 0; }
+/* A one-off game's standings and who owes whom (#403). */
+.oo-standings th:first-child { text-align: left; }
+.oo-standings .oo-me th, .oo-standings .oo-me td { font-weight: 700; }
+.oo-up { color: #7fd69a !important; }
+.oo-down { color: #f2907f !important; }
+.pz-page .oo-up { color: var(--green) !important; }
+.pz-page .oo-down { color: var(--red) !important; }
+.oo-settle { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.oo-amt { font-family: var(--font-data); margin-left: 6px; }
+.pl-chips .oo-standings { min-width: 0; width: 100%; }
+.oo-details > summary { cursor: pointer; color: var(--fg-strong); }
+.oo-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.oo-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.oo-card h2 { margin: 0; }
 
 /* Practice (trainer.js, V3 #225): score bar marked at 90, the spade, the
    question over the hand, and the last hand's line. */
