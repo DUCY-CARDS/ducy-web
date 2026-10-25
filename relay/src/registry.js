@@ -15,7 +15,13 @@
 //
 // A Record: {owner, at, name, plan: 'trial' | 'club', expires (trials; ms),
 //   limits: {tables, tourneysPerDay}, suspended, lastActive, minutes (all
-//   time), days: {date: minutes} (the last DAYS_KEPT days)}
+//   time), days: {date: minutes} (the last DAYS_KEPT days), temporary,
+//   provedAt}
+//
+// Temporary clubs (#395): a new club is temporary until its owner proves a
+// backup of it works (provedAt, signed by the owner through the club's
+// room). One with no activity for TEMP_DAYS is deleted (expired()). Clubs
+// made before this have no `temporary` and are kept, as they always were.
 //
 // limits: {perOwner, total, creators}: at most perOwner clubs for each owner
 // and total in all; creators: player IDs granted from the environment
@@ -30,6 +36,11 @@ export const FREE_GBS_PER_DAY = 13_000;
 export const FREE_LIMITS = Object.freeze({tables: 2, tourneysPerDay: 1});
 export const TRIAL_DAYS = 14;
 const DAYS_KEPT = 30;
+// A temporary club this long without activity is deleted (#395).
+export const TEMP_DAYS = 7;
+
+// When temporary club `rec` will be deleted if no one uses it, or null.
+export const removesAt = rec => (rec?.temporary ? (rec.lastActive || rec.at || 0) + TEMP_DAYS * 864e5 : null);
 
 export function limitsFrom(env = {}) {
   const n = (v, d) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : d);
@@ -66,8 +77,9 @@ export function registry(storage, limits) {
   const grants = async () => (await storage.get('grants')) || {};
   const trials = async () => (await storage.get('trials')) || {};
   const granted = async owner => limits.creators.includes(owner) ? {} : (await grants())[owner] || null;
-  // Records gain fields over time: fill in what an older one lacks.
-  const full = rec => ({plan: 'club', limits: {...FREE_LIMITS}, suspended: false, lastActive: rec.at, minutes: 0, days: {}, name: '', ...rec});
+  // Records gain fields over time: fill in what an older one lacks. An
+  // older club isn't temporary (#395).
+  const full = rec => ({plan: 'club', limits: {...FREE_LIMITS}, suspended: false, lastActive: rec.at, minutes: 0, days: {}, name: '', temporary: false, ...rec});
 
   async function update(code, fn) {
     const all = await clubs();
@@ -81,8 +93,9 @@ export function registry(storage, limits) {
   return {
     // `owner` may have a club in room `code`, called `name`: with permission,
     // a club; without, their one trial club. Throws why not. Resolves to the
-    // record.
-    async claim(owner, code, now = Date.now(), name = '') {
+    // record. `temporary` (#395): false for a club that already existed,
+    // moving here from a browser.
+    async claim(owner, code, now = Date.now(), name = '', {temporary = true} = {}) {
       const all = await clubs();
       if (all[code]) throw new Error('That club code is in use.');
       if (Object.keys(all).length >= limits.total) throw new Error('ducy’s server is full of clubs for now. Try again later.');
@@ -99,9 +112,24 @@ export function registry(storage, limits) {
         await storage.put('trials', t);
         rec = {owner, at: now, name, plan: 'trial', expires: now + TRIAL_DAYS * 864e5, limits: {...FREE_LIMITS}};
       }
-      all[code] = full(rec);
+      // Temporary until a backup of it is proved (#395).
+      all[code] = full({...rec, temporary: !!temporary});
       await storage.put('clubs', all);
       return all[code];
+    },
+    // The owner proved a backup of club `code` works (#395): it isn't
+    // temporary any more. `owner` is who signed the request (the room
+    // checked); it must be the club's owner.
+    async proved(code, owner, now = Date.now()) {
+      const rec = (await clubs())[code];
+      if (!rec) throw new Error('No such club.');
+      if (rec.owner !== owner) throw new Error('Only the club’s owner can do that.');
+      return update(code, r => { r.temporary = false; r.provedAt = now; });
+    },
+    // Temporary clubs with no activity for TEMP_DAYS (#395): the codes to
+    // delete.
+    async expired(now = Date.now()) {
+      return Object.entries(await clubs()).filter(([, rec]) => { const at = removesAt(full(rec)); return at != null && at <= now; }).map(([code]) => code);
     },
     // Is there an always-on club in room `code`? (A room that should hold one
     // but finds its storage empty rebuilds it from a backup, #97.)
@@ -163,10 +191,10 @@ export function registry(storage, limits) {
       const all = await clubs();
       const env = Object.fromEntries(limits.creators.map(id => [id, {fromEnv: true}]));
       return {
-        clubs: Object.entries(all).map(([code, rec]) => ({code, ...full(rec), blocked: blockedReason(full(rec), now)})),
+        clubs: Object.entries(all).map(([code, rec]) => ({code, ...full(rec), blocked: blockedReason(full(rec), now), removesAt: removesAt(full(rec))})),
         grants: {...env, ...(await grants())},
         trials: await trials(),
-        limits: {perOwner: limits.perOwner, total: limits.total, trialDays: TRIAL_DAYS, free: FREE_LIMITS},
+        limits: {perOwner: limits.perOwner, total: limits.total, trialDays: TRIAL_DAYS, free: FREE_LIMITS, tempDays: TEMP_DAYS},
       };
     },
     // Lets `id` create clubs: up to `maxClubs` (default perOwner), each with

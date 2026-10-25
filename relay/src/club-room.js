@@ -21,7 +21,7 @@ import { ensureTables } from '../../src/club-tables.js';
 import { createClubServer } from '../../src/club-server.js';
 import { clubEngine } from '../../src/club-engine.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
-import { FREE_LIMITS } from './registry.js';
+import { FREE_LIMITS, removesAt } from './registry.js';
 
 // How old a create request may be (its seq is at least the time it was signed).
 const CREATE_WINDOW_MS = 5 * 60_000;
@@ -93,10 +93,11 @@ export function codeInfo(club) {
 }
 
 // The club server's plan and limits from its registry record (#265). An
-// older club with no record keeps the free limits.
+// older club with no record keeps the free limits. `temporary` (#395):
+// no backup of it proved yet.
 function planOf(record) {
   const limits = record?.limits || FREE_LIMITS;
-  return {limits: {...limits}, plan: record ? {plan: record.plan, expires: record.expires ?? null} : null};
+  return {limits: {...limits}, plan: record ? {plan: record.plan, expires: record.expires ?? null, temporary: !!record.temporary, provedAt: record.provedAt ?? null, removesAt: removesAt(record)} : null};
 }
 
 // Is `env` the old host's signed handoff to this club's identity (#98)?
@@ -119,7 +120,10 @@ async function isHandoff(club, env) {
 // Worker backs it with the room's alarm, the local relay uses plain timers.
 // `record`: the club's record in the registry (registry.js, #265), for its
 // plan and limits; server.setRecord(record) when the super admin changes it.
-export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, timers = null, record = null}) {
+// `onProved(owner)`: the owner proved a backup works (#395, the
+// backup_proved action); the caller records it in the registry and
+// resolves to the club's new record.
+export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -185,10 +189,15 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     }
     return out;
   }
+  // Only the owner's signed owner_cmd reaches this (club-server.js).
+  async function backupProved() {
+    if (!onProved) throw new Error('ducy’s server can’t record that right now.');
+    server.setRecord(await onProved(club.ownerId));
+  }
   const server = createClubServer({
     identity, club, verifier,
     onChange: checkPlay,
-    extraOps: {delete_club: deleteClub, hands},
+    extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
     storeHand,
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
     transport: {send, ack() {}},

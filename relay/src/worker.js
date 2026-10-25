@@ -50,7 +50,7 @@
 // member), 409 (refused, e.g. not enough chips) or 429 (too fast).
 
 import { codeInfo, createClub, importClub, openClub } from './club-room.js';
-import { limitsFrom, registry } from './registry.js';
+import { limitsFrom, registry, removesAt } from './registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
 import { serviceHttp, serviceInRoom } from './service-http.js';
@@ -91,6 +91,8 @@ function allow(ws, rate, burst, now = Date.now()) {
 
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
+// How often the registry looks for unused temporary clubs to delete (#395).
+const CLEANUP_EVERY_MS = 6 * 3600e3;
 
 // The relay's one registry of always-on clubs (registry.js).
 const registryOf = env => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
@@ -185,18 +187,31 @@ export default {
 
 // The registry of always-on clubs (registry.js), one for the relay: limits
 // on creating them, and their usage. Only rooms reach it, except /usage
-// and the /has behind /code (#393).
+// and the /has behind /code (#393). On its alarm, every few hours,
+// temporary clubs left unused are deleted (#395).
 export class Registry {
   constructor(state, env) {
     const s = state.storage;
+    this.state = state;
+    this.env = env;
     this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(env));
+  }
+
+  async alarm() {
+    for (const code of await this.reg.expired()) {
+      // The room deletes the club (telling its members), after checking again.
+      await roomOf(this.env, code).fetch(`https://room/admin/expire/${encodeURIComponent(code)}`).catch(e => console.warn('club: not expired:', e));
+    }
+    await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
   }
 
   async fetch(req) {
     const path = new URL(req.url).pathname;
     const body = req.method === 'POST' ? await req.json() : {};
+    if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
-      if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || '')));
+      if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {temporary: body.temporary !== false}));
+      else if (path === '/proved') return Response.json(await this.reg.proved(String(body.code), String(body.owner)));
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
       else if (path === '/release') await this.reg.release(String(body.code));
@@ -260,6 +275,12 @@ export class Room {
         onUsage: minutes => this.clubCode().then(c => this.registry('/used', {minutes, code: c})),
       onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
+        // A backup proved (#395): recorded in the registry, signed for by the owner.
+        onProved: async owner => {
+          const c = await this.clubCode();
+          await this.registry('/proved', {code: c, owner});
+          return (await this.status(c, true)).record;
+        },
         timers: this.tableTimers(),
       }))
       .catch(e => { this.clubP = null; throw e; });
@@ -289,8 +310,19 @@ export class Room {
     return this.statusV;
   }
 
-  // The super admin changed the club, or looks inside it (#265).
+  // The super admin changed the club, or looks inside it (#265); or the
+  // registry found it temporary and unused (#395).
   async adminRequest(path, code) {
+    if (path === 'expire') {
+      const st = await this.status(code, true);
+      const at = removesAt(st.record);
+      if (at == null || at > Date.now()) return Response.json({ok: true, deleted: false});
+      const club = await this.club(code).catch(() => null);
+      // Deleting tells its members, and releases it from the registry.
+      if (club) await club.run('delete_club');
+      else await this.registry('/release', {code});
+      return Response.json({ok: true, deleted: true});
+    }
     if (path === 'refresh') {
       const st = await this.status(code, true);
       const club = this.clubP ? await this.clubP.catch(() => null) : null;
@@ -436,7 +468,8 @@ export class Room {
       if (!code) throw new Error('Not a club room.');
       if (this.host()) throw new Error('The club is still open in a tab as its host. Close it there first.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await importClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name}));
+      // A club that already existed isn't temporary (#395).
+      const made = await importClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name, temporary: false}));
       ws.send(JSON.stringify({type: 'club_imported', ...made}));
       const club = await this.club();
       for (const q of await this.queued()) {
@@ -453,7 +486,7 @@ export class Room {
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
     // From the Worker's admin API only: the outside world reaches rooms by
     // /room/<code> WebSockets alone.
-    const adm = url.pathname.match(/^\/admin\/(refresh|info)\//);
+    const adm = url.pathname.match(/^\/admin\/(refresh|info|expire)\//);
     if (adm) return this.adminRequest(adm[1], code);
     // What anyone may learn from the club's code (#393), from the Worker.
     if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club')));

@@ -32,7 +32,8 @@
 //                  once), tourneysPerDay}; the relay's registry sets them for
 //                  an always-on club. null: no cap. setLimits() changes them.
 //   plan           the plan, for the owner's page: {plan: 'trial' | 'club',
-//                  expires}; setLimits() may change it too
+//                  expires, temporary, provedAt, removesAt}; setLimits()
+//                  may change it too
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -317,11 +318,14 @@ export function createClubServer({
     armPromos();
   }
 
+  // The tables for members, saying too whether the club is temporary (#395:
+  // no backup of it proved), which they see on its page.
+  const tablesNow = () => ({...tablesBody(club, seatedCounts()), ...(plan?.temporary ? {temporary: true} : {})});
   function broadcastTables() {
     if (!tableHost) return;
     // Who's at which table shows in the lobby.
     broadcastLobby();
-    const body = tablesBody(club, seatedCounts());
+    const body = tablesNow();
     for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
   }
 
@@ -391,7 +395,7 @@ export function createClubServer({
       }
       const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd, Date.now(), limits);
       for (const rep of r.replies) sendToPlayer(rep);
-      if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesBody(club, seatedCounts())});
+      if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesNow()});
       if (r.table?.start && tableHost) started(tableHost.start(r.table.start));
       if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
       if (r.table) broadcastTables();
@@ -451,7 +455,7 @@ export function createClubServer({
     if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
       // table updates, their role, and an assistant or agent their view.
-      if (tableHost) sendToPlayer({to: msg.from, body: tablesBody(club, seatedCounts())});
+      if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
@@ -473,7 +477,7 @@ export function createClubServer({
     changed();
     for (const r of [rep].flat()) await sendToPlayer(r);
     // A new member gets the tables straight away.
-    if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesBody(club, seatedCounts())});
+    if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesNow()});
     broadcastLobby();
   }
 
@@ -646,7 +650,14 @@ export function createClubServer({
     tourneyLive,
     tablesRunning: () => !!tableHost,
     // The plan's limits changed (the super admin, #265).
-    setLimits(l, p = plan) { limits = l || null; plan = p; scheduleAdmin(); },
+    // A backup proved (#395) changes `temporary`: members hear of it.
+    setLimits(l, p = plan) {
+      const was = !!plan?.temporary;
+      limits = l || null;
+      plan = p;
+      scheduleAdmin();
+      if (was !== !!plan?.temporary) broadcastTables();
+    },
     limits: () => limits,
   };
 }
