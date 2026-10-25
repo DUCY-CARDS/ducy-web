@@ -10,8 +10,9 @@
 // of it uses the restored ID.
 
 import {
-  backupNeedsPassword, exportLockedIdentity, importIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId,
+  backupNeedsPassword, exportLockedIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId,
 } from './identity.js';
+import { openBackup } from './club-backup.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
 import { cycleTablePref, setTableAvatar, setTableName, tableAvatar, tableName, tablePrefs } from './play.js';
 import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
@@ -235,18 +236,16 @@ async function chooseBackup(file) {
 
 async function restore(text, password) {
   try {
-    const ident = await importIdentity(text, password);
+    // Unlocked as proving a club's backup does (club-backup.js, #395).
+    const {ident, club: c} = await openBackup(text, password);
     if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
     await saveIdentity(ident);
     idForm = null;
     let clubNote = '';
-    try {
-      const c = JSON.parse(text).club;
-      if (c && typeof c.code === 'string') {
-        localStorage.setItem(RESTORE_CLUB_KEY, JSON.stringify({code: c.code, name: String(c.name || '')}));
-        clubNote = ` Your club ${c.name || c.code} reopens once the page has reloaded.`;
-      }
-    } catch {}
+    if (c) {
+      try { localStorage.setItem(RESTORE_CLUB_KEY, JSON.stringify(c)); } catch {}
+      clubNote = ` Your club ${c.name || c.code} reopens once the page has reloaded.`;
+    }
     note = `Restored player ID ${showId(ident.id)}.${clubNote}${password ? '' : ' That backup had no password: make a new one with Back up, and delete the old file.'} Reloading…`;
     render();
     // Every part of the page (clubs, tables) picks the restored ID up.

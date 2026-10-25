@@ -155,10 +155,14 @@
       const plan = c.plan === 'trial'
         ? `Trial, ${c.expires > Date.now() ? `${Math.ceil((c.expires - Date.now()) / 864e5)} days left` : 'ended'}`
         : 'Club';
+      // No backup proved yet (#395): deleted once unused for a week.
+      const temp = c.temporary
+        ? `<br><span class="warn">Temporary</span> <span class="muted">· removed ${c.removesAt ? esc(new Date(c.removesAt).toLocaleString()) : 'soon'} if unused</span>`
+        : c.provedAt ? `<br><span class="muted">Backup proved ${esc(new Date(c.provedAt).toLocaleDateString())}</span>` : '';
       const state = c.suspended ? '<span class="err">Paused</span>' : c.blocked ? '<span class="warn">Trial ended</span>' : '<span class="ok">Running</span>';
       h += `<tr><td><b>${esc(c.name) || '<span class="muted">(no name)</span>'}</b><br><code>${esc(c.code)}</code></td>`
         + `<td><code title="${esc(c.owner)}">${esc(short(c.owner))}</code>${data.grants[c.owner] ? ' <span class="ok">✓</span>' : ''}</td>`
-        + `<td>${plan}</td>`
+        + `<td>${plan}${temp}</td>`
         + `<td><input type="number" min="0" value="${c.limits.tables}" data-lim-tables="${esc(c.code)}" aria-label="Tables"> tables<br><input type="number" min="0" value="${c.limits.tourneysPerDay}" data-lim-tourneys="${esc(c.code)}" aria-label="Tournaments a day"> / day <button data-limits="${esc(c.code)}">Set</button></td>`
         + `<td>${state}</td><td>${ago(c.lastActive)}</td><td>${hours(week)} / ${hours(c.minutes || 0)}</td>`
         + `<td><div class="row"><button data-inside="${esc(c.code)}">${open.has(c.code) ? 'Hide' : 'Look inside'}</button>`

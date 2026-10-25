@@ -285,6 +285,8 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     mem.tables = Array.isArray(b.tables) ? b.tables : [];
     mem.rathole = Number(b.rathole) || 0;
+    // No backup of the club proved yet (#395).
+    mem.temporary = b.temporary === true;
     return true;
   }
   if (b.type === 'help') {

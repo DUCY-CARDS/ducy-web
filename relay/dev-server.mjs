@@ -111,6 +111,8 @@ async function clubOf(room, code) {
     record,
     onUsage: minutes => reg.used(minutes, Date.now(), code),
     onSaved: () => scheduleBackup(room, code),
+    // A backup proved (#395): recorded in the registry, signed for by the owner.
+    onProved: owner => reg.proved(code, owner),
     // Deleted by its owner: an ordinary room again; members are let go.
     onDeleted: async () => {
       room.club = null;
@@ -123,6 +125,23 @@ async function clubOf(room, code) {
   }));
   return room.club;
 }
+
+// Temporary clubs left unused for 7 days are deleted (#395), as the
+// Worker's registry does on its alarm: hourly here (RELAY_CLEANUP_MS).
+// RELAY_CLEANUP_AHEAD_MS, for tests: look as if that much later.
+const CLEANUP_MS = Number(process.env.RELAY_CLEANUP_MS || 3600e3);
+const CLEANUP_AHEAD_MS = Number(process.env.RELAY_CLEANUP_AHEAD_MS || 0);
+async function expireClubs() {
+  const now = Date.now() + CLEANUP_AHEAD_MS;
+  for (const code of await reg.expired(now)) {
+    const room = rooms.get(code);
+    const club = room ? await clubOf(room, code) : null;
+    // Deleting tells its members, and releases it from the registry.
+    if (club) await inRoom(room, () => club.run('delete_club'));
+    else await reg.release(code);
+  }
+}
+setInterval(() => expireClubs().catch(e => console.warn('club: not expired:', e)), CLEANUP_MS).unref();
 
 function enqueue(room, from, raw) {
   if (raw.length > MAX_QUEUED_MESSAGE || room.queued.length >= MAX_QUEUED) return false;
@@ -320,7 +339,8 @@ function guest(ws, room, code, id, queue, isClub, held) {
               await clubOf(room, code);
             } else {
               if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
-              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name)))});
+              // A club that already existed isn't temporary (#395).
+              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name, {temporary: false})))});
               const c = await clubOf(room, code);
               // What members left while the host was away goes to the club.
               const waiting = room.queued;
