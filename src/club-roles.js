@@ -19,7 +19,7 @@
 
 import { approve, decline, removeMember, account } from './club.js';
 import { chipText } from './chip-format.js';
-import { answerRequest, declineRequest, ensureChips, transfer } from './club-chips.js';
+import { answerRequest, checkGrant, declineRequest, ensureChips, transfer } from './club-chips.js';
 import { newTable, tableById } from './club-tables.js';
 import { approveAward, editPromo, newPromo, promosAdmin, setPromoStatus, voidAward } from './club-promos.js';
 
@@ -131,6 +131,7 @@ export function runAdmin(club, by, cmd, now = Date.now(), limits = null) {
     }
     case 'grant': {
       if (!target?.request) throw new Error('There’s no request to grant.');
+      checkGrant(club, cmd.id);
       const amt = Number(cmd.amount ?? target.request.amount);
       const [out] = transfer(club, by, cmd.id, amt, now, target.request.note);
       answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
