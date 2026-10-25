@@ -9,6 +9,8 @@
 //   #clubs/own       the club you run (or one of its tabs: #clubs/players …)
 //   #clubs/c/CODE    a club you help run
 
+// First, so a demo club's storage (#406) is in place before anything reads storage.
+import './demo.js';
 import { openClubs, setClubsMode } from './clubs.js';
 
 setClubsMode('manage');

@@ -1,5 +1,7 @@
 // First, so a local test profile (?as=) is in place before anything reads storage.
 import { profile } from './profile.js';
+// And a demo club's (#406), for the person you are in it.
+import './demo.js';
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
 import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';

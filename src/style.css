@@ -1525,6 +1525,46 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
   background: var(--teal); color: #fff; opacity: 0.9; pointer-events: none;
 }
 
+/* A demo club (#406, demo.js): the striped DEMO bar on every page, its
+   person switcher and Simulate, and Demo over. */
+.demo-bar {
+  position: sticky; top: 0; z-index: 1200;
+  background: repeating-linear-gradient(-45deg, #f2b632 0 14px, #e3a21b 14px 28px);
+  color: #2a1d05; border-bottom: 2px solid #2a1d05;
+  font: 500 14px var(--font-ui);
+}
+.demo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 16px; }
+.demo-tag { font: 400 16px var(--font-display); letter-spacing: 0.08em; background: #2a1d05; color: #f2b632; padding: 1px 8px; border-radius: 4px; }
+.demo-left { font: 600 13px 'Overpass Mono', monospace; }
+.demo-who { position: relative; }
+.demo-who summary { list-style: none; cursor: pointer; background: #fff7e0; border: 1px solid #2a1d05; border-radius: 8px; padding: 3px 10px; }
+.demo-who summary::-webkit-details-marker { display: none; }
+.demo-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; min-width: 240px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; background: #f3e7c9; color: #1d3a2c;
+  border: 2px solid #1d3a2c; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.demo-menu button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+  font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid rgba(29, 58, 44, 0.2); padding: 8px 12px; cursor: pointer;
+}
+.demo-menu button:last-child { border-bottom: 0; font-weight: 600; }
+.demo-menu button:hover:not(:disabled), .demo-menu button[aria-current] { background: #e8d9b0; }
+.demo-menu button:disabled { opacity: 0.5; cursor: default; }
+.demo-menu button span { font-size: 12px; color: #4b5a4f; }
+.demo-acts { margin-left: auto; display: flex; gap: 8px; }
+.demo-end { font: 600 13px var(--font-ui); background: #2a1d05; color: #f2b632; border: 0; border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+.demo-sim { border-top: 1px solid rgba(42, 29, 5, 0.35); background: rgba(255, 247, 224, 0.55); }
+.demo-sim-title { font: 400 15px var(--font-display); }
+.demo-sim .btn-small { background: #fff7e0; color: #2a1d05; border-color: #2a1d05; }
+.demo-sim .btn-small:disabled { opacity: 0.5; }
+.demo-sim-now { font-size: 13px; font-weight: 600; }
+.demo-over { position: fixed; inset: 0; z-index: 1300; display: grid; place-items: center; padding: 16px; background: rgba(18, 38, 28, 0.85); }
+.demo-over .cl-card { width: min(420px, 100%); background: #f3e7c9; color: #1d3a2c; border: 0; border-radius: 18px; padding: 24px; }
+.demo-over .cl-card h2 { margin: 0; font: 400 30px var(--font-display); color: #1d3a2c; }
+.demo-over .btn-small { background: transparent; color: #1d3a2c; border-color: #1d3a2c; }
+@media (max-width: 640px) { .demo-row { padding: 6px 16px; gap: 6px 8px; } .demo-acts { margin-left: 0; } }
+
 /* What a role means, on its offer and for the host making it (#190) */
 .cl-role { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .cl-role ul { margin: 0 0 4px; padding-left: 20px; }

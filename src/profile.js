@@ -44,11 +44,11 @@ function prefixed(real, prefix) {
   };
 }
 
-export const profile = chosen();
-
-if (profile) {
-  window.name = TAB + profile;
-  const prefix = `${profile}:`;
+// Gives this page storage of its own: localStorage and sessionStorage keys
+// under `prefix`, IndexedDB databases named with `dbSuffix`, and `storage`
+// events for its own keys only. A test profile uses it, and so does each
+// person in a demo club (demo.js, #406).
+export function separateStorage(prefix, dbSuffix) {
   const realLocal = window.localStorage;
   const local = prefixed(realLocal, prefix);
   Object.defineProperty(window, 'localStorage', {value: local, configurable: true});
@@ -56,7 +56,11 @@ if (profile) {
 
   const open = IDBFactory.prototype.open;
   IDBFactory.prototype.open = function (name, ...rest) {
-    return open.call(this, `${name}@${profile}`, ...rest);
+    return open.call(this, `${name}${dbSuffix}`, ...rest);
+  };
+  const drop = IDBFactory.prototype.deleteDatabase;
+  IDBFactory.prototype.deleteDatabase = function (name, ...rest) {
+    return drop.call(this, `${name}${dbSuffix}`, ...rest);
   };
 
   const add = window.addEventListener;
@@ -74,7 +78,13 @@ if (profile) {
   window.removeEventListener = function (type, fn, opts) {
     return remove.call(this, type, (type === 'storage' && wrapped.get(fn)) || fn, opts);
   };
+}
 
+export const profile = chosen();
+
+if (profile) {
+  window.name = TAB + profile;
+  separateStorage(`${profile}:`, `@${profile}`);
   document.title = `[${profile}] ${document.title}`;
   const badge = () => {
     const b = document.createElement('div');
