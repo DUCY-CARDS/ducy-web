@@ -2726,12 +2726,19 @@ let leaveHook = null;
 // `seatTools` (watching a club table, #414): {rows() → [{key, name, stack,
 // note, buttons, items: [[tool, label]]}], run(key, tool)}, the players and
 // what the watcher can do to each.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null} = {}) {
+// `credit`: a club's cash table (#404): {available() (chips the player may
+// add, their own and credit), asked() (an open request to the manager, or
+// 0), ask(amount) (asks the manager, from the table), cancel()}. Its chips
+// panel then adds straight from what's available, or asks the manager when
+// nothing is.
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null, credit = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
   clubTable = club;
   seatToolsHook = seatTools;
   seatToolsOpen = '';
+  creditHook = credit;
+  chipsOpen = false;
   bannerHook = banner;
   wholeChips = whole;
   watching = watch;
@@ -2755,6 +2762,13 @@ let seatToolsHook = null; // joinTableVia's seatTools
 let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 let bannerHook = null; // joinTableVia's banner()
+let creditHook = null; // joinTableVia's credit
+let chipsOpen = false; // its Add chips panel, opened with enough to play
+
+// Something the table's panels show changed elsewhere (a club account, #404).
+export function tableChanged() {
+  if (seated && state && open) render();
+}
 
 // A moment at the table worth celebrating (#278): a promotion prize, or a
 // new high hand. Shown above the felt for a few seconds, where the banner
@@ -2999,6 +3013,7 @@ function leaveTable(note = '') {
   watching = false;
   seatToolsHook = null;
   clubTable = true;
+  creditHook = null;
   handHook = null;
   net?.close();
   net = null;
@@ -3671,7 +3686,7 @@ function outClockText() {
 
 function chipsHtml() {
   if (mode === 'host' && hostInfo.buyIn) return hostChipsHtml();
-  if (mode === 'guest' && myChips) return guestChipsHtml();
+  if (mode === 'guest' && myChips) return creditHook ? clubChipsHtml() : guestChipsHtml();
   return '';
 }
 
@@ -3694,6 +3709,33 @@ function seatToolsHtml() {
     h += '</span></li>';
   }
   return h + '</ul></div>';
+}
+
+// Adding chips at a club's cash table (#404): only the amount being added
+// and what's available; taken straight from it. With nothing available, the
+// same panel asks the manager, from the table.
+function clubChipsHtml() {
+  const {min, max, requested, approved} = myChips;
+  const stack = num(state.seats[0].stack) + approved;
+  if (stack >= max && !requested) return '';
+  // With enough to play, the panel waits behind its button.
+  if (stack >= min && !requested && !chipsOpen && !num(creditHook.asked())) return '<div class="pl-chips"><button class="btn-small" data-act="addopen">Add chips</button></div>';
+  const avail = Math.max(0, num(creditHook.available()) || 0);
+  const asked = num(creditHook.asked()) || 0;
+  const lo = Math.max(1, min - stack), hi = max - stack;
+  const availRow = `<div class="pl-avail"><span>Available</span><b>${c(avail)}</b></div>`;
+  let h = '<div class="pl-chips pl-addchips"><div class="pl-chips-head"><b>Add chips</b></div>';
+  if (requested) return h + `<div class="pl-chip-ask"><span>Adding ${c(requested)}…</span></div></div>`;
+  if (asked) return h + availRow + `<div class="pl-chip-ask"><span>Asked the manager for ${c(asked)}</span><button class="link-btn" data-act="cancelask">Cancel</button></div></div>`;
+  const room = Math.min(hi, avail);
+  if (room >= lo) {
+    const v = Math.max(lo, Math.min(room, chipAsk || room));
+    h += `<label class="pl-chip-amt">Amount <input class="pl-text" type="number" id="pl-chipamt" min="${chipInput(lo)}" max="${chipInput(room)}" step="${CHIP_STEP}" value="${chipInput(v)}"></label>${availRow}`;
+    return h + `<button class="tr-btn yes" data-act="addchips" data-label="Add">Add ${c(v)}</button></div>`;
+  }
+  const v = Math.max(lo, Math.min(hi, chipAsk || hi));
+  h += `${availRow}<label class="pl-chip-amt">Ask the manager for <input class="pl-text" type="number" id="pl-chipamt" min="${chipInput(lo)}" max="${chipInput(hi)}" step="${CHIP_STEP}" value="${chipInput(v)}"></label>`;
+  return h + `<button class="tr-btn yes" data-act="askmgr" data-label="Ask for">Ask for ${c(v)}</button></div>`;
 }
 
 function hostChipsHtml() {
@@ -4198,7 +4240,11 @@ function onClick(e) {
     return;
   }
   if (d.act === 'hostchips') { chipAsk = chipAmount(); hostEvent('hostChips', chipAsk); return; }
-  if (d.act === 'askchips') { chipAsk = chipAmount(); net?.send({type: 'request_chips', amount: chipAsk}); return; }
+  if (d.act === 'askchips' || d.act === 'addchips') { chipAsk = chipAmount(); chipsOpen = false; net?.send({type: 'request_chips', amount: chipAsk}); return; }
+  // A club table with nothing available: the manager is asked (#404).
+  if (d.act === 'addopen') { chipsOpen = true; chipAsk = 0; render(); return; }
+  if (d.act === 'askmgr') { chipAsk = chipAmount(); if (chipAsk > 0) creditHook?.ask(chipAsk); render(); return; }
+  if (d.act === 'cancelask') { creditHook?.cancel(); render(); return; }
   if (d.act === 'sitout') { net?.send({type: 'sit_out'}); return; }
   if (d.act === 'sitin') { net?.send({type: 'sit_in', wait_for_big_blind: d.wait === '1'}); return; }
   if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
@@ -4315,7 +4361,12 @@ function onClick(e) {
 
 function onInput(e) {
   if (e.target.id === 'pl-bombevery' && e.target.value) { setup.bombEvery = bombEvery(e.target.value); saveSetup(); }
-  if (e.target.id === 'pl-chipamt') chipAsk = parseChips(e.target.value) || 0;
+  if (e.target.id === 'pl-chipamt') {
+    chipAsk = parseChips(e.target.value) || 0;
+    // The button says the amount (#404): "Add 150", "Ask for 200".
+    const go = root.querySelector('.pl-addchips [data-label]');
+    if (go && chipAsk > 0) go.textContent = `${go.dataset.label} ${c(chipAsk)}`;
+  }
   if (e.target.id === 'qt-amt') questAmount = parseChips(e.target.value) || 0;
   if (e.target.id === 'pl-amt') {
     // The slider steps in chips; its far end is the top of the range.

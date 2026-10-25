@@ -2322,6 +2322,25 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .mg-id { font-family: var(--font-data); color: var(--fg-muted); }
 .pl-actions.mg-acts { margin: 0; align-items: center; }
 .cl-seated-list { overflow-wrap: anywhere; }
+/* Credit players (#404): a manager's Credit and Settle debt cards; a
+   player's Sit down and Add chips panels, You left, and Debt settled. */
+.mg-card, .cl-left, .cl-sitform { background: #f3e7c9; color: #1d3a2c; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 0 #0f2219; max-width: 420px; }
+.mg-card > b, .cl-left-title { font: 400 18px var(--font-display); }
+.mg-card label, .cl-sitform label, .pl-chip-amt { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.mg-card .pl-text, .cl-sitform .pl-text { width: 100%; font-size: 16px; padding: 8px 10px; background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.mg-card .btn-small:not(.primary), .cl-left .btn-small:not(.primary), .cl-sitform .btn-small:not(.primary) { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.mg-card .btn-small.primary, .cl-left .btn-small, .cl-sitform .btn-small.primary { align-self: flex-start; }
+.pl-avail { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.pl-avail b { font-family: var(--font-data); }
+.cl-left-net { font: 400 34px var(--font-display); }
+.cl-left .cl-down, .mg-card .cl-down, .cl-sitform .cl-down { color: #b0391f; }
+.cl-left .cl-up { color: #2f7a43; }
+.cl-settled { margin: 0; padding: 10px 14px; border-radius: 12px; background: #2f6b3d; color: #e3f4de; font-weight: 600; }
+.cl-tcard .cl-sitform { flex-basis: 100%; box-shadow: none; padding: 10px 0 0; background: none; color: inherit; }
+.cl-home-chips.owes { background: #c9472f; color: #fff4e8; }
+.pl-addchips { display: flex; flex-direction: column; gap: 8px; }
+.pl-addchips .pl-text { width: 140px; font-size: 15px; }
+.pl-addchips .tr-btn { align-self: flex-start; }
 @media (max-width: 1199px) {
   .mg-shell { grid-template-columns: 200px minmax(0, 1fr); }
   .mg-notes { display: none; position: fixed; top: var(--demo-h, 0px); right: 0; bottom: 0; width: min(380px, 100%); z-index: 1150; overflow-y: auto; border-left: 0; box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4); }

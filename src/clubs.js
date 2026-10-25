@@ -46,7 +46,7 @@ import { bigMove, isBigMove } from './club-roles.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
-import { celebrateAtTable, joinTableVia, showFairCheck } from './play.js';
+import { celebrateAtTable, joinTableVia, showFairCheck, tableChanged } from './play.js';
 import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { hostPromosHtml, memberPromosHtml, promosPartHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { readServiceForm, servicesHtml } from './club-services-ui.js';
@@ -57,6 +57,8 @@ import { demo, showDemoList } from './demo.js';
 import { managerPage, NAV, navOf, pageHash } from './club-nav.js';
 import { durationText, FILTERS, memberFilter, overviewNumbers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
+import { chipLines, leftSummary } from './club-member-view.js';
+import { creditRow } from './club-credit.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -710,6 +712,17 @@ function onSubmit(e) {
     hostAct(kind === 'raise' ? 'raise_credit' : 'grant', {id, amount: parseChips(notef.elements.amount.value)}).then(done);
     return;
   }
+  // A member's credit limit (#404).
+  const cf = e.target.closest('form[data-creditform]');
+  if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: parseChips(cf.elements.amount.value)}); return; }
+  // Sitting down with a buy-in (#404).
+  const sf2 = e.target.closest('form[data-sitform]');
+  if (sf2) {
+    e.preventDefault();
+    sitForm = '';
+    sitAt(sf2.dataset.code, sf2.dataset.table, sf2.elements.amount ? parseChips(sf2.elements.amount.value) || 0 : 0);
+    return;
+  }
   // Asking for help, or replying to a request (#192).
   const hf = e.target.closest('form[data-helpform]');
   if (hf) {
@@ -801,7 +814,7 @@ function onSubmit(e) {
   const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
   chipForm = null;
-  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle'}[kind];
+  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle', debt: 'settle_debt'}[kind];
   if (op) hostAct(op, {id, amount, note: why});
 }
 
@@ -937,8 +950,14 @@ function connectMembership(mem) {
       // Chips given to you, and a table opening, wherever you are (#193).
       const cname = mem.name || mem.code;
       if (msg.body?.type === 'account') {
-        const given = (mem.entries || []).filter(e => !hadEntries.has(e.n) && GIVEN.includes(e.kind) && Date.now() - e.at < 3600e3).reduce((n, e) => n + e.amount, 0);
+        const fresh = (mem.entries || []).filter(e => !hadEntries.has(e.n) && Date.now() - e.at < 3600e3);
+        const given = fresh.filter(e => GIVEN.includes(e.kind)).reduce((n, e) => n + e.amount, 0);
         if (given) notice(`${cname}: you were given ${chips(given)} chips.`);
+        // Standing up (#404): "You left Main", the result and the balance after.
+        const out = fresh.findLast(e => e.kind === 'cash_out');
+        if (out && hadEntries.size && Date.now() - out.at < 120e3) leftPanels.set(mem.code, out.n);
+        // The table's Add chips panel shows what's available now.
+        if (seatedAt?.code === mem.code) tableChanged();
       }
       if (msg.body?.type === 'tables' && hadTables) {
         const opened = (mem.tables || []).filter(t => !hadTables.has(t.id));
@@ -1237,12 +1256,21 @@ function replayHtml() {
 
 // Sits down at a club table: the #play page draws it (play.js), and its
 // commands go to the host signed, over this club's connection.
-function sitAt(code, table) {
+// `amount`: the buy-in chosen on the club page (#404), added once seated.
+function sitAt(code, table, amount = 0) {
   const mem = memberships.find(m => m.code === code);
   // A tournament's tables are table 'tourney:<id>' (#81): its chips are whole.
   const tourney = table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === table.slice(8)) : null;
   const t = tourney || mem?.tables?.find(x => x.id === table);
   if (!mem || !t) return;
+  // A cash table's chips come from what's available, own and credit (#404);
+  // with nothing, the manager is asked from the table.
+  const credit = tourney ? null : {
+    available: () => availableIn(mem),
+    asked: () => mem.request?.table ? mem.request.amount : 0,
+    ask: n => sendToHost(code, {type: 'chip_request', club: code, amount: n, note: '', table: t.name}),
+    cancel: () => sendToHost(code, {type: 'cancel_request', club: code}),
+  };
   joinTableVia(handlers => {
     seatedAt = {code, table, handlers};
     return {
@@ -1252,6 +1280,7 @@ function sitAt(code, table) {
   }, {
     label: `${mem.name} · ${t.name}`,
     whole: !!tourney,
+    credit,
     // The club's promotions for this table (#278), kept current as they change.
     banner: () => tableBannerText(mem.promos, {table, game: t.game, tourney: !!tourney}),
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
@@ -1266,8 +1295,13 @@ function sitAt(code, table) {
     },
   });
   handsSeen.clear();
+  if (amount > 0 && !tourney) sendToHost(code, {type: 'table', club: code, table, cmd: {type: 'request_chips', amount}});
   location.hash = 'play';
 }
+
+// What member `mem` may bring to a table: their balance and credit (#404;
+// from an older host, the balance).
+const availableIn = mem => (mem.available != null ? mem.available : Math.max(0, mem.balance || 0));
 // The last few hands played at the club table, by hand number: your cards,
 // the board and the stored record, for the fair-deal check.
 const handsSeen = new Map();
@@ -1356,6 +1390,9 @@ function toolsHtml() {
   return h;
 }
 
+// Forms whose typing survives a redraw (#398, #404).
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform]';
+
 function render() {
   for (const f of listeners) f();
   updateCalls();
@@ -1390,8 +1427,8 @@ function render() {
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   // And what's typed in a notification's form or the Club info editor (#398).
-  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform}|${fm.dataset.id || ''}`;
-  const typed = [...root.querySelectorAll('form[data-noteform], form[data-infoform]')].map(fm => ({
+  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.table}|${fm.dataset.id || ''}`;
+  const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.value])),
   }));
@@ -1408,7 +1445,7 @@ function render() {
   const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
   if (lobbyInput) { lobbyInput.value = lobbyKept.v; if (lobbyKept.focus) lobbyInput.focus({preventScroll: true}); }
   for (const k of typed) {
-    const fm = [...root.querySelectorAll('form[data-noteform], form[data-infoform]')].find(f => keepKey(f) === k.key);
+    const fm = [...root.querySelectorAll(KEPT_FORMS)].find(f => keepKey(f) === k.key);
     if (!fm) continue;
     for (const [name, v] of Object.entries(k.values)) if (fm.elements[name] && !(fm.elements[name] instanceof RadioNodeList)) fm.elements[name].value = v;
     if (k.focus) fm.elements[k.focus]?.focus({preventScroll: true});
@@ -1930,6 +1967,13 @@ function requestsPageHtml() {
 function askRowHtml(m) {
   let h = `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
   if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
+  // At their credit limit (#404): never chips past it; raise it, or no.
+  if (m.request.atLimit) {
+    const n = {credit: creditRow(m).credit, asked: m.request.amount, available: creditRow(m).available};
+    h += `<span class="pl-meta">At their credit limit (${chips(n.credit)})</span>`;
+    h += `<form class="cl-acts" data-noteform="raise" data-id="${esc(m.id)}"><label class="pl-meta">New limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(raiseTo(n)))}"></label>`;
+    return h + `<button class="btn-small primary" type="submit">Raise limit</button><button class="btn-small" type="button" data-cl="deny-now" data-id="${esc(m.id)}">No</button></form></li>`;
+  }
   h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
   h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">No</button></span>`;
   if (chipForm?.id === m.id && (chipForm.kind === 'grant' || chipForm.kind === 'deny')) h += chipFormHtml(m);
@@ -1952,42 +1996,52 @@ function membersPageHtml() {
   h += '<ul class="mg-rows mg-members">';
   const q = memberQuery.trim().toLowerCase();
   for (const m of list) {
-    const tags = [m.role === 'assistant' && 'assistant', m.agent === 'yes' && 'agent', m.agentOf && club.members[m.agentOf] && `via ${club.members[m.agentOf].name}`].filter(Boolean);
+    const tags = memberTags(m);
     h += `<li data-name="${esc(m.name.toLowerCase())}"${q && !m.name.toLowerCase().includes(q) ? ' hidden' : ''}><a href="#${pageHash('member', m.id)}"><b>${esc(m.name)}</b>`;
     if (tags.length) h += `<span class="pl-meta">${tags.map(esc).join(' · ')}</span>`;
     if (m.seat) h += `<span class="pl-meta">on a table ${chips(m.seat.stack)}</span>`;
-    h += `<span class="mg-row-end${m.balance < 0 ? ' cl-down' : ''}">${chips(m.balance)}</span></a></li>`;
+    h += `<span class="mg-row-end${m.balance < 0 ? ' cl-down' : ''}">${signed(m.balance)}</span></a></li>`;
   }
   return h + '</ul>';
 }
 
-// A member's own page (#398): their chips, Give and Take back, and the rest
-// of what the host can do for them.
+// A member's own page (#398): their chips, Give and Take back, their credit
+// limit and Settle debt (#404), and the rest of what a manager can do for
+// them.
 function memberPageHtml(id) {
   const m = club.members[id];
   const back = `<a class="link-btn mg-back" href="#${pageHash('members')}">‹ Members</a>`;
   if (!m || m.status !== 'member') return back + pageHead('Member') + '<p class="pl-meta">Not a member.</p>';
-  const tags = [m.role === 'assistant' && 'Assistant', m.role === 'offered' && 'Offered assistant', m.agent === 'yes' && 'Agent', m.agent === 'offered' && 'Offered agent', m.agentOf && club.members[m.agentOf] && `Via ${club.members[m.agentOf].name}`].filter(Boolean);
+  const c = creditRow(m);
   let h = back + pageHead(esc(m.name), `<code class="mg-id">${esc(showId(m.id))}</code>`);
+  const tags = memberTags(m);
   if (tags.length) h += `<p class="pl-meta">${tags.map(esc).join(' · ')}</p>`;
   h += '<div class="mg-stats">';
-  h += statHtml('Balance', chips(m.balance), m.balance < 0 ? 'down' : '');
-  h += statHtml('On a table', m.seat ? chips(m.seat.stack) : '–');
+  h += statHtml('Balance', signed(c.balance), c.balance < 0 ? 'down' : '');
+  h += statHtml('On a table', m.seat ? chips(c.onTable) : '–');
+  if (c.credit) h += statHtml('Credit limit', chips(c.credit)) + statHtml('Available', chips(c.available));
   if (m.agent === 'yes') {
     const a = accountOf(club, m.id);
     h += statHtml('Agent credit used', `${chips(a.creditUsed)} / ${chips(a.limit)}`);
   }
   h += '</div>';
-  h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
+  h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give chips</button>`;
   h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
+  if (c.owes) h += `<button class="btn-small primary" data-cl="debt" data-id="${esc(m.id)}">Settle debt</button>`;
   h += memberMenuHtml(m) + '</div>';
-  if (chipForm?.id === m.id) h += chipFormHtml(m);
-  // Making an assistant: what they'll be able to do, then Offer (#190).
+  if (chipForm?.id === m.id && chipForm.kind === 'debt') h += debtFormHtml(m, c);
+  else if (chipForm?.id === m.id) h += chipFormHtml(m);
+  // Making a manager: what they'll be able to do, then Offer (#190, #417).
   if (offering === m.id) {
     h += `<div class="cl-offer-confirm">${roleHtml('assistant', null, m.name)}`;
     h += `<span><button class="btn-small primary" data-cl="offer-role-yes" data-id="${esc(m.id)}">Offer it</button> <button class="btn-small" data-cl="offer-role-no">Cancel</button></span></div>`;
   }
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
+  // Credit (#404): the limit (0 for none), and what it leaves them.
+  h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
+  h += `<label>Limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}"></label>`;
+  h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
+  h += '<button class="btn-small primary" type="submit">Save</button></form>';
   const mine = club.chips.ledger.filter(e => e.member === m.id);
   if (mine.length) {
     const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
@@ -1998,12 +2052,35 @@ function memberPageHtml(id) {
   return h;
 }
 
+// Settle debt (#404): what was received (cash, a transfer), up to what they
+// owe, and the balance it leaves.
+function debtFormHtml(m, c) {
+  let h = `<form class="mg-card" data-chipform="debt" data-id="${esc(m.id)}"><b>Settle debt</b>`;
+  h += `<div class="pl-avail"><span>${esc(m.name)} owes</span><b>${chips(c.owes)}</b></div>`;
+  h += `<label>Received <input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="0.01" max="${chipInput(c.owes)}" step="${CHIP_STEP}" value="${chipInput(c.owes)}" data-after="${c.balance}"></label>`;
+  h += `<label>Note <input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Cash, transfer…"></label>`;
+  h += `<div class="pl-avail"><span>Balance after</span><b data-after-out="1">${signed(c.balance + c.owes)}</b></div>`;
+  return h + `<span class="pl-actions"><button class="btn-small primary" type="submit" data-label="Record">Record ${chips(c.owes)}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></span></form>`;
+}
+
+// What a member is in the club, for their row and page (#417: the owner,
+// managers; agents and their players).
+function memberTags(m) {
+  return [
+    m.id === club.ownerId && 'Owner',
+    m.role === 'assistant' && 'Manager', m.role === 'offered' && 'Offered manager',
+    m.agent === 'yes' && 'Agent', m.agent === 'offered' && 'Offered agent',
+    m.agentOf && club.members[m.agentOf] && `Via ${club.members[m.agentOf].name}`,
+    m.credit && `Credit ${chips(m.credit)}`,
+  ].filter(Boolean);
+}
+
 const statHtml = (label, value, cls = '') => `<div class="mg-stat"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls ? ` cl-${cls}` : ''}">${value}</b></div>`;
 
 // One ledger line, for the host: when, what, the change and the balance after.
 function ledgerLineHtml(e, tableNames = {}, names = null) {
   const sign = balanceChange(e) < 0 ? '−' : '+';
-  return `<li><span class="pl-meta">${when(e.at)}</span> ${names ? `${esc(names[e.member] || e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
+  return `<li><span class="pl-meta">${when(e.at)}</span> ${names ? `${esc(names[e.member] || e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${signed(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
 }
 
 // The rest of what the host can do for a member, in a ⋯ menu (#143).
@@ -2185,7 +2262,7 @@ function accountingHtml() {
   const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
   if (members.length) {
     h += '<h2>Results</h2><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
-    for (const m of members) h += `<tr><th><a href="#${pageHash('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${chips(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
+    for (const m of members) h += `<tr><th><a href="#${pageHash('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${signed(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
     h += '</tbody></table>';
   }
   h += resultsHtml(club.chips.ledger, names, tableNames);
@@ -2284,7 +2361,11 @@ function memberHomeHtml(m, manage = '') {
   const code = esc(m.code);
   const mismatch = m.entries?.length && m.ledgerOk === false;
   let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(m.name || m.code)}</h1>`;
-  h += `<span class="cl-home-chips"${m.entries?.length && !mismatch ? ' title="Your copy of the ledger adds up to this balance"' : ''}>Your chips ${chips(m.balance)}</span></div>`;
+  // Your balance (negative: what you owe, #404) and any credit limit.
+  h += `<span class="cl-home-chips${m.balance < 0 ? ' owes' : ''}"${m.entries?.length && !mismatch ? ' title="Your copy of the ledger adds up to this balance"' : ''}>Balance ${signed(m.balance)}</span>`;
+  if (m.credit) h += `<span class="cl-home-chips">Credit limit ${chips(m.credit)}</span>`;
+  h += '</div>';
+  h += leftPanelHtml(m) + settledHtml(m);
   if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
   if (m.error) h += `<p class="pl-desc pl-neterr cl-err">${esc(m.error)}</p>`;
   // No backup of the club proved yet (#395): it may not last.
@@ -2304,14 +2385,7 @@ function memberHomeHtml(m, manage = '') {
   if (tab === 'chips' || tab === 'history') {
     h += `<div class="cl-home-title"><h2>${tab === 'chips' ? 'Your chips' : 'Your hands'}</h2><button class="link-btn" data-cl="mtab" data-code="${code}" data-tab="tables">‹ Tables</button></div>`;
     if (tab === 'chips') {
-      if (m.entries?.length) {
-        h += '<ul class="cl-ledger">';
-        for (const e of [...m.entries].reverse().slice(0, 50)) {
-          const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin', 'promo_void'].includes(e.kind) ? '−' : '+';
-          h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(KIND_TEXT[e.kind] || e.kind)} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, code, me.id)}</li>`;
-        }
-        h += '</ul>';
-      } else h += '<p class="pl-meta">No chips in or out yet.</p>';
+      h += myChipsHtml(m);
     } else {
       h += handsHtml(m.code, me.id, 'Your hands');
       const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
@@ -2327,7 +2401,7 @@ function memberHomeHtml(m, manage = '') {
   h += '</section><aside class="cl-home-side"><h2>You here</h2><div class="cl-side-card">';
   // New and without chips: the first step, with the biggest buy-in at the
   // club's tables to ask for (#185).
-  const fresh = !m.request && !m.balance && !m.entries?.length;
+  const fresh = !m.request && !m.balance && !m.entries?.length && !m.credit;
   const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
   if (fresh) h += `<p class="cl-next"><b>You’re in.</b> Ask the host for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
   if (m.request) {
@@ -2338,7 +2412,9 @@ function memberHomeHtml(m, manage = '') {
     // How your last request went, for a week (#188).
     const a = m.answer;
     if (a && Date.now() - a.at < 7 * 24 * 3600e3) {
-      h += a.outcome === 'granted'
+      h += a.outcome === 'granted' && a.limit != null
+        ? `<p class="cl-side-note cl-answer">Credit limit raised to ${chips(a.limit)} (${when(a.at)}).</p>`
+        : a.outcome === 'granted'
         ? `<p class="cl-side-note cl-answer">You asked for ${chips(a.asked)} and were given ${chips(a.given)} (${when(a.at)}).</p>`
         : `<p class="cl-side-note cl-answer">Your request for ${chips(a.asked)} was declined${a.note ? `: “${esc(a.note)}”` : ''} (${when(a.at)}).</p>`;
     }
@@ -2357,7 +2433,47 @@ function memberHomeHtml(m, manage = '') {
   return h + '</aside></div>';
 }
 
-const KIND_TEXT = {issue: 'Given by the host', grant: 'Request granted', reclaim: 'Taken back by the host', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settlement recorded', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided'};
+// A balance or result: "−120", never "-120".
+const signed = (n, plus = false) => (n < 0 ? `−${chips(-n)}` : `${plus && n > 0 ? '+' : ''}${chips(n)}`);
+
+// Standing up (#404): the table left, the result there and the balance
+// after it, until Done. By club code: the cash-out entry's n.
+const leftPanels = new Map();
+function leftPanelHtml(m) {
+  const n = leftPanels.get(m.code);
+  const s = n && leftSummary(m.entries || [], n);
+  if (!s) return '';
+  const name = m.tables?.find(t => t.id === s.table)?.name || 'the table';
+  let h = `<section class="cl-left" role="status"><b class="cl-left-title">You left ${esc(name)}</b>`;
+  h += `<b class="cl-left-net${s.net > 0 ? ' cl-up' : s.net < 0 ? ' cl-down' : ''}">${signed(s.net, true)}</b>`;
+  h += `<div class="pl-avail"><span>Balance</span><b${s.balance < 0 ? ' class="cl-down"' : ''}>${signed(s.balance)}</b></div>`;
+  return h + `<button class="btn-small primary" data-cl="left-done" data-code="${esc(m.code)}">Done</button></section>`;
+}
+
+// My chips (#398, #404): each table session as one line ("Left Main −120
+// → −220"), and every other chip move, with the balance after.
+function myChipsHtml(m) {
+  const lines = chipLines(m.entries).slice(0, 50);
+  if (!lines.length) return '<p class="pl-meta">No chips in or out yet.</p>';
+  const tableName = id => m.tables?.find(t => t.id === id)?.name || 'a table';
+  let h = '<ul class="cl-ledger mg-rows">';
+  for (const l of lines) {
+    const what = l.kind === 'left' ? `Left ${esc(tableName(l.table))}` : l.kind === 'at' ? `At ${esc(tableName(l.table))}` : esc(MEMBER_KIND[l.kind] || l.kind);
+    h += `<li class="mg-row"><span>${what}${l.note && l.note !== 'Settled' ? ` <span class="pl-meta">“${esc(l.note)}”</span>` : ''}</span><span class="pl-meta">${when(l.at)}</span>${l.entry ? promoReplayBtn(l.entry, m.code, me.id) : ''}`;
+    h += `<span class="mg-row-end"><b class="${l.amount > 0 ? 'cl-up' : l.amount < 0 ? 'cl-down' : ''}">${signed(l.amount, true)}</b> → ${signed(l.balance)}</span></li>`;
+  }
+  return h + '</ul>';
+}
+
+// A debt the manager recorded as settled (#404), for a day.
+function settledHtml(m) {
+  const e = (m.entries || []).findLast(x => x.kind === 'settle' && Date.now() - x.at < 864e5);
+  return e ? `<p class="cl-settled"><span aria-hidden="true">✓</span> Debt settled: ${chips(e.amount)}</p>` : '';
+}
+
+const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', reclaim: 'Taken back by the manager', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settled', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided'};
+// The member sees their own (#404): a settlement is their debt settled.
+const MEMBER_KIND = {...KIND_TEXT, settle: 'Debt settled'};
 
 // What a member's club page shows in its main column (#193, #225): the
 // tables and tournaments, or your chips history or hands. Remembered per club.
@@ -2372,6 +2488,19 @@ function setMemberTab(code, t) {
   try { localStorage.setItem(`ducyMemberTab:${code}`, t); } catch {}
 }
 
+// Sitting down (#404): only the amount being added and what's available
+// (their own chips, then credit). With less than the minimum available,
+// they sit with nothing and ask the manager from the table.
+let sitForm = ''; // `${code}|${table}`
+function sitFormHtml(m, t, r) {
+  const avail = availableIn(m);
+  const hi = Math.min(r.max, avail);
+  let h = `<form class="cl-sitform" data-sitform="1" data-code="${esc(m.code)}" data-table="${esc(t.id)}">`;
+  if (hi >= r.min) h += `<label>Adding <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="${chipInput(r.min)}" max="${chipInput(hi)}" step="${CHIP_STEP}" value="${chipInput(hi)}"></label>`;
+  h += `<div class="pl-avail"><span>Available</span><b>${chips(avail)}</b></div>`;
+  return h + '<button class="btn-small primary" type="submit">Sit down</button><button class="btn-small" type="button" data-cl="sit-cancel">Cancel</button></form>';
+}
+
 // A member's Tables tab: their last session while it's recent (#187), and
 // the open tables with Sit, or why not.
 function memberTablesHtml(m, hostHere) {
@@ -2379,7 +2508,7 @@ function memberTablesHtml(m, hostHere) {
   const last = tableSessions(m.entries || []).find(s => !s.open);
   if (last && Date.now() - last.end < 24 * 3600e3) {
     const where = (m.tables || []).find(t => t.id === last.table)?.name || 'a table';
-    const net = last.net > 0 ? `+${chips(last.net)}` : chips(last.net);
+    const net = last.net > 0 ? `+${chips(last.net)}` : signed(last.net);
     h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
   }
   if (!m.tables?.length) return h + `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`;
@@ -2400,8 +2529,9 @@ function memberTablesHtml(m, hostHere) {
     // The hit-and-run rule, before you sit.
     if (t.stayHands > 0) h += `<span class="pl-meta cl-why">Once you’re up here, you play ${t.stayHands} more hands before you can leave.</span>`;
     if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
+    else if (sitForm === `${m.code}|${t.id}` && !why) h += sitFormHtml(m, t, r);
     else {
-      if (free > 0 || why !== 'Full') h += `<button class="btn-small primary" data-cl="sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit down</button>`;
+      if (free > 0 || why !== 'Full') h += `<button class="btn-small primary" data-cl="sit-open" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${why ? ` disabled title="${esc(why)}"` : ''}>Sit down</button>`;
       if (why && why !== 'Full') h += `<span class="pl-meta cl-why">${esc(why)}</span>`;
       // Full: no need to keep checking (#187).
       if (t.taken >= t.seats) {
@@ -2675,6 +2805,9 @@ async function onClick(e) {
   // Notifications' quick actions (#398).
   else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
+  else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
+  else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; render(); root.querySelector('form[data-sitform] input')?.select(); }
+  else if (act === 'sit-cancel') { sitForm = ''; render(); }
   else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
   else if (act === 'notes-clear') { setHostNote('cleared', [...clearedNotes(), ...clearableKeys(notices())].slice(-300)); render(); }
   // Overview's numbers open Members, filtered.
@@ -2738,6 +2871,7 @@ async function onClick(e) {
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
+  else if (act === 'debt') openChipForm('debt', b.dataset.id);
   else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
@@ -3053,6 +3187,15 @@ export async function openClubs(el, v = 'clubs') {
     });
     // The Members search (#398) filters the rows as it's typed.
     root.addEventListener('input', e => {
+      // Settle debt (#404): the balance it leaves, and the amount on its button.
+      if (e.target.dataset?.after != null) {
+        const f = e.target.form, n = parseChips(e.target.value);
+        if (!Number.isSafeInteger(n)) return;
+        f.querySelector('[data-after-out]').textContent = signed(Number(e.target.dataset.after) + n);
+        const go = f.querySelector('[data-label]');
+        go.textContent = `${go.dataset.label} ${chips(n)}`;
+        return;
+      }
       if (!e.target.dataset?.msearch) return;
       memberQuery = e.target.value;
       const q = memberQuery.trim().toLowerCase();
