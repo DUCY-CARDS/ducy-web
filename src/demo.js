@@ -324,6 +324,8 @@ async function draw() {
     }
   }
   if (h !== drawn) bar.innerHTML = drawn = h;
+  // The club manager's drawers open below the bar, so it stays in view (#398).
+  document.documentElement.style.setProperty('--demo-h', `${bar.offsetHeight}px`);
 }
 function drawSoon() {
   clearTimeout(drawTimer);
@@ -392,6 +394,7 @@ if (demo || over) {
   if (demo) {
     ready(drawSoon);
     addEventListener('hashchange', drawSoon);
+    addEventListener('resize', drawSoon);
     // At a table: Simulate once seated, and how it's going.
     setInterval(() => { if (location.hash === '#play') drawSoon(); }, 2000);
   } else ready(drawOver);

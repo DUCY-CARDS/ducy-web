@@ -125,12 +125,13 @@ export function readPayoutForm(f) {
 }
 
 // The host's Tournaments tab. `club` has the tournaments; `live` how running
-// ones are going; `ui` = {form, editor, last, payoutEdit: {id, places}}.
+// ones are going; `ui` = {form, editor, last, payoutEdit: {id, places},
+// heading} (heading false: the page has its own, #398).
 export function hostTourneysHtml(club, live, ui, now = Date.now()) {
   const list = [...(club.tourneys || [])].sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.startsAt - a.startsAt);
-  let h = '<h2>Tournaments</h2>';
+  let h = ui.heading === false ? '' : '<h2>Tournaments</h2>';
   h += ui.form ? tourneyFormHtml(ui.editor, ui.last, now) : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-tourney">New tournament</button></div>';
-  if (!list.length && !ui.form) h += '<p class="pl-meta">No tournaments yet: schedule one with New tournament; members register from their club page, and play starts at its time.</p>';
+  if (!list.length && !ui.form) h += '<p class="pl-meta">No tournaments yet.</p>';
   h += '<ul class="cl-list">';
   for (const t of list) {
     const players = playerCount(t), entries = entryCount(t);

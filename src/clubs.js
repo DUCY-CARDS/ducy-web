@@ -31,7 +31,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
 } from './club.js';
-import { ensureChips, issue, ledgerCsv, MAX_NOTE, reclaim, totals } from './club-chips.js';
+import { balanceChange, ensureChips, issue, ledgerCsv, MAX_NOTE, reclaim, totals } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -54,6 +54,7 @@ import { payoutShares, tourneyById } from './club-tourneys.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
+import { managerPage, NAV, navOf, pageHash } from './club-nav.js';
 
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
@@ -242,7 +243,7 @@ function setWizard(step, {setup = wizard?.setup ?? false} = {}) {
 function wizardOnward() {
   if (wizard?.setup) { setWizard('table'); return; }
   setWizard(null);
-  location.hash = 'clubs/own';
+  location.hash = 'clubs/overview';
 }
 
 // The New table form (#113): three choices (game, blinds, seats) as
@@ -358,9 +359,15 @@ function submitTable(f) {
 
 // The host watches a table (#73) on the #play page: a spectator's view from
 // the engine (no one's cards before they're shown down), nothing to act on.
+// On the club manager, the table view opens inside it (manage.js): set
+// before the table, so play.js has somewhere to draw it.
+let showTable = null;
+export function setShowTable(fn) { showTable = fn; }
+
 function watchTable(id) {
   const t = tableById(club, id);
   if (!t || !tableRunning(id)) return;
+  showTable?.();
   // Who sits where, from the host's updates, for Remove from table (#414).
   let seats = {players: [], view: null};
   const toPage = handlers => u => {
@@ -390,7 +397,7 @@ function watchTable(id) {
     label: `${club.name} · ${t.name} (watching)`,
     watch: true,
     seatTools,
-    onLeave: why => { note = why || ''; location.hash = 'clubs/own'; },
+    onLeave: why => { note = why || ''; location.hash = 'clubs/cash'; },
   });
   location.hash = 'play';
 }
@@ -431,7 +438,15 @@ function memberHelpHtml(m, hostHere) {
 // Who's online and the lobby chat: `online` [{name, role, table}], `chat`
 // [{name, text, at, host}]. `form` is the club code for a member's page,
 // or 'host' for the club you run; `canSend` whether the club is reachable.
-function lobbyHtml(online, chat, form, canSend) {
+// `who` false: the chat and how many are online, without the list (the
+// manager's notifications panel, #398).
+function lobbyHtml(online, chat, form, canSend, who = true) {
+  if (!who) {
+    let h = `<div class="mg-lobby"><h2>Lobby <span class="pl-meta">${online.length} online</span></h2><div class="cl-side-card cl-lobby">`;
+    if (chat.length) h += `<ul class="cl-lobby-log">${chat.map(x => `<li><span class="pl-meta">${clock(x.at)}</span> <b${x.host ? ' class="cl-lobby-host"' : ''}>${esc(x.name)}</b> ${esc(x.text)}</li>`).join('')}</ul>`;
+    h += `<form class="cl-lobby-form" data-lobbyform="${esc(form)}"><input class="pl-text" name="text" maxlength="${CHAT_MAX}" autocomplete="off" placeholder="Say something" aria-label="Lobby chat"${canSend ? '' : ' disabled'}>`;
+    return h + `<button class="btn-small primary" type="submit"${canSend ? '' : ' disabled'}>Send</button></form></div></div>`;
+  }
   let h = `<h2>Lobby</h2><div class="cl-side-card cl-lobby"><span class="pl-meta">Online now (${online.length})</span><ul class="cl-lobby-who">`;
   for (const x of online) {
     // "Host" needs no tag, and the host isn't waiting for a game.
@@ -455,7 +470,7 @@ function hostLobbyHtml() {
   const ids = new Set(remote ? owner.view?.online || [] : server?.online || []);
   const list = onlineList(club, ids, !remote && hostOnline);
   const chat = (club.lobby || []).filter(x => Date.now() - x.at < LOBBY_MAX_AGE_MS);
-  return lobbyHtml(list, chat, 'host', remote ? owner.online : !!hostNet);
+  return lobbyHtml(list, chat, 'host', remote ? owner.online : !!hostNet, false);
 }
 
 // The open help requests, for the host (`code` null) or an assistant of
@@ -498,30 +513,39 @@ let activityBig = false;
 // Closing a table asks on its own row (#186): the table being asked about.
 let closingTable = null;
 
-function tablesHtml() {
+// Cash games (#398): a card per table, with who's at it, Watch, and the
+// rest in its ⋯ menu.
+function cashHtml() {
   const tables = openTables(club);
   const counts = seatedCounts();
-  let h = '<h2>Tables</h2>';
-  if (tables.length) {
-    // A card per table (#225), cream while anyone's playing at it.
-    h += '<ul class="cl-tables cl-tcards">';
-    for (const t of tables) {
-      const n = counts[t.id] || 0;
-      h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span><span class="cl-tcard-meta">Buy-in ${t.minBB}–${t.maxBB} big blinds</span></span>`;
-      if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
-      else if (closingTable === t.id) {
-        h += `<span class="cl-confirm">Close ${esc(t.name)}? Everyone at it is cashed out at the end of the hand, back to their balance.`;
-        h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close it</button><button class="btn-small" data-cl="close-table-no">Keep it open</button></span>`;
-      } else h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button><button class="btn-small" data-cl="close-table" data-table="${esc(t.id)}">Close</button></span>`;
-      const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
-      h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now})));
-      h += '</li>';
+  let h = tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
+  if (!tables.length) return h + (tableForm === true ? '' : '<p class="pl-meta cl-empty">No tables open.</p>');
+  // Cream while anyone's playing at it (#225).
+  h += '<ul class="cl-tables cl-tcards">';
+  for (const t of tables) {
+    const n = counts[t.id] || 0;
+    h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span>`;
+    h += tableStatusHtml(t) + '</span>';
+    if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
+    else if (closingTable === t.id) {
+      h += `<span class="cl-confirm">Close ${esc(t.name)}?`;
+      h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close</button><button class="btn-small" data-cl="close-table-no">Keep open</button></span>`;
+    } else {
+      h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button>`;
+      h += menuHtml(`More for ${t.name}`, [['close-table', 'Close table']], '', '', ` data-table="${esc(t.id)}"`) + '</span>';
     }
-    h += '</ul>';
-  } else if (tableForm !== true) h += '<p class="pl-meta">No tables yet: open one, then send players the invite link.</p>';
-  h += tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
-  // The invite link is in Manage beside it (#225), and on Members.
-  return h;
+    // Who's at it, each with a ⋯ to remove them from the table (#414).
+    const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
+    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now})));
+    h += '</li>';
+  }
+  return h + '</ul>';
+}
+
+// A table's line under its name: dealing or not (filled in with the
+// overview, #398).
+function tableStatusHtml(t) {
+  return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}</span>`;
 }
 
 // Who's at table `tid` ([{id, name, stack, removing, now}]), each with a ⋯
@@ -565,31 +589,6 @@ function inviteRowHtml() {
 const hostNoteKey = () => `ducyClubHost:${myClubCode()}`;
 const hostNotes = () => load(hostNoteKey(), {});
 const setHostNote = (k, v) => save(hostNoteKey(), {...hostNotes(), [k]: v});
-
-// From a new club to a game: open a table, share the link, let players in,
-// give them chips. Ticked off as they happen; gone once all are, or closed.
-// A club never gives chips by itself (#395): how many is the host's choice,
-// with each member's Give.
-function checklistHtml() {
-  const notes = hostNotes();
-  if (notes.checklistHidden) return '';
-  const members = membersByStatus(club, 'member');
-  const steps = [
-    ['Open a table', openTables(club).length > 0, 'tables'],
-    ['Send players the invite link', !!notes.shared || members.length > 0, 'players'],
-    ['Let them in as they ask', members.length > 0, 'players'],
-    ['Give them chips: the Give button by each member', (club.chips?.issued || 0) > 0, 'players'],
-  ];
-  if (steps.every(s => s[1])) return '';
-  const next = steps.findIndex(s => !s[1]);
-  let h = '<div class="cl-checklist"><b>Get your first game going</b><ol>';
-  steps.forEach(([text, done, tab], i) => {
-    h += `<li class="${done ? 'done' : ''}">${done ? '✓ ' : ''}${esc(text)}`;
-    if (i === next && dashTab !== tab) h += ` <button class="link-btn" data-cl="dash" data-tab="${tab}">Go</button>`;
-    h += '</li>';
-  });
-  return h + '</ol><button class="link-btn" data-cl="checklist-hide">Hide this</button></div>';
-}
 
 // Until the club is backed up: a reminder, since without a backup nobody
 // can run it again if this browser loses it.
@@ -1298,9 +1297,54 @@ function clearInviteFromAddress() {
 
 // ---- drawing ----
 
+// The club manager's top bar (#398): the club switcher, Live, the
+// notifications bell and the account. Redrawn with the page.
+let toolsDrawn = '';
+function drawTools() {
+  const el = mode === 'manage' && document.getElementById('mg-tools');
+  if (!el) return;
+  if (!el.dataset.on) { el.dataset.on = '1'; el.addEventListener('click', onClick); }
+  const h = toolsHtml();
+  if (h === toolsDrawn) return;
+  const opened = new Set([...el.querySelectorAll('details[data-keep][open]')].map(d => d.dataset.keep));
+  el.innerHTML = toolsDrawn = h;
+  for (const d of el.querySelectorAll('details[data-keep]')) if (opened.has(d.dataset.keep)) d.open = true;
+}
+
+function toolsHtml() {
+  const own = club || isRemote();
+  const at = me ? shownClub() : '';
+  const helped = memberships.filter(helps);
+  const ownName = club?.name || owner?.record?.name || '';
+  const running = at === 'own' && own && !(wizard?.code === myClubCode());
+  const name = running ? ownName : at && at !== 'own' ? helped.find(m => m.code === at)?.name || at : '';
+  let h = '';
+  if (running && club) h += `<button class="mg-burger" data-cl="mg-nav" aria-label="Menu" aria-expanded="${navOpen}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>`;
+  if (name) {
+    h += `<details class="cl-menu mg-switch" data-keep="mg-switch"><summary title="Switch club">${esc(name)} <span aria-hidden="true">▾</span></summary><div class="cl-menu-items">`;
+    if (own) h += `<a class="cl-menu-item" href="#clubs/overview">${esc(ownName)}</a>`;
+    for (const m of helped) h += `<a class="cl-menu-item" href="#${clubHash(m.code)}">${esc(m.name || m.code)}</a>`;
+    h += '<a class="cl-menu-item" href="#clubs">All clubs</a></div></details>';
+  } else h += '<span class="mg-badge">Club manager</span>';
+  h += '<span class="mg-spacer"></span>';
+  if (running && club) {
+    h += liveHtml();
+    const n = noteCount();
+    h += `<button class="mg-bell${notesOpen ? ' on' : ''}" data-cl="mg-notes" aria-label="Notifications${n ? `, ${n}` : ''}" aria-expanded="${notesOpen}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1z"/></svg>${n ? `<span class="mg-count">${n}</span>` : ''}</button>`;
+  }
+  if (me) {
+    const who = myName() || 'You';
+    h += `<details class="cl-menu mg-acct" data-keep="mg-acct"><summary class="mg-avatar" aria-label="Account" title="${esc(who)}">${esc(who.slice(0, 1).toUpperCase())}</summary><div class="cl-menu-items">`;
+    h += `<span class="cl-menu-item mg-acct-id"><b>${esc(who)}</b> <code>${esc(showId(me.id))}</code></span>`;
+    h += `<a class="cl-menu-item" href="${playerHref('clubs')}">Player app</a><a class="cl-menu-item" href="#clubs">All clubs</a></div></details>`;
+  }
+  return h;
+}
+
 function render() {
   for (const f of listeners) f();
   updateCalls();
+  drawTools();
   if (me) noticeHelp();
   if (!open || !root) return;
   const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
@@ -1330,6 +1374,9 @@ function render() {
   // And a lobby chat line being typed.
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
+  // And the Members search (#398), where it was being typed.
+  const search = root.querySelector('[data-msearch]');
+  const searchKept = search && document.activeElement === search && {start: search.selectionStart, end: search.selectionEnd};
   // A backup's passwords, or the file chosen to prove it (#395): the form
   // itself is kept, since a chosen file can't be put back.
   const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"]');
@@ -1339,6 +1386,8 @@ function render() {
   if (clFresh) { clFresh.replaceWith(clForm); if (clFocus) clFocus.focus({preventScroll: true}); }
   const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
   if (lobbyInput) { lobbyInput.value = lobbyKept.v; if (lobbyKept.focus) lobbyInput.focus({preventScroll: true}); }
+  const searchInput = searchKept && root.querySelector('[data-msearch]');
+  if (searchInput) { searchInput.focus({preventScroll: true}); searchInput.setSelectionRange(searchKept.start, searchKept.end); }
   // The lobby chat shows its newest lines.
   for (const log of root.querySelectorAll('.cl-lobby-log')) log.scrollTop = log.scrollHeight;
   if (window.scrollY !== y) window.scrollTo(0, y);
@@ -1444,13 +1493,13 @@ function managerHtml() {
 }
 
 // Which club the address shows (#225): 'own' for the one you run (#clubs/own,
-// or one of its tabs, #clubs/players), a club code for one you're in
-// (#clubs/c/CODE), or '' for the list.
+// or one of the manager's pages, #clubs/members, club-nav.js), a club code
+// for one you're in (#clubs/c/CODE), or '' for the list.
 function shownClub() {
   const p = location.hash.slice(1).split('/');
   if (p[0] !== 'clubs' || !p[1]) return '';
   if (p[1] === 'c') return decodeURIComponent(p[2] || '');
-  return p[1] === 'own' || DASH_TABS.includes(p[1]) ? 'own' : '';
+  return managerPage(location.hash) ? 'own' : '';
 }
 // The address of club `code`'s page.
 const clubHash = code => (code && code === myClubCode() ? 'clubs/own' : code ? `clubs/c/${encodeURIComponent(code)}` : 'clubs');
@@ -1582,7 +1631,6 @@ function notice(text, go = 'play') {
 function createHtml() {
   if (club || isRemote()) return '';
   let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span>';
-  if (!demo) h += '<span class="cl-act-desc">Free for 14 days: 2 tables and 1 tournament a day.</span>';
   h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || (demo ? 'Demo Club' : ''))}">`;
   h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create a club'}</button></span>`;
   if (alwaysFailed) {
@@ -1711,145 +1759,284 @@ function relayWarningHtml() {
   return '';
 }
 
-// The club's plan (#265), from the relay: a free trial with its days left,
-// or a club; and what it allows.
-function planHtml(p) {
-  if (!p?.limits || demo) return '';
-  const n = (k, one, many) => `${p.limits[k]} ${p.limits[k] === 1 ? one : many}`;
-  const allows = `up to ${n('tables', 'table', 'tables')} open, ${n('tourneysPerDay', 'tournament', 'tournaments')} a day`;
-  if (p.plan === 'trial' && p.expires) {
-    const days = Math.ceil((p.expires - Date.now()) / 864e5);
-    const left = days > 1 ? `${days} days left` : days === 1 ? 'last day' : 'ended';
-    return `<p class="pl-meta cl-plan">Free trial club: ${left} · ${allows}. To keep it going after the trial, ask ducy.</p>`;
-  }
-  return `<p class="pl-meta cl-plan">Club plan: ${allows}. Need more? Ask ducy.</p>`;
-}
+// The club you run, on the club manager (#398): its pages by task in a
+// sidebar (a drawer on a phone), the page the address names, and the
+// notifications beside it (behind the bell on a phone).
+let navOpen = false, notesOpen = false;
 
 function hostHtml() {
-  if (!club && isRemote()) return `<section class="cl-card"><h2>${esc(owner.record.name)}</h2><p class="pl-meta">Connecting to your always-on club…</p></section>`;
+  if (!club && isRemote()) return `<section class="cl-card"><h2>${esc(owner.record.name)}</h2><p class="pl-meta">Connecting…</p></section>`;
   if (!club) return '';
-  const pending = membersByStatus(club, 'pending');
-  const members = membersByStatus(club, 'member');
+  const at = managerPage(location.hash) || {page: 'overview', member: ''};
+  // An older address (#clubs/players …) shows under its page's own.
+  const want = pageHash(at.page, at.member);
+  if (location.hash.startsWith('#clubs') && location.hash.slice(1) !== want) history.replaceState(null, '', `${location.pathname}${location.search}#${want}`);
+  let h = `<div class="mg-shell${navOpen ? ' nav-open' : ''}${notesOpen ? ' notes-open' : ''}">`;
+  h += sideHtml(at.page);
+  h += `<section class="mg-page">${connNoteHtml()}${backupNagHtml()}${pageHtml(at)}</section>`;
+  h += notesHtml();
+  return h + '<div class="mg-scrim" data-cl="mg-close"></div></div>';
+}
+
+// A club run in this tab, when it isn't reaching its players. An always-on
+// club says how it's connected in the top bar (liveHtml).
+function connNoteHtml() {
+  if (isRemote()) return '';
+  if (!hostNet) return '<p class="pl-desc pl-neterr">This tab isn’t hosting the club. <button class="btn-small" data-cl="reconnect">Reconnect</button></p>';
+  if (!hostOnline || !hostNet.healthy()) return '<p class="pl-desc pl-neterr">The tables are paused until the connection is back.</p>';
+  return '';
+}
+
+// Live, or how the club's connection is doing, in the top bar.
+function liveHtml() {
   const remote = isRemote();
-  const stalled = !remote && hostOnline && hostNet && !hostNet.healthy();
-  const on = remote ? owner.online : hostOnline;
-  // An always-on club shows nothing while connected (every club is always
-  // on); only reconnecting, or a Reconnect button once another tab has it.
-  const badge = remote ? (owner.online ? '' : owner.connected ? CONN.reconnecting : CONN.off)
-    : hostOnline && !stalled ? CONN.on : hostNet ? CONN.reconnecting : CONN.off;
-  // The club you run (V3 Club home, #225): its name on top; the tables and
-  // tournaments, or the part of Manage picked; and beside them, Manage:
-  // what needs you, then members, chips, history, settings and the link.
-  let h = `<div class="cl-home-head"><h1 class="cl-home-name">${esc(club.name)}</h1>${badge ? `<span class="cl-badge${on ? ' on' : ''}">${badge}</span>` : ''}`;
-  if (!remote && !hostNet) h += '<button class="btn-small" data-cl="reconnect">Reconnect</button>';
+  const on = remote ? owner.online : hostOnline && !!hostNet?.healthy();
+  const text = on ? 'Live' : remote ? (owner.connected ? CONN.reconnecting : CONN.off) : hostNet ? CONN.reconnecting : CONN.off;
+  let h = `<span class="mg-live${on ? ' on' : ''}" title="${text}">${text}</span>`;
   if (remote && !owner.connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
-  h += `<span class="cl-home-chips">${members.length} member${members.length === 1 ? '' : 's'}</span></div>`;
-  if (!remote && hostNet && (stalled || !hostOnline)) h += '<p class="pl-desc pl-neterr">The tables are paused until the connection is back: no one is folded or timed out meanwhile.</p>';
-  if (!remote && !hostNet) h += '<p class="pl-desc pl-neterr">This tab isn’t hosting the club right now, so players can’t reach it from here, and changes made here reach them only when they next connect. If the club is open in another tab, use that one.</p>';
-  if (!remote) h += `<p class="pl-meta">Runs in this tab · code ${esc(club.code)}</p>`;
-  if (remote) h += planHtml(owner.view?.plan);
-  h += backupNagHtml() + checklistHtml();
-  const asking = members.filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
-  const helpReqs = openHelp(club);
-  syncDash();
-  h += '<div class="cl-home"><section class="cl-home-main">';
-  const PARTS = {players: 'Members', accounting: 'Chips and ledger', promos: 'Promotions', history: 'History', settings: 'Settings'};
-  if (PARTS[dashTab]) h += `<div class="cl-home-title"><h2>${PARTS[dashTab]}</h2><button class="link-btn" data-cl="dash" data-tab="tables">‹ Tables</button></div>`;
-  if (dashTab === 'tables' || dashTab === 'tourneys') {
-    h += tablesHtml();
-    h += hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit});
-  } else if (dashTab === 'settings') h += settingsHtml();
-  else if (dashTab === 'promos') h += hostPromosHtml(club, promoFor ? {} : {form: promoForm, note: promoNote});
-  else if (dashTab === 'players') {
-    h += helpListHtml(helpReqs);
-    if (pending.length || asking.length) {
-      h += `<div class="cl-needs"><h3>Needs you (${pending.length + asking.length})</h3><ul class="cl-list">`;
-      // Letting someone in only lets them in: chips are the host's choice,
-      // with Give (#395).
-      for (const m of pending) {
-        h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
-        h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
-      }
-      for (const m of asking) {
-        h += `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
-        if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
-        h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
-        h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other amount</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
-        if (chipForm?.kind === 'grant' || chipForm?.kind === 'deny') h += chipFormHtml(m);
-        h += '</li>';
-      }
-      h += '</ul></div>';
+  return h;
+}
+
+// The sidebar: each group's pages, with what's waiting on them.
+function sideHtml(page) {
+  const counts = {requests: hostWaiting(), promos: (club.promos?.awards || []).filter(a => a.status === 'held').length};
+  let h = '<nav class="mg-side" aria-label="Club manager">';
+  for (const g of NAV) {
+    h += `<div class="mg-group">${g.group ? `<span class="mg-group-name">${g.group}</span>` : ''}`;
+    for (const [id, label] of g.pages) {
+      const on = navOf(page) === id;
+      h += `<a class="mg-link${on ? ' on' : ''}" href="#${pageHash(id)}"${on ? ' aria-current="page"' : ''}><span>${label}</span>${counts[id] ? `<span class="mg-count">${counts[id]}</span>` : ''}</a>`;
     }
-    h += requestLogHtml();
-    h += inviteRowHtml();
-    h += `<h3>Members (${members.length})</h3>`;
-    if (!members.length) h += `<p class="pl-meta cl-empty">No members yet: send someone the invite link above. <button class="btn-small primary" data-cl="copy">${copied ? 'Copied' : 'Copy the link'}</button></p>`;
-    else {
-      // Agents' players are listed under their agent (#75).
-      const agents = members.filter(m => m.agent === 'yes');
-      const order = members.filter(m => !m.agentOf || !agents.some(a => a.id === m.agentOf))
-        .flatMap(m => (m.agent === 'yes' ? [m, ...members.filter(p => p.agentOf === m.id)] : [m]));
-      h += '<ul class="cl-list">';
-      for (const m of order) h += memberRowHtml(m, agents);
-      h += '</ul>';
-    }
-  } else if (dashTab === 'accounting') h += accountingHtml();
+    h += '</div>';
+  }
+  return h + '</nav>';
+}
+
+const pageHead = (title, extra = '') => `<div class="mg-head"><h1 class="mg-h">${title}</h1>${extra}</div>`;
+
+function pageHtml({page, member}) {
+  if (page === 'cash') return pageHead('Cash games') + cashHtml();
+  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit, heading: false});
+  if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, promoFor ? {} : {form: promoForm, note: promoNote});
+  if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
+  if (page === 'members') return pageHead('Members') + membersPageHtml();
+  if (page === 'member') return memberPageHtml(member);
+  if (page === 'chips') return pageHead('Chips') + accountingHtml();
+  if (page === 'info') return pageHead('Club info') + infoEditHtml();
+  if (page === 'rules') return pageHead('Rules') + rulesHtml();
+  if (page === 'backup') return pageHead('Backup and devices') + backupPageHtml();
+  if (page === 'history') return pageHead('History') + historyHtml();
+  return overviewHtml();
+}
+
+// Overview, the manager's home (#398): never a list of members.
+function overviewHtml() {
+  let h = pageHead('Overview');
+  const counts = seatedCounts();
+  const tables = openTables(club);
+  h += '<section class="mg-sec"><h2>Tables</h2>';
+  if (!tables.length) h += `<p class="pl-meta cl-empty">No tables open. <a class="btn-small primary" href="#${pageHash('cash')}">New table</a></p>`;
   else {
-    // Hand history (#71): the host's hands show no hidden cards.
-    h += handsHtml(club.code, 'host', 'Hands at your tables');
-    if (club.log?.length) {
-      // Filtered by who did it (#190).
-      const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || club.services?.[id]?.name || (id === club.hostId || id === club.ownerId ? 'You' : id)]);
-      // Big chip moves stand out (#190): a full buy-in at the biggest open table or more.
-      const big = bigMove(club);
-      const bigCount = club.log.filter(l => isBigMove(l, big)).length;
-      const shown = club.log.filter(l => (!activityBy || l.by === activityBy) && (!activityBig || isBigMove(l, big)));
-      h += `<details class="cl-history" data-keep="activity"><summary>Activity (${club.log.length})${bigCount ? ` · <span class="cl-big">${bigCount} big</span>` : ''}</summary>`;
-      const filters = [];
-      if (who.length > 1) filters.push(`<select class="pl-text" data-activity="1" aria-label="Whose activity"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
-      if (big != null) filters.push(`<label class="pl-meta"><input type="checkbox" data-activitybig="1"${activityBig ? ' checked' : ''}> Only chip moves of ${chips(big)} or more</label>`);
-      if (filters.length) h += `<div class="pl-row cl-activity-filters">${filters.join('')}</div>`;
-      if (!shown.length) h += '<span class="pl-meta">Nothing matches these filters.</span>';
-      h += '<ul>';
-      for (const l of [...shown].reverse().slice(0, 100)) h += `<li${isBigMove(l, big) ? ' class="cl-bigmove"' : ''}><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
-      h += '</ul></details>';
+    h += '<ul class="mg-rows">';
+    for (const t of tables) h += `<li><a href="#${pageHash('cash')}"><b>${esc(t.name)}</b><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)}</span><span class="mg-row-end">${counts[t.id] || 0}/${t.seats}</span></a></li>`;
+    h += '</ul>';
+  }
+  return h + '</section>';
+}
+
+// Requests (#398): help, people asking to join, chip requests, then the
+// answered ones and the invite link.
+function requestsPageHtml() {
+  const pending = membersByStatus(club, 'pending');
+  const asking = membersByStatus(club, 'member').filter(m => m.request && !m.agentOf).sort((a, b) => a.request.at - b.request.at);
+  let h = helpListHtml(openHelp(club));
+  if (pending.length || asking.length) {
+    h += '<ul class="cl-list cl-needs">';
+    // Letting someone in only lets them in: chips are the host's choice,
+    // with Give (#395).
+    for (const m of pending) {
+      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
+      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></li>`;
     }
-  }
-  h += '</section>';
-  return h + manageSideHtml(pending, asking, helpReqs, members) + '</div>';
+    for (const m of asking) h += askRowHtml(m);
+    h += '</ul>';
+  } else if (!openHelp(club).length) h += '<p class="pl-meta cl-empty">Nothing waiting.</p>';
+  h += requestLogHtml();
+  return h + inviteRowHtml();
 }
 
-// Manage, beside the club you run's tables (#225): who's asking to join or
-// for chips, answered right there (a reason to decline opens Members); help
-// requests; then each part of running the club, and the invite link.
-function manageSideHtml(pending, asking, helpReqs, members) {
-  let h = '<aside class="cl-home-side"><h2>Manage</h2><div class="cl-side-card">';
-  // Let in only lets them in: no chips come with it (#395).
-  for (const m of pending) {
-    h += `<div class="cl-side-ask"><span><b>${esc(m.name)}</b> asks to join</span><span class="cl-side-btns">`;
-    h += `<button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button>`;
-    h += `<button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></div>`;
-  }
-  for (const m of asking) {
-    h += `<div class="cl-side-ask"><span><b>${esc(m.name)}</b> asks for ${chips(m.request.amount)}</span><span class="cl-side-btns">`;
-    h += `<button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give</button><button class="btn-small" data-cl="deny-there" data-id="${esc(m.id)}">No</button></span></div>`;
-  }
-  const row = (t, label, value) => `<button type="button" class="cl-side-row${dashTab === t ? ' on' : ''}" data-cl="dash" data-tab="${dashTab === t ? 'tables' : t}"><span>${label}</span><b>${value} ›</b></button>`;
-  if (helpReqs.length) h += row('players', 'Help requests', helpReqs.length);
-  h += row('players', 'Members', members.length);
-  h += row('accounting', 'Chips and ledger', '');
-  const promosOn = (club.promos?.list || []).filter(p => p.status === 'running').length;
-  const promosWaiting = (club.promos?.awards || []).filter(a => a.status === 'held').length;
-  h += row('promos', 'Promotions', promosWaiting ? `${promosWaiting} to approve` : promosOn || '');
-  h += row('history', 'History', '');
-  h += row('settings', 'Settings', '');
-  h += `<button type="button" class="cl-side-row" data-cl="copy"><span>Invite link</span><b>${copied ? 'Copied' : 'Copy'}</b></button>`;
-  return h + '</div><span class="pl-meta">Only you and your game assistants see Manage.</span>' + hostLobbyHtml() + '</aside>';
+// A chip request on Requests: Give what was asked, another amount, or no.
+function askRowHtml(m) {
+  let h = `<li><span class="cl-name">${esc(m.name)}</span><span class="cl-chips">asks for ${chips(m.request.amount)}</span>`;
+  if (m.request.note) h += `<span class="pl-meta">“${esc(m.request.note)}”</span>`;
+  h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
+  h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">No</button></span>`;
+  if (chipForm?.id === m.id && (chipForm.kind === 'grant' || chipForm.kind === 'deny')) h += chipFormHtml(m);
+  return h + '</li>';
 }
 
-// The club page's tab (#152): 'tables', 'players', 'accounting', 'history' or 'settings'.
-let dashTab = 'tables';
-const DASH_TABS = ['tables', 'tourneys', 'players', 'accounting', 'promos', 'history', 'settings'];
+// Members (#398): everyone, with a search; each opens their own page.
+let memberQuery = '';
+function membersPageHtml() {
+  const list = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
+  let h = '<div class="mg-tools-row">';
+  h += `<input class="pl-text mg-search" type="search" data-msearch="1" placeholder="Search" aria-label="Search members" value="${esc(memberQuery)}">`;
+  h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy invite link'}</button></div>`;
+  if (!list.length) return h + '<p class="pl-meta cl-empty">No members yet.</p>';
+  h += '<ul class="mg-rows mg-members">';
+  const q = memberQuery.trim().toLowerCase();
+  for (const m of list) {
+    const tags = [m.role === 'assistant' && 'assistant', m.agent === 'yes' && 'agent', m.agentOf && club.members[m.agentOf] && `via ${club.members[m.agentOf].name}`].filter(Boolean);
+    h += `<li data-name="${esc(m.name.toLowerCase())}"${q && !m.name.toLowerCase().includes(q) ? ' hidden' : ''}><a href="#${pageHash('member', m.id)}"><b>${esc(m.name)}</b>`;
+    if (tags.length) h += `<span class="pl-meta">${tags.map(esc).join(' · ')}</span>`;
+    if (m.seat) h += `<span class="pl-meta">on a table ${chips(m.seat.stack)}</span>`;
+    h += `<span class="mg-row-end${m.balance < 0 ? ' cl-down' : ''}">${chips(m.balance)}</span></a></li>`;
+  }
+  return h + '</ul>';
+}
+
+// A member's own page (#398): their chips, Give and Take back, and the rest
+// of what the host can do for them.
+function memberPageHtml(id) {
+  const m = club.members[id];
+  const back = `<a class="link-btn mg-back" href="#${pageHash('members')}">‹ Members</a>`;
+  if (!m || m.status !== 'member') return back + pageHead('Member') + '<p class="pl-meta">Not a member.</p>';
+  const tags = [m.role === 'assistant' && 'Assistant', m.role === 'offered' && 'Offered assistant', m.agent === 'yes' && 'Agent', m.agent === 'offered' && 'Offered agent', m.agentOf && club.members[m.agentOf] && `Via ${club.members[m.agentOf].name}`].filter(Boolean);
+  let h = back + pageHead(esc(m.name), `<code class="mg-id">${esc(showId(m.id))}</code>`);
+  if (tags.length) h += `<p class="pl-meta">${tags.map(esc).join(' · ')}</p>`;
+  h += '<div class="mg-stats">';
+  h += statHtml('Balance', chips(m.balance), m.balance < 0 ? 'down' : '');
+  h += statHtml('On a table', m.seat ? chips(m.seat.stack) : '–');
+  if (m.agent === 'yes') {
+    const a = accountOf(club, m.id);
+    h += statHtml('Agent credit used', `${chips(a.creditUsed)} / ${chips(a.limit)}`);
+  }
+  h += '</div>';
+  h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
+  h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
+  h += memberMenuHtml(m) + '</div>';
+  if (chipForm?.id === m.id) h += chipFormHtml(m);
+  // Making an assistant: what they'll be able to do, then Offer (#190).
+  if (offering === m.id) {
+    h += `<div class="cl-offer-confirm">${roleHtml('assistant', null, m.name)}`;
+    h += `<span><button class="btn-small primary" data-cl="offer-role-yes" data-id="${esc(m.id)}">Offer it</button> <button class="btn-small" data-cl="offer-role-no">Cancel</button></span></div>`;
+  }
+  if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
+  const mine = club.chips.ledger.filter(e => e.member === m.id);
+  if (mine.length) {
+    const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
+    h += '<section class="mg-sec"><h2>Chips</h2><ul class="cl-ledger">';
+    for (const e of [...mine].reverse().slice(0, 30)) h += ledgerLineHtml(e, tableNames);
+    h += '</ul></section>';
+  }
+  return h;
+}
+
+const statHtml = (label, value, cls = '') => `<div class="mg-stat"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls ? ` cl-${cls}` : ''}">${value}</b></div>`;
+
+// One ledger line, for the host: when, what, the change and the balance after.
+function ledgerLineHtml(e, tableNames = {}, names = null) {
+  const sign = balanceChange(e) < 0 ? '−' : '+';
+  return `<li><span class="pl-meta">${when(e.at)}</span> ${names ? `${esc(names[e.member] || e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
+}
+
+// The rest of what the host can do for a member, in a ⋯ menu (#143).
+function memberMenuHtml(m) {
+  const items = [];
+  if (m.role === 'assistant') items.push(['revoke-role', 'Stop being an assistant']);
+  else if (m.role === 'offered') items.push(['revoke-role', 'Withdraw the assistant offer']);
+  else items.push(['offer-role', 'Make assistant']);
+  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['limit', 'Agent credit limit'], ['revoke-agent', 'Stop being an agent']);
+  else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
+  else if (!m.agentOf) items.push(['make-agent', 'Make agent']);
+  items.push(['remove', 'Remove from the club']);
+  // Their agent is picked in the menu too (#193).
+  const agents = membersByStatus(club, 'member').filter(a => a.agent === 'yes' && a.id !== m.id);
+  const picker = !m.agent && agents.length
+    ? `<label class="cl-menu-item cl-assign">Agent <select class="pl-text" data-assign="${esc(m.id)}"><option value="">none</option>${agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>`
+    : '';
+  return menuHtml(`More for ${m.name}`, items, m.id, picker);
+}
+
+// History: the hands at the club's tables (#71) and the activity log (#190).
+function historyHtml() {
+  let h = handsHtml(club.code, 'host', 'Hands');
+  if (!club.log?.length) return h;
+  const who = [...new Set(club.log.map(l => l.by).filter(Boolean))].map(id => [id, club.members[id]?.name || club.services?.[id]?.name || (id === club.hostId || id === club.ownerId ? 'You' : id)]);
+  // Big chip moves stand out (#190): a full buy-in at the biggest open table or more.
+  const big = bigMove(club);
+  const bigCount = club.log.filter(l => isBigMove(l, big)).length;
+  const shown = club.log.filter(l => (!activityBy || l.by === activityBy) && (!activityBig || isBigMove(l, big)));
+  h += `<details class="cl-history" data-keep="activity" open><summary>Activity (${club.log.length})${bigCount ? ` · <span class="cl-big">${bigCount} big</span>` : ''}</summary>`;
+  const filters = [];
+  if (who.length > 1) filters.push(`<select class="pl-text" data-activity="1" aria-label="Whose activity"><option value="">Everyone</option>${who.map(([id, n]) => `<option value="${esc(id)}"${activityBy === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`);
+  if (big != null) filters.push(`<label class="pl-meta"><input type="checkbox" data-activitybig="1"${activityBig ? ' checked' : ''}> ${chips(big)} or more</label>`);
+  if (filters.length) h += `<div class="pl-row cl-activity-filters">${filters.join('')}</div>`;
+  if (!shown.length) h += '<span class="pl-meta">Nothing matches.</span>';
+  h += '<ul>';
+  for (const l of [...shown].reverse().slice(0, 100)) h += `<li${isBigMove(l, big) ? ' class="cl-bigmove"' : ''}><span class="pl-meta">${when(l.at)}</span> ${esc(l.text)}</li>`;
+  return h + '</ul></details>';
+}
+
+// The notifications (#398): what needs the manager, each answered right
+// there. Beside the page on a wide screen, behind the bell on a phone.
+function notesHtml() {
+  const pending = membersByStatus(club, 'pending');
+  const asking = membersByStatus(club, 'member').filter(m => m.request && !m.agentOf);
+  let h = '<aside class="mg-notes" aria-label="Notifications"><div class="mg-notes-head"><h2>Notifications</h2><button class="link-btn mg-notes-x" data-cl="mg-close" aria-label="Close">✕</button></div>';
+  const items = [];
+  for (const m of pending) items.push(`<li class="mg-note"><span><b>${esc(m.name)}</b> asks to join</span><span class="mg-note-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></li>`);
+  for (const m of asking) items.push(`<li class="mg-note"><span><b>${esc(m.name)}</b> asks for ${chips(m.request.amount)}</span><span class="mg-note-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">No</button></span></li>`);
+  h += items.length ? `<ul class="mg-note-list">${items.join('')}</ul>` : '<p class="pl-meta mg-quiet">Nothing new.</p>';
+  return h + hostLobbyHtml() + '</aside>';
+}
+const noteCount = () => (club ? hostWaiting() : 0);
+
+// Rules (#398): how the club's tables and members work.
+function rulesHtml() {
+  const remote = isRemote();
+  let h = '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
+  h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
+  h += '</div></div>';
+  h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
+  h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
+  h += '</div></div>';
+  // Asking to join with the club code alone (#393): off by default.
+  if (remote) {
+    h += `<div class="pl-row"><span class="pl-label">Join by code (${esc(club.code)})</span><div class="pl-opts">`;
+    h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${(club.codeJoin === true) === on ? ' on' : ''}" data-cl="code-join" data-on="${on ? 1 : 0}">${text}</button>`).join('');
+    h += '</div></div>';
+  }
+  h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
+  // Outside servers that give chips (club-services.js): an always-on club's room answers them.
+  if (remote) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
+  return h;
+}
+
+// Backup and devices (#398, #399): the backup and its proof, running the
+// club from another device, and deleting it.
+function backupPageHtml() {
+  const remote = isRemote();
+  let h = '';
+  if (remote) {
+    // A backup counts once proved (#395), on any device: the relay keeps when.
+    const last = hostNotes().backedUp, plan = owner.view?.plan;
+    if (plan?.temporary) h += '<p class="pl-meta pl-neterr">Temporary club: no backup proved yet.</p>';
+    else if (plan?.provedAt) h += `<p class="pl-meta">Backed up ✓ ${esc(new Date(plan.provedAt).toLocaleString())}</p>`;
+    if (last) h += `<p class="pl-meta">Last backup from this browser: ${esc(new Date(last).toLocaleString())}</p>`;
+    h += '<div class="pl-actions"><button class="btn-small primary" data-cl="backup">Back up the club</button></div>';
+    // Moving devices (#191): the backup is the way.
+    h += '<h2>Another device</h2><p class="pl-desc">Back it up here, then on the other device: club manager › Start a club › Restore it from its backup. One device at a time runs the club.</p>';
+  } else h += '<p class="pl-desc">Kept in this browser only. Move it to always on to back it up.</p>';
+  h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' : '<button class="btn-small" data-cl="move-always">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
+  return h;
+}
+
+// Club info (#398): filled in with the info editor.
+function infoEditHtml() {
+  return '<p class="pl-meta">Coming next.</p>';
+}
+
 // The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
 let promoForm = null, promoNote = '';
 // Whose promotions the form is for: '' the club you run, or the code of a
@@ -1864,29 +2051,6 @@ function promoCmd(code, op, args) {
   render();
   return Promise.resolve(true);
 }
-// The tab is remembered per club, and the address says it (#clubs/players), so
-// it can be linked to (#193).
-let dashFor = '';
-function setDash(t) {
-  if (!DASH_TABS.includes(t)) return;
-  dashTab = t;
-  const code = myClubCode();
-  if (code) { dashFor = code; try { localStorage.setItem(`ducyClubTab:${code}`, t); } catch {} }
-  if (open && view === 'clubs' && location.hash.startsWith('#clubs')) history.replaceState(null, '', `${location.pathname}${location.search}#clubs/${t}`);
-}
-// The club being shown changed (or the page opened): its remembered tab,
-// unless the address names one.
-function syncDash() {
-  const code = myClubCode();
-  const fromHash = location.hash.startsWith('#clubs/') ? location.hash.slice(7) : '';
-  if (DASH_TABS.includes(fromHash) && fromHash !== dashTab) { setDash(fromHash); return; }
-  if (!code || code === dashFor) return;
-  dashFor = code;
-  let t = '';
-  try { t = localStorage.getItem(`ducyClubTab:${code}`) || ''; } catch {}
-  dashTab = DASH_TABS.includes(t) ? t : 'tables';
-}
-
 // The Accounting tab: where the club's chips are, each member's balance and
 // results, and every chip movement (the ledger).
 function accountingHtml() {
@@ -1895,20 +2059,22 @@ function accountingHtml() {
   const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
   const results = totalsByMember(tableSessions(club.chips.ledger));
   const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
-  let h = '<h3>Chips</h3><table class="cl-acct"><tbody>';
+  let h = '<table class="cl-acct"><tbody>';
   h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
   h += `<tr><th>Taken back</th><td>${chips(t.reclaimed)}</td></tr>`;
   h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued - t.reclaimed)}</td></tr>`;
   h += `<tr><th>In balances</th><td>${chips(t.balances)}</td></tr>`;
   h += `<tr><th>On tables</th><td>${chips(t.onTables)}</td></tr>`;
+  if (t.inTourneys) h += `<tr><th>In tournaments</th><td>${chips(t.inTourneys)}</td></tr>`;
+  // Credit players (#404): what's owed each way.
+  if (t.owedToClub) h += `<tr><th>Owed to the club</th><td>${chips(t.owedToClub)}</td></tr>`;
   h += '</tbody></table>';
-  h += t.conserved ? '<p class="pl-meta">Adds up: balances and tables hold every chip in the club.</p>'
-    : '<p class="pl-desc pl-neterr">Doesn’t add up: balances and tables don’t hold every chip in the club.</p>';
+  h += t.conserved ? '<p class="pl-meta">Adds up ✓</p>' : '<p class="pl-desc pl-neterr">Doesn’t add up.</p>';
   const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
   if (members.length) {
-    h += '<h3>Members</h3><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
-    for (const m of members) h += `<tr><th>${esc(m.name)}</th><td>${chips(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
-    h += '</tbody></table><p class="pl-meta">Results: what each member won or lost over the table sessions they finished.</p>';
+    h += '<h2>Results</h2><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
+    for (const m of members) h += `<tr><th><a href="#${pageHash('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${chips(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
+    h += '</tbody></table>';
   }
   h += resultsHtml(club.chips.ledger, names, tableNames);
   const ledger = club.chips.ledger;
@@ -1923,10 +2089,7 @@ function accountingHtml() {
     h += `<details class="cl-history" data-keep="ledger"><summary>Ledger (${ledger.length})</summary>`;
     h += `<div class="pl-row cl-ledger-filters">${sel('member', 'Everyone', people)}${sel('kind', 'Everything', kinds)}${tables.length ? sel('table', 'Every table', tables) : ''}`;
     h += `<button class="btn-small" data-cl="ledger-csv">Export CSV${shown.length < ledger.length ? ` (${shown.length})` : ''}</button></div><ul>`;
-    for (const e of [...shown].reverse().slice(0, 200)) {
-      const sign = ['reclaim', 'buy_in', 'top_up', 'transfer_out', 'tourney_buyin', 'promo_void'].includes(e.kind) ? '−' : '+';
-      h += `<li><span class="pl-meta">${when(e.at)}</span> ${esc(names[e.member] || e.member)} · ${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${chips(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
-    }
+    for (const e of [...shown].reverse().slice(0, 200)) h += ledgerLineHtml(e, tableNames, names);
     h += '</ul>';
     if (shown.length > 200) h += `<p class="pl-meta">The newest 200 of ${shown.length}; Export CSV has them all.</p>`;
     if (!shown.length) h += '<p class="pl-meta">Nothing matches.</p>';
@@ -1970,81 +2133,6 @@ function menuHtml(label, items, id = '', extra = '', attrs = '') {
   return h + extra + '</div></details>';
 }
 
-// The Settings tab (#152): the rules, with good defaults; a backup; where the
-// club runs; and deleting it.
-function settingsHtml() {
-  const remote = isRemote();
-  let h = '<div class="pl-row"><span class="pl-label">Rathole</span><div class="pl-opts">';
-  h += [0, 1, 2, 4, 8, 24].map(n => `<button class="cc-btn${club.ratholeHours === n ? ' on' : ''}" data-cl="rathole" data-hours="${n}">${n ? n + ' h' : 'Off'}</button>`).join('');
-  h += '</div><span class="pl-desc">A player who leaves a table must come back to it with at least what they left with, for this long.</span></div>';
-  h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
-  h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
-  h += '</div><span class="pl-desc">The default for new tables: someone sitting out longer gives up their seat, and their chips go back to their balance.</span></div>';
-  // Asking to join with the club code alone (#393): off by default, so only
-  // the invite link gets a request in. Play's Enter a code finds always-on
-  // clubs only (the relay's lookup).
-  if (remote) {
-    h += '<div class="pl-row"><span class="pl-label">Join by code</span><div class="pl-opts">';
-    h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${(club.codeJoin === true) === on ? ' on' : ''}" data-cl="code-join" data-on="${on ? 1 : 0}">${text}</button>`).join('');
-    h += `</div><span class="pl-desc">Let people ask to join with the club code, ${esc(club.code)}, as well as the invite link. You still let everyone in.</span></div>`;
-  }
-  h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div><span class="pl-desc">How long the hands at your tables are kept for the history.</span></div>`;
-  // Outside servers that give chips (club-services.js): an always-on club's room answers them.
-  if (remote) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
-  h += '<h3>Backup</h3>';
-  if (remote) {
-    h += '<p class="pl-desc">A file, locked with a password, that lets you run the club again from any browser if this one loses it.</p>';
-    // A backup counts once proved (#395), on any device: the relay keeps when.
-    const last = hostNotes().backedUp, plan = owner.view?.plan;
-    if (plan?.temporary) h += '<p class="pl-meta pl-neterr">Temporary club: no backup of it has been proved yet.</p>';
-    else if (plan?.provedAt) h += `<p class="pl-meta">Backed up ✓ Last proved ${esc(new Date(plan.provedAt).toLocaleString())}.</p>`;
-    if (last) h += `<p class="pl-meta">Last backup made from this browser ${esc(new Date(last).toLocaleString())}.</p>`;
-    h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Back up the club</button></div>';
-    // Moving devices (#191): the backup is the way.
-    h += '<p class="pl-desc"><b>Running it from another device too</b> (your phone, say): back it up here, then on that device open the club manager and, under Start a club, choose “Restore it from its backup”. The backup also brings your player ID, so that device is you. One device at a time runs the club: the other shows Reconnect.</p>';
-  } else h += '<p class="pl-desc">A club run in this tab is kept in this browser only. Move it to always on to back it up.</p>';
-  h += `<h3>Delete</h3><div class="pl-actions">${remote ?'<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' :'<button class="btn-small" data-cl="move-always" title="Run it on ducy’s server, so it stays open with this page closed">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
-  return h;
-}
-
-// One member on the host's dashboard: balance, chips on a table, and what the
-// host can do. An agent shows their account and credit (#75, #76); a player
-// under an agent is indented, and any non-agent can be assigned to an agent.
-function memberRowHtml(m, agents) {
-  const under = m.agentOf && club.members[m.agentOf];
-  let h = `<li class="${under ? 'cl-under' : ''}"><span class="cl-name">${esc(m.name)}</span><code>${esc(showId(m.id))}</code><span class="cl-chips" title="Club balance">${chips(m.balance)} chips</span>`;
-  if (m.seat) h += `<span class="pl-meta">${chips(m.seat.stack)} on a table</span>`;
-  if (m.agent === 'yes') {
-    const a = accountOf(club, m.id);
-    h += `<span class="pl-meta">agent · account ${chips(a.total)} · credit used ${chips(a.creditUsed)}/${chips(a.limit)}</span>`;
-  }
-  if (m.role === 'assistant') h += '<span class="pl-meta">assistant</span>';
-  else if (m.role === 'offered') h += '<span class="pl-meta">offered assistant</span>';
-  if (m.agent === 'offered') h += '<span class="pl-meta">offered agent</span>';
-  // Giving and taking chips stay in view; the rest is in the row's menu (#143).
-  h += `<span class="cl-acts"><button class="btn-small" data-cl="give" data-id="${esc(m.id)}">Give</button>`;
-  h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
-  const items = [];
-  if (m.role === 'assistant') items.push(['revoke-role', 'Stop being an assistant']);
-  else if (m.role === 'offered') items.push(['revoke-role', 'Withdraw the assistant offer']);
-  else items.push(['offer-role', 'Make assistant', `Let ${m.name} help run the club`]);
-  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['limit', 'Credit limit'], ['revoke-agent', 'Stop being an agent']);
-  else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
-  else if (!m.agentOf) items.push(['make-agent', 'Make agent', `Let ${m.name} bring in and back players`]);
-  items.push(['remove', 'Remove from the club']);
-  // Their agent is picked in the menu too (#193): the row fits a phone.
-  const picker = !m.agent && agents.length
-    ? `<label class="cl-menu-item cl-assign">Agent <select class="pl-text" data-assign="${esc(m.id)}"><option value="">none</option>${agents.map(a => `<option value="${esc(a.id)}"${m.agentOf === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>`
-    : '';
-  h += menuHtml(`More for ${m.name}`, items, m.id, picker) + '</span>';
-  if (chipForm && chipForm.kind !== 'grant' && chipForm.kind !== 'deny') h += chipFormHtml(m);
-  // Making an assistant: what they'll be able to do, then Offer (#190).
-  if (offering === m.id) {
-    h += `<div class="cl-offer-confirm">${roleHtml('assistant', null, m.name)}`;
-    h += `<span><button class="btn-small primary" data-cl="offer-role-yes" data-id="${esc(m.id)}">Offer it</button> <button class="btn-small" data-cl="offer-role-no">Cancel</button></span></div>`;
-  }
-  return h + '</li>';
-}
 
 // The clubs you're in: on Clubs ('play' here) your balance, chips and
 // tables; and, picked at the top of Clubs ('clubs'), the ones you help run.
@@ -2456,13 +2544,22 @@ async function onClick(e) {
   // The blind structure editor in the New tournament form redraws itself.
   const ed = tourneyForm && e.target.closest('[data-tseditor]');
   if (ed && tEditor.click(e)) { ed.innerHTML = tEditor.html(); return; }
+  // Going to another page closes the drawer and notifications on a phone (#398).
+  if (e.target.closest('a[href^="#"]') && (navOpen || notesOpen)) {
+    navOpen = notesOpen = false;
+    // Not a redraw: the link has yet to be followed.
+    root.querySelector('.mg-shell')?.classList.remove('nav-open', 'notes-open');
+  }
   const b = e.target.closest('[data-cl]');
   if (!b) return;
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'demo') showDemoList();
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
-  else if (act === 'dash') { setDash(b.dataset.tab); render(); }
+  // The manager's sidebar drawer and notifications on a phone (#398).
+  else if (act === 'mg-nav') { navOpen = !navOpen; notesOpen = false; render(); }
+  else if (act === 'mg-notes') { notesOpen = !notesOpen; navOpen = false; render(); }
+  else if (act === 'mg-close') { navOpen = notesOpen = false; render(); }
   // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).
   else if (act === 'promo-new') { promoForm = 'new'; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
   else if (act === 'promo-edit') { promoForm = b.dataset.id; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
@@ -2495,10 +2592,9 @@ async function onClick(e) {
   else if (act === 'wiz-onward') { provedNote = ''; wizardOnward(); }
   else if (act === 'wiz-invite') setWizard('invite');
   else if (act === 'wiz-cancel') { backupNote = ''; setWizard(null); }
-  else if (act === 'wiz-done') { setWizard(null); setDash('tables'); location.hash = 'clubs/own'; }
+  else if (act === 'wiz-done') { setWizard(null); location.hash = 'clubs/overview'; }
   else if (act === 'share') { setHostNote('shared', true); navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {}); render(); }
   else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
-  else if (act === 'checklist-hide') { setHostNote('checklistHidden', true); render(); }
   else if (act === 'backup-nag-hide') { setHostNote('backupNagHidden', true); render(); }
   else if (act === 'close-table-yes') { closingTable = null; hostAct('close_table', {table: b.dataset.table}); render(); }
   else if (act === 'close-table-no') { closingTable = null; render(); }
@@ -2526,8 +2622,6 @@ async function onClick(e) {
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
   else if (act === 'deny') openChipForm('deny', b.dataset.id);
-  // From Manage (#225): declining, with an optional reason, is on Members.
-  else if (act === 'deny-there') { setDash('players'); openChipForm('deny', b.dataset.id); }
   else if (act === 'ledger-csv') exportLedger();
   else if (act === 'quick') { const f = b.closest('form'); if (f?.elements.amount) f.elements.amount.value = b.dataset.v; }
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
@@ -2836,6 +2930,13 @@ export async function openClubs(el, v = 'clubs') {
       if (e.target.dataset.tstack) { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 20) { tEditor.setStack(n); if (ed) ed.innerHTML = tEditor.html(); } return; }
       if (e.target.closest('[data-tseditor]') && tEditor.input(e) && ed) ed.innerHTML = tEditor.html();
     });
+    // The Members search (#398) filters the rows as it's typed.
+    root.addEventListener('input', e => {
+      if (!e.target.dataset?.msearch) return;
+      memberQuery = e.target.value;
+      const q = memberQuery.trim().toLowerCase();
+      for (const li of root.querySelectorAll('.mg-members li[data-name]')) li.hidden = !!q && !li.dataset.name.includes(q);
+    });
     document.addEventListener('keydown', onDocKey);
     // A ⋯ menu closes when you click anywhere else.
     document.addEventListener('click', e => {
@@ -2857,12 +2958,11 @@ export function showClubPlayers() {
   const helped = memberships.find(m => helps(m) && helperWaiting(m));
   // On the player app, they're answered on the club manager.
   if (mode === 'play') {
-    location.href = managerHref(club || isRemote() ? 'clubs/players' : helped ? clubHash(helped.code) : 'clubs');
+    location.href = managerHref(club || isRemote() ? 'clubs/requests' : helped ? clubHash(helped.code) : 'clubs');
     return;
   }
   if (!club && !isRemote() && helped) { location.hash = clubHash(helped.code); return; }
-  setDash('players');
-  location.hash = 'clubs/players';
+  location.hash = 'clubs/requests';
   render();
 }
 
