@@ -400,11 +400,15 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   const before = hands();
   await relay.simulate(ann.id, 'play10');
   await until('ten hands played', async () => !(await relay.status(ann.id)).plan, 240_000);
-  assert.ok(hands() - before >= 10, `${hands() - before} hands`);
+  // Quest's players bet big: losing it all ends the ten hands early.
+  const out = (await stack()) === 0;
+  assert.ok(out || hands() - before >= 10, `${hands() - before} hands`);
 
   // Bust: all of it, in up to three hands.
-  await relay.simulate(ann.id, 'bust');
-  await until('busted', async () => !(await relay.status(ann.id)).plan);
+  if (!out) {
+    await relay.simulate(ann.id, 'bust');
+    await until('busted', async () => !(await relay.status(ann.id)).plan);
+  }
   await until('the stack at 0', async () => (await stack()) === 0);
 
   // Leaving cashes her out through the real ledger: what she has left is

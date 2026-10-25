@@ -487,7 +487,8 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     const v = u.view, hand = num(v.hand_number);
     if (v.complete && hand && hand !== plan.counted && (plan.kind === 'play10' ? !!v.seats[0].cards : hand === plan.hand)) {
       plan.counted = hand;
-      if (plan.kind === 'play10') plan.left--;
+      // Out of chips, she's dealt no more hands: Play 10 hands ends there.
+      if (plan.kind === 'play10') plan.left = num(v.seats[0].stack) > 0 ? plan.left - 1 : 0;
       else if (plan.kind === 'bust' && num(v.seats[0].stack) > 0 && ++plan.tries < 3) plan.hand = null;
       else plan.left = 0;
       if (plan.left <= 0) room.plans.delete(id);
@@ -528,7 +529,11 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       return role === bettor && L.bet ? to(pot * 0.75) : passive;
     }
     const bot = room.bots.get(who);
-    if (!bot) return range && Math.random() < 0.2 ? to(num(v.current_bet) + pot / 2) : passive;
+    if (!bot) {
+      // Quest's players bet big: she lets a big bet go rather than call off her stack.
+      if (!L.can_check && num(L.call) > num(v.seats[0].stack) / 3) return {kind: 'fold', amount: 0};
+      return range && Math.random() < 0.2 ? to(num(v.current_bet) + pot / 2) : passive;
+    }
     let m = null;
     if (bot.quest) {
       try {
