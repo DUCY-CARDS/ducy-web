@@ -49,7 +49,7 @@ export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Frida
   if (note) h += `<p class="pl-desc pl-neterr">${esc(note)}</p>`;
   h += '<button class="tr-start sg-open" type="button" data-tz="open">Open the lobby</button></div>';
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
-  h += '<div class="sg-code" aria-hidden="true">····-····</div><p class="sg-note">The code and link come once the lobby is open. Players register there, and you start when everyone is in.</p></aside></div>';
+  h += '<div class="sg-code" aria-hidden="true">····-····</div><p class="sg-note">The code and link come once the lobby is open. Players register there (you too, if you’re playing), and you start when everyone is in.</p></aside></div>';
   return h;
 }
 
@@ -101,9 +101,10 @@ function blindsHtml(b) {
 }
 
 // The page: `b` the lobby body (private-tourney.js lobbyBody); `ui` = {me,
-// host (this tab runs it), link, note, atTable, connecting}.
+// host (this tab runs it), link, note, atTable, connecting, watching (the
+// table the host is watching, if any)}.
 export function pageHtml(b, ui, now = Date.now()) {
-  const {me, host = false, link = '', note = '', atTable = false} = ui;
+  const {me, host = false, link = '', note = '', atTable = false, watching = null} = ui;
   let h = `<div class="pl-head"><h1>${esc(b?.name || 'Tournament')}</h1></div>`;
   const err = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
   if (!b) {
@@ -114,7 +115,7 @@ export function pageHtml(b, ui, now = Date.now()) {
   h += '<div class="sg-wrap"><div class="sg-form pz-page">';
   h += err;
   if (b.status === 'scheduled') {
-    h += `<p class="pz-status">${host ? 'Your lobby is open. Share the code; you start when everyone is in.' : `Waiting for ${esc(b.host)} to start.`}</p>`;
+    h += `<p class="pz-status">${host ? `Your lobby is open. Share the code; you start when everyone is in.${mine ? '' : ' To play in it too, register like everyone else.'}` : `Waiting for ${esc(b.host)} to start.`}</p>`;
     h += `<span class="sg-label">Registered (${b.players.length})</span><ul class="pz-players">`;
     for (const p of b.players) {
       const tags = [p.id === me ? 'you' : '', p.away ? 'away' : ''].filter(Boolean).join(', ');
@@ -125,13 +126,21 @@ export function pageHtml(b, ui, now = Date.now()) {
     h += '</ul>';
     if (host) {
       const enough = b.players.length >= 2;
-      h += `<div class="pl-actions"><button class="tr-start sg-open" data-tz="start"${enough ? '' : ' disabled'}>Start</button><button class="btn-small" data-tz="cancel">Cancel tournament</button></div>`;
-      if (!enough) h += '<p class="pl-desc">It needs at least 2 players.</p>';
+      // Playing in it is the host's choice, made here like everyone's (#394).
+      const play = mine ? '<button class="btn-small" data-tz="unplay">Leave</button>' : '<button class="btn-small primary" data-tz="play">Play in it</button>';
+      h += `<div class="pl-actions"><button class="tr-start sg-open" data-tz="start"${enough ? '' : ' disabled'}>Start</button>${play}<button class="btn-small" data-tz="cancel">Cancel tournament</button></div>`;
+      if (!enough) h += `<p class="pl-desc">It needs at least 2 players${mine ? '' : ', and you aren’t one unless you play in it'}.</p>`;
     } else h += '<div class="pl-actions"><button class="btn-small" data-tz="leave">Leave</button></div>';
   } else if (b.status === 'running') {
     if (mine?.place) h += `<p class="pz-status">You finished <b>${ordinal(mine.place)}</b>. Stay to watch how it ends.</p>`;
     else if (mine) h += `<div class="pl-actions"><button class="tr-start sg-open" data-tz="table">${atTable ? 'Back to the table' : 'Go to your table'}</button></div>`;
+    if (host) h += '<p class="pl-desc">Keep this page open: it runs the tournament.</p>';
     h += liveHtml(b, me, now);
+    // The host, not at a table of their own, can watch any (#394).
+    const tables = b.live?.tables || [];
+    if (host && (!mine || mine.place) && tables.length) {
+      h += `<span class="sg-label">Watch a table</span><div class="sg-chips">${tables.map(x => chip(watching === x.id, 'data-tz="watch" data-table', x.id, `Table ${x.id + 1} (${x.players} ${x.players === 1 ? 'player' : 'players'})`)).join('')}</div>`;
+    }
     h += placesHtml(b, me, false);
   } else if (b.status === 'finished') {
     const win = b.players.find(p => p.place === 1);

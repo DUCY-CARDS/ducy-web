@@ -39,7 +39,9 @@ export function privateClub(code, hostName, now = Date.now()) {
 export const cleanName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_NAME);
 
 // The tournament, from the setup form: {name, game, stack, tableSize,
-// structure, payout} (payout: one of PAYOUTS' ids). The host is registered.
+// structure, payout} (payout: one of PAYOUTS' ids). The host runs it (their
+// tab runs every table) and plays only if they register in the lobby, as
+// anyone does: until then they have no seat and no place.
 // Throws why the settings won't do.
 export function newPrivateTourney(club, s, now = Date.now()) {
   if (club.tourneys?.length) throw new Error('This game has a tournament already.');
@@ -51,7 +53,6 @@ export function newPrivateTourney(club, s, now = Date.now()) {
   }, now);
   const p = PAYOUTS.find(x => x.id === s.payout);
   if (p?.places) setPayout(club, t.id, p.places);
-  register(club, t.id, HOST_ID, now);
   return t;
 }
 
@@ -92,12 +93,12 @@ export function joinPrivate(club, id, name, now = Date.now()) {
 }
 
 // Player `id` unregisters (or the host takes them off), before the start.
+// The host may too: they go on running it, and keep their name.
 export function leavePrivate(club, id, now = Date.now()) {
   const t = theTourney(club);
-  if (!t || id === HOST_ID) return false;
-  if (!t.entries.some(e => e.member === id)) return false;
+  if (!t || t.status !== 'scheduled' || !t.entries.some(e => e.member === id)) return false;
   unregister(club, t.id, id, now);
-  delete club.members[id];
+  if (id !== HOST_ID) delete club.members[id];
   return true;
 }
 

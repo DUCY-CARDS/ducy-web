@@ -20,14 +20,20 @@ const LEVELS = [
 ];
 const setup = (over = {}) => ({name: '', game: 'nlhe', stack: 1500, tableSize: 9, structure: LEVELS, payout: 'default', ...over});
 
-test('the host opens it and is registered; players register with unique names', () => {
+test('the host opens it, and plays only if they register; players register with unique names', () => {
   const club = privateClub('ABCD-EFGH', 'Ann', 0);
   const t = newPrivateTourney(club, setup(), 0);
   assert.equal(t.name, 'Ann’s tournament');
   assert.equal(t.buyIn, 0);
   assert.equal(t.status, 'scheduled');
-  assert.deepEqual(t.entries.map(e => e.member), [HOST_ID]);
+  assert.deepEqual(t.entries, [], 'the host runs it, not registered');
   assert.throws(() => newPrivateTourney(club, setup(), 0), /already/);
+  // The host registers like anyone, and can change their mind before the start.
+  assert.equal(joinPrivate(club, HOST_ID, 'Ann', 0).name, 'Ann');
+  assert.equal(leavePrivate(club, HOST_ID), true);
+  assert.equal(club.members[HOST_ID].name, 'Ann', 'still the host');
+  assert.deepEqual(t.entries, []);
+  joinPrivate(club, HOST_ID, 'Ann', 0);
 
   assert.equal(joinPrivate(club, 'g1', '  Bo  ', 1).name, 'Bo');
   assert.equal(joinPrivate(club, 'g2', 'ann', 2).name, 'ann 2', 'the host is Ann already');
@@ -40,22 +46,24 @@ test('the host opens it and is registered; players register with unique names', 
   assert.ok(Object.values(club.members).every(m => m.balance === 0));
 
   assert.equal(leavePrivate(club, 'g3'), true);
-  assert.equal(leavePrivate(club, HOST_ID), false, 'the host can’t leave their own');
   assert.equal(leavePrivate(club, 'nobody'), false);
   assert.deepEqual(t.entries.map(e => e.member), [HOST_ID, 'g1', 'g2']);
   assert.equal(club.members.g3, undefined);
 
-  // Once started, only those registered come back in.
+  // Once started, only those registered come back in, and no one leaves.
   t.status = 'running';
   assert.throws(() => joinPrivate(club, 'g5', 'Cy', 6), /started/);
+  assert.equal(leavePrivate(club, 'g2'), false);
   assert.equal(joinPrivate(club, 'g1', 'Bob', 7).name, 'Bobby', 'names are kept once it runs');
 });
 
 test('payouts: the defaults follow the entries; a fixed split stays', () => {
   const club = privateClub('ABCD-EFGH', 'Ann', 0);
   const t = newPrivateTourney(club, setup(), 0);
-  for (let i = 0; i < 9; i++) joinPrivate(club, `g${i}`, `P${i}`, 1);
+  for (let i = 0; i < 10; i++) joinPrivate(club, `g${i}`, `P${i}`, 1);
   assert.equal(paidPlaces(t).length, 3, '10 players: 3 paid');
+  joinPrivate(club, 'g10', 'P10', 1);
+  assert.equal(paidPlaces(t).length, 2, '11 players: the top 15%');
   assert.equal(paidPlaces(t).reduce((s, p) => s + p.share, 0), 10000);
 
   const wta = privateClub('ABCD-EFGJ', 'Ann', 0);
@@ -67,6 +75,7 @@ test('payouts: the defaults follow the entries; a fixed split stays', () => {
   const top3 = privateClub('ABCD-EFGK', 'Ann', 0);
   const t3 = newPrivateTourney(top3, setup({payout: 'top3'}), 0);
   joinPrivate(top3, 'g1', 'Bo', 1);
+  joinPrivate(top3, 'g2', 'Cy', 1);
   assert.deepEqual(paidPlaces(t3).map(p => p.share), [5000, 3000]);
 });
 
@@ -80,13 +89,21 @@ test('the page: the lobby for the host and a player, then the results', () => {
   let h = pageHtml(b, {me: HOST_ID, host: true, link: 'https://x/?table=ABCD-EFGH#join'});
   assert.match(h, /Friday &lt;b&gt;/, 'escaped');
   assert.match(h, /ABCD-EFGH/);
-  assert.match(h, /data-tz="start" disabled/, 'not alone');
+  assert.match(h, /data-tz="start" disabled/, 'no players yet');
+  assert.match(h, /Registered \(0\)/, 'the host isn’t one of them');
+  assert.match(h, /data-tz="play">Play in it/);
   assert.match(h, /data-tz="copy"/);
 
+  // One player is too few; the host playing makes two.
   joinPrivate(club, 'g1', 'Bo', 1);
+  h = pageHtml(lobbyBody(club), {me: HOST_ID, host: true});
+  assert.match(h, /data-tz="start" disabled/);
+  assert.match(h, /you aren’t one unless you play in it/);
+  joinPrivate(club, HOST_ID, 'Ann', 1);
   const b2 = lobbyBody(club);
   h = pageHtml(b2, {me: HOST_ID, host: true});
   assert.match(h, /data-tz="start">Start/);
+  assert.match(h, /data-tz="unplay">Leave/);
   assert.match(h, /data-tz="remove" data-id="g1"/);
   assert.match(h, /Registered \(2\)/);
   h = pageHtml(b2, {me: 'g1'});
@@ -104,6 +121,10 @@ test('the page: the lobby for the host and a player, then the results', () => {
   assert.match(h, /2 left on 1 table/);
   assert.match(h, /Go to your table/);
   assert.equal(bannerText(run, 0), 'Friday <b> · Level 2 · 20/40 · next in 10 min · 2 left');
+  // The host at their own table isn't offered another to watch.
+  h = pageHtml(run, {me: HOST_ID, host: true}, 0);
+  assert.match(h, /Keep this page open/);
+  assert.doesNotMatch(h, /Watch a table/);
 
   t.entries.find(e => e.member === HOST_ID).place = 2;
   t.entries.find(e => e.member === 'g1').place = 1;
@@ -120,6 +141,33 @@ test('the page: the lobby for the host and a player, then the results', () => {
   assert.match(h, /Close the tournament/);
 });
 
+test('the page for a host who runs it without playing: progress, a table to watch, the results', () => {
+  const club = privateClub('ABCD-EFGH', 'Ann', 0);
+  const t = newPrivateTourney(club, setup(), 0);
+  joinPrivate(club, 'g1', 'Bo', 1);
+  joinPrivate(club, 'g2', 'Cy', 1);
+  let h = pageHtml(lobbyBody(club), {me: HOST_ID, host: true});
+  assert.match(h, /Registered \(2\)/);
+  assert.match(h, /data-tz="start">Start/);
+  assert.match(h, /data-tz="play">Play in it/);
+  assert.doesNotMatch(h, /\(you\)/);
+
+  t.status = 'running';
+  const live = {level: 0, onBreak: false, stepEndsAt: null, playersLeft: 2, handForHand: false, tables: [{id: 0, players: 2}], standings: [{id: 'g1', name: 'Bo', stack: 2000}, {id: 'g2', name: 'Cy', stack: 1000}]};
+  h = pageHtml(lobbyBody(club, live), {me: HOST_ID, host: true, watching: 0}, 0);
+  assert.doesNotMatch(h, /Go to your table|You finished/);
+  assert.match(h, /Keep this page open/);
+  assert.match(h, /2 left on 1 table/);
+  assert.match(h, /data-tz="watch" data-table="0" aria-pressed="true">Table 1 \(2 players\)/);
+
+  t.entries.find(e => e.member === 'g1').place = 1;
+  t.entries.find(e => e.member === 'g2').place = 2;
+  t.status = 'finished';
+  h = pageHtml(lobbyBody(club), {me: HOST_ID, host: true});
+  assert.match(h, /<b>Bo<\/b> won\.<\/p>/);
+  assert.doesNotMatch(h, /You finished|\(you\)/);
+});
+
 test('the form: game, stack, table size, blinds and payouts', () => {
   const ed = structureEditor({stack: 10000, tableSize: 9});
   const h = setupHtml({name: '', game: 'plo6', stack: 10000, tableSize: 6, payout: 'top2'}, ed, {lead: '<i>lead</i>'});
@@ -131,10 +179,12 @@ test('the form: game, stack, table size, blinds and payouts', () => {
   assert.match(h, /data-tz="open"/);
 });
 
-test('20 players on three tables play to a winner, with places and shares for everyone', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, async () => {
+// Plays a tournament of the host (if `hostPlays`) and 19 others to the end.
+async function runToEnd(hostPlays) {
   const club = privateClub('ABCD-EFGH', 'Ann', 0);
   const t = newPrivateTourney(club, setup({tableSize: 8, payout: 'top3'}), 0);
   const ids = Array.from({length: 19}, (_, i) => `g${i}`);
+  if (hostPlays) joinPrivate(club, HOST_ID, 'Ann', 1);
   for (const id of ids) joinPrivate(club, id, id.toUpperCase(), 1);
   const engine = clubEngine(ducy.MultiTable);
   let host = null;
@@ -162,19 +212,26 @@ test('20 players on three tables play to a winner, with places and shares for ev
   t.startsAt = Date.now();
   await host.begin(t.id);
   assert.equal(t.status, 'running');
-  for (const id of [HOST_ID, ...ids]) { joined.add(id); await host.handle(t.id, id, {type: 'join', name: id}); }
+  for (const id of hostPlays ? [HOST_ID, ...ids] : ids) { joined.add(id); await host.handle(t.id, id, {type: 'join', name: id}); }
   const end = Date.now() + 240_000;
   while (t.status === 'running' && Date.now() < end) await new Promise(r => setTimeout(r, 50));
   assert.equal(t.status, 'finished');
-  assert.equal(maxTables, 3, '20 players at 8 a table');
+  const n = hostPlays ? 20 : 19;
+  assert.equal(maxTables, 3, `${n} players at 8 a table`);
   assert.ok(changes > 0, 'the page was told as players went out');
 
   const b = lobbyBody(club);
   const rows = results(b);
-  assert.deepEqual(rows.map(r => r.place), Array.from({length: 20}, (_, i) => i + 1));
+  assert.deepEqual(rows.map(r => r.place), Array.from({length: n}, (_, i) => i + 1));
   assert.deepEqual(rows.slice(0, 4).map(r => r.share), [5000, 3000, 2000, 0]);
+  assert.equal(rows.some(r => r.id === HOST_ID), hostPlays, 'the host has a place only if they played');
+  assert.equal(b.host, 'Ann');
   // Tournament chips only: no club chips moved.
   assert.equal(club.chips.issued, 0);
   assert.deepEqual(club.chips.ledger, []);
   assert.ok(Object.values(club.members).every(m => m.balance === 0));
-});
+}
+
+test('20 players, the host one of them, play on three tables to a winner, with places and shares for everyone', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, () => runToEnd(true));
+
+test('a host who only runs it: 19 players on three tables to a winner, the host with no seat or place', {skip: !ducy.ClubTournament && 'this ducy-wasm has no tournaments'}, () => runToEnd(false));

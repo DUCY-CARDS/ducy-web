@@ -1058,7 +1058,8 @@ function show(snap) {
 // still in.
 function canPrefold() {
   const me = state.seats[0];
-  return !state.legal && !state.complete && !me.folded && !me.all_in && !me.sitting_out && !me.empty;
+  // Watching (a club's or a tournament's host), seat 0 isn't yours.
+  return !watching && !state.legal && !state.complete && !me.folded && !me.all_in && !me.sitting_out && !me.empty;
 }
 
 // Whether checking is free for the player right now (e.g. the big blind,

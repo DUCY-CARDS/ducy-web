@@ -20,7 +20,9 @@
 // file for it): the lobby, how it's going, the results. Once it starts each
 // player is taken to their table (play.js's joinTableVia); a player knocked
 // out, and everyone at the end, comes back to the page a few seconds after
-// the last hand.
+// the last hand. The host runs it and plays only if they register in the
+// lobby (Play in it), as anyone does; when not at a table of their own they
+// can watch any.
 //
 // It lives only in the host's tab: if that closes, the tournament ends
 // (saving and resuming it, as a cash game can, is for later).
@@ -99,7 +101,7 @@ const mine = () => body?.players.find(p => p.id === myId()) || null;
 
 const redraw = setTourneyPage({
   active: () => !!role,
-  html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting}),
+  html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting, watching: watching?.table ?? null}),
   setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
   click, change, join: joinPrivateTourney,
 });
@@ -135,6 +137,7 @@ async function openLobby(wrap) {
   runner = createTourneyHost({
     club: () => club, save() {}, sendTable, chipsChanged() {}, store: null,
     tourneysChanged: publish, liveChanged: liveSoon, online: id => id === HOST_ID || online.has(id),
+    observe: (id, res) => watched(res),
   });
   const s = session;
   net = connect(code, 'host', null, {
@@ -237,6 +240,58 @@ function startIt() {
   t.startsAt = Date.now();
   stood = false;
   runner.begin(t.id);
+}
+
+// The host plays in it, or not after all, before the start: registered
+// like anyone else, under the name they play as.
+function hostPlays(on) {
+  if (!club || body?.status !== 'scheduled') return;
+  try {
+    if (on) joinPrivate(club, HOST_ID, tableName());
+    else leavePrivate(club, HOST_ID);
+  } catch (e) { note = e.message; }
+  publish();
+}
+
+// ---- the host watching a table ----
+//
+// A host who isn't at a table of their own watches any, as a club's host
+// watches a cash table: the spectator's view (no hidden cards), after every
+// change. If that table is broken, the watch moves to another.
+
+let watching = null; // {table, handlers, seq}
+
+function watchTable(table) {
+  if (role !== 'host' || !runner?.running(tid())) return;
+  if (watching) { watching.table = table; location.hash = 'play'; refreshWatch(); return; }
+  joinTableVia(handlers => {
+    watching = {table, handlers, seq: 0};
+    return {send() {}, close: () => { watching = null; }};
+  }, {
+    label: `${body.name} (watching)`, watch: true, whole: true, club: false,
+    banner: () => bannerText(body),
+    onLeave: () => { watching = null; if (location.hash !== '#host') location.hash = 'host'; else redraw(); },
+  });
+  location.hash = 'play';
+  refreshWatch();
+}
+
+// After each engine result: the watched table's view, if it changed.
+function watched(res) {
+  if (!watching) return;
+  const ids = (res.tables || []).map(x => x.id);
+  if (ids.length && !ids.includes(watching.table)) watching.table = ids[0];
+  watching.seq = Math.max(watching.seq, Number(res.seq) || 0);
+  watching.turnMs = res.tables?.find(x => x.id === watching.table)?.turnMsLeft ?? null;
+  refreshWatch();
+}
+
+function refreshWatch() {
+  const w = watching;
+  if (!w || !runner) return;
+  runner.tableView(tid(), w.table).then(view => {
+    if (watching === w && view) w.handlers.onMessage({type: 'state', seq: w.seq, view, turn_ms_left: w.turnMs});
+  }, e => console.warn(e));
 }
 
 function removePlayer(id) {
@@ -374,16 +429,20 @@ function sit() {
   location.hash = 'play';
 }
 
-// Off the table, quietly (knocked out, the end, or leaving the tournament).
+// Off the table, quietly (knocked out, the end, or leaving the tournament),
+// or done watching one.
 function standUp() {
   clearTimeout(outTimer);
   outTimer = null;
   if (seat) seat.handlers.onFail('');
+  if (watching) watching.handlers.onFail('');
 }
 
 // The tournament as it now is, for this player: to the table when it starts,
-// and back to the page a few seconds after they're out or it's over.
+// and back to the page a few seconds after they're out or it's over. A host
+// watching comes back at the end.
 function follow() {
+  if (watching && body?.status !== 'running' && !outTimer) outTimer = setTimeout(() => { outTimer = null; standUp(); }, OUT_MS);
   const p = mine();
   if (!body || !p) return;
   if (body.status === 'running' && p.place == null && !seat && !stood) sit();
@@ -464,6 +523,8 @@ function click(e) {
   }
   if (!role || !d.tz) return false;
   if (d.tz === 'start') startIt();
+  else if (d.tz === 'play' || d.tz === 'unplay') hostPlays(d.tz === 'play');
+  else if (d.tz === 'watch') watchTable(Number(d.table));
   else if (d.tz === 'remove') removePlayer(d.id);
   else if (d.tz === 'cancel') { if (confirm('Cancel the tournament? Everyone registered is told.')) runner?.cancel(tid(), 'the host cancelled it'); }
   else if (d.tz === 'leave') { if (confirm('Leave the tournament?')) { net?.send({type: 't_leave'}); end(); } }
