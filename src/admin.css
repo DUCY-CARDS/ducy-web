@@ -16,6 +16,11 @@
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
 main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+/* The update screen (browser-check.js, #442), as in style.css. */
+html.browser-old body > :not(.browser-update) { display: none !important; }
+.browser-update { max-width: 440px; margin: 20vh auto 0; padding: 0 16px; text-align: center; }
+.browser-update h1 { margin-bottom: 10px; }
+.browser-update p { color: var(--fg-muted); }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 16px; margin: 0 0 8px; }
 h3 { font-size: 14px; margin: 12px 0 6px; }
