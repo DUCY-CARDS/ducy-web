@@ -256,13 +256,20 @@ export async function checkSignature(env) {
   try {
     raw = fromB64url(env.pub);
     sig = fromB64url(env.sig);
-    key = await subtle().importKey('raw', raw, KEY_ALGS[env.alg].gen, false, ['verify']);
   } catch {
     return 'malformed';
   }
+  try {
+    key = await subtle().importKey('raw', raw, KEY_ALGS[env.alg].gen, false, ['verify']);
+  } catch {
+    // No Ed25519 in this browser's WebCrypto (Safari before 17): checked in JS.
+    if (env.alg !== 'ed25519' || raw.length !== 32) return 'malformed';
+  }
   if (await playerIdFor(raw) !== env.from) return 'id does not match key';
   const {sig: _, ...signed} = env;
-  const ok = await subtle().verify(KEY_ALGS[env.alg].sign, key, sig, new TextEncoder().encode(canonical(signed)));
+  const data = new TextEncoder().encode(canonical(signed));
+  const ok = key ? await subtle().verify(KEY_ALGS[env.alg].sign, key, sig, data)
+    : await (await import('./ed25519.js')).ed25519Verify(raw, sig, data);
   return ok ? '' : 'bad signature';
 }
 

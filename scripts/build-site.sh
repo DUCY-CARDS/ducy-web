@@ -45,17 +45,20 @@ cp admins.json "$OUT/"
 # The pre-flop charts' data (charts.js): Ducybot's and the Regulars', as JSON.
 cp -r charts "$OUT/"
 
-# Each page's Content Security Policy (#436) allows a local relay for testing;
-# the site's doesn't (nor does .htaccess's, the one that counts there).
-LOCAL_RELAY=" ws://localhost:\* http://localhost:\*"
+# Each source page carries the Content Security Policy in a <meta> tag, with a
+# local relay, for local testing (#436). The site's pages don't: there the
+# header from .htaccess is the only policy (#442), since a browser enforces
+# both and Safari 15 needs a policy of its own that only the header picks.
+NO_META=(-e '/<meta http-equiv="Content-Security-Policy"/d' -e '/<!-- Local testing only: the Content Security Policy/d')
+CHECK="s#src=\"src/browser-check.js\"#src=\"v/$VERSION/src/browser-check.js\"#"
 
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     -e "s#src=\"src/main.js\"#src=\"v/$VERSION/src/main.js\"#" \
-    -e "s#$LOCAL_RELAY##" \
+    -e "$CHECK" "${NO_META[@]}" \
     index.html > "$OUT/index.html"
 
 # Fail loudly if index.html changed shape and an asset was left unversioned.
-for ref in "href=\"v/$VERSION/src/style.css\"" "src=\"v/$VERSION/src/main.js\""; do
+for ref in "href=\"v/$VERSION/src/style.css\"" "src=\"v/$VERSION/src/main.js\"" "src=\"v/$VERSION/src/browser-check.js\""; do
   grep -qF "$ref" "$OUT/index.html" || { echo "index.html is missing $ref" >&2; exit 1; }
 done
 if grep -nE '(src|href)="(src|wasm)/' "$OUT/index.html"; then
@@ -67,9 +70,9 @@ fi
 # club, pointed at the same release.
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     -e "s#src=\"src/manage.js\"#src=\"v/$VERSION/src/manage.js\"#" \
-    -e "s#$LOCAL_RELAY##" \
+    -e "$CHECK" "${NO_META[@]}" \
     manage.html > "$OUT/manage.html"
-for ref in "href=\"v/$VERSION/src/style.css\"" "src=\"v/$VERSION/src/manage.js\""; do
+for ref in "href=\"v/$VERSION/src/style.css\"" "src=\"v/$VERSION/src/manage.js\"" "src=\"v/$VERSION/src/browser-check.js\""; do
   grep -qF "$ref" "$OUT/manage.html" || { echo "manage.html is missing $ref" >&2; exit 1; }
 done
 if grep -nE '(src|href)="(src|wasm)/' "$OUT/manage.html"; then
@@ -81,16 +84,21 @@ fi
 # release. The relay answers only requests signed by a key in admins.json.
 sed -e "s#href=\"src/admin.css\"#href=\"v/$VERSION/src/admin.css\"#" \
     -e "s#src=\"src/admin.js\"#src=\"v/$VERSION/src/admin.js\"#" \
-    -e "s#$LOCAL_RELAY##" \
+    -e "$CHECK" "${NO_META[@]}" \
     admin.html > "$OUT/admin.html"
-for ref in "href=\"v/$VERSION/src/admin.css\"" "src=\"v/$VERSION/src/admin.js\""; do
+for ref in "href=\"v/$VERSION/src/admin.css\"" "src=\"v/$VERSION/src/admin.js\"" "src=\"v/$VERSION/src/browser-check.js\""; do
   grep -qF "$ref" "$OUT/admin.html" || { echo "admin.html is missing $ref" >&2; exit 1; }
 done
 
-# Every page has its policy, without the local relay, and no inline script,
-# <style> or on…= handler, which the policy would block.
+# No page carries a policy of its own (the header covers every file), nor
+# mentions the local relay, nor has an inline script, <style> or on…=
+# handler, which the policy would block.
+grep -qF 'Header set Content-Security-Policy' "$OUT/.htaccess" || { echo ".htaccess sends no Content-Security-Policy" >&2; exit 1; }
 for page in index.html manage.html admin.html; do
-  grep -qF '<meta http-equiv="Content-Security-Policy"' "$OUT/$page" || { echo "$page has no Content-Security-Policy" >&2; exit 1; }
+  if grep -niF 'Content-Security-Policy' "$OUT/$page"; then
+    echo "$page still has a policy of its own (above)" >&2
+    exit 1
+  fi
   if grep -nF 'localhost' "$OUT/$page"; then
     echo "$page still allows a local relay (above)" >&2
     exit 1

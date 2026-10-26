@@ -5,6 +5,13 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 AddType application/wasm .wasm
 AddType application/manifest+json .webmanifest
 
+# Safari 15 and every browser on iOS 15 (#442): see the policy below.
+<IfModule mod_setenvif.c>
+  SetEnvIf User-Agent "Version/15\.[0-9.]+ .*Safari/" ducy_safari15
+  SetEnvIf User-Agent "(Chrome|Chromium|Edg)/" !ducy_safari15
+  SetEnvIf User-Agent "OS 15(_[0-9]+)* like Mac OS X" ducy_safari15
+</IfModule>
+
 # Revalidate on every load so a deploy never mixes old and new JS/WASM
 # (and so gto/current.json picks up a newly published model)
 <IfModule mod_headers.c>
@@ -16,13 +23,23 @@ AddType application/manifest+json .webmanifest
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
 
-  # Security headers (#436). The pages carry the same policy in a <meta> tag
-  # (all but frame-ancestors, which only a header can set); keep them in step.
+  # Security headers (#436). The source pages carry the same policy in a
+  # <meta> tag for local testing; build-site.sh takes it out of the site's, so
+  # this header is the only one there. Keep them in step.
   # Scripts only from the site ('wasm-unsafe-eval' lets ducy's engine compile);
   # inline style attributes are allowed (the table places seats and bets with
   # them) but not <style> elements; fonts from Google Fonts; data: images (drawn
   # avatars); connections to the site and the relay only.
-  Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  #
+  # Safari 15 (#442) doesn't know 'wasm-unsafe-eval' and only compiles
+  # WebAssembly with 'unsafe-eval', so it alone gets that instead; the rest of
+  # its policy is the same. Every browser on iOS 15 is Safari's engine; on a
+  # Mac, Chrome and Edge also say "Safari/". The strict policy comes last, so
+  # if the env= conditions were ever ignored it's the one that stays.
+  Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" env=ducy_safari15
+  Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" env=!ducy_safari15
+  # The policy depends on the browser, so caches must keep one per browser.
+  Header append Vary User-Agent
   Header set X-Content-Type-Options "nosniff"
   Header set Referrer-Policy "strict-origin-when-cross-origin"
   Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"

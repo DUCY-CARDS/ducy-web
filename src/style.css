@@ -39,6 +39,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); pad
 body.booting { background: #1d3a2c; }
 body.booting > * { visibility: hidden; animation: boot-reveal 0s 6s forwards; }
 @keyframes boot-reveal { to { visibility: visible; } }
+/* The update screen (browser-check.js, #442), on browsers too old for the
+   site: nothing else on the page shows. */
+html.browser-old body > :not(.browser-update) { display: none !important; }
+.browser-update { max-width: 440px; margin: 20vh auto 0; padding: 0 16px; text-align: center; }
+.browser-update h1 { font-family: var(--font-display); font-size: 28px; font-weight: 400; line-height: 1.15; color: var(--fg-strong); margin-bottom: 14px; }
+.browser-update p { color: var(--fg-muted); line-height: 1.45; }
 
 .topbar {
   display: flex; align-items: center; height: 48px; padding: 0 20px;
@@ -593,7 +599,7 @@ body.mode-trainer :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .rgrid .rc {
   aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
   border-radius: 3px; font-size: 10px; font-weight: 600; cursor: pointer;
-  transition: background 0.08s; user-select: none;
+  transition: background 0.08s; -webkit-user-select: none; user-select: none;
 }
 .rgrid .rc.on { background: var(--teal); color: #fff; }
 .rgrid .rc.off { background: var(--bg-inset); color: var(--fg-muted); }
@@ -620,7 +626,7 @@ body.mode-trainer :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 
 /* Range presets */
 .presets { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
-.presets > summary { cursor: pointer; list-style: none; margin-bottom: 0; user-select: none; }
+.presets > summary { cursor: pointer; list-style: none; margin-bottom: 0; -webkit-user-select: none; user-select: none; }
 .presets > summary::-webkit-details-marker { display: none; }
 .presets > summary::before { content: '\25B8'; margin-right: 6px; display: inline-block; transition: transform 0.12s; }
 .presets[open] > summary::before { transform: rotate(90deg); }
@@ -1219,7 +1225,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-tools .link-btn { margin-left: 6px; }
 /* The table's ⋯ menu and Leave (V3, #225). */
 .pl-menu { position: static; }
-.pl-menu > summary { list-style: none; cursor: pointer; font-weight: 700; font-size: 18px; line-height: 1; padding: 7px 14px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--fg-strong); user-select: none; }
+.pl-menu > summary { list-style: none; cursor: pointer; font-weight: 700; font-size: 18px; line-height: 1; padding: 7px 14px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--fg-strong); -webkit-user-select: none; user-select: none; }
 .pl-menu > summary::-webkit-details-marker { display: none; }
 .pl-menu[open] > summary { background: var(--bg-inset); }
 .pl-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: min(230px, calc(100vw - 32px)); max-width: calc(100vw - 32px); display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--bg-raised); border: 1px solid var(--border); box-shadow: 0 10px 24px rgba(0,0,0,0.25); }
@@ -1237,7 +1243,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-stats-table { border-collapse: collapse; font-size: 12px; width: 100%; white-space: nowrap; }
 .pl-stats-table th, .pl-stats-table td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--border); }
 .pl-stats-table td { font-family: var(--font-data); color: var(--fg); }
-.pl-stats-table thead th { color: var(--fg-muted); font-weight: 600; cursor: pointer; user-select: none; }
+.pl-stats-table thead th { color: var(--fg-muted); font-weight: 600; cursor: pointer; -webkit-user-select: none; user-select: none; }
 .pl-stats-table thead th:hover { color: var(--fg-strong); }
 .pl-stats-table th:first-child { text-align: left; position: sticky; left: 0; background: var(--bg); }
 .pl-stats-table tbody th { font-weight: 600; color: var(--fg-strong); }
@@ -1396,7 +1402,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-chip-acts .tr-btn { padding: 4px 12px; font-size: 13px; }
 .pl-chip-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pl-chip-ask .pl-text { width: 110px; }
-.pl-pid { font-family: var(--font-data); font-size: 13px; letter-spacing: 0.06em; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg); user-select: all; }
+.pl-pid { font-family: var(--font-data); font-size: 13px; letter-spacing: 0.06em; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--fg); -webkit-user-select: all; user-select: all; }
 /* Locking and opening an identity backup with a password */
 .pl-idform { display: flex; flex-direction: column; gap: 6px; max-width: 360px; margin: 4px 0 8px; }
 .pl-idform label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); }
@@ -2027,7 +2033,7 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .pz-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pz-players li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .pz-places .pz-me td, .pz-places .pz-me th { font-weight: 700; }
-.pz-code { color: var(--fg-strong); border-style: solid; user-select: all; }
+.pz-code { color: var(--fg-strong); border-style: solid; -webkit-user-select: all; user-select: all; }
 .pz-link { word-break: break-all; margin: 0; }
 /* Prizes in points, the host's boxes in place of the amounts (#403). */
 .pz-prizes td { white-space: nowrap; }
