@@ -85,6 +85,19 @@ export function registry(storage, limits) {
   // older club isn't temporary (#395).
   const full = rec => ({plan: 'club', limits: {...FREE_LIMITS}, suspended: false, lastActive: rec.at, minutes: 0, days: {}, name: '', temporary: false, ...rec});
 
+  // Usage was seated time until #421, which one seat held for two weeks
+  // made nonsense: it starts again from then, once (usageV2).
+  let usageFresh = null;
+  const freshUsage = () => (usageFresh ||= (async () => {
+    const now = Date.now();
+    if (await storage.get('usageV2')) return;
+    for (let i = 0; i <= DAYS_KEPT * 2; i++) await storage.delete(`day:${today(now - i * 864e5)}`);
+    const all = await clubs();
+    for (const rec of Object.values(all)) { rec.minutes = 0; rec.days = {}; }
+    await storage.put('clubs', all);
+    await storage.put('usageV2', now);
+  })().catch(e => { usageFresh = null; throw e; }));
+
   async function update(code, fn) {
     const all = await clubs();
     if (!all[code]) throw new Error('No such club.');
@@ -154,6 +167,7 @@ export function registry(storage, limits) {
     // A club's tables were in play for `minutes` (`code`: which club, when
     // known); someone used it (`active`, no minutes).
     async used(minutes, now = Date.now(), code = null) {
+      await freshUsage();
       if (code) {
         const all = await clubs();
         if (all[code]) {
@@ -177,6 +191,7 @@ export function registry(storage, limits) {
     },
     // Clubs, and the last `days` days of use against the free plan.
     async usage(days = 7, now = Date.now()) {
+      await freshUsage();
       const all = await clubs();
       const out = [];
       for (let i = 0; i < days; i++) {
@@ -216,6 +231,7 @@ export function registry(storage, limits) {
 
     // Every club with its record, who has permission, and who used a trial.
     async list(now = Date.now()) {
+      await freshUsage();
       const all = await clubs();
       const env = Object.fromEntries(limits.creators.map(id => [id, {fromEnv: true}]));
       return {

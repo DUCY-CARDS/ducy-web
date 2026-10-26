@@ -14,11 +14,18 @@
 //   onHand(table, view, players) a hand finished (the host's view: no hidden
 //                       cards; players: [{seat, client_id}], who sat where)
 //   online(id)          whether a member is connected to the relay
+//   onPlay()            a hand is in play at a table (for usage, #421)
 //
 // A table's clock stops while the host can't reach the relay (linkHealthy
 // false) or no one seated there is connected: no turn runs out, no one is
 // folded or sat out, no hand is dealt, until someone is back (an outage
 // shouldn't fold everyone).
+//
+// Idle seats (#421): someone seated IDLE_MS without being dealt a hand
+// (sitting out, or alone at the table) is stood up, as if they'd left. If
+// they're connected they're asked first ("Still here?") and have ASK_MS to
+// say so, which gives them another IDLE_MS. This runs even while the clock
+// is stopped: that's how a seat no one came back to was held for two weeks.
 
 import { canJoin, cashOutTable, chipsForTable, handsToStay, leftTable, limits, syncStacks, tableById, tableLedgerN } from './club-tables.js';
 import { refundTopUp } from './club-chips.js';
@@ -39,6 +46,11 @@ const FAIR_KEEP = 3;
 // the people at it to come back; then whoever isn't back counts as
 // disconnected, and the clocks run again.
 const RESUME_GRACE_MS = 60_000;
+// Idle seats (#421): how long without a hand, and how long to answer "Still here?".
+export const IDLE_MS = 10 * 60_000;
+export const ASK_MS = 2 * 60_000;
+// Table commands that are someone at their app, not their page on its own.
+const ACTIVE_CMDS = new Set(['still_here', 'act', 'sit_in', 'request_chips', 'time_bank', 'run_twice']);
 
 let worker = null, nextId = 0;
 const pending = new Map();
@@ -73,8 +85,9 @@ export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => c
 // later; an always-on club's room backs it with its alarm (#135), so the
 // room can sleep between turns and a restart doesn't lose them.
 export function createTableHost({
-  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true,
+  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {},
   call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
+  idleMs = IDLE_MS, askMs = ASK_MS,
 }) {
   const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
   const at = new Map(); // member id → table id
@@ -191,6 +204,8 @@ export function createTableHost({
     for (const d of res.departed || []) {
       if (at.get(d.client_id) === tid) at.delete(d.client_id);
       r.removed?.delete(d.client_id);
+      r.active.delete(d.client_id);
+      r.asked.delete(d.client_id);
       const s = club().members[d.client_id]?.seat;
       const removing = s?.table === tid ? s.removing : null, put = s?.put;
       if (leftTable(club(), d.client_id, num(d.chips))) { changed = true; chipsChanged(d.client_id); }
@@ -207,6 +222,18 @@ export function createTableHost({
     r.view = state;
     r.complete = !!state.complete;
     r.handNumber = num(state.hand_number);
+    // Idle seats (#421): anyone new is counted from now (or from their seat's
+    // last activity, kept through a restart); a hand dealt to them is activity.
+    const now = Date.now();
+    for (const p of r.players) if (!r.active.has(p.client_id)) r.active.set(p.client_id, club().members[p.client_id]?.seat?.active || now);
+    if (!r.complete && r.handNumber && r.handNumber !== r.dealtHand) {
+      r.dealtHand = r.handNumber;
+      for (const p of r.players) {
+        const v = state.seats?.[p.seat];
+        if (v && !v.empty && !v.sitting_out && !p.pending) markActive(tid, p.client_id, now);
+      }
+    }
+    if (!r.complete) onPlay();
     // A hand just finished: for the host's hand history (#71).
     if (r.complete && r.handNumber && r.handNumber !== r.recorded) {
       r.recorded = r.handNumber;
@@ -261,7 +288,78 @@ export function createTableHost({
     if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }
     if (before !== r.players.length) tablesChanged();
     syncClock(tid);
+    armIdle(tid, r);
     return t;
+  }
+
+  // ---- idle seats (#421) ----
+
+  // Member `id` did something at table `tid` (or was dealt a hand): idle
+  // from now. If they'd been asked "Still here?", the question goes away.
+  function markActive(tid, id, now = Date.now()) {
+    const r = running.get(tid);
+    if (!r) return;
+    r.active.set(id, now);
+    const s = club().members[id]?.seat;
+    if (s?.table === tid) s.active = now;
+    if (r.asked.delete(id)) sendTable(id, {type: 'table', table: tid, update: {type: 'idle', done: true}});
+  }
+
+  // The idle check's timer, set for whoever's due first.
+  function armIdle(tid, r) {
+    let due = Infinity;
+    // A closing table stands everyone up anyway.
+    if (tableById(club(), tid)?.status === 'open') for (const p of r.players) {
+      const id = p.client_id;
+      if (removalOf(id, tid).removing || r.removed?.has(id)) continue;
+      const asked = r.asked.get(id);
+      due = Math.min(due, asked != null ? asked + askMs : (r.active.get(id) ?? Date.now()) + idleMs);
+    }
+    // The host can't reach anyone, or the table waits for its people after
+    // a restart: no one is stood up meanwhile; look again in a while.
+    if (due !== Infinity && (!linkOk || r.paused)) due = Math.max(due, Date.now() + 30_000);
+    if (due === r.idleDue) return;
+    timers.clear(r.idleT);
+    r.idleT = null;
+    r.idleDue = due;
+    if (due === Infinity) return;
+    r.idleT = timers.set(() => {
+      r.idleT = null;
+      r.idleDue = null;
+      if (!running.has(tid)) return;
+      checkIdle(tid, r);
+      armIdle(tid, r);
+    }, Math.max(1000, due - Date.now()));
+  }
+
+  // Asks or stands up whoever's been idle too long.
+  function checkIdle(tid, r) {
+    if (!linkOk || r.paused) return;
+    const t = tableById(club(), tid);
+    if (!t || t.status !== 'open') return;
+    const now = Date.now();
+    for (const p of r.players) {
+      const id = p.client_id;
+      if (removalOf(id, tid).removing || r.removed?.has(id)) continue;
+      if (now - (r.active.get(id) ?? now) < idleMs) continue;
+      const asked = r.asked.get(id);
+      if (online(id) && asked == null) {
+        r.asked.set(id, now);
+        sendTable(id, {type: 'table', table: tid, update: {type: 'idle', secs: Math.round(askMs / 1000)}});
+        continue;
+      }
+      if (online(id) && now - asked < askMs) continue;
+      standIdle(tid, p);
+    }
+  }
+
+  // Stands up idle player `p`, as when the manager removes them (#414): the
+  // usual cash-out, the hit-and-run rule overridden, a line in the log.
+  function standIdle(tid, p) {
+    const m = club().members[p.client_id];
+    if (m?.seat?.table === tid) { m.seat.removing = {by: null, idle: true, at: Date.now()}; save(); }
+    Promise.resolve(call('clubMustPlay', tid, p.client_id, false)).catch(() => {});
+    return standUp(tid, p, {idle: true});
   }
 
   // The sit-out limit is checked on tick, so a table with people at it ticks
@@ -435,7 +533,7 @@ export function createTableHost({
     // known to have been dealt, so it starts again from here (#398).
     if (isDealing(t.dealing)) t.dealing = {...t.dealing, since: null};
     const {min, max} = limits(t);
-    const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true, results: new Map()};
+    const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true, results: new Map(), active: new Map(), asked: new Map()};
     running.set(t.id, r);
     const fresh = () => call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000);
     r.chain = (resume ? restore(t, r).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))
@@ -450,6 +548,7 @@ export function createTableHost({
       .catch(e => {
         if (!(e instanceof Closed)) console.warn(e);
         timers.clear(r.sweep);
+        timers.clear(r.idleT);
         running.delete(t.id);
         if (resume && cashOutTable(club(), t.id).length) save();
         if (t.status === 'closing') { t.status = 'closed'; save(); }
@@ -515,7 +614,7 @@ export function createTableHost({
 
   function drop(tid) {
     const r = running.get(tid);
-    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); timers.clear(r.sweep); r.sweep = null; }
+    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); timers.clear(r.sweep); r.sweep = null; timers.clear(r.idleT); r.idleT = null; }
     running.delete(tid);
     if (dealingNow(tid)) save();
     call('clubDrop', tid).catch(() => {});
@@ -577,15 +676,17 @@ export function createTableHost({
   }
 
   // The engine stands player `p` up: now between hands, else folding at
-  // their turn and gone when the hand ends. Once per removal.
-  function standUp(tid, p) {
+  // their turn and gone when the hand ends. Once per removal. `why`:
+  // {idle: true} when they sat idle too long (#421).
+  function standUp(tid, p, why = {}) {
     const r = running.get(tid);
     r.removed ??= new Set();
     if (r.removed.has(p.client_id)) return null;
     r.removed.add(p.client_id);
     // Mid-hand the engine sends them nothing more: their page leaves now,
-    // rather than wait on a table that stopped for them.
-    if (!r.complete) sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'removed', name: tableById(club(), tid)?.name || ''}});
+    // rather than wait on a table that stopped for them. So does someone
+    // with no chips there (no seat in the ledger, so no result to wait for).
+    if (!r.complete || !club().members[p.client_id]?.seat) sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'removed', name: tableById(club(), tid)?.name || '', ...why}});
     return run(tid, 'remove', p.seat);
   }
 
@@ -595,8 +696,8 @@ export function createTableHost({
     const c = club();
     const name = c.members[id]?.name || id;
     const who = !how.by || how.by === c.hostId || how.by === c.ownerId ? 'The manager' : c.members[how.by]?.name || how.by;
-    logAction(c, how.by || c.hostId, `${who} removed ${name} from ${t.name}`);
-    sendTable(id, {type: 'table', table: t.id, update: {type: 'removed', name: t.name, chips, ...(put != null ? {net: chips - put} : {})}});
+    logAction(c, how.by || c.hostId, how.idle ? `${name} was idle, so they left ${t.name}` : `${who} removed ${name} from ${t.name}`);
+    sendTable(id, {type: 'table', table: t.id, update: {type: 'removed', name: t.name, chips, ...(put != null ? {net: chips - put} : {}), ...(how.idle ? {idle: true} : {})}});
   }
 
   // A member's command for table `tid`.
@@ -611,6 +712,13 @@ export function createTableHost({
     }
     // A commitment or reveal for the next hand's deal (#136).
     if (cmd.type === 'fair_commit' || cmd.type === 'fair_reveal') { await fairIncoming(tid, id, cmd); return; }
+    // Someone at their app (#421): "Still here?" answered, or anything they did.
+    if (ACTIVE_CMDS.has(cmd.type) && at.get(id) === tid) {
+      const r = running.get(tid);
+      markActive(tid, id);
+      if (r) armIdle(tid, r);
+      if (cmd.type === 'still_here') { save(); return; }
+    }
     if (cmd.type === 'join') {
       const why = canJoin(club(), id, t, at.get(id));
       if (why) { sendTable(id, {type: 'table', table: tid, update: {type: 'rejected', reason: why, fatal: true}}); return; }

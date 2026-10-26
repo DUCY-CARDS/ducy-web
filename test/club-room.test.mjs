@@ -176,13 +176,14 @@ test('the owner deletes an always-on club (#98): members are told, storage is wi
   await say(ann, {type: 'join', invite, name: 'Ann'});
   await say(owner, {type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1});
 
-  // Seated players hold up deletion, and the time their table is in play counts.
+  // Seated players hold up deletion. Being seated isn't play time: only
+  // hands in play are (#421, playClock below).
   server.club.members[ann.id].seat = {table: 't', stack: 100};
   await say(owner, {type: 'owner_cmd', op: 'settings', args: {sitOutMins: 5}, id: 2});
   await say(owner, {type: 'owner_cmd', op: 'delete_club', id: 3});
   server.club.members[ann.id].seat = null;
   await say(owner, {type: 'owner_cmd', op: 'settings', args: {sitOutMins: 10}, id: 4});
-  assert.equal(used.length, 1, 'play time reported when the table emptied');
+  assert.equal(used.length, 0, 'no hands, no play time');
   await say(owner, {type: 'owner_cmd', op: 'delete_club', id: 5});
   await settle();
   const results = await box.bodies(owner.id, 'owner_result');

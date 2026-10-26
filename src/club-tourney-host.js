@@ -24,6 +24,7 @@
 //   onHand(tid, table, view)  a hand finished at one of its tables: the
 //                        table's spectator view (no hidden cards; each
 //                        seat's id is the member), for promotions (#274)
+//   onPlay()             a hand is in play at one of its tables (usage, #421)
 //
 // A running tournament is saved after every change (its tables, hands in
 // play, turn clocks and the level clock), so when the host restarts it
@@ -45,7 +46,7 @@ export const tourneyTable = tid => `tourney:${tid}`;
 export function createTourneyHost({
   club, save, sendTable, chipsChanged, tourneysChanged = () => {}, liveChanged = () => {}, online = () => true,
   call = workerCall, timers = browserTimers, store = {get: getTable, put: putTable, drop: dropTable}, turnMs = TURN_MS, nextHandMs = NEXT_HAND_MS, botPaceMs = BOT_PACE_MS, levelMs = null,
-  observe = () => {}, onHand = null,
+  observe = () => {}, onHand = null, onPlay = () => {},
 }) {
   const running = new Map(); // tid → {chain, step, onBreak, level, timers, live}
   const scheduled = new Map(); // tid → timer handle
@@ -224,6 +225,7 @@ export function createTourneyHost({
         .map(s => ({id: s.id, name: s.name, stack: Number(s.stack), table: s.at?.table, absent: !!s.absent})),
     };
     for (const m of res.out || []) sendTable(m.to, {table: tourneyTable(tid), update: m.data});
+    if ((res.tables || []).some(x => x.inHand)) onPlay();
     if (onHand) for (const x of res.tables || []) if (!x.inHand) handDone(tid, x.id);
     if (ev.winner) { finish(tid, ev.winner.id); return; }
     if (lobby) changed(); else liveChanged();

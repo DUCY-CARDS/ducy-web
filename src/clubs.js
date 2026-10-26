@@ -1425,7 +1425,8 @@ function tableUpdate(u) {
   if (u.type === 'rejected' && u.fatal) { seatedAt.handlers.onFail(u.reason); return; }
   // The manager removed you (#414). The club page shows your result under
   // it (Last session), as when you leave.
-  if (u.type === 'removed') { seatedAt.handlers.onFail(`The manager removed you from ${String(u.name || 'the table')}.`); return; }
+  // Idle too long (#421): the same, by the table.
+  if (u.type === 'removed') { seatedAt.handlers.onFail(u.idle ? `You were idle for 10 minutes, so you left ${String(u.name || 'the table')}.` : `The manager removed you from ${String(u.name || 'the table')}.`); return; }
   seatedAt.handlers.onMessage(u);
 }
 

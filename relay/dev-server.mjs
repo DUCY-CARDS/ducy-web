@@ -110,7 +110,7 @@ async function clubOf(room, code) {
     online: [...room.guests.keys()],
     MultiTable,
     record,
-    onUsage: minutes => reg.used(minutes, Date.now(), code),
+    onUsage: (minutes, at) => reg.used(minutes, at ?? Date.now(), code),
     onSaved: () => scheduleBackup(room, code),
     // A backup proved (#395): recorded in the registry, signed for by the owner.
     onProved: owner => reg.proved(code, owner),
