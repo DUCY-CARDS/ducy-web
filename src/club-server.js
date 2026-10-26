@@ -35,6 +35,8 @@
 //   plan           the plan, for the owner's page: {plan: 'trial' | 'club',
 //                  expires, temporary, provedAt, removesAt}; setLimits()
 //                  may change it too
+//   lastSeen()     when each player was last heard from, {id: ms}, kept by
+//                  an always-on club's room (#401); its managers see it (#426)
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -77,6 +79,7 @@ const SETTINGS = {
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
+  lastSeen = () => ({}),
 }) {
   const planInfo = () => (plan || limits ? {...(plan || {}), limits} : null);
   const online = new Set(); // members connected now
@@ -159,7 +162,9 @@ export function createClubServer({
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
     const hostKey = (await hostKeys()).pub;
-    for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId}});
+    // When each member was last heard from, for Members' Last active (#426).
+    const seen = Object.fromEntries(Object.entries(lastSeen() || {}).filter(([mid]) => club.members[mid]));
+    for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId, seen}});
   }
 
   // The owner or a manager watching a table (#73, #125): its spectator view,

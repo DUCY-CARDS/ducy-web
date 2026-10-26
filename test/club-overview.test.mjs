@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DAY, dealClock, dealingMs, durationText, isDealing, lastPlayed, memberFilter, overviewNumbers, tableSummaries, todaysTourneys,
+  DAY, dealClock, dealingMs, durationText, isDealing, lastActive, lastPlayed, memberFilter, overviewNumbers, PAGE_SIZE, pageOf, SORTS, sortMembers,
+  tableSummaries, todaysTourneys,
 } from '../src/club-overview.js';
 import { clearableKeys, managerNotices, raiseTo } from '../src/club-notices.js';
 import { buyIn, cashOut, ensureChips, issue, requestChips, setStack } from '../src/club-chips.js';
@@ -25,6 +26,71 @@ function club() {
   ensureChips(c);
   return c;
 }
+
+test('Members sort by name, balance either way, and last active (#426)', () => {
+  const c = club();
+  c.members.ann.balance = 500;
+  c.members.ben.balance = -200;
+  c.members.cy.balance = 500;
+  c.members.dee.balance = 0;
+  // Last active: heard from (the room's `seen`), played, or joined, whichever is latest.
+  issue(c, 'dee', 10_000, NOW - 20 * DAY);
+  buyIn(c, 'dee', 't1', 4_000, {min: 1, max: 10_000}, NOW - 3 * DAY);
+  const active = lastActive(c, {cy: NOW - 5 * MIN, ann: 'not a time'});
+  assert.equal(active.cy, NOW - 5 * MIN);
+  assert.equal(active.dee, NOW - 3 * DAY);
+  assert.equal(active.ben, NOW - 2 * DAY, 'joined');
+  assert.equal(active.ann, NOW - 60 * DAY);
+  const list = memberFilter(c, 'all', NOW);
+  const names = sort => sortMembers(list, sort, active).map(m => m.name);
+  assert.deepEqual(SORTS, ['name', 'balance', 'balance-low', 'active']);
+  assert.deepEqual(names('name'), ['Ann', 'Ben', 'Cy', 'Dee']);
+  // Ties go by name.
+  assert.equal(c.members.dee.balance, 6_000);
+  assert.deepEqual(names('balance'), ['Dee', 'Ann', 'Cy', 'Ben']);
+  assert.deepEqual(names('balance-low'), ['Ben', 'Ann', 'Cy', 'Dee']);
+  assert.deepEqual(names('active'), ['Cy', 'Ben', 'Dee', 'Ann']);
+  // An unknown order is by name; the list itself isn't changed.
+  assert.deepEqual(names('nope'), names('name'));
+  assert.deepEqual(list.map(m => m.name), ['Ann', 'Ben', 'Cy', 'Dee']);
+});
+
+test('Members by agent: the agents, an agent’s players, and those under none (#426)', () => {
+  const c = club();
+  c.members.ann.agent = 'yes';
+  c.members.ben.agentOf = 'ann';
+  c.members.cy.agentOf = 'ann';
+  // Asking to join through Ann: not a member yet.
+  c.members.eve.agentOf = 'ann';
+  const names = (f, agent) => memberFilter(c, f, NOW, undefined, agent).map(m => m.name).sort();
+  assert.deepEqual(names('agents'), ['Ann']);
+  assert.deepEqual(names('agent', 'ann'), ['Ben', 'Cy']);
+  assert.deepEqual(names('agent', 'dee'), []);
+  assert.deepEqual(names('noagent'), ['Ann', 'Dee']);
+  // Ann stops being an agent: her players are under no one.
+  c.members.ann.agent = null;
+  assert.deepEqual(names('agents'), []);
+  assert.deepEqual(names('noagent'), ['Ann', 'Ben', 'Cy', 'Dee']);
+});
+
+test('Members come 50 a page, with where the page is in the list (#426)', () => {
+  assert.equal(PAGE_SIZE, 50);
+  const list = Array.from({length: 230}, (_, i) => i + 1);
+  const p2 = pageOf(list, 2);
+  assert.deepEqual({...p2, items: [p2.items[0], p2.items.at(-1), p2.items.length]}, {items: [51, 100, 50], page: 2, pages: 5, from: 51, to: 100, total: 230});
+  const last = pageOf(list, 5);
+  assert.deepEqual([last.from, last.to, last.items.length], [201, 230, 30]);
+  // Past the end: the last page; before the start or not a number: the first.
+  assert.equal(pageOf(list, 9).page, 5);
+  assert.equal(pageOf(list, 0).page, 1);
+  assert.equal(pageOf(list, 'x').page, 1);
+  assert.deepEqual(pageOf([], 3), {items: [], page: 1, pages: 1, from: 0, to: 0, total: 0});
+  assert.deepEqual(pageOf(list.slice(0, 50), 1).pages, 1);
+  // A search or filter runs over the whole list, then it's paged.
+  const found = list.filter(n => n % 7 === 0);
+  assert.deepEqual(pageOf(found, 1).total, 32);
+  assert.deepEqual(pageOf(found, 1).items.at(-1), 7 * 32);
+});
 
 test('the dealing clock runs only while dealing, and adds up', () => {
   let c = dealClock(null, false, NOW);

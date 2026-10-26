@@ -287,7 +287,12 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     if (!onProved) throw new Error('ducy’s server can’t record that right now.');
     server.setRecord(await onProved(club.ownerId));
   }
+  // When each player was last heard from, for the admin page's People
+  // (#401) and the managers' Members (#426): saved at most once a minute
+  // per player.
+  const seen = (await storage.get('seen')) || {};
   const server = createClubServer({
+    lastSeen: () => seen,
     identity, club, verifier,
     onPlay: playing,
     extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
@@ -330,9 +335,6 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
   // which members need before they'll accept this room's messages. It's
   // kept, and given to everyone as they connect.
   let handoff = (await storage.get('handoff')) || null;
-  // When each player was last heard from, for the admin page's People
-  // (#401): saved at most once a minute per player.
-  const seen = (await storage.get('seen')) || {};
   const noteSeen = id => {
     if (typeof id !== 'string' || Date.now() - (seen[id] || 0) < SEEN_EVERY_MS) return;
     seen[id] = Date.now();

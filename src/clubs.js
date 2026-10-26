@@ -41,7 +41,7 @@ import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
-import { accountOf, settle } from './club-agents.js';
+import { accountOf, playersOf, settle } from './club-agents.js';
 import { bigMove, isBigMove } from './club-roles.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
@@ -56,7 +56,7 @@ import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
 import { managerPage, NAV, navOf, pageHash, pageTitle } from './club-nav.js';
-import { durationText, FILTERS, memberFilter, overviewNumbers, tableSummaries, todaysTourneys } from './club-overview.js';
+import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
 import { chipLines, leftSummary } from './club-member-view.js';
 import { creditRow } from './club-credit.js';
@@ -93,7 +93,7 @@ let managing = null, ownClub = null;
 const isRemote = () => !!managing || !!owner?.record;
 const own = () => managing?.ctl || owner;
 // A manager page's address, in the club being drawn.
-const ph = (page, member = '') => pageHash(page, member, managing?.code || '');
+const ph = (page, member = '', list = {}) => pageHash(page, member, managing?.code || '', list);
 // Which page this runs on: 'play', the player app (index.html), where you
 // join clubs and play at their tables; or 'manage', the club manager
 // (manage.html, manage.js), where you run a club or help run one. Running a
@@ -1988,7 +1988,7 @@ function hostHtml() {
   if (!club) return '';
   const at = managerPage(location.hash) || {page: 'overview', member: ''};
   // An older address (#clubs/players …) shows under its page's own.
-  const want = ph(at.page, at.member);
+  const want = ph(at.page, at.member, at);
   if (location.hash.startsWith('#clubs') && location.hash.slice(1) !== want) history.replaceState(null, '', `${location.pathname}${location.search}#${want}`);
   let h = `<div class="mg-shell${navOpen ? ' nav-open' : ''}${notesOpen ? ' notes-open' : ''}">`;
   h += sideHtml(at.page);
@@ -2037,13 +2037,14 @@ const pageHead = (title, extra = '') => `<div class="mg-head"><h1 class="mg-h">$
 // The owner's pages (#417): a manager doesn't have them.
 const OWNER_PAGES = new Set(['rules', 'backup']);
 
-function pageHtml({page, member}) {
+function pageHtml(at) {
+  const {page, member} = at;
   if (OWNER_PAGES.has(page) && !isOwnerPage()) return pageHead(pageTitle(page)) + '<p class="pl-meta">The club’s owner looks after this.</p>';
   if (page === 'cash') return pageHead('Cash games') + cashHtml();
   if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payTable, heading: false});
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, promoFor ? {} : {form: promoForm, note: promoNote});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
-  if (page === 'members') return pageHead('Members') + membersPageHtml();
+  if (page === 'members') return pageHead('Members') + membersPageHtml(at);
   if (page === 'member') return memberPageHtml(member);
   if (page === 'chips') return pageHead('Chips') + accountingHtml();
   if (page === 'info') return pageHead('Club info') + infoEditHtml();
@@ -2141,28 +2142,64 @@ function askRowHtml(m) {
 }
 
 // Members (#398): everyone, with a search and the Overview's filters
-// (club-overview.js); each opens their own page.
-let memberQuery = '', memberFilterOn = 'all';
-const FILTER_TEXT = {all: 'All', new: 'Joined, 7 days', inactive: 'Inactive, 30+ days', owes: 'Owes'};
-function membersPageHtml() {
+// (club-overview.js); each opens their own page. Sorted and in pages of
+// PAGE_SIZE (#426), the filter, order and page in the address
+// (club-nav.js); the search and filters run over the whole list. Agents
+// (#426): the agents, an agent's players (By agent), and those under none.
+let memberQuery = '';
+const FILTER_TEXT = {all: 'All', new: 'Joined, 7 days', inactive: 'Inactive, 30+ days', owes: 'Owes', agents: 'Agents', noagent: 'No agent'};
+const SORT_TEXT = {name: 'Name', balance: 'Balance, high to low', 'balance-low': 'Balance, low to high', active: 'Last active'};
+const playersText = n => `${n} ${n === 1 ? 'player' : 'players'}`;
+// A new search: the list's first page, in place of this one.
+function membersFirstPage() {
+  const at = managerPage(location.hash);
+  if (at?.page === 'members' && at.n > 1) history.replaceState(null, '', `${location.pathname}${location.search}#${ph('members', '', {...at, n: 1})}`);
+}
+function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) {
   const now = Date.now();
-  const f = FILTERS.includes(memberFilterOn) ? memberFilterOn : 'all';
-  const list = memberFilter(club, f, now).sort((a, b) => a.name.localeCompare(b.name));
+  const q = memberQuery.trim().toLowerCase();
+  // Last heard from: an always-on club's room keeps it (#401).
+  const active = lastActive(club, (isRemote() && own().view?.seen) || {});
+  const list = sortMembers(memberFilter(club, show, now, undefined, agent).filter(m => !q || m.name.toLowerCase().includes(q)), sort, active);
+  const pg = pageOf(list, n);
+  const agents = memberFilter(club, 'agents', now).sort((a, b) => a.name.localeCompare(b.name));
   let h = '<div class="mg-tools-row">';
   h += `<input class="pl-text mg-search" type="search" data-msearch="1" placeholder="Search" aria-label="Search members" value="${esc(memberQuery)}">`;
   h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy invite link'}</button></div>`;
-  h += `<div class="mg-filters" role="group" aria-label="Show">${FILTERS.map(x => `<button class="cc-btn${x === f ? ' on' : ''}" data-cl="mfilter-here" data-f="${x}" aria-pressed="${x === f}">${FILTER_TEXT[x]} <span class="pl-meta">${memberFilter(club, x, now).length}</span></button>`).join('')}</div>`;
-  if (!list.length) return h + '<p class="pl-meta cl-empty">No one.</p>';
-  h += '<ul class="mg-rows mg-members">';
-  const q = memberQuery.trim().toLowerCase();
-  for (const m of list) {
-    const tags = memberTags(m);
-    h += `<li data-name="${esc(m.name.toLowerCase())}"${q && !m.name.toLowerCase().includes(q) ? ' hidden' : ''}><a href="#${ph('member', m.id)}"><b>${esc(m.name)}</b>`;
-    if (tags.length) h += `<span class="pl-meta">${tags.map(esc).join(' · ')}</span>`;
-    if (m.seat) h += `<span class="pl-meta">on a table ${chips(m.seat.stack)}</span>`;
-    h += `<span class="mg-row-end${m.balance < 0 ? ' cl-down' : ''}">${signed(m.balance)}</span></a></li>`;
+  const shown = FILTERS.filter(x => agents.length || (x !== 'agents' && x !== 'noagent'));
+  h += `<div class="mg-filters" role="group" aria-label="Show">${shown.map(x => `<button class="cc-btn${x === show ? ' on' : ''}" data-cl="mfilter-here" data-f="${x}" aria-pressed="${x === show}">${FILTER_TEXT[x]} <span class="pl-meta">${memberFilter(club, x, now).length}</span></button>`).join('')}`;
+  if (agents.length) {
+    h += `<select class="pl-text mg-agent-pick${show === 'agent' ? ' on' : ''}" data-magent="1" aria-label="By agent"><option value="">By agent</option>`;
+    h += agents.map(a => `<option value="${esc(a.id)}"${a.id === agent ? ' selected' : ''}>${esc(a.name)} (${playersOf(club, a.id).length})</option>`).join('') + '</select>';
   }
-  return h + '</ul>';
+  h += '</div>';
+  if (!list.length) return h + '<p class="pl-meta cl-empty">No one.</p>';
+  // The order: column headings, or a select on a phone.
+  const sortLink = (to, label, on) => `<a class="mg-sort${on ? ' on' : ''}" href="#${ph('members', '', {sort: to, show, agent})}"${on ? ' aria-current="true"' : ''}>${label}</a>`;
+  const bal = sort === 'balance' || sort === 'balance-low';
+  h += `<label class="mg-sort-pick">Sort <select class="pl-text" data-msort="1">${SORTS.map(s => `<option value="${s}"${s === sort ? ' selected' : ''}>${SORT_TEXT[s]}</option>`).join('')}</select></label>`;
+  h += '<div class="mg-rows mg-members mg-members-head" role="group" aria-label="Sort"><div class="mg-row">';
+  h += sortLink('name', 'Name', sort === 'name');
+  h += `<span class="mg-row-end">${sortLink('active', 'Last active', sort === 'active')}`;
+  h += sortLink(sort === 'balance' ? 'balance-low' : 'balance', `Balance${sort === 'balance' ? ' ↓' : sort === 'balance-low' ? ' ↑' : ''}`, bal);
+  h += '</span></div></div>';
+  h += '<ul class="mg-rows mg-members">';
+  for (const m of pg.items) {
+    const tags = memberTags(m);
+    h += `<li><a href="#${ph('member', m.id)}"><b>${esc(m.name)}</b>`;
+    if (tags.length) h += `<span class="pl-meta">${tags.join(' · ')}</span>`;
+    if (m.seat) h += `<span class="pl-meta">on a table ${chips(m.seat.stack)}</span>`;
+    h += `<span class="mg-row-end"><span class="pl-meta mg-active">${active[m.id] ? esc(ago(active[m.id], now)) : '–'}</span>`;
+    h += `<span class="mg-bal${m.balance < 0 ? ' cl-down' : ''}">${signed(m.balance)}</span></span></a></li>`;
+  }
+  h += '</ul>';
+  if (pg.pages > 1) {
+    const to = k => `#${ph('members', '', {sort, n: k, show, agent})}`;
+    h += `<nav class="mg-pager" aria-label="Pages">${pg.page > 1 ? `<a class="btn-small" data-cl="mpage" href="${to(pg.page - 1)}">Previous</a>` : '<span></span>'}`;
+    h += `<span class="pl-meta">${pg.from}–${pg.to} of ${pg.total}</span>`;
+    h += `${pg.page < pg.pages ? `<a class="btn-small" data-cl="mpage" href="${to(pg.page + 1)}">Next</a>` : '<span></span>'}</nav>`;
+  }
+  return h;
 }
 
 // A member's own page (#398): their chips, Give and Take back, their credit
@@ -2174,8 +2211,8 @@ function memberPageHtml(id) {
   if (!m || m.status !== 'member') return back + pageHead('Member') + '<p class="pl-meta">Not a member.</p>';
   const c = creditRow(m);
   let h = back + pageHead(esc(m.name), `<code class="mg-id">${esc(showId(m.id))}</code>`);
-  const tags = memberTags(m);
-  if (tags.length) h += `<p class="pl-meta">${tags.map(esc).join(' · ')}</p>`;
+  const tags = memberTags(m, true);
+  if (tags.length) h += `<p class="pl-meta mg-tags">${tags.join(' · ')}</p>`;
   h += '<div class="mg-stats">';
   h += statHtml('Balance', signed(c.balance), c.balance < 0 ? 'down' : '');
   h += statHtml('On a table', m.seat ? chips(c.onTable) : '–');
@@ -2224,14 +2261,18 @@ function debtFormHtml(m, c) {
 }
 
 // What a member is in the club, for their row and page (#417: the owner,
-// managers; agents and their players).
-function memberTags(m) {
+// managers; agents and their players), as HTML. An agent's players, and a
+// player's agent (#426), link to their list and page when `links`.
+function memberTags(m, links = false) {
+  const link = (href, text) => (links ? `<a href="#${href}">${esc(text)}</a>` : esc(text));
+  const agent = m.agentOf && club.members[m.agentOf];
   return [
     m.id === club.ownerId && 'Owner',
     m.role === 'assistant' && 'Manager', m.role === 'offered' && 'Offered manager',
-    m.agent === 'yes' && 'Agent', m.agent === 'offered' && 'Offered agent',
-    m.agentOf && club.members[m.agentOf] && `Via ${club.members[m.agentOf].name}`,
-    m.credit && `Credit ${chips(m.credit)}`,
+    m.agent === 'yes' && link(ph('members', '', {agent: m.id}), `Agent · ${playersText(playersOf(club, m.id).length)}`),
+    m.agent === 'offered' && 'Offered agent',
+    agent && link(ph('member', agent.id), `Under ${agent.name}`),
+    m.credit && esc(`Credit ${chips(m.credit)}`),
   ].filter(Boolean);
 }
 
@@ -3055,6 +3096,8 @@ async function onClickIn(e) {
   const act = b.dataset.cl;
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'demo') showDemoList();
+  // Another page of Members (#426) starts at its top.
+  else if (act === 'mpage') window.scrollTo(0, 0);
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   // The manager's sidebar drawer and notifications on a phone (#398).
   else if (act === 'mg-nav') { navOpen = !navOpen; notesOpen = false; render(); }
@@ -3071,8 +3114,10 @@ async function onClickIn(e) {
   else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
   else if (act === 'notes-clear') { setHostNote('cleared', [...clearedNotes(), ...clearableKeys(notices())].slice(-300)); render(); }
   // Overview's numbers open Members, filtered.
-  else if (act === 'mfilter') { memberFilterOn = b.dataset.f; location.hash = ph('members'); render(); }
-  else if (act === 'mfilter-here') { memberFilterOn = b.dataset.f; render(); }
+  // Members with a filter (#426: in the address), from the Overview or on
+  // Members, in the order it has, from the first page.
+  else if (act === 'mfilter') location.hash = ph('members', '', {show: b.dataset.f});
+  else if (act === 'mfilter-here') location.hash = ph('members', '', {sort: managerPage(location.hash)?.sort, show: b.dataset.f});
   // High Hand promotions (#278), the host's or (data-code) an assistant's (#274).
   else if (act === 'promo-new') { promoForm = 'new'; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
   else if (act === 'promo-edit') { promoForm = b.dataset.id; promoFor = b.dataset.code || ''; promoNote = ''; render(); }
@@ -3467,10 +3512,15 @@ export async function openClubs(el, v = 'clubs') {
         go.textContent = `${go.dataset.label} ${chips(n)}`;
         return;
       }
+      // The Members order, on a phone (#426): the first page of it.
+      if (e.target.dataset?.msort) { location.hash = ph('members', '', {...managerPage(location.hash), sort: e.target.value, n: 1}); return; }
+      // An agent's players (#426); none picked: everyone.
+      if (e.target.dataset?.magent) { location.hash = ph('members', '', {sort: managerPage(location.hash)?.sort, agent: e.target.value}); return; }
       if (!e.target.dataset?.msearch) return;
       memberQuery = e.target.value;
-      const q = memberQuery.trim().toLowerCase();
-      for (const li of root.querySelectorAll('.mg-members li[data-name]')) li.hidden = !!q && !li.dataset.name.includes(q);
+      // Over the whole list (#426), from its first page.
+      membersFirstPage();
+      render();
     });
     document.addEventListener('keydown', onDocKey);
     // A ⋯ menu closes when you click anywhere else.
