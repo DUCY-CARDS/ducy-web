@@ -3,28 +3,41 @@ name: CI
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Relay dependencies
         run: npm ci --prefix relay
 
       - name: Checkout ducy
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: allenpiscitello/ducy
           path: ducy
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
         with:
           targets: wasm32-unknown-unknown
 
+      # wasm-pack at a pinned version, checked against its release's SHA-256.
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          DIR="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$DIR.tar.gz"
+          echo "$WASM_PACK_SHA256  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP"
+          install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
+          wasm-pack --version
 
       - name: Build WASM
         run: |

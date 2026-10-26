@@ -1,0 +1,11 @@
+# Update PRs for the pinned GitHub Actions and the relay's npm packages (#436).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /relay
+    schedule:
+      interval: weekly
