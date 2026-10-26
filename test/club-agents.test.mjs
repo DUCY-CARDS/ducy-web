@@ -90,6 +90,28 @@ test('the agent view: players’ results at the tables and the settlements recor
   assert.deepEqual(v.settlements, [{at: 5, amount: 300, note: 'cash at the bar'}]);
 });
 
+test('the agent view: where each player sits, and what the agent would owe if they stood up (#428)', () => {
+  const {club, t} = setup();
+  t.name = 'Main';
+  runAgent(club, 'a', {op: 'give', id: 'p', amount: 800}); // own −300
+  chipsForTable(club, 'p', t, 800);
+  let v = agentBody(club, 'a');
+  assert.deepEqual(v.players.find(x => x.id === 'p'), {id: 'p', name: 'P', balance: 0, request: null, seated: true, result: 0, table: 'Main', stack: 800});
+  assert.equal(v.players.find(x => x.id === 'q').table, undefined, 'not at a table');
+  // Credit used counts chips at the table (#63 example A); owed doesn't.
+  assert.deepEqual([v.creditUsed, v.owed, v.room], [300, 0, 700]);
+  // Lost 600 at the table so far: owed only once it's more than the agent's 500.
+  club.members.p.seat.stack = 100;
+  assert.equal(agentBody(club, 'a').owed, 200);
+  leftTable(club, 'p', 100);
+  v = agentBody(club, 'a');
+  assert.deepEqual([v.creditUsed, v.owed], [200, 200]);
+  // A 0-credit agent gives only what they have.
+  setCreditLimit(club, 'a', 0);
+  assert.throws(() => runAgent(club, 'a', {op: 'give', id: 'q', amount: 1}), /allows \(0\)/);
+  assert.equal(agentBody(club, 'a').room, -300);
+});
+
 test('#63 example C: winning pays credit back', () => {
   const {club, t} = setup();
   runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});

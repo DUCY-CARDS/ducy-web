@@ -7,14 +7,17 @@
 //   club: {         or one already going, run by the demo's manager:
 //     name,
 //     tables:  [{name, game, sb, bb, minBB, maxBB, seats}]   as club-tables.js newTable
-//     people:  [{name, status, balance, ask, register}]       people you can switch to
-//     bots:    [{status, balance, table, ask, help, register}]  members the demo plays
+//     people:  [{name, status, balance, credit, agent, under, ask, register}]  people you can switch to
+//     bots:    [{status, balance, table, under, ask, help, register}]  members the demo plays
 //     tourney: {name, buyIn, stack, structure, startsIn (ms), …}     as club-tourneys.js newTourney
 //     promo:   {kind: 'high_hand', …}                                as club-promos.js newPromo
 //     sessions: [{table, ago, seats: [{name | bot, buyIn, cashOut}]}]  table sessions already played
 //   }
 // status: 'member' (the default) or 'pending' (asking to join); balance:
-// club chips (hundredths) once let in; credit: a credit limit (#404); table:
+// club chips (hundredths) once let in, from the manager, or from their agent
+// when `under` one; credit: a credit limit (#404); agent: an agent, with
+// this credit limit (#63, #428; 0: none); under: the index in `people` of
+// the agent they play under; table:
 // the index of the table a bot sits at (buying in for its maximum); ask:
 // chips asked for; help: a help request; register: entered in the
 // tournament. Each bot is one of Bankroll Quest's players, with their name
@@ -28,6 +31,38 @@ const bots = (n, each) => Array.from({length: n}, (_, i) => each(i));
 const balance = i => ((i * 7919) % 31) * 5000;
 
 const NLH = {game: 'nlhe', minBB: 40, maxBB: 100};
+
+// The Agents club (#428). Its people: five agents (agent: their credit
+// limit; balance: chips from the manager), then two of their players
+// (under: their agent; balance: chips from that agent).
+const AGENTS_PEOPLE = [
+  // Players at the tables.
+  {name: 'Marco Silva', agent: 300_000, balance: 100_000},
+  // No credit: gives out only what the manager gave him.
+  {name: 'Dana Wu', agent: 0, balance: 150_000},
+  // Near her limit (850 of 1,000 given out on credit), and owes 200.
+  {name: 'Priya Nair', agent: 100_000, balance: 0},
+  {name: 'Sam Okafor', agent: 200_000, balance: 50_000},
+  {name: 'Lena Berg', agent: 50_000, balance: 20_000},
+  // Marco's player, with 300 from him to sit with.
+  {name: 'Tom Reyes', under: 0, balance: 30_000},
+  // Dana's player, asking her for 200.
+  {name: 'Ivy Chen', under: 1, ask: 20_000},
+];
+// Its bots: each agent's players (under: the agent; balance: chips from
+// them beyond a seated bot's buy-in), then three members with no agent.
+const AGENTS_BOTS = [
+  ...[0, 1, 2].map(() => ({under: 0, balance: 10_000, table: 0})),
+  {under: 0, balance: 15_000},
+  ...[20_000, 30_000, 10_000].map(balance => ({under: 1, balance})),
+  ...[20_000, 25_000, 20_000, 20_000].map(balance => ({under: 2, balance})),
+  ...[0, 1].map(() => ({under: 3, balance: 5_000, table: 1})),
+  ...[0, 1, 2].map(() => ({under: 3, balance: 10_000})),
+  ...[0, 1, 2].map(() => ({under: 4, balance: 5_000})),
+  {balance: 10_000, table: 0},
+  {balance: 20_000},
+  {balance: 5_000},
+];
 
 export const SCENARIOS = [
   {id: 'new', name: 'A brand new club', club: null},
@@ -102,16 +137,34 @@ export const SCENARIOS = [
       sessions: [{table: 0, ago: 3600e3, seats: [{name: 'Player 3', buyIn: 20_000, cashOut: 0}, {bot: 3, buyIn: 20_000, cashOut: 40_000}]}],
     },
   },
+  {
+    // Agents (#63, #428): five agents, each with their own credit limit and
+    // players; switch to each to see the club as they do.
+    id: 'agents', name: 'Agents',
+    club: {
+      name: 'Harbor Card Room',
+      tables: [
+        {...NLH, name: 'Main 1/2', sb: 100, bb: 200, seats: 9},
+        {name: 'Omaha 1/2', game: 'plo4', sb: 100, bb: 200, minBB: 40, maxBB: 100, seats: 6},
+      ],
+      people: AGENTS_PEOPLE,
+      bots: AGENTS_BOTS,
+      // One of Priya's players lost 200 to a member with no agent: she owes it.
+      sessions: [{table: 0, ago: 2 * 3600e3, seats: [{bot: 9, buyIn: 20_000, cashOut: 0}, {bot: 20, buyIn: 20_000, cashOut: 40_000}]}],
+    },
+  },
 ];
 
 export const scenarioById = id => SCENARIOS.find(s => s.id === id) || SCENARIOS[0];
 
-// What a demo club's list shows of it: its members and tables.
+// What a demo club's list shows of it: its members, tables and agents.
 export function scenarioFacts(s) {
   const c = s.club;
   if (!c) return '';
   const members = (c.bots || []).filter(b => b.status !== 'pending').length + c.people.filter(p => p.status !== 'pending').length;
   const parts = [`${members} members`, `${c.tables.length} ${c.tables.length === 1 ? 'table' : 'tables'}`];
+  const agents = c.people.filter(p => p.agent != null).length;
+  if (agents) parts.push(`${agents} agents`);
   if (c.tourney) parts.push('a tournament');
   return parts.join(' · ');
 }

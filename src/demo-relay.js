@@ -100,6 +100,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
         rigged: new Set(), // `${member}|${hand}`: hands whose deal was chosen here
         seen: new Map(), // member id → {table, view}: their last table update
         targets: {}, // table id → how many bots it keeps (they come and go)
+        agents: new Map(), // agent id → identity: agents who back bots (#428)
       };
       rooms.set(code, room);
     }
@@ -129,6 +130,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       room.pubs[b.id] = b.pub;
     }
     Object.assign(room.targets, (await room.store.get('demoTargets')) || {});
+    for (const a of (await room.store.get('demoAgents')) || []) room.agents.set(a.id, await importIdentity(a.identity));
     room.hostKP = await keyPairFromJSON(await room.store.get('hostKey'));
     const server = await openClub({
       storage: room.store,
@@ -333,9 +335,21 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     if (full(room, server, t)) return;
     if (!canBuyIn(server.club, bot, t)) { bot.home = null; await saveBot(room, bot); return; }
     const {max} = tableLimits(t);
-    if (num(server.club.members[bot.id].balance) < max) await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
+    if (!(await refill(room, bot.id, max))) { bot.home = null; await saveBot(room, bot); return; }
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'request_chips', amount: max}});
+  }
+
+  // A bot short of a buy-in of `max` gets more chips: from its agent (#428)
+  // when it plays under one, within their credit; otherwise from the
+  // manager. False if its agent can't.
+  async function refill(room, id, max) {
+    const server = await room.server;
+    const m = server.club.members[id];
+    if (num(m?.balance) >= max) return true;
+    const agent = m?.agentOf && room.agents.get(m.agentOf);
+    if (!agent) { await server.run('give', {id, amount: max * 5, note: 'Demo bot'}); return true; }
+    try { await agentGives(server, agent, id, max - num(m.balance)); return true; } catch { return false; }
   }
 
   async function botSends(room, bot, body) {
@@ -362,7 +376,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
   // otherwise it comes online with the people (syncBots). It's one of
   // Quest's players who'd sit at `t` (or the club's smallest game), picked
   // with `r` (Math.random, or a scenario's dice).
-  async function addBot(room, t, {balance = null, pending = false, online = true, r = Math.random} = {}) {
+  async function addBot(room, t, {balance = null, pending = false, online = true, r = Math.random, agent = null} = {}) {
     const server = await room.server;
     const club = server.club;
     const ident = await createIdentity();
@@ -385,11 +399,26 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     await server.run('approve', {id: bot.id});
     const max = t ? tableLimits(t).max : 0;
     const amount = (balance ?? max * 4) + max;
-    if (amount > 0) await server.run('give', {id: bot.id, amount, note: 'Demo bot'});
+    // Under an agent (#428): their player, given their chips by the agent.
+    if (agent) {
+      await server.run('assign_agent', {id: bot.id, agent: agent.id});
+      if (amount > 0) await agentGives(server, agent, bot.id, amount);
+    } else if (amount > 0) await server.run('give', {id: bot.id, amount, note: 'Demo bot'});
     if (!t) return bot;
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'request_chips', amount: max}});
     return bot;
+  }
+
+  // Agent `agent` (an identity) gives their player `id` chips, as the
+  // agent's own page would (signed agent_cmd); throws if the club refused.
+  async function agentGives(server, agent, id, amount) {
+    const before = num(server.club.members[id]?.balance);
+    // After the agent's own last message from their page (as personState signs).
+    const room = rooms.get(server.club.code);
+    agent.seq = Math.max(agent.seq, room?.seqs[agent.id] || 0);
+    await server.message({from: agent.id, data: await signMessage(agent, {club: server.club.code, type: 'agent_cmd', cmd: {op: 'give', id, amount}})});
+    if (num(server.club.members[id]?.balance) !== before + amount) throw new Error(`A demo agent couldn’t give ${server.club.members[id]?.name} ${amount}.`);
   }
 
   async function botReceive(room, bot, data) {
@@ -418,10 +447,12 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
         const server = await room.server;
         const t = tableById(server.club, tid);
         if (!t) return;
-        // It can't buy in here yet (the rathole rule): it gets up instead.
-        if (!canBuyIn(server.club, bot, t)) { await getUp(room, bot, tid); return; }
+        // Its chips just haven't reached this view yet.
+        if (num(server.club.members[bot.id]?.seat?.stack)) return;
         const {max} = tableLimits(t);
-        if (num(server.club.members[bot.id]?.balance) < max) await server.run('give', {id: bot.id, amount: max * 5, note: 'Demo bot'});
+        // It can't buy in here yet (the rathole rule), or its agent can't
+        // back it (#428): it gets up instead.
+        if (!canBuyIn(server.club, bot, t) || !(await refill(room, bot.id, max))) { await getUp(room, bot, tid); return; }
         await botSends(room, bot, {type: 'table', table: tid, cmd: {type: 'request_chips', amount: max}});
       });
     }
@@ -652,26 +683,46 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
         const tables = [];
         for (const t of c.tables || []) tables.push(tableById(server.club, await server.run('new_table', {table: t})));
         const asks = [], helps = [], registers = [], botIds = [];
+        // A person joins with the invite and is let in, given chips and any
+        // credit; an agent (#428) accepts the role with their credit limit,
+        // and a player under one is given chips by their agent.
+        const join = async p => {
+          await as(p.ident, {type: 'join', invite: made.invite, name: p.name, key: (await newKeyPair()).pub});
+          if (p.status === 'pending') return;
+          await server.run('approve', {id: p.ident.id});
+          if (p.under != null) {
+            await server.run('assign_agent', {id: p.ident.id, agent: people[p.under].ident.id});
+            if (p.balance) await agentGives(server, people[p.under].ident, p.ident.id, p.balance);
+          } else if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
+          if (p.credit) await server.run('set_credit', {id: p.ident.id, amount: p.credit});
+          if (p.agent != null) {
+            await server.run('offer_agent', {id: p.ident.id, amount: p.agent});
+            await as(p.ident, {type: 'agent_reply', accept: true});
+          }
+          if (p.ask) asks.push([p.ident, p.ask]);
+          if (p.register) registers.push(p.ident);
+        };
+        // Agents first: their players, bots among them, join under them. The
+        // relay keeps their identities to back their bots later (refill).
+        for (const p of people) {
+          if (p.agent == null) continue;
+          await join(p);
+          room.agents.set(p.ident.id, p.ident);
+        }
+        if (room.agents.size) await room.store.put('demoAgents', await Promise.all([...room.agents].map(async ([id, ident]) => ({id, identity: await exportIdentity(ident)}))));
         // Its bots are Quest's players, the same ones every time it starts.
         const seed = seedOf(scenario.id);
         for (const [i, b] of (c.bots || []).entries()) {
           const t = tables[b.table] ?? null;
-          const bot = await addBot(room, t, {balance: b.balance ?? 0, pending: b.status === 'pending', online: false, r: key => roll(seed, i, key)});
+          const agent = b.under != null ? people[b.under].ident : null;
+          const bot = await addBot(room, t, {balance: b.balance ?? 0, pending: b.status === 'pending', online: false, r: key => roll(seed, i, key), agent});
           botIds.push(bot.id);
           if (t) room.targets[t.id] = (room.targets[t.id] || 0) + 1;
           if (b.ask) asks.push([bot.ident, b.ask]);
           if (b.help) helps.push([bot.ident, b.help]);
           if (b.register) registers.push(bot.ident);
         }
-        for (const p of people) {
-          await as(p.ident, {type: 'join', invite: made.invite, name: p.name, key: (await newKeyPair()).pub});
-          if (p.status === 'pending') continue;
-          await server.run('approve', {id: p.ident.id});
-          if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
-          if (p.credit) await server.run('set_credit', {id: p.ident.id, amount: p.credit});
-          if (p.ask) asks.push([p.ident, p.ask]);
-          if (p.register) registers.push(p.ident);
-        }
+        for (const p of people) if (p.agent == null) await join(p);
         // Table sessions played before the demo starts (a credit player who
         // stood up owing, #404): the ledger's own buy-in and cash-out, the
         // chips lost at one seat won at another.

@@ -381,7 +381,7 @@ export async function playerReceive(mem, env) {
   }
   if (b.type === 'agent') {
     mem.hostSeq = env.seq;
-    mem.agentView = {own: b.own, shares: b.shares, total: b.total, limit: b.limit, creditUsed: b.creditUsed, room: b.room, invite: b.invite, recruits: b.recruits || [], players: b.players || [], settlements: b.settlements || []};
+    mem.agentView = {own: b.own, shares: b.shares, total: b.total, limit: b.limit, creditUsed: b.creditUsed, room: b.room, owed: b.owed ?? b.creditUsed, invite: b.invite, recruits: b.recruits || [], players: b.players || [], settlements: b.settlements || []};
     return true;
   }
   if (b.type === 'admin_result') {

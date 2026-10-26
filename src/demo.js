@@ -25,7 +25,7 @@ import { useLocalRelay } from './play-net.js';
 import { chipText } from './chip-format.js';
 import { inviteLink, newMembership } from './club.js';
 import { SCENARIOS, scenarioById, scenarioFacts } from './demo-scenarios.js';
-import { dbSuffixOf, demoStorage, isOn, MANAGER, newDemo, prefixOf, relayDb, resetDemo } from './demo-state.js';
+import { dbSuffixOf, demoStorage, isOn, MANAGER, newDemo, prefixOf, relayDb, resetDemo, whereIs } from './demo-state.js';
 
 const KEY = 'ducyDemo';
 const TAB = 'ducy-demo', OVER = 'ducy-demo-over';
@@ -196,6 +196,8 @@ async function setUp() {
   realLocal.setItem(`${prefixOf(demo.id, MANAGER)}ducyClubRemote`, JSON.stringify({code: made.code, hostId: made.hostId, name: made.name}));
   for (const p of people) {
     const mem = {...newMembership(made), status: p.status === 'pending' ? 'pending' : 'member'};
+    // An agent (#428) knows it already: their page opens on their players.
+    if (p.agent != null && mem.status === 'member') Object.assign(mem, {agent: 'yes', creditLimit: p.agent});
     realLocal.setItem(`${prefixOf(demo.id, p.key)}ducyClubName`, p.name);
     realLocal.setItem(`${prefixOf(demo.id, p.key)}ducyClubs`, JSON.stringify([mem]));
   }
@@ -244,12 +246,8 @@ async function switchTo(key) {
   const club = await r.club();
   await r.flush();
   store({...d, current: key});
-  if (key === MANAGER) { go(managerUrl(club ? 'clubs/own' : 'clubs')); return; }
-  const status = club?.members[p.id]?.status;
-  if (status === 'member') go(playerUrl(`clubs/c/${encodeURIComponent(club.code)}`));
-  else if (status === 'pending') go(playerUrl('join'));
-  else if (club) go(inviteLink(club, playerUrl('')));
-  else go(playerUrl('clubs'));
+  const to = whereIs(club, p);
+  go(to.page === 'invite' ? inviteLink(club, playerUrl('')) : to.page === 'manager' ? managerUrl(to.hash) : playerUrl(to.hash));
 }
 
 // A new person, who opens the club's invite link and asks to join.
@@ -273,7 +271,10 @@ async function newPlayer() {
 function stateOf(p, club) {
   if (p.key === MANAGER) return club ? club.name : 'No club yet';
   const m = club?.members[p.id];
-  if (m?.status === 'member') return `${m.seat ? 'At a table' : 'Member'} · ${chipText(m.balance + (m.seat?.stack || 0))}`;
+  if (m?.status === 'member') {
+    const n = m.balance + (m.seat?.stack || 0);
+    return `${m.seat ? 'At a table' : m.agent === 'yes' ? 'Agent' : m.agentOf ? `Via ${club.members[m.agentOf]?.name || 'an agent'}` : 'Member'} · ${n < 0 ? `−${chipText(-n)}` : chipText(n)}`;
+  }
   if (m?.status === 'pending') return 'Asking to join';
   if (m?.status === 'declined') return 'Declined';
   if (m?.status === 'removed') return 'Removed';
@@ -290,7 +291,7 @@ async function draw() {
     bar.setAttribute('role', 'region');
     bar.setAttribute('aria-label', 'Demo');
     bar.addEventListener('click', onClick);
-    bar.addEventListener('toggle', e => { if (e.target.open) draw(); }, true);
+    bar.addEventListener('toggle', () => drawSoon(), true);
     document.body.prepend(bar);
     document.body.classList.add('in-demo');
   }
@@ -323,7 +324,16 @@ async function draw() {
       h += '</div>';
     }
   }
-  if (h !== drawn) bar.innerHTML = drawn = h;
+  // While the menu is open, its people's states change in place: a redraw
+  // would replace a button under the pointer and lose the click (the
+  // Agents club's balances change all the time, #428). It redraws on close.
+  if (opened && bar.contains(opened) && h !== drawn) {
+    for (const b of opened.querySelectorAll('[data-demo-as]')) {
+      const p = d.people.find(x => x.key === b.dataset.demoAs);
+      const s = b.querySelector('span');
+      if (p && s && s.textContent !== stateOf(p, club)) s.textContent = stateOf(p, club);
+    }
+  } else if (h !== drawn) bar.innerHTML = drawn = h;
   // The club manager's drawers open below the bar, so it stays in view (#398).
   document.documentElement.style.setProperty('--demo-h', `${bar.offsetHeight}px`);
 }

@@ -1611,7 +1611,9 @@ function viewHtml() {
   const at = shownClub();
   if (at === 'own' && own) return msg + runHereHtml() + footHtml();
   const mem = at && memberships.find(m => m.code === at && m.status === 'member');
-  if (mem) return msg + memberHomeHtml(mem, helps(mem) ? helpHereHtml(mem) : '') + footHtml();
+  // A manager's tools are on the club manager; an agent's players are a tab
+  // of their own club page here (#428).
+  if (mem) return msg + memberHomeHtml(mem, mem.status === 'member' && mem.role === 'assistant' ? helpHereHtml(mem) : '') + footHtml();
   return msg + clubListHtml() + footHtml();
 }
 
@@ -1625,11 +1627,10 @@ function runHereHtml() {
   return h;
 }
 
-// For a club you help run, on the player app: your staff tools are on the
-// club manager.
+// For a club you help run as a manager, on the player app: your tools are
+// on the club manager.
 function helpHereHtml(m) {
-  const what = m.role === 'assistant' ? 'manager' : 'agent';
-  return `<section class="cl-card cl-elsewhere"><p class="pl-desc">You’re ${what === 'agent' ? 'an agent' : 'a manager'} here.</p><a class="btn-small primary" href="${managerHref(clubHash(m.code))}">Open the club manager</a></section>`;
+  return `<section class="cl-card cl-elsewhere"><p class="pl-desc">You’re a manager here.</p><a class="btn-small primary" href="${managerHref(clubHash(m.code))}">Open the club manager</a></section>`;
 }
 
 // The club manager (manage.html): the club you run, a club you help run, or
@@ -2532,11 +2533,12 @@ function memberHomeHtml(m, manage = '') {
   else if (changed.length) h += `<p class="cl-updated"><button class="link-btn" data-cl="mtab" data-code="${code}" data-tab="info">Updated: ${changed.map(k => sectionName(k).toLowerCase()).join(', ')}</button></p>`;
   // The tabs (#398): Cash games · Tournaments · Club info · My chips · My hands.
   const tabBtn = (id, label) => `<button class="pl-tab${tab === id ? ' on' : ''}" role="tab" aria-selected="${tab === id}" data-cl="mtab" data-code="${code}" data-tab="${id}">${label}${id === 'info' && changed.length && tab !== 'info' ? '<span class="cl-dot" aria-label="updated"></span>' : ''}</button>`;
-  h += `<div class="pl-tabs cl-dash-tabs cl-member-tabs" role="tablist">${MEMBER_TAB_NAMES.map(([id, label]) => tabBtn(id, label)).join('')}</div>`;
+  h += `<div class="pl-tabs cl-dash-tabs cl-member-tabs" role="tablist">${tabNamesFor(m).map(([id, label]) => tabBtn(id, label)).join('')}</div>`;
   h += '<div class="cl-home"><section class="cl-home-main">';
   const ev = nextEvent(m.info);
   const evLine = ev ? `<p class="cl-next-event"><b>Next:</b> ${esc(ev.text)} <span class="pl-meta">${esc(new Date(ev.at).toLocaleString(undefined, {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}))}</span></p>` : '';
-  if (tab === 'chips') h += myChipsHtml(m);
+  if (tab === 'players') h += agentHtml(m, hostHere, {page: true});
+  else if (tab === 'chips') h += myChipsHtml(m);
   else if (tab === 'history') {
     h += handsHtml(m.code, me.id, 'Your hands');
     const tableNames = Object.fromEntries((m.tables || []).map(t => [t.id, t.name]));
@@ -2650,11 +2652,16 @@ function markInfoSeen(m) {
 // What a member's club page shows in its main column (#193, #225, #398):
 // a tab each. Remembered per club.
 const MEMBER_TAB_NAMES = [['tables', 'Cash games'], ['tourneys', 'Tournaments'], ['info', 'Club info'], ['chips', 'My chips'], ['history', 'My hands']];
-const MEMBER_TABS = MEMBER_TAB_NAMES.map(([id]) => id);
+// An agent (#428) is a player with players of their own: Your players
+// first, and open unless they've picked another tab.
+const tabNamesFor = m => (m?.agent === 'yes' ? [['players', 'Your players'], ...MEMBER_TAB_NAMES] : MEMBER_TAB_NAMES);
+const MEMBER_TABS = [...MEMBER_TAB_NAMES.map(([id]) => id), 'players'];
 function memberTab(code) {
+  const m = memberships.find(x => x.code === code);
+  const tabs = tabNamesFor(m).map(([id]) => id);
   let t = '';
   try { t = localStorage.getItem(`ducyMemberTab:${code}`) || ''; } catch {}
-  return MEMBER_TABS.includes(t) ? t : 'tables';
+  return tabs.includes(t) ? t : tabs[0];
 }
 function setMemberTab(code, t) {
   if (!MEMBER_TABS.includes(t)) return;
@@ -2759,17 +2766,29 @@ function agentLink(m) {
   return u.toString();
 }
 
-function agentHtml(m, hostHere) {
+// An agent's players and the chips they move to and from them (#74–#76).
+// On the player app it's their club page's Your players tab (#428, `page`:
+// the page shows their balance already); on the club manager, under Manage.
+function agentHtml(m, hostHere, {page = false} = {}) {
   const a = m.agentView;
-  let h = '<div class="cl-account cl-admin"><b>Agent tools</b>';
+  let h = `<div class="cl-account cl-admin cl-agent${page ? ' cl-agent-page' : ''}">`;
   if (!hostHere) h += `<span class="pl-meta">${UNREACHABLE}</span>`;
   if (m.adminNote) h += `<span class="pl-neterr">${esc(m.adminNote)}</span>`;
   if (!a) return h + '<span class="pl-meta">Loading…</span></div>';
   const dis = hostHere ? '' : ' disabled';
-  h += `<span>Your account: <b class="cl-chips">${chips(a.total)}</b> <span class="pl-meta">(your balance ${chips(a.own)} + your players’ ${chips(a.shares)})</span></span>`;
-  h += `<span class="${a.creditUsed ? 'cl-down' : 'pl-meta'}">Credit used ${chips(a.creditUsed)} of ${chips(a.limit)} · you can still give out ${chips(Math.max(0, a.room))}</span>`;
-  // Close to the limit: say so before a grant fails (#190).
-  if (a.limit && a.creditUsed >= 0.8 * a.limit) h += `<span class="pl-neterr">You’ve used ${Math.round((100 * a.creditUsed) / a.limit)}% of your credit: settle with the owner, or take chips back from your players, to give out more.</span>`;
+  // Your account in this club (#428): what you can give your players now
+  // (your balance plus your credit, up to your limit), your balance, what
+  // you'd owe the club if your players stood up now, and your credit limit.
+  const owed = a.owed ?? a.creditUsed;
+  const stat = (label, val, cls = '') => `<div class="mg-stat"><span class="mg-stat-label">${label}</span><span class="mg-stat-val${cls}">${val}</span></div>`;
+  h += '<div class="mg-stats cl-agent-stats">';
+  h += stat('Available', chips(Math.max(0, a.room)));
+  if (!page) h += stat('Your balance', signed(a.own), a.own < 0 ? ' cl-down' : '');
+  h += stat('Owed', chips(owed), owed ? ' cl-down' : '');
+  h += stat('Credit limit', a.limit ? chips(a.limit) : 'None');
+  h += '</div>';
+  // Close to the limit: say so before a give fails (#190).
+  if (a.limit && a.room <= 0.2 * a.limit) h += '<span class="pl-neterr">Near your credit limit</span>';
   if (a.settlements?.length) {
     h += `<details class="cl-history" data-keep="settle:${esc(m.code)}"><summary>Settlements recorded (${a.settlements.length})</summary><ul>`;
     for (const s of [...a.settlements].reverse()) h += `<li><span class="pl-meta">${when(s.at)}</span> ${chips(s.amount)}${s.note && s.note !== 'Settlement' ? ` <span class="pl-meta">“${esc(s.note)}”</span>` : ''}</li>`;
@@ -2782,14 +2801,16 @@ function agentHtml(m, hostHere) {
     for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('ag-approve', x, 'Approve', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
     h += '</ul>';
   }
-  h += `<span class="pl-meta">Your players (${a.players.length})</span>`;
+  if (!page) h += `<span class="pl-meta">Your players (${a.players.length})</span>`;
   if (!a.players.length) h += '<span class="pl-meta">No players yet. Send someone your link.</span>';
   else {
     h += '<ul class="cl-list">';
     for (const x of a.players) {
-      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${chips(x.balance)} chips</span>${x.seated ? '<span class="pl-meta">at a table</span>' : ''}`;
+      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${signed(x.balance)}</span>`;
+      // At a table (#428): which, and their stack there.
+      if (x.seated) h += `<span class="cl-at">${esc(x.table || 'At a table')}${x.stack != null ? ` · ${chips(x.stack)}` : ''}</span>`;
       // How they've done at the tables (#190).
-      if (x.result) h += `<span class="${x.result > 0 ? 'cl-up' : 'cl-down'}" title="Won or lost over finished table sessions">${x.result > 0 ? '+' : ''}${chips(x.result)} at the tables</span>`;
+      if (x.result) h += `<span class="${x.result > 0 ? 'cl-up' : 'cl-down'}" title="Won or lost over finished table sessions">${signed(x.result, true)} at the tables</span>`;
       if (x.request) h += `<span class="pl-meta">asks for ${chips(x.request.amount)}</span>`;
       h += '<span class="cl-acts">';
       h += x.request ? `${btn('ag-grant', x, 'Give', ' primary')}${btn('ag-deny', x, 'Decline')}` : btn('ag-give', x, 'Give');
