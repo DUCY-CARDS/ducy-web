@@ -1,0 +1,47 @@
+/* The super admin's page (#265, #401): clubs, who may create them, their
+   plans and limits, pausing, everything a club stores, people, and the
+   admin log. Requests are signed with this browser's identity
+   (src/admin.js); the relay lets in only the keys in admins.json. */
+:root {
+  --bg: #edeef0; --bg-raised: #f7f7f8; --fg: #3e4248; --fg-muted: #848890;
+  --line: #d3d5d9; --teal: #2e7888; --red: #b0443c; --amber: #9a6a12;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16191e; --bg-raised: #1f2329; --fg: #c9ccd1; --fg-muted: #868b93;
+    --line: #343941; --teal: #4aa3b5; --red: #d9776f; --amber: #d1a24a;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+h3 { font-size: 14px; margin: 12px 0 6px; }
+section { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+input, select, button { font: inherit; color: inherit; }
+input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; }
+input[type=number] { width: 4.5em; }
+button { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; cursor: pointer; }
+button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+button.link { background: none; border: none; padding: 0; color: var(--teal); text-align: left; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.row.spread { justify-content: space-between; }
+header.row { justify-content: space-between; margin-bottom: 12px; }
+nav button[aria-current=page] { border-color: var(--teal); color: var(--teal); }
+.muted { color: var(--fg-muted); }
+.err { color: var(--red); }
+.warn { color: var(--amber); }
+.ok { color: var(--teal); }
+.scroll { overflow-x: auto; }
+.tall { max-height: 420px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--fg-muted); font-size: 12px; position: sticky; top: 0; background: var(--bg-raised); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+code { font-size: 12px; word-break: break-all; }
+pre { background: var(--bg); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 4px 0; }
+dt { color: var(--fg-muted); }
+dd { margin: 0; }

@@ -152,7 +152,7 @@ function clubHtml(x, code) {
   if (!rec && !f.code) return `<section><h2>${esc(code)}</h2><p class="muted">No such club</p></section>`;
   const live = x.inside?.club;
   const members = f.members || [];
-  let h = `<section><div class="row" style="justify-content:space-between"><h2>${esc(f.name || rec?.name || '')} <code>${esc(code)}</code></h2>`
+  let h = `<section><div class="row spread"><h2>${esc(f.name || rec?.name || '')} <code>${esc(code)}</code></h2>`
     + (f.revealed ? '<span class="warn">Showing chats and cards</span>' : '<button id="reveal">Show chats and cards</button>') + '</div><dl>'
     + `<dt>Owner</dt><dd>${pid(f.ownerId || rec?.owner)} <span class="muted">${ago(f.ownerSeen)}</span></dd>`
     // A temporary club goes after 7 days unused (registry.js removesAt).

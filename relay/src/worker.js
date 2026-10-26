@@ -132,55 +132,68 @@ async function admin(req, env, url, cors) {
   return json(out.body, out.status);
 }
 
+// Every answer but a WebSocket's says its content type is to be believed
+// (#436). CORS stays as each route sets it.
+function nosniff(res) {
+  if (res.status === 101 || res.webSocket) return res;
+  const out = new Response(res.body, res);
+  out.headers.set('x-content-type-options', 'nosniff');
+  return out;
+}
+
 export default {
   async fetch(req, env) {
-    const url = new URL(req.url);
-    const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (url.pathname.startsWith('/admin/')) {
-      const origin = req.headers.get('Origin');
-      // The admin page on the site, or a script (no Origin), signing as an admin.
-      const cors = origin && (!allowed.length || allowed.includes(origin))
-        ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST', vary: 'Origin'}
-        : {};
-      if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
-      return admin(req, env, url, cors);
-    }
-    // How much always-on clubs use against the free plan (#98): numbers only.
-    if (url.pathname === '/usage' && req.method === 'GET') {
-      const res = await registryOf(env).fetch('https://registry/usage');
-      const origin = req.headers.get('Origin');
-      const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
-      return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
-    }
-    // What a code is (#393): a club (the registry knows it, its room says
-    // what it may tell), or else a game.
-    const look = url.pathname.match(/^\/code\/([^/]+)$/);
-    if (look && req.method === 'GET') {
-      const origin = req.headers.get('Origin');
-      const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
-      const headers = {'content-type': 'application/json', vary: 'Origin', ...(cors ? {'access-control-allow-origin': cors} : {})};
-      const code = decodeURIComponent(look[1]);
-      if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
-      const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
-      if (!has) return new Response(JSON.stringify({kind: 'game'}), {headers});
-      const invite = (url.searchParams.get('invite') || '').slice(0, 64);
-      const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
-      return new Response(res.body, {headers});
-    }
-    const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
-    if (svc) {
-      const code = decodeURIComponent(svc[1]);
-      return serviceHttp(req, code, env2 => roomOf(env, code).fetch(`https://room/service/${encodeURIComponent(code)}`, {method: 'POST', body: JSON.stringify(env2)}));
-    }
-    const m = url.pathname.match(/^\/room\/([^/]+)$/);
-    if (!m) return new Response('ducy relay', {status: 404});
-    if (allowed.length && !allowed.includes(req.headers.get('Origin'))) return new Response('forbidden', {status: 403});
-    const code = decodeURIComponent(m[1]);
-    if (!CODE.test(code)) return new Response('bad table code', {status: 400});
-    if (req.headers.get('Upgrade') !== 'websocket') return new Response('expected a WebSocket', {status: 426});
-    return env.ROOMS.get(env.ROOMS.idFromName(code)).fetch(req);
+    return nosniff(await route(req, env));
   },
 };
+
+async function route(req, env) {
+  const url = new URL(req.url);
+  const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (url.pathname.startsWith('/admin/')) {
+    const origin = req.headers.get('Origin');
+    // The admin page on the site, or a script (no Origin), signing as an admin.
+    const cors = origin && (!allowed.length || allowed.includes(origin))
+      ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST', vary: 'Origin'}
+      : {};
+    if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
+    return admin(req, env, url, cors);
+  }
+  // How much always-on clubs use against the free plan (#98): numbers only.
+  if (url.pathname === '/usage' && req.method === 'GET') {
+    const res = await registryOf(env).fetch('https://registry/usage');
+    const origin = req.headers.get('Origin');
+    const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
+    return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
+  }
+  // What a code is (#393): a club (the registry knows it, its room says
+  // what it may tell), or else a game.
+  const look = url.pathname.match(/^\/code\/([^/]+)$/);
+  if (look && req.method === 'GET') {
+    const origin = req.headers.get('Origin');
+    const cors = !allowed.length ? '*' : allowed.includes(origin) ? origin : '';
+    const headers = {'content-type': 'application/json', vary: 'Origin', ...(cors ? {'access-control-allow-origin': cors} : {})};
+    const code = decodeURIComponent(look[1]);
+    if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
+    const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
+    if (!has) return new Response(JSON.stringify({kind: 'game'}), {headers});
+    const invite = (url.searchParams.get('invite') || '').slice(0, 64);
+    const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
+    return new Response(res.body, {headers});
+  }
+  const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
+  if (svc) {
+    const code = decodeURIComponent(svc[1]);
+    return serviceHttp(req, code, env2 => roomOf(env, code).fetch(`https://room/service/${encodeURIComponent(code)}`, {method: 'POST', body: JSON.stringify(env2)}));
+  }
+  const m = url.pathname.match(/^\/room\/([^/]+)$/);
+  if (!m) return new Response('ducy relay', {status: 404});
+  if (allowed.length && !allowed.includes(req.headers.get('Origin'))) return new Response('forbidden', {status: 403});
+  const code = decodeURIComponent(m[1]);
+  if (!CODE.test(code)) return new Response('bad table code', {status: 400});
+  if (req.headers.get('Upgrade') !== 'websocket') return new Response('expected a WebSocket', {status: 426});
+  return env.ROOMS.get(env.ROOMS.idFromName(code)).fetch(req);
+}
 
 // The registry of always-on clubs (registry.js), one for the relay: limits
 // on creating them, and their usage. Only rooms reach it, except /usage

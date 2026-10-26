@@ -13,7 +13,7 @@ import { exportLockedIdentity, importIdentity } from './identity.js';
 
 // The backup file's text: `ident` locked with `password`, and the club.
 export async function clubBackupText(ident, password, {code, name = ''}) {
-  const locked = JSON.parse(await exportLockedIdentity(ident, password));
+  const locked = JSON.parse(await exportLockedIdentity(ident, password, {name}));
   return JSON.stringify({...locked, club: {code, name}});
 }
 

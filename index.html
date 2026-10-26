@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- The Content Security Policy (#436), as .htaccess sends it, plus a local
+       relay for testing (build-site.sh takes that out). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev ws://localhost:* http://localhost:*; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <title>DUCY: Poker Games and Training</title>
   <meta name="description" content="Play poker with friends and in private clubs, practise against Ducybot, a GTO bot, and personality bots, drill your ranges, and calculate equity for Hold’em and Omaha.">
   <meta property="og:title" content="DUCY: Poker Games and Training">
@@ -18,9 +21,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="DUCY">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <!-- Before any stylesheet arrives: just the felt until main.js opens the
-       first page (style.css has the rest, and a fallback reveal). -->
-  <style>body.booting { background: #1d3a2c; } body.booting > * { visibility: hidden; }</style>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&family=Alfa+Slab+One&family=Work+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="src/style.css">
 </head>

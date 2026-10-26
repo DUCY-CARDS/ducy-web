@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev ws://localhost:* http://localhost:*; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="robots" content="noindex, nofollow">
   <title>Club manager · DUCY</title>
   <meta name="description" content="Run your DUCY poker club: tables, members, chips, promotions and settings.">
@@ -11,7 +12,6 @@
   <meta name="theme-color" content="#1d3a2c">
   <!-- The club manager (manage.js): running a club, apart from the player
        app (index.html). Same look and stylesheet. -->
-  <style>body.booting { background: #1d3a2c; } body.booting > * { visibility: hidden; }</style>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Overpass+Mono:wght@400;600;700&family=Alfa+Slab+One&family=Work+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="src/style.css">
 </head>
