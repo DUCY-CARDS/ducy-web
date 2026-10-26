@@ -5,12 +5,16 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 AddType application/wasm .wasm
 AddType application/manifest+json .webmanifest
 
-# Safari 15 and every browser on iOS 15 (#442): see the policy below.
-<IfModule mod_setenvif.c>
-  SetEnvIf User-Agent "Version/15\.[0-9.]+ .*Safari/" ducy_safari15
-  SetEnvIf User-Agent "(Chrome|Chromium|Edg)/" !ducy_safari15
-  SetEnvIf User-Agent "OS 15(_[0-9]+)* like Mac OS X" ducy_safari15
-</IfModule>
+# Safari 15 and every browser on iOS 15 (#442): see the policy below. Set with
+# mod_rewrite, which the host runs (SetEnvIf had no effect there).
+# Safari 15 on a Mac or an iPad asking for the desktop site, but not Chrome or
+# Edge, which also say "Safari/":
+RewriteCond %{HTTP_USER_AGENT} Version/15\.[0-9.]+\s.*Safari/
+RewriteCond %{HTTP_USER_AGENT} !(Chrome|Chromium|Edg)/
+RewriteRule ^ - [E=ducy_safari15:1]
+# Any browser on iOS 15:
+RewriteCond %{HTTP_USER_AGENT} OS\s15(_[0-9]+)*\slike\sMac\sOS\sX
+RewriteRule ^ - [E=ducy_safari15:1]
 
 # Revalidate on every load so a deploy never mixes old and new JS/WASM
 # (and so gto/current.json picks up a newly published model)
@@ -40,6 +44,9 @@ AddType application/manifest+json .webmanifest
   Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" env=!ducy_safari15
   # The policy depends on the browser, so caches must keep one per browser.
   Header append Vary User-Agent
+  # Temporary (#442): shows whether the host set ducy_safari15, to check the
+  # rules above after deploy. Remove once Safari 15 gets its policy.
+  Header set X-Ducy-Safari15 "%{ducy_safari15}e"
   Header set X-Content-Type-Options "nosniff"
   Header set Referrer-Policy "strict-origin-when-cross-origin"
   Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
