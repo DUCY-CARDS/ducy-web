@@ -102,7 +102,7 @@ test('a room evicted mid-hand wakes on its alarm: the player to act times out an
 // closed their tabs still woke every 5 s, for the sit-out tick, which
 // re-armed itself while the table's clock was stopped. With no one there to
 // connect, nothing should wake it.
-test('a table whose seated players are all gone sets no timers, so the room can sleep; one coming back starts them again', async () => {
+test('a table whose seated players are all gone sets no ticking timers, so the room can sleep; one coming back starts them again', async () => {
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity(), bob = await createIdentity();
   const code = 'IDLE-TEST';
@@ -134,7 +134,9 @@ test('a table whose seated players are all gone sets no timers, so the room can 
   // Everyone leaves: the owner's tab and both players' tabs close.
   for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'close'});
   await settle();
-  assert.ok(!pending(), 'no one connected: no timer left to wake the room');
+  // What's left wakes it once, not every 5 s: the play time's report after
+  // the pause, and the idle check that stands them up (#421).
+  assert.ok(clock.next - Date.now() > 30_000, 'no one connected: nothing wakes the room soon');
 
   // Ann comes back: the table's clock, and its sit-out tick, run again.
   await server.message({from: ann.id, event: 'open'});

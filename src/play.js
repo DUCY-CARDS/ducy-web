@@ -272,6 +272,8 @@ let noteUntil = 0; // keep netNote on screen until then (a refused chip request)
 // A club table's hit-and-run rule: hands you still play before you may
 // leave, as the host last said (0: free to go).
 let stayLeft = 0;
+// A club table asks whether you're still here after 10 minutes idle (#421).
+let idleAsk = false;
 let shownSeq = -1; // state number on screen, so late results are dropped
 let hostChain = Promise.resolve(); // host calls to the worker, in order
 let hostTimer = null; // turn clock for the host
@@ -2803,6 +2805,7 @@ function startGuest(code) {
   myChips = null;
   mySeat = null;
   stayLeft = 0;
+  idleAsk = false;
   chipAsk = 0;
   gtoTable = false;
   review = null;
@@ -2832,6 +2835,12 @@ function guestMessage(m) {
       leaveTable('The host ended the game.');
       return;
     }
+    render();
+    return;
+  }
+  // Idle at a club table (#421): "Still here?" until you answer, or it's gone.
+  if (m.type === 'idle') {
+    idleAsk = !m.done;
     render();
     return;
   }
@@ -3802,6 +3811,7 @@ function netBarHtml() {
       : `<span class="cl-fair bad">Hand ${fairCheck.hand}: the deal didn’t check out: ${esc(fairCheck.why)}.</span>`;
   }
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
+  if (mode === 'guest' && idleAsk) h += '<span class="pl-idle" role="alert"><b>Still here?</b><button class="tr-btn yes" data-act="stillhere">Stay</button></span>';
   if (mode === 'host' && clockStopped) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
   return h;
 }
@@ -4246,6 +4256,7 @@ function onClick(e) {
   if (d.act === 'askmgr') { chipAsk = chipAmount(); if (chipAsk > 0) creditHook?.ask(chipAsk); render(); return; }
   if (d.act === 'cancelask') { creditHook?.cancel(); render(); return; }
   if (d.act === 'sitout') { net?.send({type: 'sit_out'}); return; }
+  if (d.act === 'stillhere') { idleAsk = false; net?.send({type: 'still_here'}); render(); return; }
   if (d.act === 'sitin') { net?.send({type: 'sit_in', wait_for_big_blind: d.wait === '1'}); return; }
   if (d.act === 'cancelchips') { net?.send({type: 'request_chips', amount: 0}); return; }
   if (d.act === 'timebank') { useTimeBank(); return; }

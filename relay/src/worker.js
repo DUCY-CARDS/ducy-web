@@ -212,7 +212,11 @@ export class Registry {
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
       else if (path === '/release') await this.reg.release(String(body.code));
-      else if (path === '/used') await this.reg.used(Number(body.minutes), Date.now(), body.code ? String(body.code) : null);
+      // On the day it was played (`at`, #421): within the last day or so.
+      else if (path === '/used') {
+        const now = Date.now(), at = Number(body.at);
+        await this.reg.used(Number(body.minutes), Number.isFinite(at) && at <= now && now - at < 2 * 864e5 ? at : now, body.code ? String(body.code) : null);
+      }
       else if (path === '/usage') return Response.json(await this.reg.usage());
       // The super admin's (only reached through admin() in the Worker).
       else if (path === '/list') return Response.json(await this.reg.list());
@@ -272,7 +276,7 @@ export class Room {
     this.clubP = this.status(code)
       .then(({record}) => openClub({
         storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(), record,
-        onUsage: minutes => this.clubCode().then(c => this.registry('/used', {minutes, code: c})),
+        onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
       onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
         // A backup proved (#395): recorded in the registry, signed for by the owner.

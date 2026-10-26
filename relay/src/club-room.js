@@ -33,6 +33,10 @@ const MAX_HANDS = 500;
 const SEEN_EVERY_MS = 60_000;
 // Finished hands the admin page shows (#401).
 const ADMIN_HANDS = 100;
+// Usage (#421): the longest pause in play that still counts, and the most
+// play time kept before it's reported.
+export const PLAY_GAP_MS = 60_000;
+const REPORT_MS = 5 * 60_000;
 
 // A signed request to create an always-on club in room `code`:
 // {type: 'create_club', club: code, name}. Returns {hostId, invite}, or
@@ -174,12 +178,42 @@ async function isHandoff(club, env) {
     && env.from === club.ownerId && !(await checkSignature(env));
 }
 
+// A club's play time (#421): playing() each time a hand is in play; gaps up
+// to PLAY_GAP_MS count, longer ones end a stretch. onUsage(minutes, at) gets
+// it as it goes: at most REPORT_MS at a time, at the end of each stretch
+// (found by `timers`, if given, else at the next one), and at a new day.
+// report() sends what's counted so far.
+export function playClock(onUsage, timers = null, now = () => Date.now()) {
+  let played = 0, lastPlay = 0, reportT = null;
+  const day = t => new Date(t).toISOString().slice(0, 10);
+  function report() {
+    if (!played) return;
+    const minutes = played / 60_000, at = lastPlay;
+    played = 0;
+    Promise.resolve(onUsage(minutes, at)).catch(e => console.warn('club: usage not reported:', e));
+  }
+  function check() {
+    reportT = null;
+    if (now() - lastPlay > PLAY_GAP_MS) report();
+    else reportT = timers.set(check, PLAY_GAP_MS);
+  }
+  function playing() {
+    const t = now();
+    if (t - lastPlay <= PLAY_GAP_MS && day(t) === day(lastPlay)) played += t - lastPlay;
+    else report();
+    lastPlay = t;
+    if (played >= REPORT_MS) report();
+    if (timers && !reportT) reportT = timers.set(check, PLAY_GAP_MS + 1000);
+  }
+  return {playing, report};
+}
+
 // Opens the club in this room, if there is one: a running club server
 // (club-server.js), with `online` (the member IDs connected now) told it's
 // open. `send(to, data)` delivers to a member's connections; `MultiTable` is
 // the initialised engine. Returns null when the room isn't a club.
-// `onUsage(minutes)`: the club's tables were in play that long (registry.js
-// counts it against the free plan). `onDeleted()`: the owner deleted the
+// `onUsage(minutes, at)`: the club's tables were in play that long, by time
+// `at` (registry.js counts it against the free plan on that day). `onDeleted()`: the owner deleted the
 // club and its storage is gone; the caller drops the server and its
 // connections. `onSaved()`: the club was saved (the caller may back it up,
 // backup.js).
@@ -203,27 +237,19 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
   // Once the club is deleted nothing more is saved, so it can't come back.
   let deleted = false;
   const later = fn => { saving = saving.then(() => (deleted ? null : fn())).catch(e => console.warn('club: not saved:', e)); return saving; };
-  // Usage (#98): from when someone sits at a table until no one is seated.
-  // Kept in storage, so it survives the room restarting meanwhile.
-  let playingSince = (await storage.get('playingSince')) ?? null;
-  function checkPlay() {
-    const seated = Object.values(club.members).some(m => m.seat);
-    if (seated && playingSince == null) {
-      playingSince = Date.now();
-      later(() => storage.put('playingSince', playingSince));
-    } else if (!seated && playingSince != null) {
-      const minutes = (Date.now() - playingSince) / 60_000;
-      playingSince = null;
-      later(() => storage.delete('playingSince'));
-      Promise.resolve(onUsage(minutes)).catch(e => console.warn('club: usage not reported:', e));
-    }
-  }
+  // Usage (#98, #421): the time hands are in play at any of the club's
+  // tables (playClock; the tables call onPlay every few seconds while one
+  // is), not merely someone seated: a seat held two weeks once counted as
+  // two weeks. Seated time was kept as playingSince before; that's dropped.
+  if (await storage.get('playingSince') != null) later(() => storage.delete('playingSince'));
+  const {playing, report} = playClock(onUsage, timers);
   // The owner deletes the club: members are told, and its storage goes.
   async function deleteClub() {
     if (Object.values(club.members).some(m => m.seat)) throw new Error('People are still at tables. Close the tables first.');
     for (const [id, m] of Object.entries(club.members)) {
       if (m.status === 'member' || m.status === 'pending') send(id, await signMessage(identity, {type: 'status', club: club.code, name: club.name, status: 'closed'}));
     }
+    report();
     deleted = true;
     await saving;
     const hands = ((await storage.get('hands')) || []).map(h => h.key);
@@ -263,7 +289,7 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
   }
   const server = createClubServer({
     identity, club, verifier,
-    onChange: checkPlay,
+    onPlay: playing,
     extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
     storeHand,
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),

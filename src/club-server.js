@@ -16,6 +16,7 @@
 //   persist()      the club or verifier changed: save them
 //   transport      {send(to, data), ack(n)}: the relay connection
 //   onChange()     something the host's view shows changed
+//   onPlay()       a hand is in play at one of its tables (usage, #421)
 //   storeHand(rec, {days})  a finished hand, for the host's history (#71)
 //   engine         {call, store} for the tables (club-host.js); defaults to
 //                  the page's worker and IndexedDB
@@ -74,7 +75,7 @@ const SETTINGS = {
 };
 
 export function createClubServer({
-  identity, club, verifier, persist, transport, onChange = () => {}, storeHand = () => {}, engine = {},
+  identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
 }) {
   const planInfo = () => (plan || limits ? {...(plan || {}), limits} : null);
@@ -361,6 +362,7 @@ export function createClubServer({
       },
       tablesChanged: () => { broadcastTables(); onChange(); },
       online: id => online.has(id),
+      onPlay,
       onHand: (tid, view, players) => {
         const t = tableById(club, tid);
         const rec = handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'});
@@ -381,6 +383,7 @@ export function createClubServer({
       tourneysChanged: broadcastTourneys,
       liveChanged: () => { liveChanged(); onChange(); },
       online: id => online.has(id),
+      onPlay,
       // Only while a promotion counts tournament hands (#274).
       onHand: (tid, table, view) => { if (club.promos?.list?.some(p => p.status === 'running' && p.tourneys)) promoTourneyHand(tid, table, view); },
       ...engine,
