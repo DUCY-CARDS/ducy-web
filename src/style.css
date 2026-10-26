@@ -2251,6 +2251,8 @@ body.mode-charts :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
    its own. On the player app, the cards that send you there. */
 .mg-badge { margin-left: 10px; padding: 2px 10px; border-radius: 999px; background: var(--teal); color: #fff; font: 600 12px var(--font-ui); letter-spacing: 0.02em; }
 body.mode-manage .mg-main { display: block; }
+/* Watching a table (#427): the table in place of the manager's pages, not below them. */
+body.mode-manage .mg-main[hidden] { display: none; }
 body.mode-manage .mg-main .cl-wrap { max-width: 1100px; margin: 0 auto; }
 .cl-elsewhere { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 
@@ -2347,6 +2349,24 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .mg-tools-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .mg-search { flex: 1 1 200px; width: auto; font-size: 15px; padding: 8px 10px; }
 .mg-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Members (#426): sorted by its column headings (a select on a phone), last
+   active and balance at the row's end, and pages. */
+.mg-members .mg-row-end { display: flex; align-items: baseline; gap: 16px; }
+.mg-members .mg-active { min-width: 100px; text-align: right; font-family: var(--font-ui); }
+.mg-members .mg-bal { min-width: 84px; text-align: right; }
+.mg-members-head { background: none; margin-bottom: -8px; }
+.mg-members-head .mg-row { padding-top: 0; padding-bottom: 0; }
+.mg-members-head .mg-row-end { font-family: var(--font-ui); }
+.mg-sort { display: inline-block; color: var(--fg-muted); font-size: 13px; font-weight: 600; text-decoration: none; }
+.mg-sort:hover, .mg-sort.on { color: var(--fg-strong); }
+.mg-members-head .mg-row-end .mg-sort:first-child { min-width: 100px; text-align: right; }
+.mg-members-head .mg-row-end .mg-sort:last-child { min-width: 84px; text-align: right; }
+.mg-sort-pick { display: none; align-items: center; gap: 8px; font-size: 14px; color: var(--fg-muted); }
+.mg-sort-pick .pl-text { width: auto; font-size: 15px; padding: 6px 8px; }
+.mg-filters .mg-agent-pick { width: auto; font-size: 13px; padding: 4px 8px; }
+.mg-filters .mg-agent-pick.on { border-color: var(--teal); }
+.mg-tags a { color: inherit; }
+.mg-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mg-back { align-self: flex-start; }
 .mg-id { font-family: var(--font-data); color: var(--fg-muted); }
 .pl-actions.mg-acts { margin: 0; align-items: center; }
@@ -2411,6 +2431,9 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
   .mg-top .wordmark { font-size: 0; gap: 0; }
   .mg-live.on { font-size: 0; gap: 0; padding: 6px; }
   .mg-switch > summary { font-size: 16px; max-width: 52vw; }
+  .mg-members-head { display: none; }
+  .mg-sort-pick { display: flex; }
+  .mg-members .mg-active { min-width: 0; }
 }
 
 /* Bankroll quest's lobby (#303, quest-ui.js): cream cards on the felt. */

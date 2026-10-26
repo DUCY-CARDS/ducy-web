@@ -52,13 +52,53 @@ export function lastPlayed(club) {
 //   new       joined in the last 7 days
 //   inactive  no hand played in 30 days (one who joined since isn't yet)
 //   owes      a negative balance: owes the club (#404)
-export const FILTERS = ['all', 'new', 'inactive', 'owes'];
-export function memberFilter(club, filter, now = Date.now(), played = lastPlayed(club)) {
+//   agents    the club's agents (#74, #426)
+//   noagent   members who aren't under an agent
+//   agent     agent `agent`'s players (Members' By agent)
+export const FILTERS = ['all', 'new', 'inactive', 'owes', 'agents', 'noagent'];
+export function memberFilter(club, filter, now = Date.now(), played = lastPlayed(club), agent = '') {
   const members = Object.values(club.members || {}).filter(m => m.status === 'member');
   if (filter === 'new') return members.filter(m => now - (m.joinedAt || 0) < NEW_DAYS * DAY);
   if (filter === 'inactive') return members.filter(m => !m.seat && now - Math.max(played[m.id] || 0, m.joinedAt || 0) >= INACTIVE_DAYS * DAY);
   if (filter === 'owes') return members.filter(m => owedBy(m) > 0);
+  if (filter === 'agents') return members.filter(m => m.agent === 'yes');
+  if (filter === 'noagent') return members.filter(m => !m.agentOf || club.members[m.agentOf]?.agent !== 'yes');
+  if (filter === 'agent') return members.filter(m => m.agentOf && m.agentOf === agent);
   return members;
+}
+
+// When each member was last active, by id: last heard from (`seen`, kept
+// by an always-on club's room, #401), last played, or joined, whichever is
+// latest; 0 when none of them is known.
+export function lastActive(club, seen = {}, played = lastPlayed(club)) {
+  const out = {};
+  for (const m of Object.values(club.members || {})) out[m.id] = Math.max(Number(seen[m.id]) || 0, played[m.id] || 0, m.joinedAt || 0);
+  return out;
+}
+
+// The Members list's orders (#426): by name, balance (highest first, or
+// lowest: who owes the most), or last active (most recent first). Ties go
+// by name. `active` is lastActive's map.
+export const SORTS = ['name', 'balance', 'balance-low', 'active'];
+export function sortMembers(list, sort = 'name', active = {}) {
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const by = {
+    balance: (a, b) => (b.balance || 0) - (a.balance || 0),
+    'balance-low': (a, b) => (a.balance || 0) - (b.balance || 0),
+    active: (a, b) => (active[b.id] || 0) - (active[a.id] || 0),
+  }[sort];
+  return [...list].sort((a, b) => (by && by(a, b)) || byName(a, b));
+}
+
+// Page `page` (from 1) of `list`, `size` a page: {items, page, pages, from,
+// to, total}, from and to counted from 1 ("51–100 of 230"). A page past the
+// end shows the last one.
+export const PAGE_SIZE = 50;
+export function pageOf(list, page = 1, size = PAGE_SIZE) {
+  const total = list.length, pages = Math.max(1, Math.ceil(total / size));
+  const n = Math.min(Math.max(1, Math.floor(Number(page)) || 1), pages);
+  const items = list.slice((n - 1) * size, n * size);
+  return {items, page: n, pages, from: total ? (n - 1) * size + 1 : 0, to: (n - 1) * size + items.length, total};
 }
 
 // ---- the overview ----

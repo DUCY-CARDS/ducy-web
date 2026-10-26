@@ -178,10 +178,14 @@ export function createTableHost({
 
   // Saves the table (#107) when its state changed, so a hand in progress
   // can resume if the page closes. A table that can't be saved (an older
-  // ducy-wasm, or storage blocked) just plays on, as before.
+  // ducy-wasm, or storage blocked) just plays on, as before. Not while the
+  // engine holds a chip request: the ledger has already paid an approved one
+  // that the engine hasn't added yet, so a table restored from then would
+  // lose those chips and ask for them again (#427). The approve or deny
+  // that follows is saved.
   async function persist(tid, res) {
     const r = running.get(tid);
-    if (!r || r.noSave || res.seq === r.savedSeq) return;
+    if (!r || r.noSave || res.seq === r.savedSeq || res.chipRequests?.length) return;
     try {
       const json = await call('clubSave', tid);
       if (json == null) { r.noSave = true; return; }
@@ -596,7 +600,12 @@ export function createTableHost({
       console.warn(`table ${t.id}: the saved hand is out of step with the ledger; not resumed`);
       return false;
     }
-    await call('clubRestore', t.id, rec.json);
+    // Saved holding a chip request (before #427): the ledger may have paid it.
+    const res = await call('clubRestore', t.id, rec.json);
+    if (res?.chipRequests?.length) {
+      console.warn(`table ${t.id}: saved with a chip request open; not resumed`);
+      return false;
+    }
     r.paused = true;
     r.back = new Set();
     r.savedSeq = rec.seq;

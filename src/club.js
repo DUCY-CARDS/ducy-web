@@ -324,7 +324,7 @@ export async function playerReceive(mem, env) {
   if (b.type === 'owner_view') {
     mem.hostSeq = env.seq;
     if (!b.data || typeof b.data !== 'object') return false;
-    mem.mgr = {data: b.data, seated: b.seated || {}, running: b.running || [], online: b.online || [], tourneys: b.tourneys || {}, plan: b.plan || null, owner: b.owner === true};
+    mem.mgr = {data: b.data, seated: b.seated || {}, running: b.running || [], online: b.online || [], tourneys: b.tourneys || {}, plan: b.plan || null, owner: b.owner === true, seen: b.seen || {}};
     return true;
   }
   if (b.type === 'owner_result') {

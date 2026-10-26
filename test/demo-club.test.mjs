@@ -197,6 +197,42 @@ test('each demo club starts in its scenario’s state, and starts again the same
 });
 const room = a => a.limit + a.own;
 
+// The page reloads once the demo is set up, and the club opens again from
+// storage, its tables resuming from their saved snapshots: as an always-on
+// club's room does when it wakes (#107, #135), with the same club-room code.
+// A table saved while a bot's buy-in was paid but not yet added there lost
+// it (#427). Opened again from storage as it was after each table save, the
+// club's chips add up.
+test('a demo club opened again from storage, as after the page reloads, loses no chips', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const { scenarioById } = await import('../src/demo-scenarios.js');
+  const sc = scenarioById('busy');
+  const mem = new Map(), copies = [];
+  const kv = m => ({get: async k => structuredClone(m.get(k)), put: async (k, v) => { m.set(k, structuredClone(v)); }, delete: async k => { m.delete(k); }});
+  const storage = {...kv(mem), put: async (k, v) => {
+    mem.set(k, structuredClone(v));
+    if (k.includes('|table:')) copies.push(structuredClone(mem));
+  }};
+  const owner = await createIdentity();
+  const people = [];
+  for (const p of sc.club.people) people.push({...p, ident: await createIdentity()});
+  const noBot = async () => { throw new Error('no SeatBot'); };
+  const relay = createDemoRelay({storage, identity: async () => owner, ready: async () => ducy, think: noBot});
+  const made = await relay.setUp(sc, {owner, people});
+  await relay.flush();
+  assert.ok(copies.length >= sc.club.bots.filter(b => b.table != null).length, 'each buy-in saved');
+  for (const [i, copy] of copies.entries()) {
+    const again = createDemoRelay({storage: kv(copy), identity: async () => owner, ready: async () => ducy, think: noBot});
+    const conn = again.connect(made.code, 'guest', owner.id, {onOpen() {}, onStatus() {}, onFail() {}, onMessage() {}});
+    await sleep(400);
+    await again.flush();
+    const club = await again.club();
+    assert.ok(totals(club).conserved, `opened after table save ${i + 1}: chips add up`);
+    assert.ok(!club.chips.ledger.some(e => e.kind === 'top_up'), `opened after table save ${i + 1}: no one bought in again`);
+    conn.close();
+    await again.flush();
+  }
+});
+
 test('Quest’s players fill a demo club’s tables, play through the real table code, come and go, and the books add up', {skip: !haveWasm && 'no wasm build'}, async () => {
   const { scenarioById } = await import('../src/demo-scenarios.js');
   const sc = scenarioById('busy');
@@ -433,6 +469,13 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   await cmd('approve', {id: ann.id});
   await cmd('give', {id: ann.id, amount: 50_000});
   await until('the host key', () => a.inbox.some(m => m.body?.type === 'account'));
+  // The managers' copy says when each member was last heard from, for
+  // Members' Last active (#426); no one else's.
+  await o.send({type: 'owner_hello'});
+  let view;
+  do view = await o.next('owner_view'); while (!view.body.seen?.[ann.id]);
+  assert.ok(Math.abs(view.body.seen[ann.id] - Date.now()) < 60_000);
+  assert.ok(!(owner.id in view.body.seen), 'members only');
   a.sit(tid);
   await a.table({type: 'join'});
   await a.table({type: 'request_chips', amount: 20_000});
