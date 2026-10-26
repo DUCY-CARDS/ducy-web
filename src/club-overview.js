@@ -77,15 +77,23 @@ export function lastActive(club, seen = {}, played = lastPlayed(club)) {
 }
 
 // The Members list's orders (#426): by name, balance (highest first, or
-// lowest: who owes the most), or last active (most recent first). Ties go
-// by name. `active` is lastActive's map.
-export const SORTS = ['name', 'balance', 'balance-low', 'active'];
-export function sortMembers(list, sort = 'name', active = {}) {
+// lowest: who owes the most), last active (most recent first), or agent
+// (#445: each agent then their players, by the agent's name; those under
+// none last). Ties go by name. `active` is lastActive's map; `members` the
+// club's, for agents' names.
+export const SORTS = ['name', 'balance', 'balance-low', 'active', 'agent'];
+export function sortMembers(list, sort = 'name', active = {}, members = {}) {
   const byName = (a, b) => a.name.localeCompare(b.name);
+  const agentOf = m => (m.agent === 'yes' ? m : members[m.agentOf]?.agent === 'yes' ? members[m.agentOf] : null);
   const by = {
     balance: (a, b) => (b.balance || 0) - (a.balance || 0),
     'balance-low': (a, b) => (a.balance || 0) - (b.balance || 0),
     active: (a, b) => (active[b.id] || 0) - (active[a.id] || 0),
+    agent: (a, b) => {
+      const x = agentOf(a), y = agentOf(b);
+      if (!x || !y) return !x - !y;
+      return byName(x, y) || x.id.localeCompare(y.id) || (b === y) - (a === x);
+    },
   }[sort];
   return [...list].sort((a, b) => (by && by(a, b)) || byName(a, b));
 }

@@ -100,6 +100,11 @@ test('managers: the owner’s own actions, and what a manager’s look like in t
   for (const op of ['give', 'grant', 'set_credit', 'raise_credit', 'settle_debt', 'approve', 'new_table', 'close_table', 'set_info', 'new_tourney', 'new_promo']) assert.ok(!OWNER_ONLY.has(op), op);
   assert.throws(() => checkManagerOp(club, 'b', 'remove', {id: 'o'}), /owner can remove/);
   assert.doesNotThrow(() => checkManagerOp(club, 'b', 'remove', {id: 'a'}));
+  // An agent's credit limit is the owner's to set (#445); a player's isn't.
+  assert.doesNotThrow(() => checkManagerOp(club, 'b', 'set_credit', {id: 'a', amount: 100}));
+  club.members.a.agent = 'yes';
+  for (const op of ['set_credit', 'raise_credit']) assert.throws(() => checkManagerOp(club, 'b', op, {id: 'a', amount: 100}), /owner sets an agent’s credit/, op);
+  delete club.members.a.agent;
   assert.equal(managerLogText(club, 'b', 'close_table', {table: 't'}), 'Ben closed Main');
   assert.equal(managerLogText(club, 'b', 'grant', {id: 'a', amount: 2500}), 'Ben granted Ann’s chip request (25)');
   assert.equal(managerLogText(club, 'b', 'hands', {}), '', 'looking changes nothing');

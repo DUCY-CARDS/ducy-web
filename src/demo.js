@@ -197,7 +197,7 @@ async function setUp() {
   for (const p of people) {
     const mem = {...newMembership(made), status: p.status === 'pending' ? 'pending' : 'member'};
     // An agent (#428) knows it already: their page opens on their players.
-    if (p.agent != null && mem.status === 'member') Object.assign(mem, {agent: 'yes', creditLimit: p.agent});
+    if (p.agent != null && mem.status === 'member') Object.assign(mem, {agent: 'yes'});
     realLocal.setItem(`${prefixOf(demo.id, p.key)}ducyClubName`, p.name);
     realLocal.setItem(`${prefixOf(demo.id, p.key)}ducyClubs`, JSON.stringify([mem]));
   }

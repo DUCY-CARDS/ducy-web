@@ -375,7 +375,6 @@ export async function playerReceive(mem, env) {
   if (b.type === 'agent_role') {
     mem.hostSeq = env.seq;
     mem.agent = b.agent || null;
-    mem.creditLimit = Number(b.creditLimit) || 0;
     if (mem.agent !== 'yes') mem.agentView = null;
     return true;
   }

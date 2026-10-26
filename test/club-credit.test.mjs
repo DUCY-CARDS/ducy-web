@@ -202,7 +202,8 @@ test('at the limit, a request may only be answered by raising the limit or no', 
 
 test('an agent can’t grant chips to a player of theirs at their credit limit', () => {
   const club = clubWith('agent', 'ann');
-  offerAgent(club, 'agent', 1000);
+  setCredit(club, 'agent', 1000, 0);
+  offerAgent(club, 'agent');
   answerAgent(club, 'agent', true);
   assignToAgent(club, 'ann', 'agent');
   setCredit(club, 'ann', 100, 0);

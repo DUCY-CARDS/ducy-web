@@ -43,6 +43,12 @@ export function ensureChips(club) {
     m.request ??= null;
     m.left ??= {};
     m.seat ??= null;
+    // An agent's credit limit was its own field; it's the member's credit
+    // now (#445).
+    if (m.creditLimit != null) {
+      if (m.creditLimit > (m.credit || 0)) m.credit = m.creditLimit;
+      delete m.creditLimit;
+    }
   }
   return club;
 }

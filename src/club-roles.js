@@ -57,15 +57,17 @@ export const isBigMove = (entry, threshold) => threshold != null && entry.amount
 // (The `role` field keeps its name, 'assistant'.)
 export const OWNER_ONLY = new Set([
   'offer_assistant', 'revoke_role', 'settings', 'service_add', 'service_update', 'service_revoke',
-  'offer_agent', 'credit_limit', 'revoke_agent', 'assign_agent', 'settle', 'delete_club', 'backup_proved',
+  'offer_agent', 'revoke_agent', 'assign_agent', 'settle', 'delete_club', 'backup_proved',
 ]);
 
 // Throws if manager `by` may not run `op` on its target: only the owner
-// removes a manager, and no one removes the owner.
+// removes a manager, and no one removes the owner. An agent's credit limit
+// backs their players too, so it stays the owner's (#445).
 export function checkManagerOp(club, by, op, args = {}) {
   if (OWNER_ONLY.has(op)) throw new Error('Only the club’s owner can do that.');
   const t = club.members[args.id];
   if (op === 'remove' && t && (t.id === club.ownerId || t.role === 'assistant')) throw new Error('Only the club’s owner can remove a manager.');
+  if ((op === 'set_credit' || op === 'raise_credit') && t?.agent) throw new Error('Only the club’s owner sets an agent’s credit limit.');
 }
 
 // What manager `by` did with `op`, for the activity log; '' for what changes
