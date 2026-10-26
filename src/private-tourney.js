@@ -31,12 +31,14 @@ export const HOST_ID = 'host';
 const MAX_NAME = 20;
 
 // The payout choices: the club defaults (about the top 15%, by the number of
-// entries), or a fixed split. Shares are basis points (1/100 of a percent).
+// entries), a fixed split, or the host's own payout table by entries (#424,
+// the setup's `rows`). Shares are basis points (1/100 of a percent).
 export const PAYOUTS = [
   {id: 'default', label: 'Top 15%', places: null},
   {id: 'wta', label: 'Winner takes all', places: [10000]},
   {id: 'top2', label: 'Top 2', places: [6500, 3500]},
   {id: 'top3', label: 'Top 3', places: [5000, 3000, 2000]},
+  {id: 'table', label: 'By entries', places: null},
 ];
 
 // The stand-in club for tournament code `code`, with the host as its
@@ -51,8 +53,9 @@ export function privateClub(code, hostName, now = Date.now()) {
 export const cleanName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_NAME);
 
 // The tournament, from the setup form: {name, game, stack, tableSize,
-// structure, payout, buyIn} (payout: one of PAYOUTS' ids; buyIn in points,
-// #403). The host runs it (their
+// structure, payout, rows, buyIn} (payout: one of PAYOUTS' ids; rows, for
+// 'table', the payout table's rows, #424; buyIn in points, #403). The host
+// runs it (their
 // tab runs every table) and plays only if they register in the lobby, as
 // anyone does: until then they have no seat and no place.
 // Throws why the settings won't do.
@@ -67,7 +70,13 @@ export function newPrivateTourney(club, s, now = Date.now()) {
     opensAt: now, startsAt: now, minPlayers: 2, maxPlayers: MAX_ENTRIES,
   }, now);
   const p = PAYOUTS.find(x => x.id === s.payout);
-  if (p?.places) setPayout(club, t.id, p.places);
+  try {
+    if (p?.places) setPayout(club, t.id, p.places);
+    else if (p?.id === 'table') setPayout(club, t.id, {rows: s.rows});
+  } catch (e) {
+    club.tourneys = [];
+    throw e;
+  }
   t.points = {buyIn, prizes: null};
   return t;
 }

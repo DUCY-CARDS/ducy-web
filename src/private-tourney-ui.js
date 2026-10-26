@@ -12,6 +12,7 @@ import { GAMES, maxSeats } from './club-tables.js';
 import { levelText } from './club-tourneys-ui.js';
 import { PAYOUTS, results, tourneySettle, tourneyStandings } from './private-tourney.js';
 import { settleHtml, standingsHtml } from './oneoff-standings-ui.js';
+import { draftOf, rowsEditorHtml } from './payout-table-ui.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const whole = n => Number(n || 0).toLocaleString('en-US');
@@ -30,7 +31,7 @@ const field = (label, body) => `<div class="sg-field"><span class="sg-label">${l
 // ---- the form ----
 
 // The Tournament form, after Start a game's heading and kind. `f`: {name,
-// game, stack, tableSize, payout}; `editor`: the blind structure editor
+// game, stack, tableSize, payout, table (the payout table's draft, #424)}; `editor`: the blind structure editor
 // (tourney-structure-ui.js); `lead`: Start a game's fields that come first
 // (your name, the first time, and the kind of game); `levelsOpen`: the blind
 // levels shown.
@@ -45,7 +46,10 @@ export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Frida
   const sum = `${levels.length} levels${mins.length === 1 ? ` of ${mins[0]} min` : ''}, from ${whole(levels[0]?.sb)}/${whole(levels[0]?.bb)}`;
   h += field('Blinds', `<details class="pz-levels" data-tzlevels${levelsOpen || editor.errors().length ? ' open' : ''}><summary>${esc(sum)}</summary><div class="pz-editor" data-tseditor>${editor.html()}</div></details>`);
   h += field('Buy-in, in points', `<div class="sg-nums"><input class="pl-text" type="number" name="buyin" min="0" step="1" value="${esc(f.buyIn)}" data-tzbuyin></div>`);
-  h += field('Payouts', `<div class="sg-chips">${PAYOUTS.map(p => chip(f.payout === p.id, 'data-tzpay', p.id, esc(p.label))).join('')}</div>`);
+  let pay = `<div class="sg-chips">${PAYOUTS.map(p => chip(f.payout === p.id, 'data-tzpay', p.id, esc(p.label))).join('')}</div>`;
+  // The host's own payout table by entries (#424).
+  if (f.payout === 'table') pay += `<div class="pz-editor" data-tzrows>${rowsEditorHtml(f.table || draftOf(), 'data-tz')}</div>`;
+  h += field('Payouts', pay);
   h += field('Name it', `<input class="pl-text" name="name" maxlength="40" placeholder="${esc(placeholder)}" value="${esc(f.name)}">`);
   h += '<p class="pl-desc">Any number of players: with more than a table seats, it runs on several tables and moves players to keep them even. Everyone starts with the same tournament chips.</p>';
   if (note) h += `<p class="pl-desc pl-neterr">${esc(note)}</p>`;

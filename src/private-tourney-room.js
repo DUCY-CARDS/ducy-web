@@ -35,6 +35,7 @@ import { defaultSeats, maxSeats } from './club-tables.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { HOST_ID, MAX_POINTS, PAYOUTS, cleanName, joinPrivate, leavePrivate, lobbyBody, newPrivateTourney, privateClub, setPrizes, theTourney, tourneySettle, tourneyStandings } from './private-tourney.js';
 import { bannerText, pageHtml, setupHtml, totalsText } from './private-tourney-ui.js';
+import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './payout-table-ui.js';
 import { download, fileName } from './oneoff-standings-ui.js';
 import { standingsCsv } from './oneoff-standings.js';
 import { joinTableVia, setTableName, setTourneyPage, tableName } from './play.js';
@@ -50,6 +51,9 @@ function loadForm() {
   try { s = JSON.parse(localStorage.getItem(FORM_KEY) || 'null'); } catch {}
   const f = {name: '', game: 'nlhe', stack: 10000, tableSize: 9, payout: 'default', buyIn: 100, ...(s || {})};
   if (!PAYOUTS.some(p => p.id === f.payout)) f.payout = 'default';
+  // The payout table by entries (#424), as last typed.
+  const rows = Array.isArray(f.table?.rows) && f.table.rows.length && f.table.rows.every(r => Array.isArray(r?.places)) ? f.table.rows : null;
+  f.table = rows ? {rows, cols: Number(f.table.cols) || 0} : draftOf();
   if (!Number.isSafeInteger(f.buyIn) || f.buyIn < 0 || f.buyIn > MAX_POINTS) f.buyIn = 100;
   f.tableSize = Math.min(f.tableSize, maxSeats(f.game));
   return f;
@@ -64,8 +68,8 @@ document.addEventListener('toggle', e => { if (e.target.matches?.('[data-tzlevel
 const ed = () => (editor ||= structureEditor({stack: form.stack, tableSize: form.tableSize}));
 
 function saveForm() {
-  const {game, stack, tableSize, payout, buyIn} = form;
-  try { localStorage.setItem(FORM_KEY, JSON.stringify({game, stack, tableSize, payout, buyIn})); } catch {}
+  const {game, stack, tableSize, payout, buyIn, table} = form;
+  try { localStorage.setItem(FORM_KEY, JSON.stringify({game, stack, tableSize, payout, buyIn, table})); } catch {}
 }
 
 // Reads the typed fields into the form.
@@ -76,6 +80,8 @@ function readForm(wrap) {
   if (Number.isSafeInteger(stack) && stack >= 20 && stack !== form.stack) { form.stack = stack; ed().setStack(stack); }
   const buyIn = v('[data-tzform] [name=buyin]');
   if (buyIn != null) form.buyIn = buyIn === '' ? 0 : Number(buyIn);
+  const rows = wrap.querySelector('[data-tzform] [data-tzrows]');
+  if (rows) form.table = readRows(rows, form.table);
 }
 
 // ---- where things are ----
@@ -176,7 +182,7 @@ async function openLobby(wrap) {
   if (formNote) { redraw(); return; }
   const c = privateClub(newCode(), tableName());
   try {
-    newPrivateTourney(c, {...form, structure: ed().steps()});
+    newPrivateTourney(c, {...form, structure: ed().steps(), rows: form.payout === 'table' ? cleanRows(form.table) : null});
   } catch (e) {
     formNote = e.message;
     redraw();
@@ -573,6 +579,10 @@ function click(e) {
     }
     if (d.tzsize) form.tableSize = Math.min(+d.tzsize, maxSeats(form.game));
     if (d.tzpay) form.payout = d.tzpay;
+    // The payout table by entries (#424): a row more or less, a place more.
+    if (d.tz === 'prow-add') addRow(form.table);
+    else if (d.tz === 'prow-remove') removeRow(form.table, Number(d.i));
+    else if (d.tz === 'pcol-add') addPlace(form.table);
     if (d.tz === 'open') { openLobby(wrap); return true; }
     saveForm();
     redraw();

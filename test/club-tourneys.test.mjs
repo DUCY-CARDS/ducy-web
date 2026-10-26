@@ -91,7 +91,7 @@ test('a custom payout that doesn’t add up to 100% can’t be saved', () => {
   assert.throws(() => setPayout(club, t.id, [3000, 7000]), /more than the one above/);
   assert.throws(() => setPayout(club, t.id, [10000, 0]), /above 0/);
   setPayout(club, t.id, [7000, 3000]);
-  assert.deepEqual(t.payout.places, [7000, 3000]);
+  assert.deepEqual(t.payout.rows, [{from: 1, places: [7000, 3000]}]);
   setPayout(club, t.id, null);
   assert.equal(t.payout, null);
 });

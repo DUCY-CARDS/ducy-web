@@ -1458,6 +1458,24 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .ts-levels th, .ts-levels td { padding: 2px 3px; }
 }
 
+/* Payout tables by entries (#424): the editor and the table */
+.po-scroll { max-width: 100%; overflow-x: auto; }
+.cl-payouts { flex-basis: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.cl-payouts > label { display: flex; align-items: center; gap: 8px; }
+.cl-payouts select { width: auto; min-width: 9em; padding-right: 28px; }
+.cl-payouts .cl-acct { min-width: min(320px, 100%); }
+.po-rows .pl-text { width: 64px; }
+.po-table { min-width: 0; }
+.po-table .po-on :is(th, td) { background: var(--teal-faint); }
+.cl-paytables { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+.cl-paytable { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.cl-paytable-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-paytable-head .cl-name { margin-right: auto; }
+.pz-form .po-rows .pl-text { width: 60px; }
+@media (max-width: 560px) {
+  .po-rows .pl-text, .pz-form .po-rows .pl-text { width: 52px; }
+}
+
 /* The Host tab's two choices (#152) */
 .ph-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .ph-choice {
