@@ -11,6 +11,7 @@
 //   grant | deny             a member's chip request (granted from the assistant's balance)
 //   new_table | close_table | hide_table
 //   remove_player | keep_player  stand a player up from a table, or Undo (#414)
+//   move_player              move a player to a seat held at another table (#425)
 //   new_promo | edit_promo | promo_status | approve_award | void_award
 //                            High Hand promotions (#274): set up and run
 //                            them, pay a prize held over budget, void one
@@ -132,7 +133,7 @@ export function adminBody(club, seatedCounts = {}) {
       id: t.id, name: t.name, game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats,
       status: t.status, taken: seatedCounts[t.id] || 0,
       // Who's at it, for Remove from table (#414).
-      players: ms.filter(m => m.seat?.table === t.id).map(m => ({id: m.id, name: m.name, stack: m.seat.stack, ...(m.seat.removing ? {removing: true, ...(m.seat.removing.now ? {now: true} : {})} : {})})),
+      players: ms.filter(m => m.seat?.table === t.id).map(m => ({id: m.id, name: m.name, stack: m.seat.stack, ...(m.seat.removing ? {removing: true, ...(m.seat.removing.now ? {now: true} : {})} : {}), ...(m.seat.moving ? {moving: m.seat.moving.to} : {})})),
     })),
     // The promotions, as the host sees them (#274).
     promos: club.promos?.list?.length || club.promos?.awards?.length ? promosAdmin(club) : null,
@@ -227,10 +228,17 @@ export function runAdmin(club, by, cmd, now = Date.now(), limits = null) {
     }
     // Removing a player from a table (#414): `seat` tells the host's table
     // runtime, which logs it when they stand up. keep_player is Undo.
+    // move_player (#425): to a seat held at table `to`, after the hand.
     case 'remove_player':
-    case 'keep_player': {
+    case 'keep_player':
+    case 'move_player': {
       const t = tableById(club, cmd.table);
       if (!t || target?.seat?.table !== t.id) throw new Error(`${who || 'That player'} isn’t at that table.`);
+      if (cmd.op === 'move_player') {
+        const to = tableById(club, cmd.to);
+        if (!to || to.status !== 'open' || to.id === t.id) throw new Error('Pick another open table.');
+        return {replies: [], seat: {table: t.id, id: cmd.id, to: to.id}};
+      }
       return {replies: [], seat: {table: t.id, id: cmd.id, now: !!cmd.now, ...(cmd.op === 'keep_player' ? {keep: true} : {})}};
     }
     case 'hide_table': {

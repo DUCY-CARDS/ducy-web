@@ -1958,6 +1958,9 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-at-table .link-btn { color: inherit; }
 .cl-tcard .cl-at-table .cl-menu-item { color: var(--fg); }
 .cl-at-table .cl-menu-items { left: 0; right: auto; }
+/* Move to… a table (#425): the table names, as small as the seat's ⋯. */
+.cl-move-to { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.cl-at-table .cl-move-to .btn-small { padding: 2px 8px; font-size: 13px; }
 .pl-seat-tools { position: relative; display: inline-block; }
 .pl-seat-tools > summary { list-style: none; cursor: pointer; padding: 2px 8px; }
 .pl-seat-tools > summary::-webkit-details-marker { display: none; }

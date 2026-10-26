@@ -415,7 +415,9 @@ export function createClubServer({
       // Removing a player from a table, or Undo (#414).
       if (r.seat) {
         if (!tableHost?.running(r.seat.table)) throw new Error('That table isn’t running.');
-        const p = r.seat.keep ? tableHost.keepPlayer(r.seat.table, r.seat.id) : tableHost.removePlayer(r.seat.table, r.seat.id, {now: r.seat.now, by: from});
+        const p = r.seat.keep ? tableHost.keepPlayer(r.seat.table, r.seat.id)
+          : r.seat.to ? tableHost.movePlayer(r.seat.table, r.seat.id, r.seat.to, {by: from})
+          : tableHost.removePlayer(r.seat.table, r.seat.id, {now: r.seat.now, by: from});
         Promise.resolve(p).catch(e => console.warn(e));
       }
       if (r.table) broadcastTables();
@@ -653,6 +655,13 @@ export function createClubServer({
     },
     keep_player: async ({table, id}) => {
       await tableHost?.keepPlayer(table, String(id));
+      changed();
+    },
+    // Moving a player to a seat held at table `to` (#425): they leave after
+    // the hand in play and sit down there.
+    move_player: async ({table, id, to}) => {
+      if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
+      await tableHost.movePlayer(table, String(id), String(to), {by: actor()});
       changed();
     },
     // Club info (#398): its sections, sent to every member online.

@@ -396,14 +396,18 @@ function watchTable(id) {
     handlers.onMessage(u);
   };
   const members = club.members;
+  // Other open tables with room, to move a player to (#425).
+  const moveTo = () => openTables(club).filter(x => x.status === 'open' && x.id !== id && tableRunning(x.id) && (seatedCounts()[x.id] || 0) < x.seats);
   const seatTools = {
     rows: () => seats.players.map(p => ({
       key: p.id, name: members[p.id]?.name || '', stack: seats.view?.seats?.[p.seat]?.stack ?? 0,
-      note: p.removing ? 'Leaving after this hand' : '',
+      note: p.removing ? 'Leaving after this hand' : p.moving ? `Moving to ${tableById(club, p.moving)?.name || 'another table'}` : '',
       buttons: p.removing && !p.now ? [['keep', 'Undo']] : [],
-      items: p.removing ? (p.now ? [] : [['now', 'Remove now']]) : [['after', 'Remove from table'], ['now', 'Remove now']],
+      items: p.removing ? (p.now ? [] : [['now', 'Remove now']]) : p.moving ? [['after', 'Remove from table'], ['now', 'Remove now']]
+        : [['after', 'Remove from table'], ['now', 'Remove now'], ...moveTo().map(x => [`move:${x.id}`, `Move to ${x.name}`])],
     })),
-    run: (pid, tool) => act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid, now: tool === 'now'}),
+    run: (pid, tool) => (tool.startsWith('move:') ? act('move_player', {table: id, id: pid, to: tool.slice(5)})
+      : act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid, now: tool === 'now'})),
   };
   joinTableVia(handlers => {
     // An always-on club's table runs in its room: its view comes encrypted
@@ -558,7 +562,8 @@ function cashHtml() {
     }
     // Who's at it, each with a ⋯ to remove them from the table (#414).
     const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
-    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now})));
+    const others = tables.filter(x => x.status === 'open' && x.id !== t.id).map(x => ({id: x.id, name: x.name, room: tableRunning(x.id) && (counts[x.id] || 0) < x.seats}));
+    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now, moving: m.seat.moving?.to || ''})), '', '', others);
     h += '</li>';
   }
   return h + '</ul>';
@@ -572,19 +577,31 @@ function tableStatusHtml(t) {
   return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)} · ${deal}</span>`;
 }
 
-// Who's at table `tid` ([{id, name, stack, removing, now}]), each with a ⋯
-// to remove them (#414): after this hand, or now; "Leaving after this hand"
-// with Undo meanwhile. `code`: an assistant's club, else the host's.
-function seatedHtml(tid, players, code = '', dis = '') {
+// Who's at table `tid` ([{id, name, stack, removing, now, moving}]), each
+// with a ⋯ to remove them (#414): after this hand, or now; "Leaving after
+// this hand" with Undo meanwhile. Or to move them (#425) to one of `others`
+// ([{id, name, room}], the club's other open tables) with room. `code`: an
+// assistant's club, else the host's.
+let moveMenu = ''; // `${table}|${player}`: Move to… open
+function seatedHtml(tid, players, code = '', dis = '', others = []) {
   if (!players.length) return '';
   const at = ` data-table="${esc(tid)}"${code ? ` data-code="${esc(code)}"` : ''}`;
+  const room = others.filter(x => x.room);
   let h = '<ul class="cl-at-table">';
   for (const p of players) {
     h += `<li><span>${esc(p.name)} ${chips(p.stack)}</span>`;
     if (p.removing) {
       h += '<span class="pl-meta">Leaving after this hand</span>';
       if (!p.now) h += `<button class="link-btn" data-cl="seat-keep" data-id="${esc(p.id)}"${at}${dis}>Undo</button>`;
-    } else if (!dis) h += menuHtml(`More for ${p.name}`, [['seat-remove', 'Remove from table'], ['seat-remove-now', 'Remove now']], p.id, '', at);
+    } else if (p.moving) h += `<span class="pl-meta">Moving to ${esc(others.find(x => x.id === p.moving)?.name || 'another table')}</span>`;
+    else if (!dis && moveMenu === `${tid}|${p.id}`) {
+      h += '<span class="cl-move-to"><span class="pl-meta">Move to</span>';
+      for (const x of room) h += `<button class="btn-small" data-cl="seat-move-to" data-id="${esc(p.id)}" data-to="${esc(x.id)}"${at}>${esc(x.name)}</button>`;
+      h += '<button class="link-btn" data-cl="seat-move-cancel">Cancel</button></span>';
+    } else if (!dis) {
+      const items = [['seat-remove', 'Remove from table'], ['seat-remove-now', 'Remove now'], ...(room.length ? [['seat-move', 'Move to…']] : [])];
+      h += menuHtml(`More for ${p.name}`, items, p.id, '', at);
+    }
     h += '</li>';
   }
   return h + '</ul>';
@@ -746,6 +763,7 @@ function onSubmitIn(e) {
   if (sf2) {
     e.preventDefault();
     sitForm = '';
+    sitAmount = 0;
     sitAt(sf2.dataset.code, sf2.dataset.table, sf2.elements.amount ? parseChips(sf2.elements.amount.value) || 0 : 0);
     return;
   }
@@ -1392,7 +1410,8 @@ function sitAt(code, table, amount = 0) {
     whole: !!tourney,
     credit,
     // The club's promotions for this table (#278), kept current as they change.
-    banner: () => tableBannerText(mem.promos, {table, game: t.game, tourney: !!tourney}),
+    // Or, moving to another table (#425), where.
+    banner: () => (seatedAt?.reserve ? `Moving to ${seatedAt.reserve.name} after this hand` : tableBannerText(mem.promos, {table, game: t.game, tourney: !!tourney})),
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
     // Each hand you played goes in your hand history (#71), as you saw it,
     // kept here a moment for checking its deal (#136).
@@ -1435,6 +1454,24 @@ function tableUpdate(u) {
   // it (Last session), as when you leave.
   // Idle too long (#421): the same, by the table.
   if (u.type === 'removed') { seatedAt.handlers.onFail(u.idle ? `You were idle for 10 minutes, so you left ${String(u.name || 'the table')}.` : `The manager removed you from ${String(u.name || 'the table')}.`); return; }
+  // Moving tables (#425): a seat held for you at another table (or why
+  // not), then, after your hand, the buy-in there, with what you left with.
+  if (u.type === 'reserve') {
+    if (u.refused) { seatedAt.reserve = null; note = String(u.refused); } else { seatedAt.reserve = {table: String(u.table), name: String(u.name || '')}; note = ''; }
+    render();
+    tableChanged();
+    return;
+  }
+  if (u.type === 'moved') {
+    const {code} = seatedAt;
+    seatedAt.handlers.onFail('');
+    sitForm = `${code}|${String(u.to)}`;
+    sitAmount = Math.max(0, Number(u.chips) || 0);
+    setMemberTab(code, 'tables');
+    render();
+    setTimeout(() => root.querySelector('form[data-sitform]')?.scrollIntoView({block: 'center'}), 300);
+    return;
+  }
   seatedAt.handlers.onMessage(u);
 }
 
@@ -2683,11 +2720,14 @@ function setMemberTab(code, t) {
 // (their own chips, then credit). With less than the minimum available,
 // they sit with nothing and ask the manager from the table.
 let sitForm = ''; // `${code}|${table}`
+// Moved from another table (#425): the amount they left it with, offered first.
+let sitAmount = 0;
 function sitFormHtml(m, t, r) {
   const avail = availableIn(m);
   const hi = Math.min(r.max, avail);
+  const value = sitAmount ? Math.max(r.min, Math.min(hi, sitAmount)) : hi;
   let h = `<form class="cl-sitform" data-sitform="1" data-code="${esc(m.code)}" data-table="${esc(t.id)}">`;
-  if (hi >= r.min) h += `<label>Adding <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="${chipInput(r.min)}" max="${chipInput(hi)}" step="${CHIP_STEP}" value="${chipInput(hi)}"></label>`;
+  if (hi >= r.min) h += `<label>Adding <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="${chipInput(r.min)}" max="${chipInput(hi)}" step="${CHIP_STEP}" value="${chipInput(value)}"></label>`;
   h += `<div class="pl-avail"><span>Available</span><b>${chips(avail)}</b></div>`;
   return h + '<button class="btn-small primary" type="submit">Sit down</button><button class="btn-small" type="button" data-cl="sit-cancel">Cancel</button></form>';
 }
@@ -2712,6 +2752,18 @@ function memberTablesHtml(m, hostHere) {
     const free = t.seats - t.taken;
     // Why you can't sit, when you can't (#187).
     const atOther = seatedAt && !here ? (seatedAt.code === m.code ? (m.tables.find(x => x.id === seatedAt.table)?.name || 'another table') : 'another club’s table') : '';
+    // At another of this club's cash tables: Move here instead (#425).
+    const canMove = atOther && seatedAt.code === m.code && !seatedAt.table.startsWith('tourney:');
+    const held = canMove && seatedAt.reserve?.table === t.id;
+    if (canMove && hostHere && (free > 0 || held)) {
+      h += `<li class="cl-tcard cream"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
+      h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+      h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
+      h += held ? '<span class="pl-meta cl-why">Seat held · after this hand</span>'
+        : `<button class="btn-small primary" data-cl="move-here" data-code="${esc(m.code)}" data-table="${esc(t.id)}">Move here</button>`;
+      h += '</li>';
+      continue;
+    }
     const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : free <= 0 ? 'Full' : '';
     h += `<li class="cl-tcard${here || !why ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
     h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
@@ -2933,7 +2985,7 @@ function adminHtml(m, hostHere) {
       for (const t of open) {
         h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · buy-in ${t.minBB}–${t.maxBB} BB · ${t.taken}/${t.seats} seated${t.status === 'closing' ? ' · closing' : ''}</span>`;
         if (t.status === 'open') h += `<span class="cl-acts"><button class="btn-small" data-cl="a-close-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Close</button></span>`;
-        if (t.status === 'open') h += seatedHtml(t.id, t.players || [], m.code, dis);
+        if (t.status === 'open') h += seatedHtml(t.id, t.players || [], m.code, dis, open.filter(x => x.status === 'open' && x.id !== t.id).map(x => ({id: x.id, name: x.name, room: x.taken < x.seats})));
         h += '</li>';
       }
       for (const t of closed) h += `<li><span class="cl-name">${esc(t.name)}</span><span class="pl-meta">closed</span><span class="cl-acts"><button class="btn-small" data-cl="a-hide-table" data-code="${code}" data-table="${esc(t.id)}"${dis}>Remove</button></span></li>`;
@@ -3012,8 +3064,10 @@ async function onClickIn(e) {
   else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
-  else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; render(); root.querySelector('form[data-sitform] input')?.select(); }
-  else if (act === 'sit-cancel') { sitForm = ''; render(); }
+  else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
+  else if (act === 'sit-cancel') { sitForm = ''; sitAmount = 0; render(); }
+  // Moving from your table to this one (#425): a seat is held here.
+  else if (act === 'move-here') { b.disabled = true; sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: b.dataset.table, cmd: {type: 'reserve'}}); }
   else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
   else if (act === 'notes-clear') { setHostNote('cleared', [...clearedNotes(), ...clearableKeys(notices())].slice(-300)); render(); }
   // Overview's numbers open Members, filtered.
@@ -3143,6 +3197,10 @@ async function onClickIn(e) {
     b.closest('details')?.removeAttribute('open');
     seatAct(b.dataset.code, act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id, now: act === 'seat-remove-now'});
   }
+  // Moving a player to another table (#425).
+  else if (act === 'seat-move') { b.closest('details')?.removeAttribute('open'); moveMenu = `${b.dataset.table}|${b.dataset.id}`; render(); }
+  else if (act === 'seat-move-cancel') { moveMenu = ''; render(); }
+  else if (act === 'seat-move-to') { moveMenu = ''; seatAct(b.dataset.code, 'move_player', {table: b.dataset.table, id: b.dataset.id, to: b.dataset.to}); }
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
   else if (act === 'replay') openReplay(b.dataset.id);

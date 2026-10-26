@@ -211,6 +211,75 @@ export function cashOutTable(club, tid, now = Date.now()) {
   return Object.values(club.members).filter(m => m.seat?.table === tid).map(m => cashOut(club, m.id, now));
 }
 
+// ---- reserved seats (#425) ----
+//
+// The first piece of a waiting list: per table, the members a seat is held
+// for, in club.waitlist[table id] = [{member, at, until, from?, by?}], oldest
+// first. A member seated at one table reserves a seat at another (or a
+// manager does it for them): no one else can take it, and they leave their
+// table after the hand and sit down there as usual. `from`: the table
+// they're leaving; the hold doesn't lapse while they're still at it,
+// finishing their hand, and they have HOLD_MS from leaving it (club-host.js
+// sets `until` then). `by`: the manager who moved them.
+export const HOLD_MS = 60_000;
+
+// Reservations at table `tid` still held at `now`.
+export function reservations(club, tid, now = Date.now()) {
+  return (club.waitlist?.[tid] || []).filter(e => e.until > now || stillAt(club, e));
+}
+const stillAt = (club, e) => !!e.from && club.members[e.member]?.seat?.table === e.from;
+
+// Seats held at table `tid` for anyone but `except`.
+export const heldSeats = (club, tid, now = Date.now(), except = '') => reservations(club, tid, now).filter(e => e.member !== except).length;
+
+// Member `id`'s reservation at table `tid`, if it's held.
+export const reservationOf = (club, tid, id, now = Date.now()) => reservations(club, tid, now).find(e => e.member === id) || null;
+
+// Holds a seat at table `t` for member `id`, who is at table `from` (or at
+// none). `seated`: how many are at `t` now. Throws why not.
+export function reserveSeat(club, id, t, seated, {from = '', by = null, now = Date.now(), holdMs = HOLD_MS} = {}) {
+  const m = club.members[id];
+  if (!m || m.status !== 'member') throw new Error('Only club members can sit down.');
+  if (!t || t.status !== 'open') throw new Error('That table isn’t open.');
+  if (from === t.id) throw new Error('You’re at that table already.');
+  if (seated + heldSeats(club, t.id, now, id) >= t.seats) throw new Error('That table is full.');
+  pruneReservations(club, now);
+  // One reservation at a time.
+  for (const tid of Object.keys(club.waitlist || {})) dropReservation(club, tid, id);
+  club.waitlist ??= {};
+  const e = {member: id, at: now, until: now + holdMs, ...(from ? {from} : {}), ...(by ? {by} : {})};
+  (club.waitlist[t.id] ??= []).push(e);
+  return e;
+}
+
+// Gives up member `id`'s reservation at table `tid` (they sat down, or it
+// was called off). Returns whether there was one.
+export function dropReservation(club, tid, id) {
+  const list = club.waitlist?.[tid];
+  if (!list?.some(e => e.member === id)) return false;
+  club.waitlist[tid] = list.filter(e => e.member !== id);
+  if (!club.waitlist[tid].length) delete club.waitlist[tid];
+  return true;
+}
+
+// Drops the reservations that have lapsed; returns them.
+export function pruneReservations(club, now = Date.now()) {
+  const gone = [];
+  for (const [tid, list] of Object.entries(club.waitlist || {})) {
+    const keep = list.filter(e => e.until > now || stillAt(club, e));
+    gone.push(...list.filter(e => !keep.includes(e)).map(e => ({...e, table: tid})));
+    if (keep.length) club.waitlist[tid] = keep; else delete club.waitlist[tid];
+  }
+  return gone;
+}
+
+// When the next reservation lapses, or Infinity.
+export function nextLapse(club) {
+  let due = Infinity;
+  for (const list of Object.values(club.waitlist || {})) for (const e of list) if (!stillAt(club, e)) due = Math.min(due, e.until);
+  return due;
+}
+
 // The newest ledger entry that moved chips to or from table `tid` (a buy-in,
 // top-up or cash-out), or 0. A saved table whose snapshot was taken before
 // that entry is out of step with the ledger and isn't resumed.
