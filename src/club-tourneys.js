@@ -14,7 +14,15 @@
 //   level (0: none after the start). reentry: a busted player may buy in
 //   again then, as a new entry; maxReentries: per player (0: no limit).
 // - payout: null for the defaults (by the number of entries), or the
-//   host's {places: [basis points]} adding up to exactly 10 000.
+//   tournament's own payout table {rows} (#424; a one-off tournament's).
+//   An older {places: [basis points]} is a table of one row from 1 entry.
+// - payoutTable: the id of the club payout table it pays by (#424), if any:
+//   club.payoutTables, [{id, name, rows}]. Neither: the defaults.
+// - paidShares: once it's finished, the shares it paid by, so later edits
+//   to its table don't rewrite what it paid.
+// A payout table's rows: [{from, places}], `from` the number of entries
+// the row starts at (ascending), `places` basis points by place adding up
+// to exactly 10 000. A row is in force until the next one starts.
 // - status: 'scheduled' → 'running' → 'finished', or 'cancelled'.
 // - entries: [{n, member, at, place}] in order; a member's last entry is
 //   their current one, and place is set once it's knocked out (1: the winner).
@@ -91,10 +99,11 @@ export function newTourney(club, s = {}, now = Date.now(), limits = null) {
   if (!whole(tableSize) || tableSize < 2 || tableSize > most) throw new Error(`${aGame(game)} table seats 2 to ${most}.`);
   const lateLevel = s.lateLevel ?? 0, maxReentries = s.maxReentries ?? 0;
   if (!whole(lateLevel) || lateLevel < 0 || !whole(maxReentries) || maxReentries < 0) throw new Error('Late registration is up to a level, from 0.');
+  if (s.payoutTable && !payoutTableById(club, s.payoutTable)) throw new Error('No such payout table.');
   const t = {
     id: Math.random().toString(36).slice(2, 8), name, game, buyIn, added, stack, structure: structure(s.structure),
     opensAt, startsAt, minPlayers, maxPlayers, tableSize, lateLevel, reentry: !!s.reentry, maxReentries,
-    payout: null, status: 'scheduled', entries: [], held: 0, createdAt: now,
+    payout: null, ...(s.payoutTable ? {payoutTable: s.payoutTable} : {}), status: 'scheduled', entries: [], held: 0, createdAt: now,
   };
   club.tourneys.push(t);
   return t;
@@ -236,32 +245,138 @@ export function defaultPayout(entries) {
   return bp;
 }
 
-// The shares in force: the host's, or the defaults for the entries so far.
-export const payoutShares = t => (t.payout?.places || defaultPayout(entryCount(t)));
+// ---- payout tables by entries (#424) ----
+
+export const MAX_PAYOUT_TABLES = 20;
+export const MAX_PAYOUT_ROWS = 50;
+export const MAX_PAYOUT_NAME = 30;
+
+// Checks one row's shares: whole basis points above 0, none more than the
+// place above, adding up to exactly 10 000. Returns a copy; throws why not.
+function checkPlaces(places, where = '') {
+  if (!Array.isArray(places) || !places.length || places.length > MAX_ENTRIES || !places.every(p => whole(p) && p > 0)) throw new Error(`${where}Each paid place needs a share above 0.`);
+  if (places.some((p, i) => i && p > places[i - 1])) throw new Error(`${where}A place can’t pay more than the one above it.`);
+  const sum = places.reduce((a, b) => a + b, 0);
+  if (sum !== 10000) throw new Error(`${where}The payouts add up to ${(sum / 100).toFixed(2)}%, not 100%.`);
+  return places.slice();
+}
+
+// Checks a payout table's rows: at least one, each starting at more entries
+// than the one before (from 1), each row's shares as checkPlaces. Returns a
+// clean copy; throws why not.
+export function checkPayoutRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error('Add at least one row.');
+  if (rows.length > MAX_PAYOUT_ROWS) throw new Error(`At most ${MAX_PAYOUT_ROWS} rows.`);
+  return rows.map((r, i) => {
+    const from = r?.from;
+    if (!whole(from) || from < 1 || from > MAX_ENTRIES) throw new Error(`Row ${i + 1}: entries are a whole number from 1 to ${MAX_ENTRIES}.`);
+    if (i && from <= rows[i - 1].from) throw new Error('Each row starts at more entries than the one above it.');
+    return {from, places: checkPlaces(r.places, rows.length > 1 ? `From ${from} entries: ` : '')};
+  });
+}
+
+// The row in force for `entries` entries: the last that starts at or below
+// them (below the first row's start, the first row).
+export function payoutRow(rows, entries) {
+  return rows.findLast(r => r.from <= entries) || rows[0];
+}
+
+export const payoutTableById = (club, id) => (club?.payoutTables || []).find(p => p.id === id) || null;
+
+// The rows a tournament pays by: its club table's, its own (an older
+// single list of shares as one row from 1 entry), or null for the defaults.
+export function payoutRows(t, club = null) {
+  if (t.payoutTable) return payoutTableById(club, t.payoutTable)?.rows || null;
+  if (t.payout?.rows) return t.payout.rows;
+  if (t.payout?.places) return [{from: 1, places: t.payout.places}];
+  return null;
+}
+
+// The shares in force: what it paid by once finished; else the row in force
+// for the entries so far, or the defaults for them. `club`: for club tables.
+export function payoutShares(t, club = null) {
+  if (t.paidShares) return t.paidShares;
+  const rows = payoutRows(t, club);
+  return rows ? payoutRow(rows, entryCount(t)).places : defaultPayout(entryCount(t));
+}
 
 // The prizes for the current pool, by place (index 0: first), adding up to
 // exactly the pool; rounding remainders go to first place. No more places
 // than entries: what places beyond them would get goes to first too.
-export function prizes(t) {
+export function prizes(t, club = null) {
   const total = pool(t);
-  const shares = payoutShares(t).slice(0, Math.max(1, entryCount(t)));
+  const shares = payoutShares(t, club).slice(0, Math.max(1, entryCount(t)));
   const out = shares.map(bp => Math.floor((total * bp) / 10000));
   out[0] += total - out.reduce((a, b) => a + b, 0);
   return out;
 }
 
-// The host's own payouts: whole basis points per place that add up to
-// exactly 10 000 (100%), or null to go back to the defaults.
-export function setPayout(club, tid, places) {
+const notOver = t => { if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.'); };
+
+// The tournament's own payouts: a table {rows}, a single list of shares (a
+// table of one row from 1 entry), or null to go back to the defaults. It
+// then pays by no club table.
+export function setPayout(club, tid, payout) {
   const t = get(club, tid);
-  if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.');
-  if (places == null) { t.payout = null; return t; }
-  if (!Array.isArray(places) || !places.length || places.length > MAX_ENTRIES || !places.every(p => whole(p) && p > 0)) throw new Error('Each paid place needs a share above 0.');
-  if (places.some((p, i) => i && p > places[i - 1])) throw new Error('A place can’t pay more than the one above it.');
-  const sum = places.reduce((a, b) => a + b, 0);
-  if (sum !== 10000) throw new Error(`The payouts add up to ${(sum / 100).toFixed(2)}%, not 100%.`);
-  t.payout = {places: places.slice()};
+  notOver(t);
+  delete t.payoutTable;
+  if (payout == null) { t.payout = null; return t; }
+  t.payout = Array.isArray(payout) ? {rows: [{from: 1, places: checkPlaces(payout)}]} : {rows: checkPayoutRows(payout.rows)};
   return t;
+}
+
+// The tournament pays by club table `id`, or (null) the defaults.
+export function setPayoutTable(club, tid, id) {
+  const t = get(club, tid);
+  notOver(t);
+  if (id == null) { delete t.payoutTable; t.payout = null; return t; }
+  if (!payoutTableById(club, id)) throw new Error('No such payout table.');
+  t.payoutTable = id;
+  t.payout = null;
+  return t;
+}
+
+function tableName(club, name, except = null) {
+  const n = String(name ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_PAYOUT_NAME);
+  if (!n) throw new Error('Name the payout table.');
+  if (n.toLowerCase() === 'default') throw new Error('“Default” is ducy’s payouts: pick another name.');
+  if ((club.payoutTables || []).some(p => p.id !== except && p.name.toLowerCase() === n.toLowerCase())) throw new Error(`There’s a payout table called ${n} already.`);
+  return n;
+}
+
+// A new club payout table {name, rows}. Returns it; throws why not.
+export function addPayoutTable(club, s = {}) {
+  club.payoutTables ??= [];
+  if (club.payoutTables.length >= MAX_PAYOUT_TABLES) throw new Error(`A club has at most ${MAX_PAYOUT_TABLES} payout tables.`);
+  const p = {id: Math.random().toString(36).slice(2, 8), name: tableName(club, s.name), rows: checkPayoutRows(s.rows)};
+  club.payoutTables.push(p);
+  return p;
+}
+
+// Renames a club payout table and/or changes its rows. The tournaments
+// still to finish that pay by it follow; finished ones keep what they paid.
+export function editPayoutTable(club, id, s = {}) {
+  const p = payoutTableById(club, id);
+  if (!p) throw new Error('No such payout table.');
+  const name = s.name == null ? p.name : tableName(club, s.name, id);
+  const rows = s.rows == null ? p.rows : checkPayoutRows(s.rows);
+  p.name = name;
+  p.rows = rows;
+  return p;
+}
+
+// The tournaments still to finish that pay by club table `id`.
+export const tourneysUsing = (club, id) => ensureTourneys(club).filter(t => t.payoutTable === id && !['finished', 'cancelled'].includes(t.status));
+
+// Deletes a club payout table, unless a tournament still to finish pays by
+// it (switch those first). Returns the table.
+export function deletePayoutTable(club, id) {
+  const p = payoutTableById(club, id);
+  if (!p) throw new Error('No such payout table.');
+  const using = tourneysUsing(club, id);
+  if (using.length) throw new Error(`${using.map(t => t.name).join(', ')} ${using.length === 1 ? 'pays' : 'pay'} by ${p.name}: pick another payout for ${using.length === 1 ? 'it' : 'them'} first.`);
+  club.payoutTables = club.payoutTables.filter(x => x !== p);
+  return p;
 }
 
 // ---- results (#81) ----
@@ -290,7 +405,9 @@ export function finishTourney(club, tid, winner, now = Date.now()) {
   const gone = t.entries.filter(e => e !== w && e.out != null).sort((a, b) => a.out - b.out);
   gone.forEach((e, i) => { e.place = t.entries.length - i; });
   if (w) w.place = 1;
-  const amounts = prizes(t);
+  // What it pays by, kept: later edits to its payout table don't change it.
+  t.paidShares = payoutShares(t, club).slice();
+  const amounts = prizes(t, club);
   const paid = [];
   amounts.forEach((amount, i) => {
     const e = t.entries.find(x => x.place === i + 1);
@@ -324,7 +441,8 @@ export function tourneysBody(club, live = {}, now = Date.now()) {
         entries: entryCount(t), players: [...new Set(t.entries.map(e => e.member))].map(id => ({id, name: names(id)})),
         in: t.entries.filter(e => e.place == null).map(e => e.member),
         places: t.entries.filter(e => e.place != null).map(e => ({id: e.member, name: names(e.member), place: e.place})),
-        pool: pool(t), prizes: prizes(t), structure: t.structure,
+        // The row in force (#424): each paid place's share, in basis points.
+        pool: pool(t), prizes: prizes(t, club), shares: payoutShares(t, club).slice(0, Math.max(1, entryCount(t))), structure: t.structure,
         ...(live[t.id] ? {live: live[t.id]} : {}),
       };
     }),

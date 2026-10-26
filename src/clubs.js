@@ -47,10 +47,11 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { celebrateAtTable, joinTableVia, showFairCheck, tableChanged } from './play.js';
-import { hostTourneysHtml, memberTourneysHtml, readPayoutForm, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
+import { hostTourneysHtml, memberTourneysHtml, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
 import { hostPromosHtml, memberPromosHtml, promosPartHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { readServiceForm, servicesHtml } from './club-services-ui.js';
-import { payoutShares, tourneyById } from './club-tourneys.js';
+import { payoutTableById } from './club-tourneys.js';
+import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './payout-table-ui.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
@@ -113,8 +114,10 @@ const appBase = () => new URL('./', location.href).href;
 let alwaysFailed = null;
 let tableForm = false; // the open New table form: true (the host's), or a club code (an assistant's)
 // Tournaments (#64): the New tournament form and its blind structure
-// editor, and the payouts being edited ({id, places}).
-let tourneyForm = false, tEditor = null, payoutEdit = null;
+// editor, and the payout table being edited (#424: {id ('new' for a new
+// one), name, draft}, payout-table-ui.js), kept as it's typed.
+let tourneyForm = false, tEditor = null, payTable = null;
+const syncPayTable = fm => { if (payTable) { payTable.name = fm.elements.name.value; payTable.draft = readRows(fm, payTable.draft); } };
 const TOURNEY_KEY = 'ducyTourneyChoice';
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
 
@@ -776,7 +779,7 @@ function onSubmitIn(e) {
   if (hr) { e.preventDefault(); answerHelpReq(hr.dataset.code || null, hr.dataset.helpreply, hr.elements.reply.value, false); return; }
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
-  // A new tournament (#77), or its payouts (#79).
+  // A new tournament (#77), or a club payout table (#424).
   const tof = e.target.closest('form[data-tourneyform]');
   if (tof) {
     e.preventDefault();
@@ -791,10 +794,15 @@ function onSubmitIn(e) {
     });
     return;
   }
-  const pf = e.target.closest('form[data-payoutform]');
+  const pf = e.target.closest('form[data-paytable]');
   if (pf) {
     e.preventDefault();
-    hostAct('set_payout', {id: pf.dataset.payoutform, places: readPayoutForm(pf)}).then(ok => { if (ok) { payoutEdit = null; render(); } });
+    if (!payTable) return;
+    syncPayTable(pf);
+    let table;
+    try { table = {name: payTable.name, rows: cleanRows(payTable.draft)}; } catch (err) { alert(err.message); return; }
+    const id = pf.dataset.paytable;
+    hostAct(id === 'new' ? 'add_payout_table' : 'edit_payout_table', id === 'new' ? {table} : {id, table}).then(ok => { if (ok) { payTable = null; render(); } });
     return;
   }
   const bf = e.target.closest('form[data-clform="backup"]');
@@ -1511,8 +1519,8 @@ function render() {
   if (replay) h += replayHtml();
   h += '</div>';
   // Messages arriving redraw the page; keep what the host is typing in an open form.
-  const named = [...root.querySelectorAll('form[data-tourneyform], form[data-payoutform]')].map(fm => ({
-    key: fm.dataset.tourneyform || fm.dataset.payoutform,
+  const named = [...root.querySelectorAll('form[data-tourneyform]')].map(fm => ({
+    key: fm.dataset.tourneyform,
     values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.type === 'checkbox' ? el.checked : el.value])),
   }));
   // And what's being typed for help, or as a reply to it (#192).
@@ -1543,7 +1551,10 @@ function render() {
   // itself is kept, since a chosen file can't be put back.
   const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"]');
   const clFocus = clForm?.contains(document.activeElement) && document.activeElement;
+  // A payout table being edited (#424) is redrawn from what's typed; the box being typed in keeps the focus.
+  const payFocus = root.querySelector('form[data-paytable]')?.contains(document.activeElement) ? document.activeElement.name : '';
   root.innerHTML = h;
+  if (payFocus) root.querySelector(`form[data-paytable] [name="${payFocus}"]`)?.focus({preventScroll: true});
   const clFresh = clForm && root.querySelector(`form[data-clform="${clForm.dataset.clform}"]`);
   if (clFresh) { clFresh.replaceWith(clForm); if (clFocus) clFocus.focus({preventScroll: true}); }
   const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
@@ -1574,7 +1585,7 @@ function render() {
     if (fm) { fm.elements[0].value = v; if (focused) fm.elements[0].focus(); }
   }
   for (const k of named) {
-    const fm = root.querySelector(`form[data-tourneyform="${k.key}"], form[data-payoutform="${k.key}"]`);
+    const fm = root.querySelector(`form[data-tourneyform="${k.key}"]`);
     if (!fm) continue;
     for (const [name, v] of Object.entries(k.values)) {
       const el = fm.elements[name];
@@ -1991,7 +2002,7 @@ const OWNER_PAGES = new Set(['rules', 'backup']);
 function pageHtml({page, member}) {
   if (OWNER_PAGES.has(page) && !isOwnerPage()) return pageHead(pageTitle(page)) + '<p class="pl-meta">The club’s owner looks after this.</p>';
   if (page === 'cash') return pageHead('Cash games') + cashHtml();
-  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payoutEdit, heading: false});
+  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payTable, heading: false});
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, promoFor ? {} : {form: promoForm, note: promoNote});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml();
@@ -3130,15 +3141,16 @@ async function onClickIn(e) {
     root.querySelector('form[data-tourneyform] [name=name]')?.focus();
   } else if (act === 'cancel-tourney-form') { tourneyForm = false; render(); }
   else if (act === 'cancel-tourney') { if (confirm('Cancel this tournament? Every buy-in goes back to the players.')) hostAct('cancel_tourney', {id: b.dataset.id}); }
-  else if (act === 'payout-edit') { const t = tourneyById(club, b.dataset.id); payoutEdit = t ? {id: t.id, places: payoutShares(t).slice()} : null; render(); }
-  else if (act === 'payout-cancel') { payoutEdit = null; render(); }
-  else if (act === 'payout-default') { payoutEdit = null; hostAct('set_payout', {id: b.dataset.id, places: null}); }
-  else if (act === 'payout-add' || act === 'payout-remove') {
-    const fm = root.querySelector(`form[data-payoutform="${b.dataset.id}"]`);
-    if (!payoutEdit || !fm) return;
-    payoutEdit.places = readPayoutForm(fm);
-    if (act === 'payout-add') payoutEdit.places.push(Math.max(1, Math.round((payoutEdit.places.at(-1) || 1000) / 2)));
-    else if (payoutEdit.places.length > 1) payoutEdit.places.splice(Number(b.dataset.i), 1);
+  // The club's payout tables (#424): a new one, editing one (its rows and
+  // places), deleting one.
+  else if (act === 'paytable-new') { payTable = {id: 'new', name: '', draft: draftOf()}; render(); }
+  else if (act === 'paytable-edit') { const p = payoutTableById(club, b.dataset.id); payTable = p ? {id: p.id, name: p.name, draft: draftOf(p.rows)} : null; render(); }
+  else if (act === 'paytable-cancel') { payTable = null; render(); }
+  else if (act === 'paytable-delete') { const p = payoutTableById(club, b.dataset.id); if (p && confirm(`Delete the payout table ${p.name}?`)) hostAct('delete_payout_table', {id: p.id}); }
+  else if (payTable && (act === 'prow-add' || act === 'prow-remove' || act === 'pcol-add')) {
+    if (act === 'prow-add') addRow(payTable.draft);
+    else if (act === 'pcol-add') addPlace(payTable.draft);
+    else removeRow(payTable.draft, Number(b.dataset.i));
     render();
   }
   // Tournaments: a member's.
@@ -3345,6 +3357,9 @@ export async function openClubs(el, v = 'clubs') {
       const f = e.target.closest('form[data-tableform]');
       if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
       // The New tournament form: a game's usual table size, and no more than it deals to.
+      // What a tournament pays by (#424): Default or a club payout table.
+      const pick = e.target.dataset?.paypick;
+      if (pick && e.target.value !== 'own') hostAct('set_payout_table', {id: pick, table: e.target.value || null});
       const tf = e.target.closest('form[data-tourneyform]');
       if (tf && e.target.name === 'game') {
         const size = tf.elements.tableSize;
@@ -3361,6 +3376,9 @@ export async function openClubs(el, v = 'clubs') {
     });
     // The Members search (#398) filters the rows as it's typed.
     root.addEventListener('input', e => {
+      // A payout table being edited (#424): kept as it's typed, over redraws.
+      const ptf = e.target.closest?.('form[data-paytable]');
+      if (ptf) { syncPayTable(ptf); return; }
       // Settle debt (#404): the balance it leaves, and the amount on its button.
       if (e.target.dataset?.after != null) {
         const f = e.target.form, n = parseChips(e.target.value);

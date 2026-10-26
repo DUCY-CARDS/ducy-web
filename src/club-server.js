@@ -45,7 +45,7 @@ import { account, approve, decline, hostReceive, removeMember, revokeInvite } fr
 import { declineRequest, grantRequest, issue, reclaim } from './club-chips.js';
 import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
-import { cancelTourney, newTourney, register, setPayout, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
+import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newTourney, payoutTableById, register, setPayout, setPayoutTable, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
 import { adminBody, answerRole, checkManagerOp, isAssistant, logAction, managerLogText, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import {
@@ -612,8 +612,35 @@ export function createClubServer({
       return offered ? {offered: offered.id, name: offered.name} : null;
     },
     promos: () => promosAdmin(club),
-    set_payout: ({id, places}) => {
-      setPayout(club, id, places ?? null);
+    // A tournament's own payouts: {rows}, a list of shares, or null (the defaults).
+    set_payout: ({id, places, rows}) => {
+      setPayout(club, id, rows ? {rows} : places ?? null);
+      changed();
+      broadcastTourneys();
+    },
+    // Club payout tables by entries (#424): added, edited (renamed, rows),
+    // deleted; and the one a tournament pays by (null: the defaults).
+    add_payout_table: ({table}) => {
+      const p = addPayoutTable(club, table || {});
+      logAction(club, actor(), `Added the payout table ${p.name}`);
+      changed();
+      return p.id;
+    },
+    edit_payout_table: ({id, table}) => {
+      const was = payoutTableById(club, String(id))?.name;
+      const p = editPayoutTable(club, String(id), table || {});
+      logAction(club, actor(), was && was !== p.name ? `Renamed the payout table ${was} to ${p.name}` : `Changed the payout table ${p.name}`);
+      changed();
+      broadcastTourneys();
+    },
+    delete_payout_table: ({id}) => {
+      const p = deletePayoutTable(club, String(id));
+      logAction(club, actor(), `Deleted the payout table ${p.name}`);
+      changed();
+    },
+    set_payout_table: ({id, table}) => {
+      const t = setPayoutTable(club, String(id), table ? String(table) : null);
+      logAction(club, actor(), `${t.name} pays by ${payoutTableById(club, t.payoutTable)?.name || 'Default'}`);
       changed();
       broadcastTourneys();
     },

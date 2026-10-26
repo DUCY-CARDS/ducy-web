@@ -10,6 +10,7 @@
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { defaultSeats, GAMES, maxSeats } from './club-tables.js';
 import { entryCount, playerCount, pool, prizes, payoutShares } from './club-tourneys.js';
+import { pct, rowsEditorHtml, rowsTableHtml } from './payout-table-ui.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const whole = n => Number(n || 0).toLocaleString();
@@ -42,9 +43,19 @@ export function levelText(structure, live) {
 
 // ---- the host ----
 
+// The payout choices (#424): Default (ducy's), then the club's tables; the
+// tournament's own, when it has one from before them.
+function payoutOptions(tables, picked, own = false) {
+  let h = `<option value=""${picked || own ? '' : ' selected'}>Default</option>`;
+  for (const p of tables) h += `<option value="${esc(p.id)}"${p.id === picked ? ' selected' : ''}>${esc(p.name)}</option>`;
+  if (own) h += '<option value="own" selected>Its own</option>';
+  return h;
+}
+
 // The New tournament form. `editor`: the blind structure editor
-// (tourney-structure-ui.js); `last`: the last settings used.
-export function tourneyFormHtml(editor, last = {}, now = Date.now()) {
+// (tourney-structure-ui.js); `last`: the last settings used; `tables`: the
+// club's payout tables.
+export function tourneyFormHtml(editor, last = {}, now = Date.now(), tables = []) {
   const opens = now, starts = now + 60 * 60_000;
   const field = (label, html) => `<label>${label}${html}</label>`;
   const num = (name, value, attrs = '') => `<input class="pl-text" name="${name}" type="number" step="1" value="${esc(value)}" ${attrs}>`;
@@ -65,6 +76,8 @@ export function tourneyFormHtml(editor, last = {}, now = Date.now()) {
   h += field('Late registration until the end of level', num('lateLevel', last.lateLevel ?? 0, 'min="0"'));
   h += `<label class="tf-check"><input type="checkbox" name="reentry"${last.reentry ? ' checked' : ''}> Re-entry after busting, during late registration</label>`;
   h += field('Re-entries per player (0: no limit)', num('maxReentries', last.maxReentries ?? 0, 'min="0"'));
+  const picked = tables.some(p => p.id === last.payoutTable) ? last.payoutTable : '';
+  h += field('Payouts', `<select class="pl-text" name="payoutTable">${payoutOptions(tables, picked)}</select>`);
   h += '</div>';
   h += `<div data-tseditor="1">${editor.html()}</div>`;
   h += '<p class="pl-desc">Players don’t need to be online at the start: anyone absent is dealt in and blinded off until they come. Below the minimum at the start time, it’s cancelled and every buy-in refunded.</p>';
@@ -85,52 +98,71 @@ export function readTourneyForm(f, editor) {
     minPlayers: int('minPlayers'), maxPlayers: int('maxPlayers'),
     opensAt: fromLocal(v('opensAt')), startsAt: fromLocal(v('startsAt')),
     lateLevel: int('lateLevel'), reentry: f.elements.reentry.checked, maxReentries: int('maxReentries'),
-    structure: editor.steps(),
+    structure: editor.steps(), ...(f.elements.payoutTable?.value ? {payoutTable: f.elements.payoutTable.value} : {}),
   };
 }
 
-// The payouts: each paid place's share and prize; the host's editor when
-// there's a `draft` (shares being edited). Shares are basis points; shown
-// as percentages.
-function payoutsHtml(t, draft) {
-  const editing = !!draft;
-  const amounts = prizes(t);
-  const shares = payoutShares(t).slice(0, amounts.length);
-  let h = `<div class="cl-payouts"><span class="pl-label">Payouts${t.payout ? '' : ' (defaults for the entries so far)'}</span>`;
-  if (editing) {
-    h += `<form data-payoutform="${esc(t.id)}"><table class="ts-levels"><thead><tr><th>Place</th><th>%</th><th></th></tr></thead><tbody>`;
-    draft.forEach((bp, i) => {
-      h += `<tr><td>${ordinal(i + 1)}</td><td><input class="pl-text" type="number" min="0.01" step="0.01" name="p${i}" value="${(bp / 100).toFixed(2)}"></td>`;
-      h += `<td><button type="button" class="btn-small" data-cl="payout-remove" data-id="${esc(t.id)}" data-i="${i}" aria-label="Remove">✕</button></td></tr>`;
-    });
-    h += '</tbody></table>';
-    h += `<div class="cl-formacts"><button type="button" class="btn-small" data-cl="payout-add" data-id="${esc(t.id)}">Add a place</button>`;
-    h += '<button class="btn-small primary" type="submit">Save payouts</button>';
-    h += `<button type="button" class="btn-small" data-cl="payout-default" data-id="${esc(t.id)}">Use the defaults</button>`;
-    h += `<button type="button" class="btn-small" data-cl="payout-cancel">Cancel</button></div>`;
-    h += '<p class="pl-desc">The shares must add up to exactly 100%; rounding goes to first place.</p></form>';
-  } else {
-    h += '<table class="cl-acct"><tbody>';
-    amounts.forEach((a, i) => { h += `<tr><th>${ordinal(i + 1)}</th><td>${(shares[i] / 100).toFixed(2)}%</td><td>${club$(a)}</td></tr>`; });
-    h += '</tbody></table>';
+// Whether entries can still come (#424): before the start, or during late
+// registration (`live`: how it's going, from the host). Until then the
+// payouts follow the entries so far.
+export function entriesOpen(t, live = t.live) {
+  if (t.status === 'scheduled') return true;
+  if (t.status !== 'running') return false;
+  return live ? live.level < t.lateLevel : t.lateLevel > 0;
+}
+
+// Each paid place's share and prize: the row in force (#424).
+function prizesTable(amounts, shares) {
+  let h = '<table class="cl-acct"><tbody>';
+  amounts.forEach((a, i) => { h += `<tr><th>${ordinal(i + 1)}</th><td>${pct(shares[i] ?? 0)}%</td><td>${club$(a)}</td></tr>`; });
+  return h + '</tbody></table>';
+}
+
+// A tournament's payouts, for the manager: what it pays by (Default, a club
+// table; picked here) and the row in force, for the entries so far while
+// entries can still come.
+function payoutsHtml(club, t, live) {
+  const amounts = prizes(t, club);
+  const shares = payoutShares(t, club);
+  const own = !t.payoutTable && !!t.payout;
+  let h = '<div class="cl-payouts">';
+  h += `<label class="pl-label">Payouts <select class="pl-text" data-paypick="${esc(t.id)}">${payoutOptions(club.payoutTables || [], t.payoutTable || '', own)}</select></label>`;
+  if (entriesOpen(t, live)) h += '<span class="pl-meta">For the entries so far</span>';
+  return h + prizesTable(amounts, shares) + '</div>';
+}
+
+// The club's payout tables (#424), under the tournaments: each one's rows,
+// Edit and Delete; `edit` = {id ('new' for a new one), name, draft} for the
+// one being edited (payout-table-ui.js's draft).
+export function payoutTablesHtml(club, edit = null) {
+  const tables = club.payoutTables || [];
+  const form = (id, name, draft) => {
+    let f = `<form class="cl-paytable" data-paytable="${esc(id)}">`;
+    f += `<label class="pl-label">Name <input class="pl-text" name="name" maxlength="30" value="${esc(name)}"></label>`;
+    f += rowsEditorHtml(draft, 'data-cl');
+    f += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Save</button><button type="button" class="btn-small" data-cl="paytable-cancel">Cancel</button></div>';
+    return f + '</form>';
+  };
+  let h = '<h2>Payout tables</h2><div class="cl-paytables">';
+  for (const p of tables) {
+    if (edit?.id === p.id) { h += form(p.id, edit.name, edit.draft); continue; }
+    h += `<div class="cl-paytable"><div class="cl-paytable-head"><span class="cl-name">${esc(p.name)}</span>`;
+    h += `<button class="btn-small" data-cl="paytable-edit" data-id="${esc(p.id)}">Edit</button><button class="btn-small" data-cl="paytable-delete" data-id="${esc(p.id)}">Delete</button></div>`;
+    h += rowsTableHtml(p.rows) + '</div>';
   }
+  if (edit?.id === 'new') h += form('new', edit.name, edit.draft);
+  else h += '<div class="pl-actions"><button class="btn-small" data-cl="paytable-new">New payout table</button></div>';
   return h + '</div>';
 }
 
-// The shares in the payout form, in basis points, in order.
-export function readPayoutForm(f) {
-  const out = [];
-  for (let i = 0; f.elements[`p${i}`]; i++) out.push(Math.round(Number(f.elements[`p${i}`].value) * 100));
-  return out;
-}
-
 // The host's Tournaments tab. `club` has the tournaments; `live` how running
-// ones are going; `ui` = {form, editor, last, payoutEdit: {id, places},
-// heading} (heading false: the page has its own, #398).
+// ones are going; `ui` = {form, editor, last, payTable (the payout table
+// being edited, payoutTablesHtml), heading} (heading false: the page has its
+// own, #398).
 export function hostTourneysHtml(club, live, ui, now = Date.now()) {
   const list = [...(club.tourneys || [])].sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.startsAt - a.startsAt);
   let h = ui.heading === false ? '' : '<h2>Tournaments</h2>';
-  h += ui.form ? tourneyFormHtml(ui.editor, ui.last, now) : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-tourney">New tournament</button></div>';
+  h += ui.form ? tourneyFormHtml(ui.editor, ui.last, now, club.payoutTables || []) : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-tourney">New tournament</button></div>';
   if (!list.length && !ui.form) h += '<p class="pl-meta">No tournaments yet.</p>';
   h += '<ul class="cl-list">';
   for (const t of list) {
@@ -140,8 +172,7 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
     if (t.status === 'scheduled') h += `<span class="pl-meta">${now < t.opensAt ? `Registration opens ${until(t.opensAt, now)} · ` : ''}starts ${until(t.startsAt, now)} (${dateTime(t.startsAt)}) · at least ${t.minPlayers}</span>`;
     if (t.status === 'cancelled') h += `<span class="pl-meta">Cancelled${t.why ? `: ${esc(t.why)}` : ''}. Every buy-in was refunded.</span>`;
     if (t.status === 'scheduled' || t.status === 'running') {
-      h += `<span class="cl-acts"><button class="btn-small" data-cl="payout-edit" data-id="${esc(t.id)}">Edit payouts</button>`;
-      h += `<button class="btn-small" data-cl="cancel-tourney" data-id="${esc(t.id)}">Cancel</button></span>`;
+      h += `<span class="cl-acts"><button class="btn-small" data-cl="cancel-tourney" data-id="${esc(t.id)}">Cancel</button></span>`;
     }
     const l = live?.[t.id];
     if (t.status === 'running' && l) {
@@ -156,14 +187,14 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
       for (const p of (t.paid || [])) h += `<li value="${p.place}">${esc(club.members[p.member]?.name || p.member)} <span class="pl-meta">${club$(p.amount)}</span></li>`;
       h += '</ol>';
     }
-    if (t.status !== 'cancelled' && t.status !== 'finished') h += payoutsHtml(t, ui.payoutEdit?.id === t.id ? ui.payoutEdit.places : null);
+    if (t.status !== 'cancelled' && t.status !== 'finished') h += payoutsHtml(club, t, l);
     if (t.entries.length && t.status === 'scheduled') {
       const names = [...new Set(t.entries.map(e => club.members[e.member]?.name || e.member))];
       h += `<span class="pl-desc">Registered: ${names.map(esc).join(', ')}</span>`;
     }
     h += '</li>';
   }
-  return h + '</ul>';
+  return h + '</ul>' + payoutTablesHtml(club, ui.payTable);
 }
 
 // ---- a member ----
@@ -201,9 +232,8 @@ function lobbyHtml(t, me, code, now) {
     h += `<p class="pl-meta">Starts ${esc(dateTime(t.startsAt))}${now < t.opensAt ? ` · registration opens ${esc(until(t.opensAt, now))}` : ''}</p>`;
   }
   if (t.prizes?.length) {
-    h += `<span class="pl-label">Payouts${t.status === 'scheduled' ? ' (for the entries so far)' : ''}</span><table class="cl-acct"><tbody>`;
-    h += t.prizes.map((a, i) => `<tr><th>${ordinal(i + 1)}</th><td>${club$(a)}</td></tr>`).join('');
-    h += '</tbody></table>';
+    h += `<span class="pl-label">Payouts${entriesOpen(t) ? ' (for the entries so far)' : ''}</span>`;
+    h += t.shares ? prizesTable(t.prizes, t.shares) : `<table class="cl-acct"><tbody>${t.prizes.map((a, i) => `<tr><th>${ordinal(i + 1)}</th><td>${club$(a)}</td></tr>`).join('')}</tbody></table>`;
   }
   if (t.players.length) {
     const names = t.players.map(p => (p.id === me ? `<b>${esc(p.name)} (you)</b>` : esc(p.name)));

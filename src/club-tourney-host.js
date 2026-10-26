@@ -132,7 +132,7 @@ export function createTourneyHost({
     running.set(tid, r);
     const levels = t.structure.filter(s => !s.break).map(({sb, bb, ante}) => ({sb, bb, ante}));
     const players = t.entries.filter(e => e.place == null).map(e => ({id: e.member, name: names(e.member)}));
-    const config = {game: t.game, tableSize: t.tableSize, startingStack: t.stack, levels, paid: prizes(t).length, seed: crypto.getRandomValues(new Uint32Array(1))[0]};
+    const config = {game: t.game, tableSize: t.tableSize, startingStack: t.stack, levels, paid: prizes(t, club()).length, seed: crypto.getRandomValues(new Uint32Array(1))[0]};
     try {
       const res = await call('tourneyCreate', tid, config, players, turnMs);
       changed();
