@@ -45,8 +45,13 @@ cp admins.json "$OUT/"
 # The pre-flop charts' data (charts.js): Ducybot's and the Regulars', as JSON.
 cp -r charts "$OUT/"
 
+# Each page's Content Security Policy (#436) allows a local relay for testing;
+# the site's doesn't (nor does .htaccess's, the one that counts there).
+LOCAL_RELAY=" ws://localhost:\* http://localhost:\*"
+
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     -e "s#src=\"src/main.js\"#src=\"v/$VERSION/src/main.js\"#" \
+    -e "s#$LOCAL_RELAY##" \
     index.html > "$OUT/index.html"
 
 # Fail loudly if index.html changed shape and an asset was left unversioned.
@@ -62,6 +67,7 @@ fi
 # club, pointed at the same release.
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     -e "s#src=\"src/manage.js\"#src=\"v/$VERSION/src/manage.js\"#" \
+    -e "s#$LOCAL_RELAY##" \
     manage.html > "$OUT/manage.html"
 for ref in "href=\"v/$VERSION/src/style.css\"" "src=\"v/$VERSION/src/manage.js\""; do
   grep -qF "$ref" "$OUT/manage.html" || { echo "manage.html is missing $ref" >&2; exit 1; }
@@ -73,7 +79,26 @@ fi
 
 # The super admin's page (#265, #401): unlinked, pointed at the same
 # release. The relay answers only requests signed by a key in admins.json.
-sed -e "s#src=\"src/admin.js\"#src=\"v/$VERSION/src/admin.js\"#" admin.html > "$OUT/admin.html"
-grep -qF "src=\"v/$VERSION/src/admin.js\"" "$OUT/admin.html" || { echo "admin.html is missing v/$VERSION/src/admin.js" >&2; exit 1; }
+sed -e "s#href=\"src/admin.css\"#href=\"v/$VERSION/src/admin.css\"#" \
+    -e "s#src=\"src/admin.js\"#src=\"v/$VERSION/src/admin.js\"#" \
+    -e "s#$LOCAL_RELAY##" \
+    admin.html > "$OUT/admin.html"
+for ref in "href=\"v/$VERSION/src/admin.css\"" "src=\"v/$VERSION/src/admin.js\""; do
+  grep -qF "$ref" "$OUT/admin.html" || { echo "admin.html is missing $ref" >&2; exit 1; }
+done
+
+# Every page has its policy, without the local relay, and no inline script,
+# <style> or on…= handler, which the policy would block.
+for page in index.html manage.html admin.html; do
+  grep -qF '<meta http-equiv="Content-Security-Policy"' "$OUT/$page" || { echo "$page has no Content-Security-Policy" >&2; exit 1; }
+  if grep -nF 'localhost' "$OUT/$page"; then
+    echo "$page still allows a local relay (above)" >&2
+    exit 1
+  fi
+  if grep -nE '<script>|<script [^>]*>[^<]|<style|[[:space:]]on[a-z]+=' "$OUT/$page"; then
+    echo "$page has inline code the policy blocks (above)" >&2
+    exit 1
+  fi
+done
 
 echo "Built release $VERSION in $OUT"

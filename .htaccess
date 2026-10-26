@@ -15,6 +15,18 @@ AddType application/manifest+json .webmanifest
   <FilesMatch "\.bin$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
+
+  # Security headers (#436). The pages carry the same policy in a <meta> tag
+  # (all but frame-ancestors, which only a header can set); keep them in step.
+  # Scripts only from the site ('wasm-unsafe-eval' lets ducy's engine compile);
+  # inline style attributes are allowed (the table places seats and bets with
+  # them) but not <style> elements; fonts from Google Fonts; data: images (drawn
+  # avatars); connections to the site and the relay only.
+  Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+  Header set Strict-Transport-Security "max-age=31536000"
 </IfModule>
 
 # Compress the model files (6 MB becomes under 3 MB) and the chart data
