@@ -25,14 +25,14 @@ test('ask, reply, mark handled; one open request each', () => {
   const h2 = askHelp(club, 'p', 'Can someone top me up?', '', 2);
   assert.deepEqual(openHelp(club).map(h => h.id), [h2.id], 'a new one replaces the open one');
   // Only the host and assistants answer.
-  assert.throws(() => answerHelp(club, 'p', h2.id, {reply: 'me'}), /Only the host/);
+  assert.throws(() => answerHelp(club, 'p', h2.id, {reply: 'me'}), /Only the club’s managers/);
   offerAssistant(club, 'a');
   answerRole(club, 'a', true);
   answerHelp(club, 'a', h2.id, {reply: 'On it', handled: false}, 3);
   assert.equal(openHelp(club).length, 1, 'a reply alone leaves it open');
   answerHelp(club, 'HOSTHOST', h2.id, {}, 4);
   assert.equal(openHelp(club).length, 0);
-  assert.deepEqual(helpBody(club, 'p', []).mine.map(h => [h.text, h.reply, h.handled, h.by]), [['Can someone top me up?', 'On it', true, 'Host']]);
+  assert.deepEqual(helpBody(club, 'p', []).mine.map(h => [h.text, h.reply, h.handled, h.by]), [['Can someone top me up?', 'On it', true, 'Manager']]);
 });
 
 test('the list keeps the last MAX_HELP', () => {
@@ -46,7 +46,7 @@ test('who’s around: the host (in their tab, or the owner online) and assistant
   const club = clubWith('a', 'b', 'p');
   for (const id of ['a', 'b']) { offerAssistant(club, id); answerRole(club, id, true); }
   assert.deepEqual(staffOnline(club, new Set(['a', 'p'])), [{name: 'A', role: 'assistant'}]);
-  assert.deepEqual(staffOnline(club, new Set(), true), [{name: 'Host', role: 'host'}]);
+  assert.deepEqual(staffOnline(club, new Set(), true), [{name: 'Manager', role: 'host'}]);
   club.ownerId = 'OWNEROWN';
   assert.deepEqual(staffOnline(club, new Set(['OWNEROWN', 'b'])).map(s => s.role), ['host', 'assistant']);
 });

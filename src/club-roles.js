@@ -48,13 +48,52 @@ export function bigMove(club) {
 // Whether a log entry moved at least `threshold` chips.
 export const isBigMove = (entry, threshold) => threshold != null && entry.amount != null && entry.amount >= threshold;
 
+// ---- managers (#417) ----
+// Game assistants are now the club's managers: in an always-on club they
+// run it from the owner's page (owner_view, owner_cmd, club-server.js), with
+// the owner's actions except these, which stay the owner's: adding and
+// removing managers, settings and services, agents, backup, deleting it.
+// (The `role` field keeps its name, 'assistant'.)
+export const OWNER_ONLY = new Set([
+  'offer_assistant', 'revoke_role', 'settings', 'service_add', 'service_update', 'service_revoke',
+  'offer_agent', 'credit_limit', 'revoke_agent', 'assign_agent', 'settle', 'delete_club', 'backup_proved',
+]);
+
+// Throws if manager `by` may not run `op` on its target: only the owner
+// removes a manager, and no one removes the owner.
+export function checkManagerOp(club, by, op, args = {}) {
+  if (OWNER_ONLY.has(op)) throw new Error('Only the club’s owner can do that.');
+  const t = club.members[args.id];
+  if (op === 'remove' && t && (t.id === club.ownerId || t.role === 'assistant')) throw new Error('Only the club’s owner can remove a manager.');
+}
+
+// What manager `by` did with `op`, for the activity log; '' for what changes
+// nothing (looking at hands, watching).
+export function managerLogText(club, by, op, args = {}) {
+  const who = club.members[by]?.name || 'A manager';
+  const name = club.members[args.id]?.name || 'someone';
+  const amt = Number.isSafeInteger(args.amount) ? chipText(args.amount) : '';
+  const table = tableById(club, args.table)?.name || 'a table';
+  const text = {
+    approve: `let ${name} in`, decline: `declined ${name}`, remove: `removed ${name} from the club`,
+    give: `gave ${name} ${amt}`, take: `took back ${amt} from ${name}`, grant: `granted ${name}’s chip request${amt ? ` (${amt})` : ''}`,
+    deny: `declined ${name}’s chip request`, revoke_invite: 'made a new invite link',
+    new_table: `opened table ${args.table?.name || ''}`.trim(), close_table: `closed ${table}`,
+    new_tourney: `scheduled the tournament ${args.tourney?.name || ''}`.trim(), cancel_tourney: 'cancelled a tournament', set_payout: 'changed a tournament’s payouts',
+    new_promo: `started the promotion ${args.promo?.name || ''}`.trim(), edit_promo: 'changed a promotion', promo_status: `set a promotion to ${args.status}`,
+    approve_award: 'paid a promotion prize', void_award: 'voided a promotion prize',
+    help_answer: 'answered a help request',
+  }[op];
+  return text ? `${who} ${text}` : '';
+}
+
 const roleBody = (club, id) => ({type: 'role', club: club.code, role: club.members[id]?.role || null});
 
 // The host offers member `id` the assistant role. Returns the reply.
 export function offerAssistant(club, id) {
   const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Only members can be assistants.');
-  if (m.role === 'assistant') throw new Error(`${m.name} is already an assistant.`);
+  if (!m || m.status !== 'member') throw new Error('Only members can be managers.');
+  if (m.role === 'assistant') throw new Error(`${m.name} is already a manager.`);
   m.role = 'offered';
   return {to: id, body: roleBody(club, id)};
 }
@@ -64,7 +103,7 @@ export function revokeRole(club, id, now = Date.now()) {
   if (!m?.role) return null;
   const was = m.role;
   delete m.role;
-  if (was === 'assistant') logAction(club, club.hostId, `${m.name} is no longer an assistant`, now);
+  if (was === 'assistant') logAction(club, club.hostId, `${m.name} is no longer a manager`, now);
   return {to: id, body: roleBody(club, id)};
 }
 
@@ -74,7 +113,7 @@ export function answerRole(club, id, accept, now = Date.now()) {
   if (m?.role !== 'offered') return null;
   if (accept) {
     m.role = 'assistant';
-    logAction(club, id, `${m.name} became an assistant`, now);
+    logAction(club, id, `${m.name} became a manager`, now);
   } else delete m.role;
   return {to: id, body: roleBody(club, id)};
 }
@@ -103,7 +142,7 @@ export function adminBody(club, seatedCounts = {}) {
 // Carries out an assistant's command. Returns {replies, table} where table
 // is {start: t} or {close: id} for the host's table runtime, or throws why not.
 export function runAdmin(club, by, cmd, now = Date.now(), limits = null) {
-  if (!isAssistant(club, by)) throw new Error('You’re not an assistant in this club.');
+  if (!isAssistant(club, by)) throw new Error('You’re not a manager in this club.');
   const a = club.members[by];
   const target = cmd?.id ? club.members[cmd.id] : null;
   const who = target?.name || cmd?.id;

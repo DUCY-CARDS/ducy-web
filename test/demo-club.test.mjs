@@ -23,6 +23,7 @@ const { ORDER } = await import('../src/ladder.js');
 const { botAvatar } = await import('../src/avatars.js');
 // The Regulars' names, as the engine has them.
 const regulars = () => new Map((ducy?.botPersonalities?.() || []).map(p => [p.id, p.name]));
+const { managerNotices } = await import('../src/club-notices.js');
 
 // The demo clubs' tables keep their clocks going (club-host.js): done once the tests are.
 test.after(() => setTimeout(() => process.exit(process.exitCode ?? 0), 200));
@@ -81,11 +82,13 @@ function shape(club) {
     name: club.name, temporary: !!club.temporary,
     tables: club.tables.map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status})),
     members: Object.values(club.members).filter(m => m.id !== club.ownerId)
-      .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null}))
+      .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null, credit: m.credit || 0, atLimit: !!m.request?.atLimit}))
       .sort((a, b) => a.name.localeCompare(b.name)),
     help: (club.help || []).filter(h => !h.handled).map(h => h.text),
     tourneys: (club.tourneys || []).map(t => ({name: t.name, status: t.status, entries: t.entries.length})),
     promos: (club.promos?.list || []).map(p => ({name: p.name, status: p.status})),
+    // The manager's credit notifications (#404).
+    notices: managerNotices(club).filter(n => n.kind === 'at_limit' || n.kind === 'left_owing').map(n => n.kind).sort(),
   };
 }
 
@@ -128,6 +131,16 @@ test('each demo club starts in its scenario’s state, and starts again the same
       assert.deepEqual(first.tourneys.map(t => t.status), ['scheduled']);
       assert.equal(first.promos[0]?.status, 'running');
       assert.equal(first.help.length, 1, 'a help request');
+    }
+    // Credit players (#404): one on credit with nothing of their own, one at
+    // their limit asking, one who stood up owing; the books still add up.
+    if (s.id === 'credit') {
+      const p = name => first.members.find(m => m.name === name);
+      assert.deepEqual([p('Player 1').balance, p('Player 1').credit], [0, 50_000]);
+      assert.deepEqual([p('Player 2').ask, p('Player 2').atLimit], [40_000, true]);
+      assert.deepEqual([p('Player 3').balance, p('Player 3').credit], [-20_000, 20_000]);
+      assert.equal(first.members.filter(m => m.balance === 40_000).length, 1, 'a bot won what Player 3 lost');
+      assert.deepEqual(first.notices, ['at_limit', 'left_owing']);
     }
     if (s.id === 'tourney') {
       assert.equal(first.tourneys[0].status, 'scheduled');

@@ -228,7 +228,7 @@ const http = createServer(async (req, res) => {
     const out = (v, status = 200) => { res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*'}); res.end(JSON.stringify(v)); };
     if (!CODE.test(code)) return out({error: 'bad code'}, 400);
     if (!(await reg.has(code))) return out({kind: 'game'});
-    return out(codeInfo(rooms.get(code)?.store.get('club')));
+    return out(codeInfo(rooms.get(code)?.store.get('club'), (url.searchParams.get('invite') || '').slice(0, 64)));
   }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
   if (svc) return service(req, res, decodeURIComponent(svc[1]));

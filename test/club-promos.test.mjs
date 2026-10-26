@@ -244,7 +244,7 @@ test('assistants run promotions, logged; members see the banner (#274, #278)', a
   const {tableBannerText} = await import('../src/club-promos-ui.js');
   const club = clubWith('ann', 'bob', 'cy');
   club.members.cy.role = 'assistant';
-  assert.throws(() => runAdmin(club, 'bob', {op: 'new_promo', promo: HH}, T0), /not an assistant/);
+  assert.throws(() => runAdmin(club, 'bob', {op: 'new_promo', promo: HH}, T0), /not a manager/);
   const r = runAdmin(club, 'cy', {op: 'new_promo', promo: {...HH, games: ['nlhe']}}, T0);
   assert.equal(r.promos, true);
   const promo = club.promos.list[0];

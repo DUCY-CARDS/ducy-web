@@ -103,7 +103,7 @@ test('removed after the hand, with Undo first; the usual cash-out, credit repaid
   assert.equal(r.net, out.amount - 100);
   // The log: who removed whom, from where (and when).
   const log = club.log.at(-1);
-  assert.equal(log.text, 'The host removed Ann from Main');
+  assert.equal(log.text, 'The manager removed Ann from Main');
   assert.ok(log.at > 0);
   // The rathole rule applies when she comes back.
   assert.equal(club.members.ann.left[t.id].stack, out.amount);
@@ -120,7 +120,7 @@ test('removed now: folded out of the hand in play, no Undo; an assistant can, a 
   }
   await until('a hand in play', () => watch.view && !watch.view.complete && Number(watch.view.hand_number) >= 1);
   // A member who isn't staff can't; Cy, an assistant, can.
-  assert.throws(() => runAdmin(club, 'dee', {op: 'remove_player', table: t.id, id: 'bob', now: true}), /not an assistant/);
+  assert.throws(() => runAdmin(club, 'dee', {op: 'remove_player', table: t.id, id: 'bob', now: true}), /not a manager/);
   assert.throws(() => runAdmin(club, 'cy', {op: 'remove_player', table: t.id, id: 'ann', now: true}), /isn’t at that table/);
   const r = runAdmin(club, 'cy', {op: 'remove_player', table: t.id, id: 'bob', now: true});
   assert.deepEqual(r.seat, {table: t.id, id: 'bob', now: true});

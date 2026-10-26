@@ -34,8 +34,8 @@ test('offer, accept, decline and revoke', () => {
   assert.equal(isAssistant(club, 'bob'), false);
   assert.equal(revokeRole(club, 'ann').body.role, null);
   assert.equal(isAssistant(club, 'ann'), false);
-  assert.throws(() => runAdmin(club, 'ann', {op: 'approve', id: 'x'}), /not an assistant/);
-  assert.deepEqual(club.log.map(l => l.text), ['ann became an assistant', 'ann is no longer an assistant']);
+  assert.throws(() => runAdmin(club, 'ann', {op: 'approve', id: 'x'}), /not a manager/);
+  assert.deepEqual(club.log.map(l => l.text), ['ann became a manager', 'ann is no longer a manager']);
 });
 
 test('assistants approve, decline and remove members, and it is logged', () => {

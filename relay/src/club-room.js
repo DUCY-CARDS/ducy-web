@@ -93,9 +93,13 @@ export async function importClub(storage, env, code, claim = async () => {}) {
 // What anyone may learn from a club's code (GET /code/<code>, #393): that
 // it's a club; and, only when it lets people ask to join with the code,
 // its name and host ID, so they can. Nothing about its members or tables.
-export function codeInfo(club) {
-  if (club?.codeJoin !== true) return {kind: 'club', ask: false};
-  return {kind: 'club', ask: true, name: String(club.name || ''), hostId: club.hostId};
+// With an `invite` token that's the club's (or an agent's): its About the
+// club too (#398), for the invite screen.
+export function codeInfo(club, invite = '') {
+  const about = invite && club?.info?.about && (invite === club.invite || Object.values(club.members || {}).some(m => m.agent === 'yes' && m.agentInvite === invite))
+    ? {about: String(club.info.about).slice(0, 2000)} : {};
+  if (club?.codeJoin !== true) return {kind: 'club', ask: false, ...about};
+  return {kind: 'club', ask: true, name: String(club.name || ''), hostId: club.hostId, ...about};
 }
 
 // A finished hand without its cards (#401): no one's hole cards, board or

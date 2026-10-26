@@ -16,11 +16,15 @@
   <link rel="stylesheet" href="src/style.css">
 </head>
 <body class="booting mode-manage">
-  <div class="topbar">
+  <div class="topbar mg-top">
     <a class="wordmark" href="./" aria-label="DUCY, the player app"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M16 3.5c-3.2 4.2-10 8.1-10 13.2 0 3 2.3 5 4.9 5 1.7 0 3.1-.8 3.9-2-.3 2.6-1.2 4.4-2.8 5.8h8c-1.6-1.4-2.5-3.2-2.8-5.8.8 1.2 2.2 2 3.9 2 2.6 0 4.9-2 4.9-5 0-5.1-6.8-9-10-13.2z"/></svg>DUCY</a>
-    <span class="mg-badge">Club manager</span>
+    <!-- The club switcher, Live, the notifications bell and the account
+         (clubs.js, #398). -->
+    <div class="mg-tools" id="mg-tools"><span class="mg-badge">Club manager</span></div>
   </div>
   <main class="clubs mg-main" id="clubs"></main>
+  <!-- A table being watched (play.js, #73) -->
+  <main class="play mg-play" id="mg-play" hidden></main>
   <script type="module" src="src/manage.js"></script>
 </body>
 </html>

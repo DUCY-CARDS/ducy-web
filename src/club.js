@@ -44,6 +44,7 @@
 //                                        help requests (club-help.js, #192)
 //   {type: 'lobby', club, online, chat}  who's online, and the lobby chat
 //                                        (club-lobby.js)
+//   {type: 'info', club, info}           the club info (club-info.js, #398)
 // Join and hello carry the player's session key ({key}). Table updates go
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
@@ -52,6 +53,7 @@ import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
 import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 import { readLobby } from './club-lobby.js';
+import { readInfo } from './club-info.js';
 
 export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
@@ -130,8 +132,11 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   const m = club.members[id];
   // An always-on club's owner (#93), who runs it from their page: their
   // check-ins and commands. The caller handles them (club-server.js).
+  // Its managers (#417) run it from the same page; the caller keeps the
+  // owner's actions to the owner (club-server.js).
   if (body.type === 'owner_hello' || body.type === 'owner_cmd') {
-    if (!club.ownerId || id !== club.ownerId) return {replies: [], changed: false, reason: 'not the owner'};
+    const manager = m?.status === 'member' && m.role === 'assistant';
+    if (!club.ownerId || (id !== club.ownerId && !manager)) return {replies: [], changed: false, reason: 'not the owner'};
     return {replies: [], changed: false, owner: {type: body.type, from: id, body}};
   }
   if (body.type === 'join') {
@@ -313,6 +318,24 @@ export async function playerReceive(mem, env) {
   if (b.type === 'promos') {
     mem.hostSeq = env.seq;
     mem.promos = {promos: Array.isArray(b.promos) ? b.promos : [], recent: Array.isArray(b.recent) ? b.recent : []};
+    return true;
+  }
+  // A manager's view of the whole club, and how their action went (#417).
+  if (b.type === 'owner_view') {
+    mem.hostSeq = env.seq;
+    if (!b.data || typeof b.data !== 'object') return false;
+    mem.mgr = {data: b.data, seated: b.seated || {}, running: b.running || [], online: b.online || [], tourneys: b.tourneys || {}, plan: b.plan || null, owner: b.owner === true};
+    return true;
+  }
+  if (b.type === 'owner_result') {
+    mem.hostSeq = env.seq;
+    mem.mgrResult = {id: b.id, error: String(b.error || ''), value: b.value ?? null};
+    return true;
+  }
+  // Club info (#398, club-info.js).
+  if (b.type === 'info') {
+    mem.hostSeq = env.seq;
+    mem.info = readInfo(b.info);
     return true;
   }
   if (b.type === 'promo_event') {
