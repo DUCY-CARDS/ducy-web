@@ -23,6 +23,19 @@ export function resetDemo(d) {
   return newDemo(d.id, d.scenario);
 }
 
+// Where switching to person `p` ({key, id}) takes you, in demo club `club`
+// (null before the manager makes one): the manager to the club manager;
+// a member, an agent among them (#428), to the club's page; someone
+// asking to join to their request; anyone else to the invite link.
+//   {page: 'manager' | 'player', hash} or {page: 'invite'}
+export function whereIs(club, p) {
+  if (p.key === MANAGER) return {page: 'manager', hash: club ? 'clubs/own' : 'clubs'};
+  const status = club?.members[p.id]?.status;
+  if (status === 'member') return {page: 'player', hash: `clubs/c/${encodeURIComponent(club.code)}`};
+  if (status === 'pending') return {page: 'player', hash: 'join'};
+  return club ? {page: 'invite'} : {page: 'player', hash: 'clubs'};
+}
+
 // Where person `key` of demo `id` keeps localStorage and sessionStorage
 // keys, and the suffix of their IndexedDB databases' names.
 export const prefixOf = (id, key) => `ducyDemo:${id}:${key}:`;

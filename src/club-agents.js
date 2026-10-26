@@ -121,16 +121,29 @@ export function tableResult(club, id) {
   return total;
 }
 
+// Where a seated member is: their table's name (#428).
+function tableName(club, seat) {
+  if (seat.table.startsWith('tourney:')) return (club.tourneys || []).find(t => `tourney:${t.id}` === seat.table)?.name || 'A tournament';
+  return (club.tables || []).find(t => t.id === seat.table)?.name || 'A table';
+}
+
 // What an agent sees: their account, recruits waiting, their players (with
-// their results at the tables, #190), and the settlements recorded.
+// their results at the tables, #190, and where they're playing, #428), and
+// the settlements recorded.
 export function agentBody(club, id) {
   const a = accountOf(club, id);
   return {
     type: 'agent', club: club.code,
     own: a.own, shares: a.shares, total: a.total, limit: a.limit, creditUsed: a.creditUsed, room: a.room,
+    // What the agent would owe the club if their players stood up now
+    // (#428): credit used, less their players' chips at the tables.
+    owed: Math.max(0, -(a.total + a.players.reduce((s, m) => s + (m.seat?.stack || 0), 0))),
     invite: club.members[id].agentInvite,
     recruits: recruitsOf(club, id).map(m => ({id: m.id, name: m.name, at: m.requestedAt})),
-    players: a.players.map(m => ({id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat, result: tableResult(club, m.id)})),
+    players: a.players.map(m => ({
+      id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat, result: tableResult(club, m.id),
+      ...(m.seat ? {table: tableName(club, m.seat), stack: m.seat.stack || 0} : {}),
+    })),
     settlements: club.chips.ledger.filter(e => e.member === id && e.kind === 'settle').slice(-10).map(e => ({at: e.at, amount: e.amount, note: e.note || ''})),
   };
 }

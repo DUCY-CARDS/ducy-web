@@ -909,6 +909,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-offer { border-left-color: var(--teal); flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 .cl-admin { border-left-color: var(--teal); }
 .cl-admin .cl-list li { padding: 6px 0; }
+/* An agent's account and players (#428). */
+.cl-agent-stats { margin: 4px 0; }
+.cl-agent-stats .mg-stat-val { font-size: 22px; }
+.cl-at { font-size: 12px; color: var(--teal); font-weight: 600; }
 .cl-tables { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .cl-tables li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
 .cl-tables li .btn-small { margin-left: auto; }
@@ -1562,7 +1566,9 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
 .demo-menu {
   position: absolute; top: calc(100% + 4px); left: 0; min-width: 240px; max-width: calc(100vw - 32px);
   display: flex; flex-direction: column; background: #f3e7c9; color: #1d3a2c;
-  border: 2px solid #1d3a2c; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border: 2px solid #1d3a2c; border-radius: 12px; overflow: hidden auto; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Many people (the Agents club, #428): it scrolls within the screen. */
+  max-height: calc(100vh - 64px);
 }
 .demo-menu button {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;

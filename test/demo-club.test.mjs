@@ -17,6 +17,7 @@ const { newKeyPair, open: openBox, sharedKey } = await import('../src/e2e.js');
 const { createDemoRelay } = haveWasm ? await import('../src/demo-relay.js') : {};
 const { fairPlayer } = haveWasm ? await import('../src/fair-check.js') : {};
 const { totals } = await import('../src/club-chips.js');
+const { accountOf } = await import('../src/club-agents.js');
 const { fits, pickPlayer, playerName, stakesOf, thinker } = await import('../src/demo-bots.js');
 const { personOf } = await import('../src/quest-people.js');
 const { ORDER } = await import('../src/ladder.js');
@@ -82,7 +83,9 @@ function shape(club) {
     name: club.name, temporary: !!club.temporary,
     tables: club.tables.map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status})),
     members: Object.values(club.members).filter(m => m.id !== club.ownerId)
-      .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null, credit: m.credit || 0, atLimit: !!m.request?.atLimit}))
+      .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null, credit: m.credit || 0, atLimit: !!m.request?.atLimit,
+        // Agents (#428): an agent's credit limit, and whose player they are.
+        agent: m.agent === 'yes' ? m.creditLimit || 0 : null, under: club.members[m.agentOf]?.name ?? null}))
       .sort((a, b) => a.name.localeCompare(b.name)),
     help: (club.help || []).filter(h => !h.handled).map(h => h.text),
     tourneys: (club.tourneys || []).map(t => ({name: t.name, status: t.status, entries: t.entries.length})),
@@ -97,6 +100,7 @@ test('each demo club starts in its scenario’s state, and starts again the same
   const { conservation } = {conservation: club => totals(club).conserved};
   for (const s of SCENARIOS.filter(x => x.club)) {
     const shapes = [];
+    let agentsClub = null;
     for (let round = 0; round < 2; round++) {
       const mem = new Map();
       const storage = {get: async k => structuredClone(mem.get(k)), put: async (k, v) => { mem.set(k, structuredClone(v)); }, delete: async k => { mem.delete(k); }};
@@ -113,7 +117,17 @@ test('each demo club starts in its scenario’s state, and starts again the same
       assert.equal(club.ownerId, owner.id, 'run by the manager');
       assert.ok(conservation(club), `${s.id}: chips conserved`);
       for (const p of people) assert.equal(club.members[p.ident.id].status, p.status || 'member', `${s.id}: ${p.name}`);
+      // The "You are" switcher (#428): each person you can be is taken to
+      // the club's page (a member, an agent too) or their request, never to
+      // the invite link as someone new; the manager to the club manager.
+      const {whereIs, MANAGER} = await import('../src/demo-state.js');
+      assert.deepEqual(whereIs(club, {key: MANAGER, id: owner.id}), {page: 'manager', hash: 'clubs/own'});
+      for (const [i, p] of people.entries()) {
+        const want = p.status === 'pending' ? 'join' : `clubs/c/${encodeURIComponent(club.code)}`;
+        assert.deepEqual(whereIs(club, {key: `p${i + 1}`, id: p.ident.id}), {page: 'player', hash: want}, `${s.id}: switch to ${p.name}`);
+      }
       shapes.push(shape(club));
+      if (!round) agentsClub = club;
     }
     assert.deepEqual(shapes[1], shapes[0], `${s.id} starts the same every time`);
     const first = shapes[0];
@@ -146,8 +160,42 @@ test('each demo club starts in its scenario’s state, and starts again the same
       assert.equal(first.tourneys[0].status, 'scheduled');
       assert.equal(first.tourneys[0].entries, 18, '17 bots and Player 1 registered');
     }
+    // Agents (#428): five agents with their own limits (one with none), each
+    // with 3–6 players; one near the limit and owing, one with players at
+    // the tables, one with a player asking; members with no agent.
+    if (s.id === 'agents') {
+      const club = agentsClub;
+      const agents = Object.values(club.members).filter(m => m.agent === 'yes');
+      assert.equal(agents.length, 5);
+      const limits = agents.map(a => a.creditLimit || 0);
+      assert.ok(limits.includes(0) && new Set(limits).size === 5, `limits differ, one 0: ${limits}`);
+      const acc = Object.fromEntries(agents.map(a => [a.name, accountOf(club, a.id)]));
+      for (const a of agents) {
+        const n = acc[a.name].players.length;
+        assert.ok(n >= 3 && n <= 6, `${a.name}: ${n} players`);
+        assert.ok(a.balance >= -(a.creditLimit || 0), `${a.name} within the limit`);
+      }
+      // Each agent and two of their players are people you can be.
+      const people = new Set(s.club.people.map(p => p.name));
+      for (const a of agents) assert.ok(people.has(a.name), a.name);
+      assert.ok(s.club.people.filter(p => p.under != null).length >= 1);
+      const near = agents.find(a => a.creditLimit && room(acc[a.name]) <= 0.2 * a.creditLimit);
+      assert.ok(near, 'one near their limit');
+      assert.ok(acc[near.name].creditUsed > 0, `${near.name} owes`);
+      assert.ok(agents.some(a => acc[a.name].players.filter(p => p.seat).length >= 2), 'one with players at the tables');
+      assert.ok(agents.some(a => acc[a.name].players.some(p => p.request)), 'one with a player asking for chips');
+      assert.equal(first.members.find(m => m.name === 'Ivy Chen').ask, 20_000);
+      assert.equal(first.members.find(m => m.name === 'Tom Reyes').balance, 30_000, 'Tom has what Marco gave him');
+      assert.ok(first.members.filter(m => m.status === 'member' && !m.agent && !m.under).length >= 3, 'members with no agent');
+      // The bots under an agent were given their chips by them (transfers), not by the manager.
+      for (const a of agents) for (const p of acc[a.name].players) {
+        if (p.name !== 'Ivy Chen') assert.ok(club.chips.ledger.some(e => e.member === p.id && e.kind === 'transfer_in' && e.from === a.id), `${p.name} from ${a.name}`);
+        assert.ok(!club.chips.ledger.some(e => e.member === p.id && e.kind === 'issue'), `${p.name}: nothing from the manager`);
+      }
+    }
   }
 });
+const room = a => a.limit + a.own;
 
 test('Quest’s players fill a demo club’s tables, play through the real table code, come and go, and the books add up', {skip: !haveWasm && 'no wasm build'}, async () => {
   const { scenarioById } = await import('../src/demo-scenarios.js');

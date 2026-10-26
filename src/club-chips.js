@@ -184,7 +184,8 @@ export function transfer(club, from, to, amt, now = Date.now(), why = '', {floor
   const a = member(club, from), b = member(club, to);
   amount(amt);
   if (from === to) throw new Error('Pick someone else.');
-  if (a.balance - amt < floor) throw new Error(floor < 0 ? `That's more than your balance plus credit allows (${chipText(Math.max(0, a.balance - floor))}).` : `You have ${chipText(a.balance)} chips in the club.`);
+  // An agent (#428), with or without credit, gets the same answer.
+  if (a.balance - amt < floor) throw new Error(floor < 0 || a.agent === 'yes' ? `That's more than your balance plus credit allows (${chipText(Math.max(0, a.balance - floor))}).` : `You have ${chipText(Math.max(0, a.balance))} chips in the club.`);
   a.balance -= amt;
   b.balance += amt;
   return [
