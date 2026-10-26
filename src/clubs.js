@@ -22,10 +22,10 @@
 //   ducyClubs         clubs this browser has asked to join
 //   ducyClubName      the display name sent with join requests
 
-import { loadIdentity, MIN_PASSWORD, showId, signMessage, Verifier } from './identity.js';
+import { loadIdentity, MIN_NEW_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { clubBackupText, proveClubBackup } from './club-backup.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
+import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY, RESTORE_WARNING } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -1859,7 +1859,7 @@ function createHtml() {
   }
   // Already have one (#191): its backup brings it back, here or on another
   // device. Not in a demo (#406), which starts empty.
-  if (!demo) h += '<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
+  if (!demo) h += `<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span><span class="cl-act-desc cl-restore">${RESTORE_WARNING}</span>`;
   return h + '</section>';
 }
 
@@ -1904,8 +1904,8 @@ function wizardHtml() {
   h += setup ? `<h2>${esc(name)} is ready</h2>${step(2)}<h3>Back it up</h3>` : `<h2>Back up ${esc(name)}</h2>`;
   h += '<p class="pl-desc">The backup is a file, locked with a password you choose, that lets you run the club again from any browser if this one loses it. Then you open it once here, to prove it works.</p>';
   h += '<form class="pl-idform" data-clform="backup">';
-  h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
-  h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+  h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
+  h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
   h += '<p class="pl-desc">It isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
   h += `<div class="pl-actions"><button class="tr-start" type="submit">Save the backup</button><button class="btn-small" type="button" data-cl="${setup ? 'wiz-skip' : 'wiz-cancel'}">${setup ? 'Skip' : 'Cancel'}</button></div></form>`;
   return h + err + '</section>';

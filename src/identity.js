@@ -125,8 +125,45 @@ export async function createIdentity() {
 // someone act as this player) is encrypted with AES-256-GCM under a key
 // derived from the password by PBKDF2-SHA-256. The file says which ID it is
 // without the password.
+// A file opens with whatever password it was saved with (older ones: at
+// least MIN_PASSWORD characters); a new backup needs a strong one (#436).
 export const MIN_PASSWORD = 8;
+export const MIN_NEW_PASSWORD = 12;
 const PBKDF2_ITERATIONS = 600_000;
+
+// Passwords too common to lock a backup with, as core() makes them: digits
+// and symbols on the end, or in place of letters, don't help them.
+const COMMON_PASSWORDS = new Set([
+  'password', 'passwort', 'motdepasse', 'contraseña', 'secret', 'letmein', 'welcome', 'iloveyou',
+  'admin', 'administrator', 'login', 'qwerty', 'qwertz', 'azerty', 'asdf', 'zxcv', 'abc', 'abcd', 'monkey', 'dragon',
+  'football', 'baseball', 'basketball', 'soccer', 'hockey', 'sunshine', 'princess', 'trustno', 'starwars', 'whatever',
+  'superman', 'batman', 'master', 'shadow', 'freedom', 'changeme', 'default', 'computer', 'internet', 'hello', 'hellohello',
+  'loveyou', 'iloveyouiloveyou', 'mypassword', 'yourpassword', 'thepassword', 'newpassword', 'backup', 'mybackup',
+  'correcthorsebatterystaple', 'poker', 'pokerface', 'pokerclub', 'mypokerclub', 'holdem', 'texasholdem', 'allin',
+  'acesfull', 'royalflush', 'ducy', 'ducycards', 'ducypoker', 'ducyclub',
+]);
+// Lower case, letters and digits only.
+const plain = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+// As plain, without what's after the last letter, and with look-alikes
+// (P@ssw0rd) as the letters they stand for.
+const LOOKALIKE = {'@': 'a', 4: 'a', 0: 'o', 1: 'i', '!': 'i', 3: 'e', 5: 's', $: 's', 7: 't'};
+const core = s => plain(String(s ?? '').toLowerCase().replace(/[^\p{L}]+$/u, '').replace(/[@4013!5$7]/g, c => LOOKALIKE[c]));
+// Runs along the digits, the alphabet and the keyboard's rows.
+const RUNS = ['01234567890123456789', '98765432109876543210', 'abcdefghijklmnopqrstuvwxyz', 'zyxwvutsrqponmlkjihgfedcba', 'qwertyuiopasdfghjklzxcvbnm', '1qaz2wsx3edc4rfv5tgb6yhn7ujm'];
+
+// Why `password` won't do for a new backup, in one line, or '' if it will:
+// too short, very common, just the club's `name`, or a pattern.
+export function passwordProblem(password, {name = ''} = {}) {
+  const pw = String(password ?? '');
+  if ([...pw].length < MIN_NEW_PASSWORD) return `Use a password of at least ${MIN_NEW_PASSWORD} characters.`;
+  const p = plain(pw), k = core(pw);
+  const club = plain(name);
+  if (club && (p === club || k === core(name) || p.replace(/\d+$/, '') === club || p === club + club)) return 'Don’t use the club’s name as its password.';
+  if (COMMON_PASSWORDS.has(p) || COMMON_PASSWORDS.has(k)) return 'That password is too common.';
+  if (/^(.{1,4})\1+.{0,3}$/su.test(pw.toLowerCase()) || new Set(pw.toLowerCase()).size <= 2) return 'That password is just repeated characters.';
+  if (p.length >= 4 && RUNS.some(r => r.includes(p))) return 'That password is just a run of keys.';
+  return '';
+}
 const enc = new TextEncoder(), dec = new TextDecoder();
 
 async function passwordKey(password, salt, iterations) {
@@ -146,8 +183,10 @@ export async function exportIdentity(ident) {
 // {type, v: 2, id, alg, seq, lock: {kdf, iterations, salt, iv, ct}}, where
 // ct is the private key (JWK) encrypted. The ID, algorithm and seq are
 // bound to it as associated data, so they can't be changed either.
-export async function exportLockedIdentity(ident, password) {
-  if (typeof password !== 'string' || password.length < MIN_PASSWORD) throw new Error(`Use a password of at least ${MIN_PASSWORD} characters.`);
+// The password must pass passwordProblem (with the club's `name`, if any).
+export async function exportLockedIdentity(ident, password, {name = ''} = {}) {
+  const problem = typeof password === 'string' ? passwordProblem(password, {name}) : 'Choose a password.';
+  if (problem) throw new Error(problem);
   const jwk = await subtle().exportKey('jwk', ident.privateKey);
   const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
   const head = {type: 'ducy-identity', v: 2, id: ident.id, alg: ident.alg, seq: ident.seq};

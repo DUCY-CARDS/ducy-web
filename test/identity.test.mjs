@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ID_LENGTH, Verifier, backupNeedsPassword, canonical, checkSignature, createIdentity, exportIdentity, exportLockedIdentity,
-  importIdentity, isPlayerId, parseShownId, playerIdFor, fromB64url, showId, signMessage,
+  importIdentity, isPlayerId, MIN_NEW_PASSWORD, MIN_PASSWORD, parseShownId, passwordProblem, playerIdFor, fromB64url, showId, signMessage,
 } from '../src/identity.js';
 
 test('a new identity has an 8-character Base58 ID derived from its key', async () => {
@@ -130,7 +130,9 @@ test('a backup is locked with a password: the private key isn’t in it, and the
 
 test('a locked backup refuses a missing or wrong password, a short new one, and tampering', async () => {
   const me = await createIdentity();
-  await assert.rejects(exportLockedIdentity(me, 'short'), /at least 8/);
+  await assert.rejects(exportLockedIdentity(me, 'short'), /at least 12/);
+  await assert.rejects(exportLockedIdentity(me, 'password1234'), /too common/);
+  await assert.rejects(exportLockedIdentity(me, 'Night Owls 2026', {name: 'Night Owls'}), /club’s name/);
   const text = await exportLockedIdentity(me, 'correct horse');
   await assert.rejects(importIdentity(text), /locked with a password/);
   await assert.rejects(importIdentity(text, 'wrong horse'), /Wrong password/);
@@ -143,6 +145,25 @@ test('a locked backup refuses a missing or wrong password, a short new one, and 
   const bad = JSON.parse(text);
   bad.lock.iterations = 1e12;
   await assert.rejects(importIdentity(JSON.stringify(bad), 'correct horse'), /isn’t a ducy identity file/);
+});
+
+test('a new backup’s password: long, not common, not the club’s name, not a pattern (#436)', () => {
+  assert.equal(MIN_NEW_PASSWORD, 12);
+  assert.equal(MIN_PASSWORD, 8, 'older files still open');
+  for (const ok of ['correct horse', 'tea at 4 on the porch', 'Wq9#rLm2!vXa', 'night owls rule the felt']) assert.equal(passwordProblem(ok, {name: 'Night Owls'}), '', ok);
+  const why = (pw, name) => passwordProblem(pw, {name});
+  assert.match(why(''), /at least 12/);
+  assert.match(why('elevenchars'), /at least 12/);
+  assert.match(why('😀😀😀😀😀😀'), /at least 12/, 'counts characters, not UTF-16 units');
+  for (const pw of ['password1234', 'Password!2026', 'P@ssw0rd 2024', 'iloveyou1234', 'qwerty123456', 'letmein12345', 'correct horse battery staple', 'ducycards2026', 'PokerFace!!!'])
+    assert.match(why(pw), /too common/, pw);
+  for (const [pw, name] of [['Night Owls!!', 'Night Owls'], ['nightowls2026', 'Night Owls'], ['NightOwlsNightOwls', 'Night Owls'], ['The Back Room', 'the back room']])
+    assert.match(why(pw, name), /club’s name/, pw);
+  assert.equal(why('Night Owls at the river', 'Night Owls'), '', 'more than the name');
+  for (const pw of ['aaaaaaaaaaaa', 'abababababab', 'abcabcabcabc!', '121212121212', 'aaaaaabbbbbb', '............'])
+    assert.match(why(pw), /repeated/, pw);
+  for (const pw of ['123456789012', 'abcdefghijkl', 'qwertyuiopas', '9876543210987'])
+    assert.match(why(pw), /run of keys|repeated/, pw);
 });
 
 test('older backups without a password (version 1) still restore', async () => {

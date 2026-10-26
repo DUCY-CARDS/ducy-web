@@ -10,7 +10,7 @@
 // of it uses the restored ID.
 
 import {
-  backupNeedsPassword, exportLockedIdentity, loadIdentity, MIN_PASSWORD, saveIdentity, showId,
+  backupNeedsPassword, exportLockedIdentity, loadIdentity, MIN_NEW_PASSWORD, saveIdentity, showId,
 } from './identity.js';
 import { openBackup } from './club-backup.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
@@ -117,6 +117,8 @@ function render() {
   h += `<div class="ps-row"><span>Player ID</span><code class="pl-pid" title="Clubs know you by this ID; it lives only in this browser">${me ? esc(showId(me.id)) : '…'}</code></div>`;
   h += `<div class="ps-row"><span>Back up this device</span><button type="button" class="ps-val" data-ps="backup"${me ? '' : ' disabled'}>Download</button></div>`;
   h += '<div class="ps-row"><span>Restore from a backup</span><label class="ps-val">Choose file<input type="file" data-ps="file" accept=".json,application/json" hidden></label></div>';
+  // Phishing (#436): a page elsewhere asking for the file and its password.
+  h += `<p class="ps-hint">${RESTORE_WARNING}</p>`;
   // Notifications (#145): only if this browser has them.
   if ('Notification' in window) {
     const denied = Notification.permission === 'denied';
@@ -127,8 +129,8 @@ function render() {
   if (idForm?.kind === 'backup') {
     h += '<form class="pl-idform" data-psform="backup">';
     h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
-    h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
-    h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_PASSWORD}" autocomplete="new-password"></label>`;
+    h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
+    h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
     h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save backup</button><button class="btn-small" type="button" data-ps="cancel">Cancel</button></div></form>';
   } else if (idForm?.kind === 'restore') {
     h += '<form class="pl-idform" data-psform="restore">';
@@ -205,6 +207,8 @@ export function downloadFile(text, filename, type = 'application/json') {
 // added: restoring it brings back the ID that owns the club, and the club is
 // reopened here once the page has reloaded (clubs.js).
 export const RESTORE_CLUB_KEY = 'ducyRestoreClub';
+// By every place a backup is restored (#436).
+export const RESTORE_WARNING = 'Only restore your backup on ducy.cards.';
 
 // Saves a backup file locked with `password`.
 async function backup(password) {

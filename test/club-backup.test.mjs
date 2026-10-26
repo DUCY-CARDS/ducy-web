@@ -17,6 +17,13 @@ test('a club’s backup opens with its password and proves this club and owner',
   await proveClubBackup(text, PW, {code: 'AAAA-AAAA', ownerId: ann.id});
 });
 
+test('a club’s backup needs a strong password, and not the club’s name (#436)', async () => {
+  const ann = await createIdentity();
+  await assert.rejects(clubBackupText(ann, 'owls', {code: 'AAAA-AAAA', name: 'Night Owls'}), /at least 12/);
+  await assert.rejects(clubBackupText(ann, 'Night Owls 1!', {code: 'AAAA-AAAA', name: 'Night Owls'}), /club’s name/);
+  await assert.rejects(clubBackupText(ann, 'pokerclub2026', {code: 'AAAA-AAAA', name: 'Night Owls'}), /too common/);
+});
+
 test('a proof fails, saying why: wrong password, another club, another ID, or no club', async () => {
   const ann = await createIdentity(), bob = await createIdentity();
   const text = await clubBackupText(ann, PW, {code: 'AAAA-AAAA', name: 'Night Owls'});

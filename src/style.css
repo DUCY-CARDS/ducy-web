@@ -1875,6 +1875,7 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .ps-val[disabled] { color: var(--fg-muted); cursor: default; }
 .ps-opts { display: flex; gap: 4px; }
 .ps-row .pl-pid { font-size: 13px; }
+.ps-hint { margin: -4px 0 10px; font-size: 13px; color: var(--fg-muted); }
 @media (max-width: 640px) { .ps-sections { grid-template-columns: minmax(0, 1fr); } .ps-me { width: 72px; height: 72px; } }
 
 /* Private clubs (clubs.js, V3 #225): a card per club, then Join a club and
