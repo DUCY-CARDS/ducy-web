@@ -104,36 +104,27 @@ test('without persistent, the old give-up after six tries stands', t => {
 
 // ---- club tables (club-host.js) against a scripted engine ----
 
-// A play worker that records calls and answers like an idle table where one
-// member is seated and it's their turn.
-const calls = [];
-let players = [{client_id: 'ann', seat: 0, chips: 100}];
-globalThis.Worker = class {
-  postMessage({id, op, args}) {
-    calls.push(op === 'clubCall' ? args[1] : op);
-    const result = op === 'clubCall'
-      ? {out: [], state: {complete: false, hand_number: 1}, players, turnMsLeft: 1000, seq: calls.length}
-      : true;
-    queueMicrotask(() => this.onmessage({data: {id, result}}));
-  }
-};
-
+// A table that answers like an idle one where one member is seated and it's
+// their turn.
+const { fakeTables } = await import('./fake-table.mjs');
+const { calls, call } = fakeTables(() => ({out: [], state: {complete: false, hand_number: 1}, players: [{client_id: 'ann', seat: 0, chips: 100}], turnMsLeft: 1000, seq: calls.length}));
 const { createTableHost } = await import('../src/club-host.js');
 
 test('a club table stops its clock while the relay is unreachable or no one seated is connected', async t => {
-  t.mock.timers.enable({apis: ['setInterval', 'setTimeout']});
+  t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
   const table = {id: 't1', name: 'One', seats: 6, sb: 1, bb: 2, game: 'nlhe', turnSecs: 1, status: 'open', minBB: 20, maxBB: 100};
   const club = {tables: [table], members: {ann: {name: 'Ann', status: 'member'}}, chips: {ledger: [], balances: {}}};
   const here = new Set(['ann']);
   const th = createTableHost({
     club: () => club, save() {}, sendTable() {}, chipsChanged() {}, tablesChanged() {},
-    online: id => here.has(id),
+    online: id => here.has(id), call,
+    store: {get: async () => null, put: async () => {}, drop: async () => {}},
   });
-  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => queueMicrotask(r)); };
+  const settle = async () => { for (let i = 0; i < 40; i++) await new Promise(r => queueMicrotask(r)); };
   await th.start(table);
   await th.handle('t1', 'ann', {type: 'hello'});
   await settle();
-  const ticks = () => calls.filter(c => c === 'tick').length;
+  const ticks = () => calls.filter(c => c.method === 'tick').length;
 
   // Running normally: the turn clock ticks.
   t.mock.timers.tick(1100);
@@ -143,7 +134,6 @@ test('a club table stops its clock while the relay is unreachable or no one seat
   // The host loses the relay: the clock stops, and nothing ticks however long it lasts.
   th.setLink(false);
   await settle();
-  assert.equal(calls.filter(c => c === 'clockPause').length, 1);
   const before = ticks();
   for (let i = 0; i < 60; i++) { t.mock.timers.tick(5_000); await settle(); }
   assert.equal(ticks(), before, 'no tick (no timeout, no sit-out expiry) while the link is down');
@@ -151,7 +141,6 @@ test('a club table stops its clock while the relay is unreachable or no one seat
   // Back: the clock restarts and ticks again.
   th.setLink(true);
   await settle();
-  assert.equal(calls.filter(c => c === 'clockPause').length, 2);
   t.mock.timers.tick(1100);
   await settle();
   assert.ok(ticks() > before, 'the turn clock runs again');
@@ -160,12 +149,13 @@ test('a club table stops its clock while the relay is unreachable or no one seat
   here.delete('ann');
   th.presence('ann');
   await settle();
-  assert.equal(calls.filter(c => c === 'clockPause').length, 3);
   const quiet = ticks();
   for (let i = 0; i < 30; i++) { t.mock.timers.tick(5_000); await settle(); }
   assert.equal(ticks(), quiet, 'nobody to hear from: nobody is folded');
   here.add('ann');
   th.presence('ann');
   await settle();
-  assert.equal(calls.filter(c => c === 'clockPause').length, 4);
+  t.mock.timers.tick(1100);
+  await settle();
+  assert.ok(ticks() > quiet, 'back: it runs again');
 });

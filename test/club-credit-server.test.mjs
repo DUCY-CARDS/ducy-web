@@ -10,6 +10,7 @@ import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 import { buyIn, cashOut, setStack, totals } from '../src/club-chips.js';
 import { createTableHost } from '../src/club-host.js';
+import { fakeTables } from './fake-table.mjs';
 
 function memoryStorage() {
   const m = new Map();
@@ -81,15 +82,14 @@ test('at a table: a buy-in on credit is approved; past what is available, refuse
     code: 'ABCD-EFGH', tables: [table], chips: {issued: 0, reclaimed: 0, next: 1, ledger: []}, ratholeHours: 0,
     members: {ann: {id: 'ann', name: 'Ann', status: 'member', balance: 0, credit: 300}},
   };
-  const calls = [], sent = [], changed = [];
+  const sent = [], changed = [];
   let asks = [];
-  const call = async (op, ...args) => {
-    if (op !== 'clubCall') return true;
-    calls.push(args[1]);
-    const chipRequests = args[1] === 'handle' ? asks : [];
+  const engine = fakeTables(method => {
+    const chipRequests = method === 'handle' ? asks : [];
     asks = [];
-    return {out: [], state: {complete: true, hand_number: 0}, players: [{client_id: 'ann', seat: 0, chips: 0}], chipRequests, turnMsLeft: null, seq: calls.length};
-  };
+    return {out: [], state: {complete: true, hand_number: 0}, players: [{client_id: 'ann', seat: 0, chips: 0}], chipRequests, turnMsLeft: null, seq: engine.calls.length};
+  });
+  const {call} = engine, called = m => engine.calls.some(c => c.method === m);
   const th = createTableHost({
     club: () => club, save() {}, chipsChanged: id => changed.push(id), tablesChanged() {}, call,
     sendTable: (to, msg) => sent.push({to, ...msg.update}),
@@ -101,14 +101,14 @@ test('at a table: a buy-in on credit is approved; past what is available, refuse
   asks = [{seat: 0, amount: 200}];
   await th.handle('t1', 'ann', {type: 'request_chips', amount: 200});
   await settle();
-  assert.ok(calls.includes('approveChips'));
+  assert.ok(called('approveChips'));
   assert.deepEqual(changed, ['ann']);
   assert.equal(club.members.ann.balance, -200);
   assert.equal(club.chips.ledger.at(-1).credit, 200);
   asks = [{seat: 0, amount: 150}];
   await th.handle('t1', 'ann', {type: 'request_chips', amount: 150});
   await settle();
-  assert.ok(calls.includes('denyChips'));
+  assert.ok(called('denyChips'));
   assert.deepEqual(sent.at(-1), {to: 'ann', type: 'rejected', reason: 'You have 1 available (your chips and credit).', chips: true, ask: true});
   assert.equal(club.members.ann.balance, -200);
 });

@@ -22,9 +22,9 @@
 // Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
 // chipRequests, buyIn, hostPendingChips, out}, where out lists {to, data}
 // messages for the page to relay to each player.
-// A club's tables (club-host.js) use the ops in club-engine.js (clubCreate,
-// clubCall, clubSave, clubRestore, ...), the same code an always-on club
-// runs in the relay's Worker.
+// A club's tables (club-host.js) use the ops in club-engine.js (runnerCreate,
+// runnerEvent, runnerSave, runnerRestore, ...): each table and its runner,
+// the same code an always-on club runs in the relay's Worker.
 import init, * as wasm from '../wasm/ducy_wasm.js';
 import { clubEngine } from './club-engine.js';
 

@@ -1,21 +1,16 @@
-// A club's tables in ducy's engine (MultiTable.club, from ducy-wasm), kept
-// by table id. Shared by the page's worker (play-worker.js), where the
-// host's tab runs a club, and by the relay's Worker, where an always-on club
-// runs (#93). Ops, each returning the engine's result:
-//   clubCreate(id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) |
-//   clubCall(id, method, ...args) for handle, disconnected, newHand,
-//     advance, tick, approveChips, denyChips, remove, state, resume (the
-//     time is added) | clubDrop(id) | clubSave(id) | clubRestore(id, json) |
-//   clubSitOutLimit(id, ms) | clubMustPlay(id, client, on) | clockPause(key, on)
-// clubCall results also carry `players` and `departed`.
+// A club's tables in ducy's engine (MultiTable.club, from ducy-wasm), each
+// run by its table runner (table-runner.js), kept by table id. Shared by the
+// page's worker (play-worker.js), where the host's tab runs a club, and by
+// the relay's Worker, where an always-on club runs (#93). Ops:
+//   runnerCreate(id, config) | runnerRestore(id, json, config) → whether it
+//     could | runnerEvent(id, event) → the runner's step (the time is
+//     added) | runnerSave(id) → JSON or null | runnerDrop(id)
+// config = {seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs,
+// sitOutMs}, and the runner's own options (open, link, active, idleMs, askMs).
 //
-// Each table sees its own clock: real time, minus the time it was stopped
-// (clockPause) because the host couldn't reach anyone. The page's friends
-// table uses the same clocks under the key 'host'.
-//
-// Fair deals (#136): clubCall(id, 'newHand', seed) deals from a commit–reveal
-// seed, and fairSecret() | fairCommitment(value, nonce) | fairSeed(values)
-// are ducy's fair-deal functions, for the host's side of the round.
+// The page's friends table keeps its clock here, under the key 'host':
+// real time, minus the time it was stopped (clockPause(key, on)) because
+// the host couldn't reach anyone.
 //
 // Tournaments (#81, club-tourney-host.js): tourneyCreate(id, config,
 // players, turnMs) | tourneyCall(id, method, ...args) for handle,
@@ -24,16 +19,17 @@
 // tourneySave(id) | tourneyRestore(id, json).
 
 import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
+import { tableRunner } from './table-runner.js';
 // The whole module too: ClubTournament is only in newer builds.
 import * as ducy from '../wasm/ducy_wasm.js';
 
 // Tournaments (#81): ducy's ClubTournament, by tournament id.
 const TOURNEY_METHODS = new Set(['handle', 'disconnected', 'advance', 'tick', 'newHands', 'setLevel', 'addEntry', 'state']);
 
-const CLUB_METHODS = new Set(['handle', 'disconnected', 'newHand', 'advance', 'tick', 'approveChips', 'denyChips', 'remove', 'state', 'resume']);
+const fair = {secret: fairSecret, commitment: fairCommitment, seed: fairSeed};
 
 export function clubEngine(MultiTable) {
-  const tables = new Map();
+  const runners = new Map();
   const clocks = new Map();
   const tourneys = new Map();
 
@@ -42,38 +38,39 @@ export function clubEngine(MultiTable) {
     return c ? (c.at ?? Date.now()) - c.lost : Date.now();
   }
 
+  // Runs table `t` for table id with `config`'s runner options.
+  function runWith(id, t, config) {
+    t.setSitOutLimit(config.sitOutMs ?? 10 * 60_000);
+    runners.get(id)?.free();
+    runners.set(id, tableRunner(t, {...config, id, fair}));
+  }
+
   const ops = {
-    clubCreate: (id, seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
-      tables.get(id)?.free();
-      clocks.delete(id);
-      const t = MultiTable.club(seats, BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-      tables.set(id, t);
-      return t.state(now(id));
+    runnerCreate: (id, c) => {
+      const t = MultiTable.club(c.seats, BigInt(c.minBuyIn), BigInt(c.maxBuyIn), BigInt(c.sb), BigInt(c.bb), BigInt(c.seed), c.game, BigInt(c.turnMs));
+      runWith(id, t, c);
+      return true;
     },
-    clubCall: (id, method, ...args) => {
-      const t = tables.get(id);
-      if (!t || !CLUB_METHODS.has(method)) throw new Error(`no table ${id} or method ${method}`);
-      // newHand takes the time first, then the fair-deal seed if there is one.
-      if (method === 'newHand') return t.newHand(now(id), args[0] || undefined);
-      return t[method](...args, now(id));
-    },
-    fairSecret: () => fairSecret(),
-    fairCommitment: (value, nonce) => fairCommitment(value, nonce),
-    fairSeed: values => fairSeed(values),
-    clubDrop: id => { tables.get(id)?.free(); clocks.delete(id); return tables.delete(id); },
-    // The table as JSON for resuming it after a restart (#107); null with an
-    // older ducy-wasm, which can't save tables.
-    clubSave: id => { const t = tables.get(id); return t?.save ? t.save(now(id)) : null; },
-    // A table saved with clubSave, paused until resume (throws if it can't be loaded).
-    clubRestore: (id, json) => {
+    // A table saved with runnerSave, waiting for its people (throws if it
+    // can't be loaded). One saved holding a chip request (before #427)
+    // isn't resumed: the ledger may have paid it.
+    runnerRestore: (id, json, c) => {
       if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
       // Times in the snapshot are time left, so the restored table starts a fresh clock.
-      clocks.delete(id);
       const t = MultiTable.restore(json, Date.now());
-      tables.get(id)?.free();
-      tables.set(id, t);
-      return t.state(Date.now());
+      if (t.state(Date.now()).chipRequests?.length) { t.free?.(); return false; }
+      runWith(id, t, {...c, paused: true});
+      return true;
     },
+    runnerEvent: (id, ev) => {
+      const r = runners.get(id);
+      if (!r) throw new Error(`no table ${id}`);
+      return r.event(ev, Date.now());
+    },
+    // The table as JSON for resuming it after a restart (#107); null with an
+    // older ducy-wasm, which can't save tables.
+    runnerSave: id => runners.get(id)?.save(Date.now()) ?? null,
+    runnerDrop: id => { runners.get(id)?.free(); return runners.delete(id); },
     // A tournament (#81): every table of it, for remote players. `config` =
     // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},
     // `players` = [{id, name}], seated at random; all absent until they join.
@@ -104,18 +101,9 @@ export function clubEngine(MultiTable) {
       tourneys.set(id, t);
       return t.state(Date.now());
     },
-    // How long someone may sit out at table id before their seat goes (ms; 0: no limit).
-    clubSitOutLimit: (id, ms) => { tables.get(id)?.setSitOutLimit(ms); return true; },
-    // Whether member `client` owes table id hands (the hit-and-run rule):
-    // while they do, sitting out or dropping off blinds them off instead of
-    // taking them out. False with a ducy-wasm from before it could.
-    clubMustPlay: (id, client, on) => {
-      const t = tables.get(id);
-      return !!(t?.setMustPlay && t.setMustPlay(String(client), !!on, now(id)));
-    },
-    // Stops (on) or restarts a table's clock: while stopped no time passes
-    // for it, so no turn runs out and no sit-out expires; it resumes with the
-    // time that was left.
+    // Stops (on) or restarts the friends table's clock: while stopped no
+    // time passes for it, so no turn runs out and no sit-out expires; it
+    // resumes with the time that was left.
     clockPause: (key, on) => {
       const c = clocks.get(key) || {at: null, lost: 0};
       if (on && c.at == null) c.at = Date.now();

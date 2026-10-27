@@ -1,9 +1,12 @@
 // Runs a club's tables in the host's tab (#68). Each table is ducy's
-// MultiTable.club in a worker (play-worker.js): no seat for the host, real
-// chips. This file feeds it members' table commands, sends each member their
-// own view, answers chip requests from the club ledger, returns the chips of
-// anyone who leaves, keeps the ledger in step between hands, and paces the
-// game (next hand, turn clock, away players).
+// MultiTable.club with its table runner (table-runner.js), in a worker
+// (play-worker.js): no seat for the host, real chips. The runner has the
+// table's time (the turn clock, the next hand, away players, fair deals,
+// idle seats, the wait after a restart); this file is the club's side: it
+// feeds the runner members' table commands and presence, sends each member
+// their own view, answers chip requests from the club ledger, returns the
+// chips of anyone who leaves, keeps the ledger in step between hands, and
+// wakes the runner when it asks.
 //
 // clubs.js owns the club object and the relay; it passes in:
 //   club()              the current club object
@@ -15,17 +18,6 @@
 //                       cards; players: [{seat, client_id}], who sat where)
 //   online(id)          whether a member is connected to the relay
 //   onPlay()            a hand is in play at a table (for usage, #421)
-//
-// A table's clock stops while the host can't reach the relay (linkHealthy
-// false) or no one seated there is connected: no turn runs out, no one is
-// folded or sat out, no hand is dealt, until someone is back (an outage
-// shouldn't fold everyone).
-//
-// Idle seats (#421): someone seated IDLE_MS without being dealt a hand
-// (sitting out, or alone at the table) is stood up, as if they'd left. If
-// they're connected they're asked first ("Still here?") and have ASK_MS to
-// say so, which gives them another IDLE_MS. This runs even while the clock
-// is stopped: that's how a seat no one came back to was held for two weeks.
 //
 // Moving tables (#425): someone at one table reserves a seat at another
 // (club-tables.js reserveSeat; a manager can do it for them). They finish
@@ -44,25 +36,9 @@ import { creditOf, ratholeMin, refundTopUp } from './club-chips.js';
 import { logAction } from './club-roles.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { dealClock, isDealing } from './club-overview.js';
+import { ASK_MS, IDLE_MS } from './table-runner.js';
 
-const NEXT_HAND_MS = 3000;
-const BOT_PACE_MS = 700;
-// Fair deals (#136): how long players have to send a commitment, then a
-// reveal, and how long a deal may wait for a round still under way before
-// going ahead without one.
-const FAIR_STEP_MS = 4000;
-const FAIR_WAIT_MS = 6000;
-// Results kept per player, to send again when they come back.
-const FAIR_KEEP = 3;
-// A table resumed after the host's page reopened (#107) waits this long for
-// the people at it to come back; then whoever isn't back counts as
-// disconnected, and the clocks run again.
-const RESUME_GRACE_MS = 60_000;
-// Idle seats (#421): how long without a hand, and how long to answer "Still here?".
-export const IDLE_MS = 10 * 60_000;
-export const ASK_MS = 2 * 60_000;
-// Table commands that are someone at their app, not their page on its own.
-const ACTIVE_CMDS = new Set(['still_here', 'act', 'sit_in', 'request_chips', 'time_bank', 'run_twice']);
+export { ASK_MS, IDLE_MS };
 
 let worker = null, nextId = 0;
 const pending = new Map();
@@ -93,33 +69,18 @@ export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => c
 // `call(op, ...args)` runs club-engine.js ops (by default in the page's
 // worker), and `store` keeps saved tables (by default in IndexedDB,
 // table-store.js); an always-on club passes its own (#93). `timers`
-// ({set(fn, ms) → handle, clear(handle)}) runs everything that happens
-// later; an always-on club's room backs it with its alarm (#135), so the
+// ({set(fn, ms) → handle, clear(handle)}) wakes each table's runner when it
+// asks; an always-on club's room backs it with its alarm (#135), so the
 // room can sleep between turns and a restart doesn't lose them.
 export function createTableHost({
   club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {},
   call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
   idleMs = IDLE_MS, askMs = ASK_MS, holdMs = HOLD_MS,
 }) {
-  const running = new Map(); // table id → {chain, players, timers, asking: Set(seat), handNumber, complete}
+  const running = new Map(); // table id → {chain, players, view, complete, handNumber, asking: Set(seat), wakeT, ...}
   const at = new Map(); // member id → table id
   const watchers = new Map(); // table id → Set(fn(update))
   let linkOk = true;
-
-  // Stops or restarts table tid's clock to match who can be reached.
-  function syncClock(tid) {
-    const r = running.get(tid);
-    if (!r) return;
-    const stop = !linkOk || !r.players.some(p => online(p.client_id));
-    if (stop === !!r.stopped) return;
-    r.stopped = stop;
-    if (dealingNow(tid)) save();
-    if (stop) for (const k of Object.keys(r.timers)) clear(r, k);
-    sweep(tid, r);
-    r.chain = r.chain.then(() => call('clockPause', tid, stop)).catch(e => console.warn(e));
-    // Restarted: the state's turn clock and next step set the timers again.
-    if (!stop) run(tid, 'state');
-  }
 
   // Table tid's dealing clock (#398, club-overview.js): it runs while a hand
   // is being played, or between hands while two or more are in to deal to,
@@ -134,10 +95,11 @@ export function createTableHost({
     return was !== on;
   }
 
-  // The host's link to the relay is up (true) or down.
+  // The host's link to the relay is up (true) or down: each table's clock
+  // stops while it's down (an outage shouldn't fold everyone).
   function setLink(ok) {
     linkOk = ok;
-    for (const tid of running.keys()) syncClock(tid);
+    for (const tid of running.keys()) run(tid, {type: 'link', ok});
   }
 
   // Calls fn with the table's spectator view now and after every change.
@@ -145,35 +107,55 @@ export function createTableHost({
   function watch(tid, fn) {
     if (!watchers.has(tid)) watchers.set(tid, new Set());
     watchers.get(tid).add(fn);
-    run(tid, 'state');
+    run(tid, {type: 'state'});
     return () => watchers.get(tid)?.delete(fn);
   }
 
-  function clear(r, name) { timers.clear(r.timers[name]); r.timers[name] = null; }
-
-  // Runs engine calls for a table one at a time, handling each result.
-  function run(tid, method, ...args) {
+  // Sends table tid's runner an event, one at a time, and handles its step.
+  function run(tid, ev) {
     const r = running.get(tid);
     if (!r) return Promise.resolve(null);
     const p = r.chain.then(async () => {
       if (!running.has(tid)) return null;
-      const res = await call('clubCall', tid, method, ...args);
-      // The ledger first, then the table on disk, then the messages: after
-      // a crash the table is never behind what anyone was shown (#107).
-      const t = after(tid, res);
-      if (t) {
-        await persist(tid, res);
-        send(tid, res);
-        // A fair-dealt hand's reveals go out after its final state (#136).
-        if (r.publish) { fairPublish(tid, r.publish); r.publish = null; }
-        pace(tid, res);
-        sweep(tid, r);
-        if (t.status === 'closing' && !r.players.length) drop(tid);
-      }
-      return res;
+      const step = await call('runnerEvent', tid, ev);
+      await apply(tid, r, step);
+      return step;
     });
-    r.chain = p.catch(e => console.warn(`table ${tid} ${method}:`, e));
+    r.chain = p.catch(e => console.warn(`table ${tid} ${ev.type}:`, e));
     return p;
+  }
+
+  // What the runner did: engine results, messages, idle seats; then its
+  // next wake-up.
+  async function apply(tid, r, step) {
+    r.stopped = step.stopped;
+    r.paused = step.paused;
+    if (dealingNow(tid)) save();
+    for (const a of step.actions) {
+      if (!running.has(tid)) return;
+      if (a.type === 'engine') {
+        // The ledger first, then the table on disk, then the messages: after
+        // a crash the table is never behind what anyone was shown (#107).
+        const t = after(tid, a.res);
+        if (!t) continue;
+        await persist(tid, a.res);
+        send(tid, a.res);
+        if (t.status === 'closing' && !r.players.length) { drop(tid); return; }
+      } else if (a.type === 'send') {
+        sendTable(a.to, {type: 'table', table: tid, update: a.update});
+      } else if (a.type === 'active') {
+        const s = club().members[a.id]?.seat;
+        if (s?.table === tid) s.active = a.at;
+      } else if (a.type === 'idle') {
+        const p = r.players.find(x => x.client_id === a.id);
+        if (p) standIdle(tid, p);
+      }
+    }
+    timers.clear(r.wakeT);
+    r.wakeT = null;
+    if (step.wake != null) {
+      r.wakeT = timers.set(() => { r.wakeT = null; run(tid, {type: 'wake'}); }, Math.max(0, step.wake - Date.now()));
+    }
   }
 
   // Saves the table (#107) when its state changed, so a hand in progress
@@ -187,7 +169,7 @@ export function createTableHost({
     const r = running.get(tid);
     if (!r || r.noSave || res.seq === r.savedSeq || res.chipRequests?.length) return;
     try {
-      const json = await call('clubSave', tid);
+      const json = await call('runnerSave', tid);
       if (json == null) { r.noSave = true; return; }
       await store.put(club().code, tid, {json, ledgerN: tableLedgerN(club(), tid), seq: res.seq, at: Date.now()});
       r.savedSeq = res.seq;
@@ -214,14 +196,15 @@ export function createTableHost({
     if (!r || !t) return null;
     const before = r.players.length;
     r.players = res.players || [];
-    for (const p of r.players) at.set(p.client_id, tid);
+    for (const p of r.players) {
+      // Someone new: the runner hears whether they're connected.
+      if (at.get(p.client_id) !== tid) { at.set(p.client_id, tid); run(tid, {type: 'presence', id: p.client_id, on: online(p.client_id)}); }
+    }
     let changed = false;
     // Chips people left with go back to their club balance.
     for (const d of res.departed || []) {
       if (at.get(d.client_id) === tid) at.delete(d.client_id);
       r.removed?.delete(d.client_id);
-      r.active.delete(d.client_id);
-      r.asked.delete(d.client_id);
       const s = club().members[d.client_id]?.seat;
       const removing = s?.table === tid ? s.removing : null, put = s?.put;
       // Leaving for a seat held at another table (#425).
@@ -243,23 +226,11 @@ export function createTableHost({
     r.view = state;
     r.complete = !!state.complete;
     r.handNumber = num(state.hand_number);
-    // Idle seats (#421): anyone new is counted from now (or from their seat's
-    // last activity, kept through a restart); a hand dealt to them is activity.
-    const now = Date.now();
-    for (const p of r.players) if (!r.active.has(p.client_id)) r.active.set(p.client_id, club().members[p.client_id]?.seat?.active || now);
-    if (!r.complete && r.handNumber && r.handNumber !== r.dealtHand) {
-      r.dealtHand = r.handNumber;
-      for (const p of r.players) {
-        const v = state.seats?.[p.seat];
-        if (v && !v.empty && !v.sitting_out && !p.pending) markActive(tid, p.client_id, now);
-      }
-    }
     if (!r.complete) onPlay();
     // A hand just finished: for the host's hand history (#71).
     if (r.complete && r.handNumber && r.handNumber !== r.recorded) {
       r.recorded = r.handNumber;
       onHand?.(tid, state, r.players);
-      r.publish = state;
     }
     r.playersIn = num(res.playersIn) || 0;
     if (dealingNow(tid)) changed = true;
@@ -284,7 +255,7 @@ export function createTableHost({
         sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'stay', hands: left}});
         // Owing hands, sitting out or dropping off blinds them off (dealt in,
         // checking or folding) rather than taking them out of the count.
-        if (!was !== !left) Promise.resolve(call('clubMustPlay', tid, p.client_id, left > 0)).catch(() => {});
+        if (!was !== !left) run(tid, {type: 'mustPlay', id: p.client_id, on: left > 0});
       }
     }
     // Chip requests: approved if the club ledger allows them.
@@ -303,242 +274,24 @@ export function createTableHost({
         // Too little available: the panel offers to ask the manager (#404).
         ask = !!e.short;
       }
-      run(tid, ok ? 'approveChips' : 'denyChips', q.seat).finally(() => r.asking.delete(q.seat));
+      run(tid, {type: 'chips', seat: q.seat, ok}).finally(() => r.asking.delete(q.seat));
       if (ok) chipsChanged(who);
       else if (who) sendTable(who, {type: 'table', table: tid, update: {type: 'rejected', reason: why, chips: true, ...(ask ? {ask: true} : {})}});
     }
     // Save when chips moved or a hand ended, not on every tick.
     if (changed || (r.complete && r.handNumber !== r.saved)) { r.saved = r.handNumber; save(); }
     if (before !== r.players.length) tablesChanged();
-    syncClock(tid);
-    armIdle(tid, r);
     return t;
   }
 
-  // ---- idle seats (#421) ----
-
-  // Member `id` did something at table `tid` (or was dealt a hand): idle
-  // from now. If they'd been asked "Still here?", the question goes away.
-  function markActive(tid, id, now = Date.now()) {
-    const r = running.get(tid);
-    if (!r) return;
-    r.active.set(id, now);
-    const s = club().members[id]?.seat;
-    if (s?.table === tid) s.active = now;
-    if (r.asked.delete(id)) sendTable(id, {type: 'table', table: tid, update: {type: 'idle', done: true}});
-  }
-
-  // The idle check's timer, set for whoever's due first.
-  function armIdle(tid, r) {
-    let due = Infinity;
-    // A closing table stands everyone up anyway.
-    if (tableById(club(), tid)?.status === 'open') for (const p of r.players) {
-      const id = p.client_id;
-      if (removalOf(id, tid).removing || r.removed?.has(id)) continue;
-      const asked = r.asked.get(id);
-      due = Math.min(due, asked != null ? asked + askMs : (r.active.get(id) ?? Date.now()) + idleMs);
-    }
-    // The host can't reach anyone, or the table waits for its people after
-    // a restart: no one is stood up meanwhile; look again in a while.
-    if (due !== Infinity && (!linkOk || r.paused)) due = Math.max(due, Date.now() + 30_000);
-    if (due === r.idleDue) return;
-    timers.clear(r.idleT);
-    r.idleT = null;
-    r.idleDue = due;
-    if (due === Infinity) return;
-    r.idleT = timers.set(() => {
-      r.idleT = null;
-      r.idleDue = null;
-      if (!running.has(tid)) return;
-      checkIdle(tid, r);
-      armIdle(tid, r);
-    }, Math.max(1000, due - Date.now()));
-  }
-
-  // Asks or stands up whoever's been idle too long.
-  function checkIdle(tid, r) {
-    if (!linkOk || r.paused) return;
-    const t = tableById(club(), tid);
-    if (!t || t.status !== 'open') return;
-    const now = Date.now();
-    for (const p of r.players) {
-      const id = p.client_id;
-      if (removalOf(id, tid).removing || r.removed?.has(id)) continue;
-      if (now - (r.active.get(id) ?? now) < idleMs) continue;
-      const asked = r.asked.get(id);
-      if (online(id) && asked == null) {
-        r.asked.set(id, now);
-        sendTable(id, {type: 'table', table: tid, update: {type: 'idle', secs: Math.round(askMs / 1000)}});
-        continue;
-      }
-      if (online(id) && now - asked < askMs) continue;
-      standIdle(tid, p);
-    }
-  }
-
-  // Stands up idle player `p`, as when the manager removes them (#414): the
-  // usual cash-out, the hit-and-run rule overridden, a line in the log.
+  // Stands up idle player `p` (#421), as when the manager removes them
+  // (#414): the usual cash-out, the hit-and-run rule overridden, a line in
+  // the log.
   function standIdle(tid, p) {
     const m = club().members[p.client_id];
     if (m?.seat?.table === tid) { m.seat.removing = {by: null, idle: true, at: Date.now()}; save(); }
-    Promise.resolve(call('clubMustPlay', tid, p.client_id, false)).catch(() => {});
+    run(tid, {type: 'mustPlay', id: p.client_id, on: false});
     return standUp(tid, p, {idle: true});
-  }
-
-  // The sit-out limit is checked on tick, so a table with people at it ticks
-  // regularly, not only on the turn clock. An empty one doesn't, and nor does
-  // one whose clock is stopped (no one seated is connected, #96): the limit
-  // doesn't count then anyway, and the tick would wake an always-on club's
-  // room every 5 s for nothing (#93). It starts again when the clock does.
-  function sweep(tid, r) {
-    const want = r.players.length && !r.stopped;
-    if (want && !r.sweep) {
-      const tick = () => {
-        r.sweep = null;
-        if (!running.has(tid) || r.stopped) return;
-        run(tid, 'tick');
-        r.sweep = timers.set(tick, 5_000);
-      };
-      r.sweep = timers.set(tick, 5_000);
-    } else if (!want && r.sweep) { timers.clear(r.sweep); r.sweep = null; }
-  }
-
-  // What happens next at a table: an away player's or the clock's move, or
-  // the next hand.
-  function pace(tid, res) {
-    const r = running.get(tid);
-    const t = tableById(club(), tid);
-    if (!r || !t || r.stopped) return;
-    clear(r, 'tick');
-    if (res.turnMsLeft != null) r.timers.tick = timers.set(() => run(tid, 'tick'), num(res.turnMsLeft) + 50);
-    if (res.botToAct) {
-      clear(r, 'advance');
-      r.timers.advance = timers.set(() => run(tid, 'advance'), BOT_PACE_MS);
-    }
-    // A resumed table deals no new hand until its people are back.
-    if (r.complete && !r.paused && !r.timers.deal && t.status === 'open' && num(res.playersIn) >= 2) {
-      // The next hand's fair-deal round, if one isn't under way already.
-      if (!r.fair) fairStart(tid);
-      r.timers.deal = timers.set(() => deal(tid), r.handNumber ? NEXT_HAND_MS : 500);
-    }
-  }
-
-  // Deals the next hand, from the fair-deal round's seed (#136). A round
-  // still under way gets a little longer; after that the hand is dealt
-  // without one rather than holding the table up.
-  async function deal(tid) {
-    const r = running.get(tid);
-    if (!r) return;
-    r.timers.deal = null;
-    const f = r.fair;
-    if (f && !f.seed && Date.now() - f.started < FAIR_WAIT_MS) {
-      r.timers.deal = timers.set(() => deal(tid), 300);
-      return;
-    }
-    r.fair = null;
-    // If people left meanwhile the engine refuses; the next change (someone
-    // sitting down, chips) tries again.
-    let res = null;
-    try { res = await run(tid, 'newHand', f?.seed || null); } catch {}
-    if (res && f?.seed) {
-      // Who was dealt in: the players whose view came with their own cards
-      // (someone sitting out isn't).
-      const dealtIn = new Set((res.out || []).filter(m => m.data?.view?.seats?.[0]?.cards).map(m => m.to));
-      r.dealt = {hand: num(res.state.hand_number), round: f, seats: r.players.filter(p => dealtIn.has(p.client_id)).map(p => ({id: p.client_id, seat: p.seat}))};
-    }
-    // The round for the hand after this one runs while this one is played.
-    if (res) fairStart(tid);
-  }
-
-  // ---- fair deals (#136) ----
-  //
-  // Each seated player's page and the host commit to a random value, then,
-  // once every commitment is in (a list everyone gets before revealing),
-  // reveal it. The hand is dealt from the seed of all the values revealed,
-  // so no single party picks the cards. After the hand the host publishes
-  // the reveals, and each page checks its own cards and the board against
-  // the seed (fair-check.js). A player who doesn't commit or reveal in time
-  // is left out of the seed, so the table never waits on them.
-
-  async function fairStart(tid) {
-    const r = running.get(tid);
-    if (!r || r.fair) return;
-    const f = r.fair = {id: `${tid}:${Date.now()}`, started: Date.now(), commits: new Map(), reveals: new Map(), seed: null};
-    const players = r.players.map(p => p.client_id);
-    try { f.host = await call('fairSecret'); } catch (e) { console.warn('fair deal:', e); return; }
-    if (r.fair !== f) return;
-    f.invited = new Set(players);
-    for (const id of players) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'commit', round: f.id}});
-    clear(r, 'fair');
-    r.timers.fair = timers.set(() => fairCommitsIn(tid, f), FAIR_STEP_MS);
-  }
-
-  // Every commitment is in (or the time's up): everyone gets the list, then reveals.
-  function fairCommitsIn(tid, f) {
-    const r = running.get(tid);
-    if (!r || r.fair !== f || f.list) return;
-    clear(r, 'fair');
-    f.list = [{id: 'host', c: f.host.commitment}, ...[...f.commits].map(([id, c]) => ({id, c}))];
-    for (const [id] of f.commits) sendTable(id, {type: 'table', table: tid, update: {type: 'fair', step: 'reveal', round: f.id, list: f.list}});
-    if (!f.commits.size) { fairRevealsIn(tid, f); return; }
-    r.timers.fair = timers.set(() => fairRevealsIn(tid, f), FAIR_STEP_MS);
-  }
-
-  // Every reveal is in (or the time's up): the seed, from the values in list order.
-  async function fairRevealsIn(tid, f) {
-    const r = running.get(tid);
-    if (!r || r.fair !== f || f.seed) return;
-    clear(r, 'fair');
-    f.used = f.list.filter(e => e.id === 'host' || f.reveals.has(e.id))
-      .map(e => (e.id === 'host' ? {id: 'host', value: f.host.value, nonce: f.host.nonce} : {id: e.id, ...f.reveals.get(e.id)}));
-    try { f.seed = await call('fairSeed', f.used.map(u => u.value)); } catch (e) { console.warn('fair deal:', e); }
-  }
-
-  // A player's commitment or reveal for the round under way.
-  async function fairIncoming(tid, id, cmd) {
-    const f = running.get(tid)?.fair;
-    if (!f || cmd.round !== f.id || !f.invited?.has(id)) return;
-    const hex = s => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
-    if (cmd.type === 'fair_commit' && !f.list && hex(cmd.c) && !f.commits.has(id)) {
-      f.commits.set(id, cmd.c);
-      if (f.commits.size === f.invited.size) fairCommitsIn(tid, f);
-    } else if (cmd.type === 'fair_reveal' && f.list && !f.seed && f.commits.has(id) && !f.reveals.has(id) && hex(cmd.value) && hex(cmd.nonce)) {
-      // A reveal that doesn't open its commitment is left out, like a missing one.
-      let opens = false;
-      try { opens = (await call('fairCommitment', cmd.value, cmd.nonce)) === f.commits.get(id); } catch {}
-      if (!opens || f.seed) return;
-      f.reveals.set(id, {value: cmd.value, nonce: cmd.nonce});
-      if (f.reveals.size === f.commits.size) fairRevealsIn(tid, f);
-    }
-  }
-
-  // A hand dealt from a seed is over: everyone dealt in gets the reveals, so
-  // their page can check the deal, with where their cards are in it.
-  function fairPublish(tid, state) {
-    const r = running.get(tid);
-    const d = r?.dealt;
-    if (!d || d.hand !== num(state.hand_number)) return;
-    r.dealt = null;
-    // Cards go to the dealt seats in seat order (ducy's Deal::from_seed).
-    const dealt = d.seats.slice().sort((a, b) => a.seat - b.seat);
-    const t = tableById(club(), tid);
-    dealt.forEach((p, index) => {
-      const update = {
-        type: 'fair', step: 'result', hand: d.hand, game: t?.game || 'nlhe', dealt: dealt.length, index,
-        seed: d.round.seed, list: d.round.list, reveals: d.round.used,
-      };
-      // Kept for a while, to send again to a player who was away when it went.
-      const kept = r.results.get(p.id) || [];
-      kept.push(update);
-      r.results.set(p.id, kept.slice(-FAIR_KEEP));
-      sendTable(p.id, {type: 'table', table: tid, update});
-    });
-  }
-
-  // A player (re)joining the table gets the last few hands' results again,
-  // in case they were away when they went (their page checks each once).
-  function fairResend(tid, id) {
-    for (const update of running.get(tid)?.results.get(id) || []) sendTable(id, {type: 'table', table: tid, update});
   }
 
   // Thrown to stop starting a closing table that couldn't resume.
@@ -558,79 +311,58 @@ export function createTableHost({
     // known to have been dealt, so it starts again from here (#398).
     if (isDealing(t.dealing)) t.dealing = {...t.dealing, since: null};
     const {min, max} = limits(t);
-    const r = {chain: Promise.resolve(), players: [], timers: {}, asking: new Set(), handNumber: 0, complete: true, results: new Map(), active: new Map(), asked: new Map()};
+    const r = {chain: Promise.resolve(), players: [], asking: new Set(), handNumber: 0, complete: true, wakeT: null};
     running.set(t.id, r);
-    const fresh = () => call('clubCreate', t.id, t.seats, min, max, t.sb, t.bb, crypto.getRandomValues(new Uint32Array(1))[0], t.game, t.turnSecs * 1000);
-    r.chain = (resume ? restore(t, r).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))
-      .then(resumed => {
-        if (resumed) return;
+    const config = {
+      seats: t.seats, minBuyIn: min, maxBuyIn: max, sb: t.sb, bb: t.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0],
+      game: t.game, turnMs: t.turnSecs * 1000, sitOutMs: (t.sitOutMins ?? 10) * 60_000,
+      open: t.status === 'open', link: linkOk, idleMs, askMs,
+    };
+    let resumed = false;
+    r.chain = (resume ? restore(t, r, config).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))
+      .then(ok => {
+        resumed = ok;
+        if (ok) return;
         if (resume && cashOutTable(club(), t.id).length) save();
         // A closing table that can't resume is done: everyone's been settled.
         if (t.status === 'closing') throw new Closed();
-        return fresh();
+        return call('runnerCreate', t.id, config);
       })
-      .then(() => call('clubSitOutLimit', t.id, (t.sitOutMins ?? 10) * 60_000))
       .catch(e => {
         if (!(e instanceof Closed)) console.warn(e);
-        timers.clear(r.sweep);
-        timers.clear(r.idleT);
+        timers.clear(r.wakeT);
         running.delete(t.id);
         if (resume && cashOutTable(club(), t.id).length) save();
         if (t.status === 'closing') { t.status = 'closed'; save(); }
       });
     await r.chain;
-    // The resumed table's state: who's seated, for joins and the host's view.
-    if (r.paused) {
-      await run(t.id, 'state');
-      // Players still connected never left (an always-on club's room woke
-      // after sleeping, #135): they're back already, and if everyone is,
-      // play goes straight on.
-      for (const p of r.players) if (online(p.client_id)) cameBack(t.id, p.client_id);
-    }
+    // The resumed table's state: who's seated, for joins and the host's view;
+    // its people get a while to come back. Players still connected never
+    // left (an always-on club's room woke after sleeping, #135): they're
+    // back already, and if everyone is, play goes straight on.
+    if (resumed) await run(t.id, {type: 'state'});
     // A table that was closing finishes its hand, then closes (#117).
     if (running.has(t.id) && t.status === 'closing') await close(t.id);
   }
 
   // Loads table `t`'s saved snapshot, if it's usable. Resolves to whether
   // the table was resumed.
-  async function restore(t, r) {
+  async function restore(t, r, config) {
     const rec = await store.get(club().code, t.id);
     if (!rec) return false;
     if (rec.ledgerN !== tableLedgerN(club(), t.id)) {
       console.warn(`table ${t.id}: the saved hand is out of step with the ledger; not resumed`);
       return false;
     }
-    // Saved holding a chip request (before #427): the ledger may have paid it.
-    const res = await call('clubRestore', t.id, rec.json);
-    if (res?.chipRequests?.length) {
+    // Idle seats count on from each one's last activity.
+    const active = {};
+    for (const m of Object.values(club().members)) if (m.seat?.table === t.id && m.seat.active) active[m.id] = m.seat.active;
+    if (!await call('runnerRestore', t.id, rec.json, {...config, active})) {
       console.warn(`table ${t.id}: saved with a chip request open; not resumed`);
       return false;
     }
-    r.paused = true;
-    r.back = new Set();
     r.savedSeq = rec.seq;
-    // People get a while to come back; then the table goes on without them.
-    r.timers.grace = timers.set(() => wake(t.id), RESUME_GRACE_MS);
     return true;
-  }
-
-  // A resumed table's clocks run again: everyone not back yet counts as
-  // disconnected (they check or fold, and the sit-out limit counts).
-  async function wake(tid) {
-    const r = running.get(tid);
-    if (!r?.paused) return;
-    r.paused = false;
-    clear(r, 'grace');
-    for (const p of r.players) if (!r.back.has(p.client_id)) await run(tid, 'disconnected', p.client_id);
-    await run(tid, 'resume');
-  }
-
-  // Someone at a resumed table is back: once everyone is, play goes on.
-  function cameBack(tid, id) {
-    const r = running.get(tid);
-    if (!r?.paused) return;
-    r.back.add(id);
-    if (r.players.every(p => r.back.has(p.client_id))) wake(tid);
   }
 
   // Stops taking players, removes everyone (they leave at the end of the
@@ -638,13 +370,14 @@ export function createTableHost({
   async function close(tid) {
     const r = running.get(tid);
     if (!r) return drop(tid);
-    for (const p of r.players) await run(tid, 'remove', p.seat);
-    if (!r.players.length) drop(tid);
+    await run(tid, {type: 'open', on: false});
+    for (const p of r.players) await run(tid, {type: 'remove', seat: p.seat});
+    if (running.has(tid) && !r.players.length) drop(tid);
   }
 
   function drop(tid) {
     const r = running.get(tid);
-    if (r) { for (const k of Object.keys(r.timers)) clear(r, k); timers.clear(r.sweep); r.sweep = null; timers.clear(r.idleT); r.idleT = null; }
+    if (r) { timers.clear(r.wakeT); r.wakeT = null; }
     running.delete(tid);
     if (dealingNow(tid)) save();
     // Seats held here go, and anyone on their way stays where they are (#425).
@@ -661,7 +394,7 @@ export function createTableHost({
       save();
       armHolds();
     }
-    call('clubDrop', tid).catch(() => {});
+    Promise.resolve(call('runnerDrop', tid)).catch(() => {});
     store.drop(club().code, tid).catch(() => {});
     // Anyone watching is told the table closed.
     for (const fn of watchers.get(tid) || []) fn({type: 'closed'});
@@ -697,13 +430,13 @@ export function createTableHost({
     if (!p || m?.seat?.table !== tid) throw new Error(`${m?.name || 'That player'} isn’t at that table.`);
     m.seat.removing = {by, at: Date.now(), ...(now || m.seat.removing?.now ? {now: true} : {})};
     save();
-    // Owing hands no longer blinds them off: they're going (#414).
-    Promise.resolve(call('clubMustPlay', tid, id, false)).catch(() => {});
-    const v = r.view?.seats?.[p.seat];
-    const inHand = !r.complete && !p.pending && v && !v.empty && !v.folded && !v.sitting_out;
-    if (now || !inHand) return standUp(tid, p);
+    // They're going: owing hands no longer blinds them off, and they're not
+    // asked if they're still here.
+    run(tid, {type: 'mustPlay', id, on: false});
+    run(tid, {type: 'leaving', id, on: true});
+    if (now || !inHand(r, p)) return standUp(tid, p);
     // Watchers see "Leaving after this hand".
-    return run(tid, 'state');
+    return run(tid, {type: 'state'});
   }
 
   // Undo, before the hand ends: they stay.
@@ -716,7 +449,8 @@ export function createTableHost({
     // The hit-and-run count is told again, and holds again.
     r.stay?.delete(id);
     save();
-    return run(tid, 'state');
+    run(tid, {type: 'leaving', id, on: false});
+    return run(tid, {type: 'state'});
   }
 
   // The engine stands player `p` up: now between hands, else folding at
@@ -731,7 +465,7 @@ export function createTableHost({
     // rather than wait on a table that stopped for them. So does someone
     // with no chips there (no seat in the ledger, so no result to wait for).
     if (!r.complete || !club().members[p.client_id]?.seat) sendTable(p.client_id, {type: 'table', table: tid, update: {type: 'removed', name: tableById(club(), tid)?.name || '', ...why}});
-    return run(tid, 'remove', p.seat);
+    return run(tid, {type: 'remove', seat: p.seat});
   }
 
   // Member `id` was removed from table `t` with `chips`: the log, and their
@@ -787,7 +521,7 @@ export function createTableHost({
     if (by) {
       const who = by === c.hostId || by === c.ownerId ? 'The manager' : c.members[by]?.name || by;
       logAction(c, by, `${who} moved ${m.name} from ${tf?.name || 'a table'} to ${t.name}`);
-      Promise.resolve(call('clubMustPlay', from, id, false)).catch(() => {});
+      run(from, {type: 'mustPlay', id, on: false});
     }
     save();
     armHolds();
@@ -796,7 +530,7 @@ export function createTableHost({
     const p = rf.players.find(x => x.client_id === id);
     if (p && !inHand(rf, p)) return leaveToMove(from, p);
     // Watchers see "Moving to …".
-    return run(from, 'state');
+    return run(from, {type: 'state'});
   }
 
   // A manager moves member `id` from table `tid` to table `to` (#425).
@@ -826,10 +560,10 @@ export function createTableHost({
       armHolds();
       tablesChanged();
       sendTable(id, {type: 'table', table: tid, update: {type: 'reserve', table: mv.to, refused: owed ? stayText(owed) : short}});
-      return run(tid, 'state');
+      return run(tid, {type: 'state'});
     }
     r.leaving.add(id);
-    return run(tid, 'handle', id, {type: 'leave'});
+    return run(tid, {type: 'cmd', id, cmd: {type: 'leave'}, online: online(id)});
   }
 
   // Why member `id`, with `chips` at their table, couldn't buy in at table
@@ -887,15 +621,6 @@ export function createTableHost({
       const left = handsToStay(club(), id, t, completedHands(running.get(tid)));
       if (left) { sendTable(id, {type: 'table', table: tid, update: {type: 'stay', hands: left, refused: true}}); return; }
     }
-    // A commitment or reveal for the next hand's deal (#136).
-    if (cmd.type === 'fair_commit' || cmd.type === 'fair_reveal') { await fairIncoming(tid, id, cmd); return; }
-    // Someone at their app (#421): "Still here?" answered, or anything they did.
-    if (ACTIVE_CMDS.has(cmd.type) && at.get(id) === tid) {
-      const r = running.get(tid);
-      markActive(tid, id);
-      if (r) armIdle(tid, r);
-      if (cmd.type === 'still_here') { save(); return; }
-    }
     // Reserving a seat here from another table (#425).
     if (cmd.type === 'reserve') { try { await reserve(tid, id); } catch {} return; }
     if (cmd.type === 'join') {
@@ -914,25 +639,27 @@ export function createTableHost({
       cmd = {type: 'join', name: club().members[id].name};
     }
     if (!running.has(tid)) {
+      // A fair-deal round's message or "Still here?" for a table that's gone: nothing to say.
+      if (cmd.type.startsWith('fair_') || cmd.type === 'still_here') return;
       sendTable(id, {type: 'table', table: tid, update: {type: 'rejected', reason: 'That table isn’t running.', fatal: true}});
       return;
     }
-    await run(tid, 'handle', id, cmd);
-    if (cmd.type === 'join') { cameBack(tid, id); fairResend(tid, id); }
+    await run(tid, {type: 'cmd', id, cmd, online: online(id)});
+    // "Still here?" answered: their seat's last activity is kept.
+    if (cmd.type === 'still_here') save();
   }
 
   function disconnected(id) {
     const tid = at.get(id);
-    if (tid) run(tid, 'disconnected', id);
+    if (tid) run(tid, {type: 'disconnected', id});
   }
 
-  // A member's connection changed (clubs.js keeps who's online).
+  // A member's connection changed (clubs.js keeps who's online): their
+  // table's clock stops while no one seated there is connected, and someone
+  // connected at a table waiting after a restore is back (#135).
   function presence(id) {
     const tid = at.get(id);
-    if (!tid) return;
-    syncClock(tid);
-    // Connected while their table waits after a restore: they're back (#135).
-    if (online(id)) cameBack(tid, id);
+    if (tid) run(tid, {type: 'presence', id, on: online(id)});
   }
 
   // Seats taken: people at the table, and seats held for people coming (#425).
