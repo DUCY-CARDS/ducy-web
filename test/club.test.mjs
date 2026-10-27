@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import {
-  approve, clubName, decline, hostReceive, inviteLink, membersByStatus, newClub, newMembership,
+  approve, clubName, decline, hostReceive, inviteLink, membersByStatus, nameKey, newClub, newMembership,
   parseInvite, playerReceive, removeMember, revokeInvite,
 } from '../src/club.js';
 
@@ -132,6 +132,47 @@ test('hello reports status and updates the display name', async () => {
   assert.equal(club.members[ann.id].name, 'Annie');
   const u = await hostReceive(club, verifier, await signMessage(eve, {type: 'hello', club: club.code}));
   assert.equal(u.replies[0].body.status, 'unknown');
+});
+
+test('names in a club are unique: the same name, however written, is refused (#450)', async () => {
+  const {host, club, verifier} = await setup();
+  const ann = await createIdentity(), bob = await createIdentity(), cy = await createIdentity();
+  await hostReceive(club, verifier, await signMessage(ann, join(club, club.invite, 'Tom Reyes')));
+  // However it's written: case, spacing, punctuation, accents, look-alikes.
+  for (const name of ['Tom Reyes', 'tom reyes', 'TomReyes', 'Tom.Reyes', 'Tóm Réyes', 'T0m Reyes', 'Tоm Reyes' /* Cyrillic о */]) {
+    assert.equal(nameKey(name), nameKey('Tom Reyes'), name);
+    const r = await hostReceive(club, verifier, await signMessage(bob, join(club, club.invite, name)));
+    assert.equal(r.reason, 'name taken', name);
+    assert.deepEqual(r.replies[0].body, {type: 'status', club: club.code, name: 'Friday Game', status: 'unknown', nameTaken: name.trim()});
+    assert.equal(club.members[bob.id], undefined, 'not asking to join');
+  }
+  assert.notEqual(nameKey('Tom Reyes'), nameKey('Tom Reyes Jr'));
+  // The player is told, and their status stays as it was.
+  const mem = newMembership(parseInvite(inviteLink(club, 'https://ducy.example/')));
+  const told = await hostReceive(club, verifier, await signMessage(bob, join(club, club.invite, 'TOM REYES')));
+  assert.ok(await playerReceive(mem, await signMessage(host, told.replies[0].body)));
+  assert.deepEqual([mem.status, mem.nameTaken], ['new', 'TOM REYES']);
+  // Another name goes through, and the warning clears.
+  const ok = await hostReceive(club, verifier, await signMessage(bob, join(club, club.invite, 'Bob')));
+  assert.equal(ok.replies[0].body.status, 'pending');
+  assert.ok(await playerReceive(mem, await signMessage(host, ok.replies[0].body)));
+  assert.equal(mem.nameTaken, undefined);
+  // A member can't change to a name someone has; their own, in another case, is fine.
+  approve(club, bob.id);
+  const no = await hostReceive(club, verifier, await signMessage(bob, {type: 'hello', club: club.code, name: 'Tom  Reyes'}));
+  assert.deepEqual([no.replies[0].body.status, no.replies[0].body.nameTaken, club.members[bob.id].name], ['member', 'Tom Reyes', 'Bob']);
+  assert.equal(no.changed, false);
+  const mine = await hostReceive(club, verifier, await signMessage(bob, {type: 'hello', club: club.code, name: 'BOB'}));
+  assert.equal(mine.replies[0].body.nameTaken, undefined);
+  assert.equal(club.members[bob.id].name, 'BOB');
+  // Someone declined or removed no longer holds their name.
+  decline(club, ann.id);
+  const freed = await hostReceive(club, verifier, await signMessage(cy, join(club, club.invite, 'Tom Reyes')));
+  assert.equal(freed.replies[0].body.status, 'pending');
+  // Members who already shared a name before this keep it.
+  club.members[ann.id].status = 'member';
+  const both = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, name: 'Tom Reyes'}));
+  assert.equal(both.replies[0].body.nameTaken, undefined);
 });
 
 test('the host ignores forged, replayed and other-club messages', async () => {

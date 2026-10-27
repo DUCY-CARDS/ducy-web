@@ -1792,7 +1792,7 @@ function requestsHtml() {
     const n = playerNets.get(m.code);
     const live = connText(n, 'Your request waits until it’s back.');
     const inNow = m.status === 'member';
-    h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${inNow ? 'You’re in' : esc(STATUS_TEXT[m.status] || m.status)}</span>`;
+    h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${inNow ? 'You’re in' : m.nameTaken && m.status === 'new' ? 'Name taken' : esc(STATUS_TEXT[m.status] || m.status)}</span>`;
     if (!inNow) h += `<span class="pl-meta cl-conn">${live}</span>`;
     h += '<span class="cl-acts">';
     if (inNow) h += '<a class="btn-small primary" href="#clubs">Open the club</a>';
@@ -1810,6 +1810,8 @@ function requestsHtml() {
       h += '<span class="pl-desc cl-next">If that’s a mistake, ask the manager: they can let you in from a new invite link.</span>';
     }
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
+    // The name asked with is taken there (#450): another, for that club.
+    if (m.nameTaken) h += clubNameHtml(m);
     h += '</li>';
   }
   return h + '</ul></section>';
@@ -2563,17 +2565,25 @@ function menuHtml(label, items, id = '', extra = '', attrs = '') {
 const helps = m => m.status === 'member' && (m.role === 'assistant' || m.agent === 'yes');
 
 // The name you go by in a club (#185), with a way to change it for that
-// club only. `nameForm`: the club whose name is being edited.
+// club only. `nameForm`: the club whose name is being edited. A name
+// someone there already has (#450) opens it.
 let nameForm = '';
 function clubNameHtml(m) {
   const code = esc(m.code);
+  if (m.nameTaken) return `<p class="pl-desc pl-neterr cl-err">“${esc(m.nameTaken)}” is taken in ${esc(m.name || m.code)}.</p>${clubNameForm(m)}`;
   if (nameForm !== m.code) {
     return `<p class="pl-meta cl-myname">You’re <b>${esc(nameIn(m))}</b> in this club${m.myName ? '' : ' (your name in Player settings)'}. <button class="link-btn" data-cl="myname" data-code="${code}">Change</button></p>`;
   }
-  let h = `<form class="pl-row cl-myname" data-nameform="${code}"><label class="pl-label" for="cl-myname-${code}">Your name in ${esc(m.name || m.code)}</label>`;
-  h += `<input class="pl-text" id="cl-myname-${code}" name="name" maxlength="${MAX_PLAYER_NAME}" value="${esc(nameIn(m))}" placeholder="${esc(myName())}">`;
-  h += '<button class="btn-small primary" type="submit">Save</button><button class="btn-small" type="button" data-cl="myname-cancel">Cancel</button></form>';
+  let h = clubNameForm(m);
   if (m.myName) h += `<p class="pl-meta">Leave it as ${esc(myName() || 'empty')} to use your name in Player settings here too.</p>`;
+  return h;
+}
+
+function clubNameForm(m) {
+  const code = esc(m.code);
+  let h = `<form class="pl-row cl-myname" data-nameform="${code}"><label class="pl-label" for="cl-myname-${code}">Your name in ${esc(m.name || m.code)}</label>`;
+  h += `<input class="pl-text" id="cl-myname-${code}" name="name" maxlength="${MAX_PLAYER_NAME}" value="${esc(m.nameTaken ? '' : nameIn(m))}" placeholder="${esc(m.nameTaken ? '' : myName())}">`;
+  h += `<button class="btn-small primary" type="submit">Save</button>${m.nameTaken ? '' : '<button class="btn-small" type="button" data-cl="myname-cancel">Cancel</button>'}</form>`;
   return h;
 }
 
