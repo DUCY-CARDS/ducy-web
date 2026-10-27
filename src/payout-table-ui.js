@@ -7,17 +7,21 @@
 // (null: a box left empty). cleanRows turns it into rows for
 // club-tourneys.js's checkPayoutRows, which says what's wrong with them.
 
+import { defaultPayout } from './club-tourneys.js';
+
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const ordinal = n => `${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3 ^ 1) && n % 10] || 'th'}`;
 // Basis points as a percentage: 6500 → "65", 3333 → "33.33".
 export const pct = bp => String(+(bp / 100).toFixed(2));
 
-// A table to start from.
+// A table to start from: round shares for small fields, then the Default's
+// (club-tourneys.js) up to the most entries a tournament takes.
 export const STARTER_ROWS = [
   {from: 2, places: [10000]},
   {from: 6, places: [6500, 3500]},
   {from: 10, places: [5000, 3000, 2000]},
   {from: 20, places: [4000, 2500, 2000, 1500]},
+  ...[30, 50, 75, 100, 150, 200, 300, 500, 750, 1000].map(from => ({from, places: defaultPayout(from)})),
 ];
 
 export const draftOf = (rows = STARTER_ROWS) => ({rows: rows.map(r => ({from: r.from, places: r.places.slice()})), cols: 0});
