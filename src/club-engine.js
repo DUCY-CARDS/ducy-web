@@ -38,14 +38,19 @@ const rustRunner = ducy.ClubTable
   }
   : null;
 
+// ducy's own tournament runner (ducy-play's tourney_runner, #458), as
+// tourney-runner.js; an older ducy-wasm doesn't have it.
+const wrapTourney = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), tableView: table => t.tableView(table), free: () => t.free()});
+
 // `MultiTable`: ducy's (the real engine) or a stand-in a test scripts. With
-// ducy's, tables run on ducy's runner when it has one; table-runner.js runs
-// them otherwise.
+// ducy's, tables and tournaments run on ducy's runners when it has them;
+// table-runner.js and tourney-runner.js run them otherwise.
 export function clubEngine(MultiTable) {
   const runners = new Map();
   const clocks = new Map();
   const tourneys = new Map();
   const rust = MultiTable === ducy.MultiTable ? rustRunner : null;
+  const rustTourney = MultiTable === ducy.MultiTable && !!ducy.ClubTourney;
 
   function now(key) {
     const c = clocks.get(key);
@@ -105,6 +110,7 @@ export function clubEngine(MultiTable) {
     // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},
     // `players` = [{id, name}], seated at random; all absent until they join.
     tourneyCreate: (id, config, players, turnMs, runner) => {
+      if (rustTourney) { keepTourney(id, wrapTourney(ducy.ClubTourney.create(id, config, players, turnMs, runner))); return true; }
       if (!ducy.ClubTournament) throw new Error('this ducy-wasm has no tournaments');
       keepTourney(id, tourneyRunner(new ducy.ClubTournament(config, players, turnMs), {...runner, id}));
       return true;
@@ -124,6 +130,7 @@ export function clubEngine(MultiTable) {
     // A tournament saved with tourneySave, its runner's clock where `runner`
     // says; throws if it can't be loaded.
     tourneyRestore: (id, json, runner) => {
+      if (rustTourney) { keepTourney(id, wrapTourney(ducy.ClubTourney.restore(id, json, runner, Date.now()))); return true; }
       if (!ducy.ClubTournament?.restore) throw new Error('this ducy-wasm can’t restore tournaments');
       keepTourney(id, tourneyRunner(ducy.ClubTournament.restore(json, Date.now()), {...runner, id}));
       return true;
