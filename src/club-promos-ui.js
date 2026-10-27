@@ -43,7 +43,7 @@ export function memberPromosHtml(p, now = Date.now()) {
     if (x.kind === 'high_hand') {
       for (const g of x.games) {
         const leaders = x.leaders?.[g] || [];
-        h += `<div class="cl-promo-board"><span class="pl-label">${esc(gameLabel(g))}</span>`;
+        h += `<div class="cl-promo-board"><span class="pl-label">${esc(gameLabel(g))}${x.prize?.[g] ? ` <span class="cl-chips">${chips(x.prize[g])}</span>` : ''}</span>`;
         h += leaders.length
           ? `<ol>${leaders.map(l => `<li><b>${esc(l.name)}</b> ${esc(lower(l.hand))} ${cardsHtml(l.cards)}</li>`).join('')}</ol>`
           : '<span class="pl-meta">No qualifying hand yet.</span>';
@@ -87,25 +87,29 @@ const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 6
 
 // The form for a new promotion, or for changing `edit` (its settings).
 function formHtml(edit, newKind = 'high_hand', cd = '') {
-  const v = edit || {kind: newKind, games: ['nlhe'], every: 'day', prizes: [5000], minCategory: 'full_house', ties: 'split',
+  const v = edit || {kind: newKind, games: ['nlhe'], every: 'day', prizes: [5000], minCategory: 'full_house', ties: 'first',
     tiers: [{category: 'quads', amount: 1000, cap: 5}, {category: 'straight_flush', amount: 2500, cap: 5}, {category: 'royal_flush', amount: 10000, cap: 5}], capPerPlayer: 0, minPlayers: 4, minPot: 0, budget: 0, days: [5], from: 20 * 60, to: 23 * 60};
   const kind = v.kind;
   let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}"${cd}>`;
   if (!edit) {
     h += `<div class="pl-row"><label class="pl-label">Kind <select class="pl-text" name="kind" data-promokind="1">
-      <option value="high_hand"${kind === 'high_hand' ? ' selected' : ''}>High hand of the period</option>
-      <option value="bonus"${kind === 'bonus' ? ' selected' : ''}>Hand bonuses</option></select></label></div>`;
+      <option value="high_hand"${kind === 'high_hand' ? ' selected' : ''}>High Hand</option>
+      <option value="bonus"${kind === 'bonus' ? ' selected' : ''}>Hand Bonus</option></select></label></div>`;
   } else h += `<input type="hidden" name="kind" value="${esc(kind)}">`;
-  h += `<div class="pl-row"><label class="pl-label">Name <input class="pl-text" name="name" maxlength="40" value="${esc(v.name || '')}" placeholder="${kind === 'bonus' ? 'Hand bonuses' : 'High hand'}"></label></div>`;
-  h += `<fieldset class="cl-promo-games"><legend class="pl-label">Games${kind === 'high_hand' ? ' (each its own contest)' : ''}</legend>${GAMES.map(g => `<label><input type="checkbox" name="games" value="${g.id}"${v.games.includes(g.id) ? ' checked' : ''}> ${esc(g.label)}</label>`).join(' ')}</fieldset>`;
-  h += `<div class="pl-row"><label class="pl-label">Period <select class="pl-text" name="every" data-promoevery="1">${PERIODS.map(p => `<option value="${p}"${v.every === p ? ' selected' : ''}>${PERIOD_TEXT[p]}</option>`).join('')}</select></label></div>`;
-  h += `<div class="cl-promo-session"${v.every === 'session' ? '' : ' hidden'}><div class="pl-row">${DAY_TEXT.map((d, i) => `<label><input type="checkbox" name="days" value="${i}"${(v.days || []).includes(i) ? ' checked' : ''}> ${d}</label>`).join(' ')}</div>
+  h += `<div class="pl-row"><label class="pl-label">Name <input class="pl-text" name="name" maxlength="40" value="${esc(v.name || '')}" placeholder="${kind === 'bonus' ? 'Hand Bonus' : 'High Hand'}"></label></div>`;
+  h += `<fieldset class="cl-promo-games"><legend class="pl-label">Games</legend>${GAMES.map(g => `<label><input type="checkbox" name="games" value="${g.id}"${v.games.includes(g.id) ? ' checked' : ''}> ${esc(g.label)}</label>`).join(' ')}</fieldset>`;
+  h += `<div class="pl-row"><label class="pl-label">Period <select class="pl-text" name="every" data-promoevery="1">${PERIODS.map(p => `<option value="${p}"${v.every === p ? ' selected' : ''}>${PERIOD_TEXT[p]}</option>`).join('')}</select></label>
+    <label class="cl-promo-hours"${v.every === 'session' ? ' hidden' : ''}><input type="checkbox" name="hours" data-promohours="1"${v.hours ? ' checked' : ''}> Only at set times</label></div>`;
+  h += `<div class="cl-promo-session"${v.every === 'session' || v.hours ? '' : ' hidden'}><div class="pl-row">${DAY_TEXT.map((d, i) => `<label><input type="checkbox" name="days" value="${i}"${(v.days || []).includes(i) ? ' checked' : ''}> ${d}</label>`).join(' ')}</div>
     <div class="pl-row"><label class="pl-label">From <input class="pl-text cl-time" type="time" name="from" value="${hhmm(v.from ?? 1200)}"></label><label class="pl-label">To <input class="pl-text cl-time" type="time" name="to" value="${hhmm(v.to ?? 1380)}"></label></div></div>`;
   if (kind === 'high_hand') {
+    // One prize; a promotion from before keeps its 2nd and 3rd.
     const pz = v.prizes || [];
-    h += `<div class="pl-row"><label class="pl-label">1st <input class="pl-text cl-num" name="p1" inputmode="decimal" value="${pz[0] ? chipInput(pz[0]) : ''}"></label><label class="pl-label">2nd <input class="pl-text cl-num" name="p2" inputmode="decimal" value="${pz[1] ? chipInput(pz[1]) : ''}"></label><label class="pl-label">3rd <input class="pl-text cl-num" name="p3" inputmode="decimal" value="${pz[2] ? chipInput(pz[2]) : ''}"></label></div>`;
+    const place = (n, label, x) => `<label class="pl-label">${label} <input class="pl-text cl-num" name="${n}" inputmode="decimal" value="${x ? chipInput(x) : ''}"></label>`;
+    h += `<div class="pl-row">${place('p1', pz.length > 1 ? '1st' : 'Prize', pz[0])}${pz.length > 1 ? place('p2', '2nd', pz[1]) + place('p3', '3rd', pz[2]) : ''}</div>`;
     h += `<div class="pl-row"><label class="pl-label">At least <select class="pl-text" name="minCategory">${CAT_OPTIONS.map(c => `<option value="${c}"${v.minCategory === c ? ' selected' : ''}>${esc(tierName(c))}</option>`).join('')}</select></label>
-      <label class="pl-label">Ties <select class="pl-text" name="ties"><option value="split"${v.ties !== 'first' ? ' selected' : ''}>Split the prize</option><option value="first"${v.ties === 'first' ? ' selected' : ''}>First to make it wins</option></select></label></div>`;
+      <label class="pl-label">Ties <select class="pl-text" name="ties"><option value="first"${v.ties !== 'split' ? ' selected' : ''}>First to make it wins</option><option value="split"${v.ties === 'split' ? ' selected' : ''}>Split the prize</option></select></label></div>`;
+    h += `<div class="pl-row"><label><input type="checkbox" name="rollover"${v.rollover ? ' checked' : ''}> Rolls over when no one qualifies</label></div>`;
   } else {
     // Each hand its prize and how many a period (#277); a hand pays only its
     // highest bonus.
@@ -154,7 +158,7 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
     if (p.budget) h += `<p class="pl-meta">Paid this period: ${chips(p.paid)} of ${chips(p.budget)}</p>`;
     if (p.leaders) {
       for (const [g, list] of Object.entries(p.leaders)) {
-        h += `<div class="cl-promo-board"><span class="pl-label">${esc(gameLabel(g))}</span>${list.length ? `<ol>${list.map(l => `<li><b>${esc(l.name)}</b> ${esc(lower(l.hand))} ${cardsHtml(l.cards)}</li>`).join('')}</ol>` : '<span class="pl-meta">No qualifying hand yet.</span>'}</div>`;
+        h += `<div class="cl-promo-board"><span class="pl-label">${esc(gameLabel(g))}${p.prize?.[g] ? ` <span class="cl-chips">${chips(p.prize[g])}</span>` : ''}</span>${list.length ? `<ol>${list.map(l => `<li><b>${esc(l.name)}</b> ${esc(lower(l.hand))} ${cardsHtml(l.cards)}</li>`).join('')}</ol>` : '<span class="pl-meta">No qualifying hand yet.</span>'}</div>`;
       }
     }
     if (p.caps) h += `<ul class="cl-promo-caps">${p.caps.map(c => `<li>${esc(tierName(c.category))} ${chips(c.amount)}: ${c.used}${c.cap ? ` of ${c.cap}` : ''} paid</li>`).join('')}</ul>`;
@@ -199,16 +203,17 @@ export function readPromoForm(f) {
   const kind = v('kind');
   const out = {
     kind, name: v('name'), games: checked('games'), every: v('every'),
-    days: checked('days').map(Number), from: time('from'), to: time('to'),
+    hours: !!f.elements.hours?.checked, days: checked('days').map(Number), from: time('from'), to: time('to'),
     minPlayers: Number(v('minPlayers')) || 4, minPot: amount('minPot', 'The pot'), budget: amount('budget', 'The budget'),
     tourneys: !!f.elements.tourneys?.checked,
     // The manager's time zone now, as minutes to add to UTC.
     tz: -new Date().getTimezoneOffset(),
   };
   if (kind === 'high_hand') {
-    out.prizes = ['p1', 'p2', 'p3'].map((n, i) => amount(n, `The ${['1st', '2nd', '3rd'][i]} prize`)).filter((x, i) => i === 0 || x > 0);
+    out.prizes = ['p1', 'p2', 'p3'].map((n, i) => amount(n, i ? `The ${['1st', '2nd', '3rd'][i]} prize` : 'The prize')).filter((x, i) => i === 0 || x > 0);
     out.minCategory = v('minCategory');
     out.ties = v('ties');
+    out.rollover = !!f.elements.rollover?.checked;
   } else {
     out.tiers = [0, 1, 2, 3].map(i => ({category: v(`tcat${i}`), amount: amount(`tamt${i}`, 'A bonus'), cap: Number(v(`tcap${i}`)) || 0})).filter(t => t.category);
     out.capPerPlayer = Number(v('capPerPlayer')) || 0;

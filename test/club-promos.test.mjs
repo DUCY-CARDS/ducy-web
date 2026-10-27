@@ -74,7 +74,7 @@ const BONUS = {kind: 'bonus', name: 'Big hands', games: ['nlhe'], every: 'day', 
 test('settings: validated, rules in a sentence', () => {
   const club = clubWith();
   assert.throws(() => newPromo(club, {...HH, games: []}), /at least one game/);
-  assert.throws(() => newPromo(club, {...HH, prizes: []}), /first place/);
+  assert.throws(() => newPromo(club, {...HH, prizes: []}), /Give a prize/);
   assert.throws(() => newPromo(club, {...BONUS, tiers: []}), /at least one bonus/);
   assert.throws(() => newPromo(club, {...BONUS, tiers: [{category: 'quads', amount: 1}, {category: 'quads', amount: 2}]}), /one bonus/);
   assert.throws(() => newPromo(club, {...HH, every: 'session', days: [5], from: 1200, to: 1100}), /end after it starts/);
@@ -159,12 +159,66 @@ test('high hand of the period: each game’s best, paid at the end; ties split (
   assert.equal(club.promos.history.length, 2);
 
   // Ties split: two ace-high straights on the next day share the prize.
-  const tie = newPromo(club, {...HH, games: ['plo4'], prizes: [3001]}, T0);
+  const tie = newPromo(club, {...HH, games: ['plo4'], prizes: [3001], ties: 'split'}, T0);
   setPromoStatus(club, promo.id, 'paused');
   const day2 = Date.UTC(2026, 9, 15, 12);
   processHand(club, rec({hands: [['Ac', 'Kd', '2c', '3c'], ['As', 'Kh', '2d', '3d']], board: ['Qh', 'Jc', 'Td', '4s', '8h'], game: 'plo4', at: day2}), ids);
   const split = settlePeriods(club, Date.UTC(2026, 9, 16, 1));
   assert.deepEqual(split.filter(a => a.promo === tie.id).map(a => [a.member, a.amount]), [['ann', 1501], ['bob', 1500]]);
+});
+
+test('a high hand: one prize, the first to make it wins a tie, by default', () => {
+  const club = clubWith('ann', 'bob');
+  const promo = newPromo(club, {kind: 'high_hand', games: ['plo4'], every: 'day', prizes: [3000], minCategory: 'trips', tz: 0}, T0);
+  assert.deepEqual([promo.name, promo.ties, promo.rollover], ['High Hand', 'first', false]);
+  assert.equal(newPromo(club, {kind: 'bonus', games: ['nlhe'], every: 'day', tiers: [{category: 'quads', amount: 1000}], tz: 0}, T0).name, 'Hand Bonus');
+  processHand(club, rec({hands: [['Ac', 'Kd', '2c', '3c'], ['As', 'Kh', '2d', '3d']], board: ['Qh', 'Jc', 'Td', '4s', '8h'], game: 'plo4', at: T0}), players(['ann', 'bob']));
+  const paid = settlePeriods(club, T0 + D);
+  assert.deepEqual(paid.map(a => [a.member, a.amount]), [['ann', 3000]]);
+});
+
+test('a high hand that rolls over: a period played without a qualifying hand adds its prize to the next', () => {
+  const club = clubWith('ann', 'bob');
+  const promo = newPromo(club, {...HH, games: ['nlhe'], prizes: [5000], minCategory: 'quads', rollover: true}, T0);
+  assert.match(promoRules(promo), /No qualifying hand: the prize rolls over\.$/);
+  const ids = players(['ann', 'bob']);
+  const pair = at => rec({hands: [['Ac', 'Kd'], ['2c', '3d']], board: ['Ah', '7s', '8d', '4c', '9h'], at});
+  // Day 1: hands played, none qualifies.
+  processHand(club, pair(T0), ids);
+  assert.equal(nextSettle(club), T0 + 12 * H, 'the day still has to be settled');
+  assert.deepEqual(settlePeriods(club, T0 + D), []);
+  assert.equal(promosBody(club, T0 + D).promos[0].prize.nlhe, 10000);
+  assert.equal(club.promos.history.at(-1).rolled, 5000);
+  // Day 2: no one plays at all: nothing rolls over.
+  assert.deepEqual(settlePeriods(club, T0 + 2 * D), []);
+  assert.equal(promosBody(club, T0 + 2 * D).promos[0].prize.nlhe, 10000);
+  // Day 3: quads win the prize and what rolled over; the next day is back to 50.
+  processHand(club, pair(T0 + 2 * D), ids);
+  processHand(club, rec({hands: [['Kc', 'Kd'], ['2c', '3d']], board: ['Kh', 'Ks', '8d', '7c', '9h'], at: T0 + 2 * D + H}), ids);
+  const paid = settlePeriods(club, T0 + 3 * D);
+  assert.deepEqual(paid.map(a => [a.member, a.amount]), [['ann', 10000]]);
+  assert.equal(promosBody(club, T0 + 3 * D).promos[0].prize.nlhe, 5000);
+  assert.ok(totals(club).conserved);
+});
+
+test('a promotion on only at set times: hands outside them don’t count, past midnight too', () => {
+  const club = clubWith('ann', 'bob');
+  // Fridays and Saturdays, 20:00 to 02:00 (UTC); 2026-10-16 is a Friday.
+  const promo = newPromo(club, {...HH, games: ['nlhe'], every: 'hour', hours: true, days: [5, 6], from: 20 * 60, to: 2 * 60}, T0);
+  assert.match(promoRules(promo), /Fri, Sat 20:00–02:00\./);
+  const fri = Date.UTC(2026, 9, 16);
+  assert.equal(periodOf(promo, fri + 19 * H), null, 'Friday 19:00');
+  assert.ok(periodOf(promo, fri + 21 * H), 'Friday 21:00');
+  assert.ok(periodOf(promo, fri + D + H), 'Saturday 01:00, Friday night’s');
+  assert.equal(periodOf(promo, fri + D + 3 * H), null, 'Saturday 03:00');
+  assert.ok(periodOf(promo, fri + 2 * D + H), 'Sunday 01:00, Saturday night’s');
+  assert.equal(periodOf(promo, fri - D + H), null, 'Friday 01:00: Thursday night isn’t on');
+  assert.equal(periodOf(promo, T0), null, 'Wednesday');
+  const quads = at => rec({hands: [['Kc', 'Kd'], ['2c', '3d']], board: ['Kh', 'Ks', '8d', '7c', '9h'], at});
+  assert.equal(processHand(club, quads(fri + 19 * H), players(['ann', 'bob'])).leads.length, 0);
+  assert.equal(processHand(club, quads(fri + 21 * H), players(['ann', 'bob'])).leads.length, 1);
+  assert.throws(() => newPromo(club, {...HH, every: 'day', hours: true, days: [], from: 0, to: 60}, T0), /days/);
+  assert.throws(() => newPromo(club, {...HH, every: 'day', hours: true, days: [1], from: 60, to: 60}, T0), /hours/);
 });
 
 test('hand bonuses: highest tier once per hand, capped per period and player (#277)', () => {
