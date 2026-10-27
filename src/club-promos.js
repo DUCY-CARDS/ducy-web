@@ -9,7 +9,7 @@
 //   hour, a day, a week, or a session window) wins its prizes when the
 //   period ends (#276).
 // - 'bonus': a fixed prize for each qualifying hand, by tier (quads 10, a
-//   straight flush 25…), capped per period (#277).
+//   straight flush 25…), each tier capped per period on its own (#277).
 //
 // Qualifying hands (#269): only hands shown down (a record never holds a
 // mucked hand's cards), made with two of the player's own cards (both, in
@@ -199,8 +199,10 @@ export function promoSettings(s = {}) {
     if (!tiers.length) throw new Error('Add at least one bonus: a hand and its prize.');
     if (!tiers.every(t => chips(t.amount) && t.amount > 0)) throw new Error('Each bonus is a number of chips above 0.');
     if (new Set(tiers.map(t => t.category)).size !== tiers.length) throw new Error('Each hand can only have one bonus.');
-    out.tiers = tiers.map(t => ({category: t.category, amount: t.amount})).sort((a, b) => CATEGORIES.indexOf(b.category) - CATEGORIES.indexOf(a.category));
-    out.capPerTier = whole(s.capPerTier ?? 0, 0, 1000) ? s.capPerTier ?? 0 : 0;
+    // Each tier's cap per period (0: none); `capPerTier`, one for them all,
+    // fills in for a tier without its own.
+    const cap = c => (whole(c ?? 0, 0, 1000) ? c ?? 0 : 0);
+    out.tiers = tiers.map(t => ({category: t.category, amount: t.amount, cap: cap(t.cap ?? s.capPerTier)})).sort((a, b) => CATEGORIES.indexOf(b.category) - CATEGORIES.indexOf(a.category));
     out.capPerPlayer = whole(s.capPerPlayer ?? 0, 0, 1000) ? s.capPerPlayer ?? 0 : 0;
   }
   out.minPlayers = whole(s.minPlayers ?? 4, 2, 9) ? s.minPlayers ?? 4 : 4;
@@ -281,6 +283,9 @@ export function periodOf(promo, t) {
 // ---- after each hand ----
 
 const tierFor = (promo, cat) => promo.tiers.find(t => CATEGORIES.indexOf(t.category) <= cat) || null;
+// A tier's cap per period, 0 for none; a promotion from before tiers had
+// their own keeps its one for all.
+export const tierCap = (promo, t) => t.cap ?? promo.capPerTier ?? 0;
 
 // Why a hand can't count for `promo` ('' when it can): its conditions.
 function ineligible(promo, rec, game, players) {
@@ -357,7 +362,7 @@ export function processHand(club, rec, players, now = rec?.at ?? Date.now()) {
         record(p, rec, h, game, promo, why);
         if (why) continue;
         const tk = `${promo.id}|${period.key}|tier:${tier.category}`, mk = `${promo.id}|${period.key}|p:${h.member}`;
-        if (promo.capPerTier && (p.counts[tk] || 0) >= promo.capPerTier) continue;
+        if (tierCap(promo, tier) && (p.counts[tk] || 0) >= tierCap(promo, tier)) continue;
         if (promo.capPerPlayer && (p.counts[mk] || 0) >= promo.capPerPlayer) continue;
         const a = award(club, promo, period, {member: h.member, amount: tier.amount, rec, hand: h, kind: 'bonus', game}, now);
         if (!a) { out.budget.push(promo.name); continue; }
@@ -539,10 +544,9 @@ function rulesCore(promo) {
     const places = prizes.length === 1 ? `wins ${prizes[0]}` : `pays ${prizes.join(' / ')} for 1st${prizes.length > 2 ? ', 2nd and 3rd' : ' and 2nd'}`;
     return `Best ${games} hand ${when} ${places} (${CATEGORY_NAMES[promo.minCategory].replace(/^An? /, '').toLowerCase()} or better).`;
   }
-  const tiers = promo.tiers.map(t => `${CATEGORY_NAMES[t.category].replace(/^An? /, '').toLowerCase()} ${chipText(t.amount)}`).join(', ');
   const per = {hour: 'an hour', day: 'a day', week: 'a week', session: 'a session'}[promo.every];
-  const cap = promo.capPerTier ? `, up to ${promo.capPerTier} of each ${per}` : '';
-  return `${games}: ${tiers}${cap}${promo.capPerPlayer ? `, ${promo.capPerPlayer} per player` : ''}.`;
+  const tiers = promo.tiers.map(t => `${CATEGORY_NAMES[t.category].replace(/^An? /, '').toLowerCase()} ${chipText(t.amount)}${tierCap(promo, t) ? ` (up to ${tierCap(promo, t)} ${per})` : ''}`).join(', ');
+  return `${games}: ${tiers}${promo.capPerPlayer ? `, ${promo.capPerPlayer} per player` : ''}.`;
 }
 
 // Everything members are told about the promotions: running ones with
@@ -557,7 +561,7 @@ export function promosBody(club, now = Date.now()) {
       view.leaders = Object.fromEntries(promo.games.map(g => [g, (period && p.boards[`${promo.id}|${period.key}|${g}`] || []).slice(0, 3)
         .map(b => ({name: b.name, hand: b.hand, cards: b.cards, at: b.at}))]));
     } else {
-      view.caps = promo.tiers.map(t => ({category: t.category, amount: t.amount, used: period ? p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0 : 0, cap: promo.capPerTier}));
+      view.caps = promo.tiers.map(t => ({category: t.category, amount: t.amount, used: period ? p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0 : 0, cap: tierCap(promo, t)}));
     }
     return view;
   });
@@ -574,7 +578,7 @@ export function promosAdmin(club, now = Date.now()) {
       const period = periodOf(promo, now);
       return {...promo, rules: promoRules(promo), period, paid: period ? p.paid[`${promo.id}|${period.key}`] || 0 : 0,
         leaders: promo.kind === 'high_hand' && period ? Object.fromEntries(promo.games.map(g => [g, (p.boards[`${promo.id}|${period.key}|${g}`] || []).slice(0, 3)])) : null,
-        caps: promo.kind === 'bonus' && period ? promo.tiers.map(t => ({...t, used: p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0})) : null};
+        caps: promo.kind === 'bonus' && period ? promo.tiers.map(t => ({...t, cap: tierCap(promo, t), used: p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0})) : null};
     }),
     awards: p.awards.slice(-50).reverse(),
     hands: p.hands.slice(-30).reverse(),
