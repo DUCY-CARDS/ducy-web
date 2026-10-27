@@ -1,11 +1,13 @@
 // Runs a club's tournaments (#81), as club-host.js runs its cash tables:
 // ducy's ClubTournament (through club-engine.js) deals every table, moves
 // players to keep tables balanced and breaks them down to a final table,
-// and blinds off anyone absent. This file starts each tournament at its
-// time (or cancels it, short of players), runs the level clock with its
-// breaks, paces the game, sends each player their own view, records who's
-// knocked out in what place, takes late registrations and re-entries (#80),
-// and pays the prizes into club balances when there's a winner (#79).
+// and blinds off anyone absent. Its runner (tourney-runner.js, #458) has
+// the tournament's time: the level clock with its breaks and the pacing.
+// This file is the club's side: it starts each tournament at its time (or
+// cancels it, short of players), sends each player their own view, records
+// who's knocked out in what place, takes late registrations and re-entries
+// (#80), pays the prizes into club balances when there's a winner (#79),
+// and wakes the runner when it asks.
 //
 // Options, as for createTableHost:
 //   club()               the current club object
@@ -37,9 +39,8 @@ import { atStart, cancelTourney, finishTourney, isIn, knockedOut, lateEntry, pri
 import { browserTimers, workerCall } from './club-host.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { logAction } from './club-roles.js';
+import { BOT_PACE_MS, NEXT_HAND_MS } from './tourney-runner.js';
 
-const BOT_PACE_MS = 700;
-const NEXT_HAND_MS = 2500;
 const TURN_MS = 30_000;
 export const tourneyTable = tid => `tourney:${tid}`;
 
@@ -48,11 +49,12 @@ export function createTourneyHost({
   call = workerCall, timers = browserTimers, store = {get: getTable, put: putTable, drop: dropTable}, turnMs = TURN_MS, nextHandMs = NEXT_HAND_MS, botPaceMs = BOT_PACE_MS, levelMs = null,
   observe = () => {}, onHand = null, onPlay = () => {},
 }) {
-  const running = new Map(); // tid → {chain, step, onBreak, level, timers, live}
+  const running = new Map(); // tid → {chain, step, onBreak, level, stepEndsAt, wakeT, live}
   const scheduled = new Map(); // tid → timer handle
 
-  const clear = (r, k) => { timers.clear(r.timers[k]); r.timers[k] = null; };
   const names = id => club().members[id]?.name || id;
+  // The runner's options for tournament `t`, and where its clock was.
+  const runnerConfig = (t, at = {}) => ({structure: t.structure, levelMs, nextHandMs, botPaceMs, hands: !!onHand, ...at});
   const changed = () => { save(); tourneysChanged(); };
 
   // Starts, or schedules the start of, every tournament waiting for it, and
@@ -75,22 +77,22 @@ export function createTourneyHost({
     try { rec = await store?.get(club().code, tourneyTable(tid)); } catch (e) { console.warn(`tournament ${tid}: not loaded:`, e); }
     if (!rec?.json) return abandon(tid, 'the club restarted, and its tables weren’t saved');
     if (rec.entries !== t.entries.length || rec.out !== outCount(t)) return abandon(tid, 'the club restarted, and its saved tables were out of step with it');
-    const r = {chain: Promise.resolve(), step: rec.step ?? 0, onBreak: false, level: rec.level ?? 0, timers: {}, live: null, savedSeq: rec.seq};
+    const r = {chain: Promise.resolve(), step: rec.step ?? 0, onBreak: false, level: rec.level ?? 0, wakeT: null, live: null, savedSeq: rec.seq};
     running.set(tid, r);
     try {
-      await call('tourneyRestore', tid, rec.json);
+      await call('tourneyRestore', tid, rec.json, runnerConfig(t, {step: rec.step ?? 0, stepLeftMs: rec.stepLeftMs ?? null, level: rec.level ?? 0}));
     } catch (e) {
       console.warn(`tournament ${tid}: not resumed:`, e);
       running.delete(tid);
       return abandon(tid, 'the club restarted, and its saved tables couldn’t be loaded');
     }
     // The level clock goes on with the time it had left.
-    startStep(tid, r.step, rec.stepLeftMs);
+    run(tid, {type: 'begin'});
     // Members still connected are back at once; anyone who isn't is
     // blinded off until they're back.
     for (const id of new Set(t.entries.filter(e => e.place == null).map(e => e.member))) {
-      if (online(id)) run(tid, 'handle', id, {type: 'join', name: names(id)});
-      else run(tid, 'disconnected', id);
+      if (online(id)) run(tid, {type: 'cmd', id, cmd: {type: 'join', name: names(id)}});
+      else run(tid, {type: 'disconnected', id});
     }
   }
 
@@ -128,17 +130,15 @@ export function createTourneyHost({
     if (what === null) { if (t.status === 'scheduled') schedule(t); return; }
     if (what === 'cancel') return abandon(tid, `fewer than ${t.minPlayers} registered`, false);
     startTourney(club(), tid);
-    const r = {chain: Promise.resolve(), step: 0, onBreak: false, level: 0, timers: {}, live: null};
+    const r = {chain: Promise.resolve(), step: 0, onBreak: false, level: 0, wakeT: null, live: null};
     running.set(tid, r);
     const levels = t.structure.filter(s => !s.break).map(({sb, bb, ante}) => ({sb, bb, ante}));
     const players = t.entries.filter(e => e.place == null).map(e => ({id: e.member, name: names(e.member)}));
     const config = {game: t.game, tableSize: t.tableSize, startingStack: t.stack, levels, paid: prizes(t, club()).length, seed: crypto.getRandomValues(new Uint32Array(1))[0]};
     try {
-      const res = await call('tourneyCreate', tid, config, players, turnMs);
+      await call('tourneyCreate', tid, config, players, turnMs, runnerConfig(t));
       changed();
-      startStep(tid, 0);
-      take(tid, res);
-      await persist(tid, res);
+      await run(tid, {type: 'begin'});
     } catch (e) {
       running.delete(tid);
       console.warn(`tournament ${tid}:`, e);
@@ -162,7 +162,8 @@ export function createTourneyHost({
   function stop(tid) {
     const r = running.get(tid);
     if (r) {
-      for (const k of Object.keys(r.timers)) clear(r, k);
+      timers.clear(r.wakeT);
+      r.wakeT = null;
       running.delete(tid);
       call('tourneyDrop', tid).catch(() => {});
     }
@@ -171,53 +172,51 @@ export function createTourneyHost({
     scheduled.delete(tid);
   }
 
-  // The level clock: step `i` of the structure (a level, or a break) starts
-  // now, or, resuming, goes on with `leftMs` to go. The last level stays
-  // once it's reached.
-  function startStep(tid, i, leftMs = null) {
-    const r = running.get(tid);
-    const t = tourneyById(club(), tid);
-    if (!r || !t) return;
-    const steps = t.structure;
-    r.step = Math.min(i, steps.length - 1);
-    const s = steps[r.step];
-    r.onBreak = !!s.break;
-    const level = steps.slice(0, r.step + 1).filter(x => !x.break).length - 1;
-    const ms = leftMs ?? levelMs ?? s.minutes * 60_000;
-    r.stepEndsAt = i < steps.length ? Date.now() + ms : null;
-    clear(r, 'level');
-    if (i < steps.length - 1 || s.break) r.timers.level = timers.set(() => startStep(tid, r.step + 1), ms);
-    if (!r.onBreak && level !== r.level) run(tid, 'setLevel', Math.max(0, level));
-    else run(tid, 'state');
-  }
-
-  // Engine calls for a tournament, one at a time, each result taken in.
-  function run(tid, method, ...args) {
+  // Sends tournament tid's runner an event, one at a time, and handles its step.
+  function run(tid, ev) {
     const r = running.get(tid);
     if (!r) return Promise.resolve(null);
     const p = r.chain.then(async () => {
       if (!running.has(tid)) return null;
-      const res = await call('tourneyCall', tid, method, ...args);
-      take(tid, res);
-      await persist(tid, res);
-      return res;
+      const step = await call('tourneyEvent', tid, ev);
+      await apply(tid, r, step);
+      return step;
     });
-    r.chain = p.catch(e => console.warn(`tournament ${tid} ${method}:`, e));
+    r.chain = p.catch(e => console.warn(`tournament ${tid} ${ev.type}:`, e));
     return p;
   }
 
-  // A result: who's out, the winner and prizes, each player's view, and
-  // what happens next.
+  // What the runner did: engine results and finished hands; then its next
+  // wake-up.
+  async function apply(tid, r, step) {
+    Object.assign(r, {step: step.step, stepEndsAt: step.stepEndsAt, onBreak: step.onBreak, level: step.level});
+    for (const a of step.actions) {
+      if (!running.has(tid)) return;
+      if (a.type === 'engine') {
+        if (take(tid, a.res)) return;
+        await persist(tid, a.res);
+      } else if (a.type === 'hand' && onHand) {
+        try { onHand(tid, a.table, a.view); } catch (e) { console.warn('tournament hand:', e); }
+      }
+    }
+    timers.clear(r.wakeT);
+    r.wakeT = null;
+    if (step.wake != null && running.has(tid)) {
+      r.wakeT = timers.set(() => { r.wakeT = null; run(tid, {type: 'wake'}); }, Math.max(0, step.wake - Date.now()));
+    }
+  }
+
+  // A result: who's out, the winner and prizes, each player's view. Returns
+  // whether the tournament is over.
   function take(tid, res) {
     const r = running.get(tid);
     const t = tourneyById(club(), tid);
-    if (!r || !t || !res) return;
+    if (!r || !t || !res) return false;
     observe(tid, res);
     const ev = res.events || {};
     let lobby = false;
     for (const f of ev.busted || []) { knockedOut(club(), tid, f.id, f.place); lobby = true; }
-    if (ev.level != null) { r.level = ev.level; lobby = true; }
-    r.level = res.level ?? r.level;
+    if (ev.level != null) lobby = true;
     r.live = {
       level: r.level, onBreak: r.onBreak, stepEndsAt: r.stepEndsAt, playersLeft: res.playersLeft, handForHand: res.handForHand,
       tables: (res.tables || []).map(x => ({id: x.id, players: x.players})),
@@ -226,41 +225,9 @@ export function createTourneyHost({
     };
     for (const m of res.out || []) sendTable(m.to, {table: tourneyTable(tid), update: m.data});
     if ((res.tables || []).some(x => x.inHand)) onPlay();
-    if (onHand) for (const x of res.tables || []) if (!x.inHand) handDone(tid, x.id);
-    if (ev.winner) { finish(tid, ev.winner.id); return; }
+    if (ev.winner) { finish(tid, ev.winner.id); return true; }
     if (lobby) changed(); else liveChanged();
-    pace(tid, res);
-  }
-
-  // Table `table` of tournament `tid` is between hands: its last hand, if
-  // not seen yet, goes to onHand. (The hand that decides the winner may be
-  // missed, if the tournament's tables are gone by the time it's looked at.)
-  async function handDone(tid, table) {
-    const r = running.get(tid);
-    if (!r) return;
-    let view;
-    try { view = await call('tourneyTable', tid, table); } catch (e) { console.warn(e); return; }
-    const n = Number(view?.hand_number);
-    if (!view?.complete || !n) return;
-    r.handsSeen ||= {};
-    if (r.handsSeen[table] === n) return;
-    r.handsSeen[table] = n;
-    try { onHand(tid, table, view); } catch (e) { console.warn('tournament hand:', e); }
-  }
-
-  // What happens next: an absent player's move, the next hands (not during
-  // a break), and the turn clocks.
-  function pace(tid, res) {
-    const r = running.get(tid);
-    if (!r) return;
-    clear(r, 'advance');
-    clear(r, 'deal');
-    clear(r, 'tick');
-    if (res.over) return;
-    if (res.autoToAct) r.timers.advance = timers.set(() => run(tid, 'advance'), botPaceMs);
-    if (res.canDeal && !r.onBreak) r.timers.deal = timers.set(() => run(tid, 'newHands'), nextHandMs);
-    const left = (res.tables || []).map(x => x.turnMsLeft).filter(x => x != null).map(Number);
-    if (left.length) r.timers.tick = timers.set(() => run(tid, 'tick'), Math.min(...left) + 50);
+    return false;
   }
 
   // One player has all the chips: prizes into club balances.
@@ -286,7 +253,7 @@ export function createTourneyHost({
       sendTable(id, {table: tourneyTable(tid), update: {type: 'rejected', reason: 'You aren’t in this tournament.', fatal: true}});
       return;
     }
-    await run(tid, 'handle', id, cmd);
+    await run(tid, {type: 'cmd', id, cmd});
   }
 
   // A late registration or a re-entry (#80): the buy-in, then a starting
@@ -297,14 +264,14 @@ export function createTourneyHost({
     lateEntry(club(), tid, id, r.level);
     chipsChanged(id);
     changed();
-    await run(tid, 'addEntry', id, names(id));
+    await run(tid, {type: 'addEntry', id, name: names(id)});
   }
 
   // A member's connection dropped: blinded off wherever they're playing.
   function disconnected(id) {
     for (const tid of running.keys()) {
       const t = tourneyById(club(), tid);
-      if (t && isIn(t, id)) run(tid, 'disconnected', id);
+      if (t && isIn(t, id)) run(tid, {type: 'disconnected', id});
     }
   }
 
