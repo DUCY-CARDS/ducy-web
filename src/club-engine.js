@@ -28,10 +28,24 @@ const TOURNEY_METHODS = new Set(['handle', 'disconnected', 'advance', 'tick', 'n
 
 const fair = {secret: fairSecret, commitment: fairCommitment, seed: fairSeed};
 
+// ducy's own runner (ducy-play's runner, #452), the same events in and
+// steps out as table-runner.js; an older ducy-wasm doesn't have it.
+const rustRunner = ducy.ClubTable
+  ? {
+    create: (id, c) => ducy.ClubTable.create(id, c),
+    restore: (id, json, c) => ducy.ClubTable.restore(id, json, c, Date.now()) ?? null,
+    wrap: t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), free: () => t.free()}),
+  }
+  : null;
+
+// `MultiTable`: ducy's (the real engine) or a stand-in a test scripts. With
+// ducy's, tables run on ducy's runner when it has one; table-runner.js runs
+// them otherwise.
 export function clubEngine(MultiTable) {
   const runners = new Map();
   const clocks = new Map();
   const tourneys = new Map();
+  const rust = MultiTable === ducy.MultiTable ? rustRunner : null;
 
   function now(key) {
     const c = clocks.get(key);
@@ -41,12 +55,17 @@ export function clubEngine(MultiTable) {
   // Runs table `t` for table id with `config`'s runner options.
   function runWith(id, t, config) {
     t.setSitOutLimit(config.sitOutMs ?? 10 * 60_000);
+    keep(id, tableRunner(t, {...config, id, fair}));
+  }
+
+  function keep(id, r) {
     runners.get(id)?.free();
-    runners.set(id, tableRunner(t, {...config, id, fair}));
+    runners.set(id, r);
   }
 
   const ops = {
     runnerCreate: (id, c) => {
+      if (rust) { keep(id, rust.wrap(rust.create(id, c))); return true; }
       const t = MultiTable.club(c.seats, BigInt(c.minBuyIn), BigInt(c.maxBuyIn), BigInt(c.sb), BigInt(c.bb), BigInt(c.seed), c.game, BigInt(c.turnMs));
       runWith(id, t, c);
       return true;
@@ -55,6 +74,12 @@ export function clubEngine(MultiTable) {
     // can't be loaded). One saved holding a chip request (before #427)
     // isn't resumed: the ledger may have paid it.
     runnerRestore: (id, json, c) => {
+      if (rust) {
+        const t = rust.restore(id, json, c);
+        if (!t) return false;
+        keep(id, rust.wrap(t));
+        return true;
+      }
       if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
       // Times in the snapshot are time left, so the restored table starts a fresh clock.
       const t = MultiTable.restore(json, Date.now());
