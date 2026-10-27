@@ -43,7 +43,7 @@ test('Members sort by name, balance either way, and last active (#426)', () => {
   assert.equal(active.ann, NOW - 60 * DAY);
   const list = memberFilter(c, 'all', NOW);
   const names = sort => sortMembers(list, sort, active).map(m => m.name);
-  assert.deepEqual(SORTS, ['name', 'balance', 'balance-low', 'active']);
+  assert.deepEqual(SORTS, ['name', 'balance', 'balance-low', 'active', 'agent']);
   assert.deepEqual(names('name'), ['Ann', 'Ben', 'Cy', 'Dee']);
   // Ties go by name.
   assert.equal(c.members.dee.balance, 6_000);
@@ -71,6 +71,19 @@ test('Members by agent: the agents, an agent’s players, and those under none (
   c.members.ann.agent = null;
   assert.deepEqual(names('agents'), []);
   assert.deepEqual(names('noagent'), ['Ann', 'Ben', 'Cy', 'Dee']);
+});
+
+test('Members sort by agent: each agent then their players, by the agent’s name; those under none last (#445)', () => {
+  const c = club();
+  c.members.dee.agent = 'yes';
+  c.members.ann.agentOf = 'dee';
+  c.members.cy.agent = 'yes';
+  // Under someone who isn't an agent (any more): under none.
+  c.members.ben.agentOf = 'ann';
+  const order = () => sortMembers(memberFilter(c, 'all', NOW), 'agent', {}, c.members).map(m => m.name);
+  assert.deepEqual(order(), ['Cy', 'Dee', 'Ann', 'Ben']);
+  c.members.ben.agentOf = 'cy';
+  assert.deepEqual(order(), ['Cy', 'Ben', 'Dee', 'Ann']);
 });
 
 test('Members come 50 a page, with where the page is in the list (#426)', () => {

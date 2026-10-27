@@ -5,39 +5,37 @@
 // club balance is their share, and the agent's own balance is what they
 // haven't handed out. The agent gives chips to their players and takes them
 // back (transfers inside the account). Credit: the agent's own balance may
-// go below zero, down to −credit limit, so they can back players beyond the
-// chips the host gave them. Credit used is how far the whole account (own +
+// go below zero, down to −their credit limit (the member's one credit,
+// #404, #445), so they can back players beyond the chips the host gave
+// them. Credit used is how far the whole account (own +
 // players' shares) is below zero; players' winnings raise it again. The host
 // records settlements (paid outside the app; chips are play money), which
 // raise the agent's balance.
 //
-// Member fields: agent: 'offered' | 'yes' (is an agent), creditLimit,
-// agentInvite (their own invite token); a player under an agent: agentOf.
+// Member fields: agent: 'offered' | 'yes' (is an agent), agentInvite (their
+// own invite token); a player under an agent: agentOf.
 // Agents recruit with their own invite link and approve their own players;
 // the host can still decline or remove anyone and assign or reassign members.
 
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
-import { answerRequest, checkGrant, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
+import { answerRequest, checkGrant, creditOf, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
 import { logAction } from './club-roles.js';
-
-const whole = n => Number.isSafeInteger(n) && n >= 0;
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
 export const playersOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'member');
 export const recruitsOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'pending');
 
-const agentBodyRole = (club, id) => ({type: 'agent_role', club: club.code, agent: club.members[id]?.agent || null, creditLimit: club.members[id]?.creditLimit || 0});
+const agentBodyRole = (club, id) => ({type: 'agent_role', club: club.code, agent: club.members[id]?.agent || null});
 
-// The host offers member `id` the agent role with a credit limit.
-export function offerAgent(club, id, creditLimit) {
+// The host offers member `id` the agent role. Their credit limit is the one
+// they have as a member (#445).
+export function offerAgent(club, id) {
   const m = club.members[id];
   if (!m || m.status !== 'member') throw new Error('Only members can be agents.');
   if (m.agent === 'yes') throw new Error(`${m.name} is already an agent.`);
   if (m.agentOf) throw new Error(`${m.name} plays under an agent; unassign them first.`);
-  if (!whole(creditLimit)) throw new Error('The credit limit is a whole number of chips (0 for none).');
   m.agent = 'offered';
-  m.creditLimit = creditLimit;
   return {to: id, body: agentBodyRole(club, id)};
 }
 
@@ -47,10 +45,9 @@ export function answerAgent(club, id, accept, now = Date.now()) {
   if (accept) {
     m.agent = 'yes';
     m.agentInvite = newInvite();
-    logAction(club, id, `${m.name} became an agent (credit limit ${chipText(m.creditLimit)})`, now);
+    logAction(club, id, `${m.name} became an agent (credit limit ${chipText(creditOf(m))})`, now);
   } else {
     delete m.agent;
-    delete m.creditLimit;
   }
   return {to: id, body: agentBodyRole(club, id)};
 }
@@ -65,16 +62,7 @@ export function revokeAgent(club, id, now = Date.now()) {
   const was = m.agent;
   delete m.agent;
   delete m.agentInvite;
-  delete m.creditLimit;
   if (was === 'yes') logAction(club, club.hostId, `${m.name} is no longer an agent`, now);
-  return {to: id, body: agentBodyRole(club, id)};
-}
-
-export function setCreditLimit(club, id, limit, now = Date.now()) {
-  if (!isAgent(club, id)) throw new Error('Not an agent.');
-  if (!whole(limit)) throw new Error('The credit limit is a whole number of chips (0 for none).');
-  club.members[id].creditLimit = limit;
-  logAction(club, club.hostId, `${club.members[id].name}'s credit limit is now ${chipText(limit)}`, now);
   return {to: id, body: agentBodyRole(club, id)};
 }
 
@@ -96,7 +84,7 @@ export function accountOf(club, id) {
   const players = playersOf(club, id);
   const shares = players.reduce((s, p) => s + p.balance, 0);
   const total = a.balance + shares;
-  return {own: a.balance, shares, total, limit: a.creditLimit || 0, creditUsed: Math.max(0, -total), room: (a.creditLimit || 0) + a.balance, players};
+  return {own: a.balance, shares, total, limit: creditOf(a), creditUsed: Math.max(0, -total), room: creditOf(a) + a.balance, players};
 }
 
 // The host records a settlement from the agent (paid outside the app).
@@ -173,7 +161,7 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       if (cmd.op === 'grant') checkGrant(club, cmd.id);
       if (!Number.isSafeInteger(amt) || amt <= 0) throw new Error('Enter a whole number of chips above 0.');
       // Inside the account: the agent's own balance may go negative, down to −limit.
-      const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -(a.creditLimit || 0)});
+      const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -creditOf(a)});
       if (cmd.op === 'grant') answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
       logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now, amt);
       return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};

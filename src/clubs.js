@@ -681,9 +681,8 @@ const FORM_TEXT = {
   grant: m => ({label: `Give ${m.name} (asked for ${chips(m.request?.amount)})`, submit: 'Give', value: m.request?.amount ?? '', max: null, note: false}),
   // Declining says why, if you like; the member sees it (#188).
   deny: m => ({label: `Decline ${m.name}’s request for ${chips(m.request?.amount)}`, submit: 'Decline', noAmount: true, note: true, notePlaceholder: 'Why (optional; they see it)'}),
-  // Agents (#74, #76).
-  agent: m => ({label: `Make ${m.name} an agent with a credit limit of`, submit: 'Offer', value: 0, max: null, note: false, min: 0}),
-  limit: m => ({label: `${m.name}'s credit limit`, submit: 'Save', value: m.creditLimit || 0, max: null, note: false, min: 0}),
+  // Agents (#74, #76): their credit limit is their member one (#445).
+  agent: () => ({submit: 'Offer', noAmount: true, note: false}),
   settle: m => ({label: `Record a settlement from ${m.name} (credit used ${chips(accountOf(club, m.id).creditUsed)})`, submit: 'Record', value: accountOf(club, m.id).creditUsed || '', max: null, note: true}),
 };
 
@@ -696,7 +695,7 @@ function chipFormHtml(m) {
   let h = `<form class="cl-chipform" data-chipform="${chipForm.kind}" data-id="${esc(m.id)}">`;
   // Making an agent: what that means, before the limit (#190).
   if (chipForm.kind === 'agent') h += roleHtml('agent', null, m.name);
-  h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
+  if (t.label) h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
   if (!t.noAmount) {
     h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
     // The usual amounts, from the open tables' buy-ins (#188).
@@ -863,7 +862,7 @@ function onSubmitIn(e) {
   const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
   chipForm = null;
-  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', limit: 'credit_limit', settle: 'settle', debt: 'settle_debt'}[kind];
+  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', settle: 'settle', debt: 'settle_debt'}[kind];
   if (op) hostAct(op, {id, amount, note: why});
 }
 
@@ -2148,7 +2147,7 @@ function askRowHtml(m) {
 // (#426): the agents, an agent's players (By agent), and those under none.
 let memberQuery = '';
 const FILTER_TEXT = {all: 'All', new: 'Joined, 7 days', inactive: 'Inactive, 30+ days', owes: 'Owes', agents: 'Agents', noagent: 'No agent'};
-const SORT_TEXT = {name: 'Name', balance: 'Balance, high to low', 'balance-low': 'Balance, low to high', active: 'Last active'};
+const SORT_TEXT = {name: 'Name', balance: 'Balance, high to low', 'balance-low': 'Balance, low to high', active: 'Last active', agent: 'Agent'};
 const playersText = n => `${n} ${n === 1 ? 'player' : 'players'}`;
 // A new search: the list's first page, in place of this one.
 function membersFirstPage() {
@@ -2160,7 +2159,7 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
   const q = memberQuery.trim().toLowerCase();
   // Last heard from: an always-on club's room keeps it (#401).
   const active = lastActive(club, (isRemote() && own().view?.seen) || {});
-  const list = sortMembers(memberFilter(club, show, now, undefined, agent).filter(m => !q || m.name.toLowerCase().includes(q)), sort, active);
+  const list = sortMembers(memberFilter(club, show, now, undefined, agent).filter(m => !q || m.name.toLowerCase().includes(q)), sort, active, club.members);
   const pg = pageOf(list, n);
   const agents = memberFilter(club, 'agents', now).sort((a, b) => a.name.localeCompare(b.name));
   let h = '<div class="mg-tools-row">';
@@ -2177,9 +2176,11 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
   // The order: column headings, or a select on a phone.
   const sortLink = (to, label, on) => `<a class="mg-sort${on ? ' on' : ''}" href="#${ph('members', '', {sort: to, show, agent})}"${on ? ' aria-current="true"' : ''}>${label}</a>`;
   const bal = sort === 'balance' || sort === 'balance-low';
-  h += `<label class="mg-sort-pick">Sort <select class="pl-text" data-msort="1">${SORTS.map(s => `<option value="${s}"${s === sort ? ' selected' : ''}>${SORT_TEXT[s]}</option>`).join('')}</select></label>`;
+  const sorts = SORTS.filter(s => s !== 'agent' || agents.length);
+  h += `<label class="mg-sort-pick">Sort <select class="pl-text" data-msort="1">${sorts.map(s => `<option value="${s}"${s === sort ? ' selected' : ''}>${SORT_TEXT[s]}</option>`).join('')}</select></label>`;
   h += '<div class="mg-rows mg-members mg-members-head" role="group" aria-label="Sort"><div class="mg-row">';
   h += sortLink('name', 'Name', sort === 'name');
+  if (agents.length) h += sortLink('agent', 'Agent', sort === 'agent');
   h += `<span class="mg-row-end">${sortLink('active', 'Last active', sort === 'active')}`;
   h += sortLink(sort === 'balance' ? 'balance-low' : 'balance', `Balance${sort === 'balance' ? ' ↓' : sort === 'balance-low' ? ' ↑' : ''}`, bal);
   h += '</span></div></div>';
@@ -2219,7 +2220,7 @@ function memberPageHtml(id) {
   if (c.credit) h += statHtml('Credit limit', chips(c.credit)) + statHtml('Available', chips(c.available));
   if (m.agent === 'yes') {
     const a = accountOf(club, m.id);
-    h += statHtml('Agent credit used', `${chips(a.creditUsed)} / ${chips(a.limit)}`);
+    h += statHtml('Credit used', chips(a.creditUsed));
   }
   h += '</div>';
   h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give chips</button>`;
@@ -2234,11 +2235,14 @@ function memberPageHtml(id) {
     h += `<span><button class="btn-small primary" data-cl="offer-role-yes" data-id="${esc(m.id)}">Offer it</button> <button class="btn-small" data-cl="offer-role-no">Cancel</button></span></div>`;
   }
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
-  // Credit (#404): the limit (0 for none), and what it leaves them.
-  h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
-  h += `<label>Limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}"></label>`;
-  h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
-  h += '<button class="btn-small primary" type="submit">Save</button></form>';
+  // Credit (#404): the limit (0 for none), and what it leaves them. An
+  // agent's backs their players too, so only the owner sets it (#445).
+  if (!m.agent || isOwnerPage()) {
+    h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
+    h += `<label>Limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}"></label>`;
+    h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
+    h += '<button class="btn-small primary" type="submit">Save</button></form>';
+  }
   const mine = club.chips.ledger.filter(e => e.member === m.id);
   if (mine.length) {
     const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
@@ -2297,7 +2301,7 @@ function memberMenuHtml(m) {
   if (m.role === 'assistant') items.push(['revoke-role', 'Remove as manager']);
   else if (m.role === 'offered') items.push(['revoke-role', 'Withdraw the manager offer']);
   else items.push(['offer-role', 'Make manager']);
-  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['limit', 'Agent credit limit'], ['revoke-agent', 'Stop being an agent']);
+  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['revoke-agent', 'Stop being an agent']);
   else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
   else if (!m.agentOf) items.push(['make-agent', 'Make agent']);
   items.push(['remove', 'Remove from the club']);
@@ -2611,7 +2615,7 @@ function memberHomeHtml(m, manage = '') {
     h += `<span><button class="btn-small primary" data-cl="role-yes" data-code="${code}">Accept</button> <button class="btn-small" data-cl="role-no" data-code="${code}">No thanks</button></span></div>`;
   }
   if (m.agent === 'offered') {
-    h += `<div class="cl-account cl-offer"><span>The owner asked you to be an <b>agent</b>.</span>${roleHtml('agent', m.creditLimit || 0)}`;
+    h += `<div class="cl-account cl-offer"><span>The owner asked you to be an <b>agent</b>.</span>${roleHtml('agent')}`;
     h += `<span><button class="btn-small primary" data-cl="agent-yes" data-code="${code}">Accept</button> <button class="btn-small" data-cl="agent-no" data-code="${code}">No thanks</button></span></div>`;
   }
   h += manage;
@@ -3190,7 +3194,6 @@ async function onClickIn(e) {
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The host: agents.
   else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
-  else if (act === 'limit') openChipForm('limit', b.dataset.id);
   else if (act === 'settle') openChipForm('settle', b.dataset.id);
   else if (act === 'revoke-agent') hostAct('revoke_agent', {id: b.dataset.id});
   // A member: answering an agent offer.

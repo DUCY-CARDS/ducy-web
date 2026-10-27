@@ -4,10 +4,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, removeMember } from '../src/club.js';
-import { accountBody, checkOwnLedger, issue, totals } from '../src/club-chips.js';
+import { accountBody, checkOwnLedger, ensureChips, issue, totals } from '../src/club-chips.js';
+import { setCredit } from '../src/club-credit.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import {
-  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, setCreditLimit, settle, tableResult,
+  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, settle, tableResult,
 } from '../src/club-agents.js';
 
 function clubWith(...ids) {
@@ -22,7 +23,8 @@ function clubWith(...ids) {
 // Agent A (limit 1,000, given 500 by the host) with players P, Q, R, and a table.
 function setup() {
   const club = clubWith('a', 'p', 'q', 'r');
-  offerAgent(club, 'a', 1000);
+  setCredit(club, 'a', 1000);
+  offerAgent(club, 'a');
   answerAgent(club, 'a', true);
   for (const id of ['p', 'q', 'r']) assignToAgent(club, id, 'a');
   issue(club, 'a', 500);
@@ -32,19 +34,29 @@ function setup() {
 
 test('offer, accept, credit limit, assign, revoke', () => {
   const club = clubWith('a', 'p');
-  assert.equal(offerAgent(club, 'a', 300).body.agent, 'offered');
+  assert.deepEqual(offerAgent(club, 'a').body, {type: 'agent_role', club: club.code, agent: 'offered'});
   assert.equal(isAgent(club, 'a'), false);
   answerAgent(club, 'a', true);
   assert.ok(isAgent(club, 'a'));
   assert.ok(club.members.a.agentInvite, 'their own invite token');
-  setCreditLimit(club, 'a', 500);
-  assert.equal(club.members.a.creditLimit, 500);
+  setCredit(club, 'a', 500);
+  assert.equal(accountOf(club, 'a').limit, 500, 'the agent’s limit is their member credit');
   assignToAgent(club, 'p', 'a');
   assert.deepEqual(playersOf(club, 'a').map(m => m.id), ['p']);
   assert.throws(() => assignToAgent(club, 'a', 'a'), /under another agent/);
   revokeAgent(club, 'a');
   assert.equal(isAgent(club, 'a'), false);
   assert.equal(club.members.p.agentOf, undefined, 'players become regular members');
+  assert.equal(club.members.a.credit, 500, 'they keep their credit as a member');
+});
+
+test('an agent’s old credit limit becomes their member credit (#445)', () => {
+  const club = clubWith('a', 'b', 'c');
+  Object.assign(club.members.a, {agent: 'yes', creditLimit: 800});
+  Object.assign(club.members.b, {agent: 'yes', creditLimit: 300, credit: 500});
+  Object.assign(club.members.c, {agent: 'yes', creditLimit: 0});
+  ensureChips(club);
+  assert.deepEqual(['a', 'b', 'c'].map(id => [club.members[id].credit, 'creditLimit' in club.members[id]]), [[800, false], [500, false], [undefined, false]]);
 });
 
 test('#63 example A: buying in on credit', () => {
@@ -107,7 +119,7 @@ test('the agent view: where each player sits, and what the agent would owe if th
   v = agentBody(club, 'a');
   assert.deepEqual([v.creditUsed, v.owed], [200, 200]);
   // A 0-credit agent gives only what they have.
-  setCreditLimit(club, 'a', 0);
+  setCredit(club, 'a', 0);
   assert.throws(() => runAgent(club, 'a', {op: 'give', id: 'q', amount: 1}), /allows \(0\)/);
   assert.equal(agentBody(club, 'a').room, -300);
 });
@@ -141,7 +153,7 @@ test('#63 example E: lowering the limit below credit used', () => {
   const {club, t} = setup();
   runAgent(club, 'a', {op: 'give', id: 'p', amount: 1100}); // own −600
   chipsForTable(club, 'p', t, 1000);
-  setCreditLimit(club, 'a', 500);
+  setCredit(club, 'a', 500);
   // Chips on the table aren't touched; no new chips can go out.
   assert.equal(club.members.p.seat.stack, 1000);
   assert.throws(() => runAgent(club, 'a', {op: 'give', id: 'q', amount: 1}), /allows \(0\)/);

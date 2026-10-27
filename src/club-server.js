@@ -51,7 +51,7 @@ import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newT
 import { createTourneyHost } from './club-tourney-host.js';
 import { adminBody, answerRole, checkManagerOp, isAssistant, logAction, managerLogText, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
 import {
-  agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, setCreditLimit, settle,
+  agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, settle,
 } from './club-agents.js';
 import { raiseCredit, setCredit, settleDebt } from './club-credit.js';
 import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
@@ -490,7 +490,7 @@ export function createClubServer({
       if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
       if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminView()});
       sendHelp(msg.from);
-      if (m.agent) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: m.agent, creditLimit: m.creditLimit || 0}});
+      if (m.agent) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: m.agent}});
       if (isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
       // A new name shows in the lobby too.
       broadcastLobby();
@@ -537,8 +537,7 @@ export function createClubServer({
     set_credit: ({id, amount}) => chips(id, () => { setCredit(club, id, amount); return null; }),
     raise_credit: ({id, amount}) => chips(id, () => { raiseCredit(club, id, amount); return null; }),
     settle_debt: ({id, amount, note = ''}) => chips(id, () => settleDebt(club, id, amount, Date.now(), note)),
-    offer_agent: ({id, amount}) => reply(offerAgent(club, id, amount)),
-    credit_limit: ({id, amount}) => reply(setCreditLimit(club, id, amount)),
+    offer_agent: ({id}) => reply(offerAgent(club, id)),
     revoke_agent: ({id}) => reply(revokeAgent(club, id)),
     assign_agent: ({id, agent}) => { assignToAgent(club, id, agent || null); changed(); },
     offer_assistant: ({id}) => reply(offerAssistant(club, id)),

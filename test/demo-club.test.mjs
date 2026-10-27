@@ -84,8 +84,8 @@ function shape(club) {
     tables: club.tables.map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status})),
     members: Object.values(club.members).filter(m => m.id !== club.ownerId)
       .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null, credit: m.credit || 0, atLimit: !!m.request?.atLimit,
-        // Agents (#428): an agent's credit limit, and whose player they are.
-        agent: m.agent === 'yes' ? m.creditLimit || 0 : null, under: club.members[m.agentOf]?.name ?? null}))
+        // Agents (#428): an agent's credit limit (their member one, #445), and whose player they are.
+        agent: m.agent === 'yes' ? m.credit || 0 : null, under: club.members[m.agentOf]?.name ?? null}))
       .sort((a, b) => a.name.localeCompare(b.name)),
     help: (club.help || []).filter(h => !h.handled).map(h => h.text),
     tourneys: (club.tourneys || []).map(t => ({name: t.name, status: t.status, entries: t.entries.length})),
@@ -167,19 +167,19 @@ test('each demo club starts in its scenario’s state, and starts again the same
       const club = agentsClub;
       const agents = Object.values(club.members).filter(m => m.agent === 'yes');
       assert.equal(agents.length, 5);
-      const limits = agents.map(a => a.creditLimit || 0);
+      const limits = agents.map(a => a.credit || 0);
       assert.ok(limits.includes(0) && new Set(limits).size === 5, `limits differ, one 0: ${limits}`);
       const acc = Object.fromEntries(agents.map(a => [a.name, accountOf(club, a.id)]));
       for (const a of agents) {
         const n = acc[a.name].players.length;
         assert.ok(n >= 3 && n <= 6, `${a.name}: ${n} players`);
-        assert.ok(a.balance >= -(a.creditLimit || 0), `${a.name} within the limit`);
+        assert.ok(a.balance >= -(a.credit || 0), `${a.name} within the limit`);
       }
       // Each agent and two of their players are people you can be.
       const people = new Set(s.club.people.map(p => p.name));
       for (const a of agents) assert.ok(people.has(a.name), a.name);
       assert.ok(s.club.people.filter(p => p.under != null).length >= 1);
-      const near = agents.find(a => a.creditLimit && room(acc[a.name]) <= 0.2 * a.creditLimit);
+      const near = agents.find(a => a.credit && room(acc[a.name]) <= 0.2 * a.credit);
       assert.ok(near, 'one near their limit');
       assert.ok(acc[near.name].creditUsed > 0, `${near.name} owes`);
       assert.ok(agents.some(a => acc[a.name].players.filter(p => p.seat).length >= 2), 'one with players at the tables');

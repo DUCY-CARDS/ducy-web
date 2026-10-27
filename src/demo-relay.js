@@ -694,9 +694,11 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
             await server.run('assign_agent', {id: p.ident.id, agent: people[p.under].ident.id});
             if (p.balance) await agentGives(server, people[p.under].ident, p.ident.id, p.balance);
           } else if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
-          if (p.credit) await server.run('set_credit', {id: p.ident.id, amount: p.credit});
+          // An agent's credit limit is their member one (#445).
+          const credit = p.agent || p.credit;
+          if (credit) await server.run('set_credit', {id: p.ident.id, amount: credit});
           if (p.agent != null) {
-            await server.run('offer_agent', {id: p.ident.id, amount: p.agent});
+            await server.run('offer_agent', {id: p.ident.id});
             await as(p.ident, {type: 'agent_reply', accept: true});
           }
           if (p.ask) asks.push([p.ident, p.ask]);
