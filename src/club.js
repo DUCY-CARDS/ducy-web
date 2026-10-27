@@ -30,7 +30,9 @@
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
 //                                        | 'removed' | 'bad_invite' | 'unknown'
-//                                        | 'invite_only' (asked by code, #393)
+//                                        | 'invite_only' (asked by code, #393);
+//                                        nameTaken: the name asked for, when
+//                                        someone in the club has it (#450)
 //   {type: 'account', club, balance, request, entries, credit, available}
 //                                        see club-chips.js (credit: #404)
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
@@ -67,6 +69,28 @@ export function clubName(s) {
 }
 
 const playerName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_PLAYER_NAME) || 'Player';
+
+// Names in a club are unique (#450), so no one can pass for someone already
+// in it: two names are the same if they read the same, whatever their case,
+// spacing, punctuation and accents, and with look-alike letters (Cyrillic,
+// Greek, 0 for o…) taken as the letters they look like.
+const LOOKALIKE = {
+  а: 'a', в: 'b', е: 'e', ё: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ї: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w',
+  α: 'a', β: 'b', ε: 'e', η: 'n', ι: 'i', κ: 'k', μ: 'u', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'u', χ: 'x', ω: 'w',
+  0: 'o', 1: 'l', 3: 'e', 5: 's', '|': 'l', ı: 'i', ł: 'l', ø: 'o', đ: 'd', ß: 'ss',
+};
+export function nameKey(s) {
+  const plain = String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+  const key = [...plain].map(c => LOOKALIKE[c] ?? c).join('').replace(/[^\p{L}\p{N}]/gu, '');
+  return key || plain.trim();
+}
+
+// The member or person asking to join, other than `id`, whose name reads as
+// `name`; or null.
+export function nameTakenBy(club, id, name) {
+  const key = nameKey(name);
+  return Object.values(club.members).find(m => m.id !== id && (m.status === 'member' || m.status === 'pending') && nameKey(m.name) === key) || null;
+}
 
 export function newInvite() {
   return Array.from(crypto.getRandomValues(new Uint8Array(12)), b => TOKEN_CHARS[b % TOKEN_CHARS.length]).join('');
@@ -141,7 +165,10 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   }
   if (body.type === 'join') {
     const name = playerName(body.name);
+    // Someone in the club already goes by it (#450): they're told, and pick another.
+    const taken = nameTakenBy(club, id, name);
     if (m?.status === 'member' || m?.status === 'pending') {
+      if (taken && m.name !== name) return {replies: [{to: id, body: {...statusBody(club, id), nameTaken: name}}], changed: false, reason: 'name taken'};
       const changed = m.name !== name;
       m.name = name;
       return {replies: [reply(club, id)], changed};
@@ -153,6 +180,7 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     // The club's link, or an agent's (#74): their recruits wait for the agent.
     const agent = body.invite && Object.values(club.members).find(a => a.agent === 'yes' && a.status === 'member' && a.agentInvite === body.invite);
     if (body.invite && body.invite !== club.invite && !agent) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
+    if (taken) return {replies: [{to: id, body: {...statusBody(club, id), status: 'unknown', nameTaken: name}}], changed: false, reason: 'name taken'};
     // New, or asking again after being declined or removed.
     club.members[id] = {...m, id, name, status: 'pending', requestedAt: now};
     if (agent) club.members[id].agentOf = agent.id;
@@ -160,9 +188,14 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     return {replies: [reply(club, id)], changed: true};
   }
   if (body.type === 'hello') {
-    let changed = false;
-    if (m && body.name) { const name = playerName(body.name); changed = m.name !== name; m.name = name; }
-    const replies = [reply(club, id)];
+    let changed = false, nameTaken = '';
+    if (m && body.name) {
+      const name = playerName(body.name);
+      // A new name someone else in the club goes by is refused (#450).
+      if (m.name !== name && nameTakenBy(club, id, name)) nameTaken = name;
+      else { changed = m.name !== name; m.name = name; }
+    }
+    const replies = [nameTaken ? {to: id, body: {...statusBody(club, id), nameTaken}} : reply(club, id)];
     if (m?.status === 'member') replies.push(account(club, id, body.since));
     return {replies, changed};
   }
@@ -287,6 +320,9 @@ export async function playerReceive(mem, env) {
     mem.hostSeq = env.seq;
     if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);
     if (b.status !== 'unknown') mem.status = b.status;
+    // The name you asked for is someone else's here (#450).
+    if (b.nameTaken) mem.nameTaken = String(b.nameTaken).slice(0, MAX_PLAYER_NAME);
+    else delete mem.nameTaken;
     return true;
   }
   if (b.type === 'tables') {
