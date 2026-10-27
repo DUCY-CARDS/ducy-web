@@ -12,19 +12,19 @@
 // real time, minus the time it was stopped (clockPause(key, on)) because
 // the host couldn't reach anyone.
 //
-// Tournaments (#81, club-tourney-host.js): tourneyCreate(id, config,
-// players, turnMs) | tourneyCall(id, method, ...args) for handle,
-// disconnected, advance, tick, newHands, setLevel, addEntry, state (the
-// time is added) | tourneyTable(id, table) | tourneyDrop(id) |
-// tourneySave(id) | tourneyRestore(id, json).
+// Tournaments (#81, club-tourney-host.js): ducy's ClubTournament, each run
+// by its tourney runner (tourney-runner.js, #458): tourneyCreate(id,
+// config, players, turnMs, runner) | tourneyRestore(id, json, runner) |
+// tourneyEvent(id, event) → the runner's step (the time is added) |
+// tourneyTable(id, table) | tourneySave(id) | tourneyDrop(id). `runner` =
+// the runner's options (structure, levelMs, nextHandMs, botPaceMs, step,
+// stepLeftMs, level, hands).
 
 import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
 import { tableRunner } from './table-runner.js';
+import { tourneyRunner } from './tourney-runner.js';
 // The whole module too: ClubTournament is only in newer builds.
 import * as ducy from '../wasm/ducy_wasm.js';
-
-// Tournaments (#81): ducy's ClubTournament, by tournament id.
-const TOURNEY_METHODS = new Set(['handle', 'disconnected', 'advance', 'tick', 'newHands', 'setLevel', 'addEntry', 'state']);
 
 const fair = {secret: fairSecret, commitment: fairCommitment, seed: fairSeed};
 
@@ -63,6 +63,11 @@ export function clubEngine(MultiTable) {
     runners.set(id, r);
   }
 
+  function keepTourney(id, r) {
+    tourneys.get(id)?.free();
+    tourneys.set(id, r);
+  }
+
   const ops = {
     runnerCreate: (id, c) => {
       if (rust) { keep(id, rust.wrap(rust.create(id, c))); return true; }
@@ -99,32 +104,29 @@ export function clubEngine(MultiTable) {
     // A tournament (#81): every table of it, for remote players. `config` =
     // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},
     // `players` = [{id, name}], seated at random; all absent until they join.
-    tourneyCreate: (id, config, players, turnMs) => {
+    tourneyCreate: (id, config, players, turnMs, runner) => {
       if (!ducy.ClubTournament) throw new Error('this ducy-wasm has no tournaments');
-      tourneys.get(id)?.free();
-      const t = new ducy.ClubTournament(config, players, turnMs);
-      tourneys.set(id, t);
-      return t.state(Date.now());
+      keepTourney(id, tourneyRunner(new ducy.ClubTournament(config, players, turnMs), {...runner, id}));
+      return true;
     },
-    // A call on tournament id; the time is added.
-    tourneyCall: (id, method, ...args) => {
-      const t = tourneys.get(id);
-      if (!t || !TOURNEY_METHODS.has(method)) throw new Error(`no tournament ${id} or method ${method}`);
-      return t[method](...args, Date.now());
+    // An event for tournament id's runner (tourney-runner.js); the time is added.
+    tourneyEvent: (id, ev) => {
+      const r = tourneys.get(id);
+      if (!r) throw new Error(`no tournament ${id}`);
+      return r.event(ev, Date.now());
     },
     // The host's view of one of its tables (no hole cards until shown down).
     tourneyTable: (id, table) => tourneys.get(id)?.tableView(table) ?? null,
     tourneyDrop: id => { tourneys.get(id)?.free(); return tourneys.delete(id); },
     // The tournament as JSON, hands in play and clocks included, for
     // resuming it after the host restarts; null with a ducy-wasm that can't.
-    tourneySave: id => { const t = tourneys.get(id); return t?.save ? t.save(Date.now()) : null; },
-    // A tournament saved with tourneySave; throws if it can't be loaded.
-    tourneyRestore: (id, json) => {
+    tourneySave: id => tourneys.get(id)?.save(Date.now()) ?? null,
+    // A tournament saved with tourneySave, its runner's clock where `runner`
+    // says; throws if it can't be loaded.
+    tourneyRestore: (id, json, runner) => {
       if (!ducy.ClubTournament?.restore) throw new Error('this ducy-wasm can’t restore tournaments');
-      const t = ducy.ClubTournament.restore(json, Date.now());
-      tourneys.get(id)?.free();
-      tourneys.set(id, t);
-      return t.state(Date.now());
+      keepTourney(id, tourneyRunner(ducy.ClubTournament.restore(json, Date.now()), {...runner, id}));
+      return true;
     },
     // Stops (on) or restarts the friends table's clock: while stopped no
     // time passes for it, so no turn runs out and no sit-out expires; it
