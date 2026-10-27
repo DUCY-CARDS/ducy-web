@@ -6,8 +6,10 @@
 //
 // Two kinds of promotion:
 // - 'high_hand': the best hand shown down in each game during a period (an
-//   hour, a day, a week, or a session window) wins its prizes when the
-//   period ends (#276).
+//   hour, a day, a week, or a session window) wins its prize when the
+//   period ends (#276). With rollover, a period played without a
+//   qualifying hand adds its prize to the next.
+// Any promotion can be on only at set hours on set days.
 // - 'bonus': a fixed prize for each qualifying hand, by tier (quads 10, a
 //   straight flush 25…), each tier capped per period on its own (#277).
 //
@@ -26,7 +28,9 @@
 //   counts:  {key: n}                       bonus counts per tier / player
 //   paid:    {key: chips}                   paid per promotion and period
 //   awards:  [award]                        every prize, held or paid
-//   history: [{promo, period, game, winners, top}]  finished periods
+//   played:  {key: true}                    periods played, for a high hand that rolls over
+//   carry:   {promo|game: chips}            prizes rolled over, paid with the next first place
+//   history: [{promo, period, game, winners, top, rolled?}]  finished periods
 //   hands:   [record]                       recent qualifying hands (#269)
 // }
 
@@ -174,7 +178,7 @@ export function ensurePromos(club) {
 export function promoSettings(s = {}) {
   const kind = s.kind === 'bonus' ? 'bonus' : s.kind === 'high_hand' ? 'high_hand' : null;
   if (!kind) throw new Error('Pick a kind of promotion.');
-  const name = String(s.name ?? '').trim().slice(0, MAX_PROMO_NAME) || (kind === 'bonus' ? 'Hand bonuses' : 'High hand');
+  const name = String(s.name ?? '').trim().slice(0, MAX_PROMO_NAME) || (kind === 'bonus' ? 'Hand Bonus' : 'High Hand');
   const games = [...new Set(Array.isArray(s.games) ? s.games : [])].filter(g => GAMES.some(x => x.id === g));
   if (!games.length) throw new Error('Pick at least one game.');
   const every = PERIODS.includes(s.every) ? s.every : null;
@@ -182,18 +186,26 @@ export function promoSettings(s = {}) {
   // The manager's time zone, as minutes to add to UTC (e.g. -300 in New York in winter).
   const tz = whole(s.tz ?? 0, -14 * 60, 14 * 60) ? s.tz ?? 0 : 0;
   const out = {kind, name, games, every, tz};
+  const days = [...new Set(Array.isArray(s.days) ? s.days : [])].filter(d => whole(d, 0, 6)).sort();
   if (every === 'session') {
-    const days = [...new Set(Array.isArray(s.days) ? s.days : [])].filter(d => whole(d, 0, 6)).sort();
     if (!days.length) throw new Error('Pick the days the session runs.');
     if (!whole(s.from, 0, 1439) || !whole(s.to, 1, 1440) || s.to <= s.from) throw new Error('The session must end after it starts, the same day.');
     Object.assign(out, {days, from: s.from, to: s.to});
+  } else if (s.hours === true) {
+    // Only at set times: hands count on these days, from `from` to `to`
+    // (past midnight when `to` is earlier, 20:00 to 02:00).
+    if (!days.length) throw new Error('Pick the days it’s on.');
+    if (!whole(s.from, 0, 1439) || !whole(s.to, 0, 1440) || s.to === s.from) throw new Error('Give the hours it’s on.');
+    Object.assign(out, {hours: true, days, from: s.from, to: s.to});
   }
   if (kind === 'high_hand') {
     const prizes = (Array.isArray(s.prizes) ? s.prizes : []).filter(x => x !== null && x !== undefined && x !== '').slice(0, 3);
-    if (!prizes.length || !prizes.every(x => chips(x)) || !prizes[0]) throw new Error('Give a prize for first place, in chips.');
+    if (!prizes.length || !prizes.every(x => chips(x)) || !prizes[0]) throw new Error('Give a prize, in chips.');
     out.prizes = prizes;
     out.minCategory = CATEGORIES.includes(s.minCategory) ? s.minCategory : 'full_house';
-    out.ties = s.ties === 'first' ? 'first' : 'split';
+    out.ties = s.ties === 'split' ? 'split' : 'first';
+    // No qualifying hand in a period that was played: its prize is added to the next.
+    out.rollover = s.rollover === true;
   } else {
     const tiers = (Array.isArray(s.tiers) ? s.tiers : []).filter(t => t && CATEGORIES.includes(t.category) && t.amount);
     if (!tiers.length) throw new Error('Add at least one bonus: a hand and its prize.');
@@ -275,9 +287,21 @@ export function periodOf(promo, t) {
     if (!promo.days.includes(weekday) || mins < promo.from || mins >= promo.to) return null;
     start = dayStart + promo.from * 60e3; end = dayStart + promo.to * 60e3;
   }
+  if (promo.hours && !onHours(promo, local)) return null;
   start -= off; end -= off;
   if (promo.endsAt) end = Math.min(end, promo.endsAt);
   return {key: String(start), start, end};
+}
+
+// Whether local time `local` is within a promotion's set hours: on one of
+// its days from `from`, until `to` that day, or the next when it runs past
+// midnight.
+function onHours(promo, local) {
+  const day = Math.floor(local / D);
+  const mins = (local - day * D) / 60e3;
+  const weekday = d => (d + 4) % 7; // 0 Sunday
+  if (promo.to > promo.from) return promo.days.includes(weekday(day)) && mins >= promo.from && mins < promo.to;
+  return (promo.days.includes(weekday(day)) && mins >= promo.from) || (promo.days.includes(weekday(day - 1)) && mins < promo.to);
 }
 
 // ---- after each hand ----
@@ -340,13 +364,18 @@ export function processHand(club, rec, players, now = rec?.at ?? Date.now()) {
   // restarted). `sub`: a tournament's own table, whose hand numbers are its own.
   const key = `${rec?.table}|${rec?.sub ?? ''}|${rec?.hand}`;
   p.seen ??= [];
-  if (rec?.hand && p.seen.includes(key)) return out;
+  if (!rec || (rec.hand && p.seen.includes(key))) return out;
+  const game = rec.game || 'nlhe';
+  const dealt = (rec.seats || []).filter(s => s.inHand).length;
+  // A high hand that rolls over: this period was played, shown down or not.
+  for (const promo of p.list) {
+    const period = promo.kind === 'high_hand' && promo.rollover && promo.status === 'running' ? periodOf(promo, rec.at) : null;
+    if (period && !ineligible(promo, rec, game, dealt)) (p.played ??= {})[`${promo.id}|${period.key}|${game}`] = true;
+  }
   const shown = shownHands(rec, players);
   if (!shown.length) return out;
   p.seen.push(key);
   if (p.seen.length > 400) p.seen.splice(0, p.seen.length - 400);
-  const game = rec.game || 'nlhe';
-  const dealt = (rec.seats || []).filter(s => s.inHand).length;
   for (const promo of p.list) {
     if (promo.status !== 'running') continue;
     const period = periodOf(promo, rec.at);
@@ -402,20 +431,39 @@ function record(p, rec, h, game, promo, why) {
 export function settlePeriods(club, now = Date.now()) {
   const p = ensurePromos(club);
   const out = [];
-  for (const key of Object.keys(p.boards)) {
+  // Periods with a leaderboard, and periods played with none (a high hand
+  // that rolls over); in time order, so a prize rolled over reaches the
+  // period after.
+  const keys = [...new Set([...Object.keys(p.boards), ...Object.keys(p.played || {})])]
+    .sort((a, b) => Number(a.split('|')[1]) - Number(b.split('|')[1]));
+  for (const key of keys) {
     const [id, start, game] = key.split('|');
     const promo = promoById(club, id);
     const period = promo ? {key: start, ...periodBounds(promo, Number(start))} : null;
     if (period && period.end > now) continue;
-    const board = p.boards[key];
+    const board = p.boards[key] || [];
     delete p.boards[key];
-    if (!promo || !board.length) continue;
-    const winners = placeWinners(promo, board);
+    if (p.played) delete p.played[key];
+    if (!promo) continue;
+    const ck = `${id}|${game}`;
+    if (!board.length) {
+      // No one made it: the prize rolls over to the next period.
+      if (promo.rollover) {
+        p.carry ??= {};
+        p.carry[ck] = (p.carry[ck] || 0) + promo.prizes[0];
+        p.history.push({promo: id, promoName: promo.name, period: start, start: period.start, end: period.end, game, winners: [], top: [], rolled: p.carry[ck]});
+      }
+      continue;
+    }
+    // A prize that rolled over goes with first place.
+    const carry = p.carry?.[ck] || 0;
+    if (carry) delete p.carry[ck];
+    const winners = placeWinners(promo, board, carry);
     const paid = winners.map(w => award(club, promo, period, {member: w.member, amount: w.amount, hand: w, kind: 'high_hand', place: w.place, game}, now, {held: true}));
     out.push(...paid);
     p.history.push({promo: id, promoName: promo.name, period: start, start: period.start, end: period.end, game, winners: paid.map(a => a.id), top: board});
-    if (p.history.length > HISTORY_KEEP) p.history.splice(0, p.history.length - HISTORY_KEEP);
   }
+  if (p.history.length > HISTORY_KEEP) p.history.splice(0, p.history.length - HISTORY_KEEP);
   for (const promo of p.list) {
     const cur = periodOf(promo, now);
     if (promo.next && !hasActivity(p, promo, cur)) { Object.assign(promo, promo.next); promo.next = null; }
@@ -441,13 +489,15 @@ function periodBounds(promo, start) {
   return {start, end: promo.endsAt ? Math.min(end, promo.endsAt) : end};
 }
 
-// The prizes by place, ties split equally or to the first to make it.
-function placeWinners(promo, board) {
+// The prizes by place, ties split equally or to the first to make it;
+// `carry`, rolled over from earlier periods, adds to first place's.
+function placeWinners(promo, board, carry = 0) {
   const out = [];
+  const prizes = promo.prizes.map((x, i) => (i === 0 ? x + carry : x));
   let place = 0;
-  for (let i = 0; i < board.length && place < promo.prizes.length;) {
+  for (let i = 0; i < board.length && place < prizes.length;) {
     const tied = board.filter(b => b.score === board[i].score);
-    const span = promo.prizes.slice(place, place + tied.length);
+    const span = prizes.slice(place, place + tied.length);
     if (promo.ties === 'first' || tied.length === 1) {
       tied.slice(0, span.length).forEach((t, j) => { if (span[j]) out.push({...t, amount: span[j], place: place + j + 1}); });
     } else {
@@ -468,7 +518,7 @@ function placeWinners(promo, board) {
 export function nextSettle(club) {
   const p = ensurePromos(club);
   let next = null;
-  for (const key of Object.keys(p.boards)) {
+  for (const key of [...Object.keys(p.boards), ...Object.keys(p.played || {})]) {
     const [id, start] = key.split('|');
     const promo = promoById(club, id);
     if (!promo) continue;
@@ -536,17 +586,29 @@ export function promoRules(promo) {
   return rulesCore(promo) + (promo.tourneys ? ' Tournament hands count too.' : '');
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const hhmm = m => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+// When a session or set hours are on: "Fri, Sat 20:00–02:00".
+function hoursText(promo) {
+  if (promo.every !== 'session' && !promo.hours) return '';
+  const days = promo.days.length === 7 ? 'Every day' : promo.days.map(d => DAY_NAMES[d]).join(', ');
+  return `${days} ${hhmm(promo.from)}–${hhmm(promo.to)}`;
+}
+
 function rulesCore(promo) {
   const when = promo.every === 'session' ? 'each session' : EVERY[promo.every];
   const games = promo.games.map(gameName).join(', ');
+  const hours = hoursText(promo);
   if (promo.kind === 'high_hand') {
     const prizes = promo.prizes.map(chipText);
     const places = prizes.length === 1 ? `wins ${prizes[0]}` : `pays ${prizes.join(' / ')} for 1st${prizes.length > 2 ? ', 2nd and 3rd' : ' and 2nd'}`;
-    return `Best ${games} hand ${when} ${places} (${CATEGORY_NAMES[promo.minCategory].replace(/^An? /, '').toLowerCase()} or better).`;
+    return `Best ${games} hand ${when} ${places} (${CATEGORY_NAMES[promo.minCategory].replace(/^An? /, '').toLowerCase()} or better).`
+      + (hours ? ` ${hours}.` : '') + (promo.rollover ? ' No qualifying hand: the prize rolls over.' : '');
   }
   const per = {hour: 'an hour', day: 'a day', week: 'a week', session: 'a session'}[promo.every];
   const tiers = promo.tiers.map(t => `${CATEGORY_NAMES[t.category].replace(/^An? /, '').toLowerCase()} ${chipText(t.amount)}${tierCap(promo, t) ? ` (up to ${tierCap(promo, t)} ${per})` : ''}`).join(', ');
-  return `${games}: ${tiers}${promo.capPerPlayer ? `, ${promo.capPerPlayer} per player` : ''}.`;
+  return `${games}: ${tiers}${promo.capPerPlayer ? `, ${promo.capPerPlayer} per player` : ''}.${hours ? ` ${hours}.` : ''}`;
 }
 
 // Everything members are told about the promotions: running ones with
@@ -560,6 +622,8 @@ export function promosBody(club, now = Date.now()) {
     if (promo.kind === 'high_hand') {
       view.leaders = Object.fromEntries(promo.games.map(g => [g, (period && p.boards[`${promo.id}|${period.key}|${g}`] || []).slice(0, 3)
         .map(b => ({name: b.name, hand: b.hand, cards: b.cards, at: b.at}))]));
+      // Each game's prize now, with what rolled over.
+      view.prize = Object.fromEntries(promo.games.map(g => [g, promo.prizes[0] + (p.carry?.[`${promo.id}|${g}`] || 0)]));
     } else {
       view.caps = promo.tiers.map(t => ({category: t.category, amount: t.amount, used: period ? p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0 : 0, cap: tierCap(promo, t)}));
     }
@@ -578,6 +642,7 @@ export function promosAdmin(club, now = Date.now()) {
       const period = periodOf(promo, now);
       return {...promo, rules: promoRules(promo), period, paid: period ? p.paid[`${promo.id}|${period.key}`] || 0 : 0,
         leaders: promo.kind === 'high_hand' && period ? Object.fromEntries(promo.games.map(g => [g, (p.boards[`${promo.id}|${period.key}|${g}`] || []).slice(0, 3)])) : null,
+        prize: promo.kind === 'high_hand' ? Object.fromEntries(promo.games.map(g => [g, promo.prizes[0] + (p.carry?.[`${promo.id}|${g}`] || 0)])) : null,
         caps: promo.kind === 'bonus' && period ? promo.tiers.map(t => ({...t, cap: tierCap(promo, t), used: p.counts[`${promo.id}|${period.key}|tier:${t.category}`] || 0})) : null};
     }),
     awards: p.awards.slice(-50).reverse(),

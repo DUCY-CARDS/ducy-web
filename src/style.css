@@ -2099,6 +2099,8 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 /* A field inside its label: the label above it, as wide as the field. */
 .cl-promo-form .pl-row > .pl-label { width: auto; display: flex; flex-direction: column; gap: 4px; }
 .cl-promo-form .pl-row > .pl-label > .pl-text:not(.cl-num) { width: 13em; }
+/* A select is as wide as its longest choice, so none is cut off. */
+.cl-promo-form .pl-row > .pl-label > select.pl-text:not(.cl-num) { width: auto; min-width: 13em; max-width: 100%; }
 .cl-promo-form .pl-row > .pl-label > .cl-time { width: 9em; }
 .cl-promo-form input[name="capPerPlayer"] { width: 8em; }
 .cl-promo-session { display: flex; flex-direction: column; gap: 8px; }

@@ -3483,12 +3483,17 @@ export async function openClubs(el, v = 'clubs') {
       const f = e.target.dataset?.clrestore != null && e.target.files?.[0];
       if (f) { e.target.value = ''; restoreBackupFile(f); }
     });
-    // The promotion form (#278): its kind redraws it; a session shows its days and hours.
+    // The promotion form (#278): its kind redraws it; a session, or set
+    // times, shows the days and hours.
     root.addEventListener('change', e => {
       const pf = e.target.closest('form[data-promoform]');
       if (!pf) return;
       if (e.target.dataset.promokind) { promoForm = e.target.value === 'bonus' ? 'new-bonus' : 'new'; promoFor = pf.dataset.code || ''; render(); }
-      if (e.target.dataset.promoevery) pf.querySelector('.cl-promo-session').hidden = e.target.value !== 'session';
+      if (e.target.dataset.promoevery || e.target.dataset.promohours) {
+        const session = pf.elements.every.value === 'session';
+        pf.querySelector('.cl-promo-hours').hidden = session;
+        pf.querySelector('.cl-promo-session').hidden = !session && !pf.elements.hours.checked;
+      }
     });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
