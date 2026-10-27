@@ -4,22 +4,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// A play worker that answers every table call with the state the test sets.
-const calls = [];
-const mustPlay = [];
-let reply = {complete: true, hand_number: 2, chips: 140};
-globalThis.Worker = class {
-  postMessage({id, op, args}) {
-    if (op === 'clubCall') calls.push({method: args[1], cmd: args[3]});
-    if (op === 'clubMustPlay') mustPlay.push(args);
-    const result = op === 'clubCall'
-      ? {out: [], state: {complete: reply.complete, hand_number: reply.hand_number}, players: [{client_id: 'ann', seat: 0, chips: reply.chips}], turnMsLeft: null, seq: calls.length}
-      : true;
-    queueMicrotask(() => this.onmessage({data: {id, result}}));
-  }
-};
+import { fakeTables } from './fake-table.mjs';
+import { createTableHost } from '../src/club-host.js';
 
-const { createTableHost } = await import('../src/club-host.js');
+// A table that answers every call with the state the test sets.
+let reply = {complete: true, hand_number: 2, chips: 140};
+const {calls, call} = fakeTables(() => ({out: [], state: {complete: reply.complete, hand_number: reply.hand_number}, players: [{client_id: 'ann', seat: 0, chips: reply.chips}], turnMsLeft: null, seq: calls.length}));
+const mustPlay = () => calls.filter(c => c.method === 'setMustPlay').map(c => c.args);
+const leaves = () => calls.filter(c => c.method === 'handle' && c.args[1]?.type === 'leave');
 
 const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(r => queueMicrotask(r)); };
 
@@ -32,7 +24,7 @@ test('up at a table with the rule, a member plays its hands before leaving', asy
   const sent = [];
   const th = createTableHost({
     club: () => club, save() {}, chipsChanged() {}, tablesChanged() {},
-    sendTable: (to, msg) => sent.push({to, ...msg.update}),
+    sendTable: (to, msg) => sent.push({to, ...msg.update}), call,
     store: {get: async () => null, put: async () => {}, drop: async () => {}},
     timers: {set: () => 0, clear() {}},
   });
@@ -43,25 +35,25 @@ test('up at a table with the rule, a member plays its hands before leaving', asy
   const stays = () => sent.filter(m => m.type === 'stay');
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 5});
   // Owing hands, sitting out or dropping off blinds her off: the engine is told.
-  assert.deepEqual(mustPlay.at(-1), ['t1', 'ann', true]);
+  assert.deepEqual(mustPlay().at(-1), ['ann', true]);
   // Leaving now is refused, and never reaches the table.
   await th.handle('t1', 'ann', {type: 'leave'});
   await settle();
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 5, refused: true});
-  assert.ok(!calls.some(c => c.cmd?.type === 'leave'), 'the engine never saw the leave');
+  assert.equal(leaves().length, 0, 'the engine never saw the leave');
   // Three hands on, two to go.
   reply = {complete: true, hand_number: 5, chips: 150};
   await th.handle('t1', 'ann', {type: 'hello'});
   await settle();
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 2});
-  assert.equal(mustPlay.length, 1, 'told once, not every hand');
+  assert.equal(mustPlay().length, 1, 'told once, not every hand');
   // Hand 7 played: free to go, and the leave goes through.
   reply = {complete: true, hand_number: 7, chips: 150};
   await th.handle('t1', 'ann', {type: 'hello'});
   await settle();
   assert.deepEqual(stays().at(-1), {to: 'ann', type: 'stay', hands: 0});
-  assert.deepEqual(mustPlay.at(-1), ['t1', 'ann', false], 'call time over: the usual sit-out rules');
+  assert.deepEqual(mustPlay().at(-1), ['ann', false], 'call time over: the usual sit-out rules');
   await th.handle('t1', 'ann', {type: 'leave'});
   await settle();
-  assert.ok(calls.some(c => c.cmd?.type === 'leave'), 'the leave reached the table');
+  assert.equal(leaves().length, 1, 'the leave reached the table');
 });

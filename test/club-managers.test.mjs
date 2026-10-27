@@ -10,6 +10,7 @@ import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 import { createTableHost } from '../src/club-host.js';
+import { fakeTables } from './fake-table.mjs';
 import { isDealing } from '../src/club-overview.js';
 import { checkManagerOp, managerLogText, OWNER_ONLY } from '../src/club-roles.js';
 
@@ -114,10 +115,7 @@ test('a table’s dealing clock runs while hands are dealt, and stops with fewer
   const table = {id: 't1', name: 'One', seats: 6, sb: 1, bb: 2, game: 'nlhe', turnSecs: 0, status: 'open', minBB: 20, maxBB: 100};
   const club = {code: 'ABCD-EFGH', tables: [table], chips: {issued: 0, reclaimed: 0, next: 1, ledger: []}, ratholeHours: 0, members: {}};
   let next = {complete: true, playersIn: 0};
-  const call = async op => {
-    if (op !== 'clubCall') return true;
-    return {out: [], state: {complete: next.complete, hand_number: 1}, players: [{client_id: 'x', seat: 0, chips: 100}], playersIn: next.playersIn, chipRequests: [], turnMsLeft: null, seq: Math.random()};
-  };
+  const {call} = fakeTables(() => ({out: [], state: {complete: next.complete, hand_number: 1}, players: [{client_id: 'x', seat: 0, chips: 100}], playersIn: next.playersIn, chipRequests: [], turnMsLeft: null, seq: Math.random()}));
   const th = createTableHost({
     club: () => club, save() {}, chipsChanged() {}, tablesChanged() {}, call, sendTable() {},
     store: {get: async () => null, put: async () => {}, drop: async () => {}}, timers: {set: () => 0, clear() {}},
