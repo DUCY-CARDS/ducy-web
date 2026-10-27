@@ -35,14 +35,15 @@ const meta = page => {
   return parse(m[1]);
 };
 
-// Whether .htaccess's SetEnvIf lines, applied in order, set ENV for a user agent.
-const rules = () => [...read('.htaccess').matchAll(/^\s*SetEnvIf User-Agent "([^"]+)" (!?)(\w+)\s*$/gm)]
-  .map(([, re, not, name]) => ({re: new RegExp(re), set: !not, name}));
-const isSafari15 = ua => {
-  let on = false;
-  for (const r of rules()) if (r.name === ENV && r.re.test(ua)) on = r.set;
-  return on;
-};
+// .htaccess's rewrite rules that set ENV, each with its user-agent conditions
+// (all must hold): [{re, not}].
+const rules = () => [...read('.htaccess').matchAll(/((?:^RewriteCond %\{HTTP_USER_AGENT\} \S+\n)+)^RewriteRule \^ - \[E=(\w+):1\]$/gm)]
+  .filter(([, , name]) => name === ENV)
+  .map(([, conds]) => conds.trim().split('\n').map(c => {
+    const [, not, re] = c.match(/^RewriteCond %\{HTTP_USER_AGENT\} (!?)(\S+)$/);
+    return {re: new RegExp(re), not: !!not};
+  }));
+const isSafari15 = ua => rules().some(conds => conds.every(c => c.re.test(ua) !== c.not));
 
 test('the header is strict: scripts only from the site, nothing framed, no plugins', () => {
   const p = header();
@@ -100,7 +101,7 @@ const OTHERS = {
 };
 
 test('Safari 15 and every browser on iOS 15 get the Safari 15 policy', () => {
-  assert.ok(rules().length >= 2, '.htaccess has the SetEnvIf rules');
+  assert.ok(rules().length >= 2, '.htaccess has the rewrite rules');
   for (const [name, ua] of Object.entries(SAFARI_15)) assert.ok(isSafari15(ua), name);
 });
 
