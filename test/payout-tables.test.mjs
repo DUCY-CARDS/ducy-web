@@ -15,7 +15,7 @@ import { createClub, openClub } from '../relay/src/club-room.js';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
-  addPayoutTable, checkPayoutRows, deletePayoutTable, editPayoutTable, finishTourney, knockedOut, newTourney, payoutRow,
+  MAX_ENTRIES, MAX_PAYOUT_ROWS, addPayoutTable, checkPayoutRows, defaultPayout, deletePayoutTable, editPayoutTable, finishTourney, knockedOut, newTourney, payoutRow,
   payoutRows, payoutShares, prizes, register, lateEntry, setPayout, setPayoutTable, startTourney, tourneysBody,
 } from '../src/club-tourneys.js';
 import { entriesOpen, hostTourneysHtml, memberTourneysHtml, payoutTablesHtml } from '../src/club-tourneys-ui.js';
@@ -25,7 +25,7 @@ import { setupHtml } from '../src/private-tourney-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
 const LEVELS = [{sb: 10, bb: 20, ante: 0, minutes: 10}, {sb: 20, bb: 40, ante: 0, minutes: 10}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
-const ROWS = STARTER_ROWS; // 2: 100 · 6: 65/35 · 10: 50/30/20 · 20: 40/25/20/15
+const ROWS = STARTER_ROWS; // 2: 100 · 6: 65/35 · 10: 50/30/20 · 20: 40/25/20/15 · 30 … 1000: the Default's
 
 function clubWith(n, balance = 10000) {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
@@ -42,8 +42,15 @@ const tourney = (club, s = {}) => newTourney(club, {buyIn: 100, stack: 1500, str
 test('the row in force: the last that starts at or below the entries, the first below it', () => {
   const rows = checkPayoutRows(ROWS);
   const at = n => payoutRow(rows, n).from;
-  for (const [n, from] of [[0, 2], [1, 2], [2, 2], [5, 2], [6, 6], [9, 6], [10, 10], [19, 10], [20, 20], [1000, 20]]) assert.equal(at(n), from, `${n} entries`);
+  for (const [n, from] of [[0, 2], [1, 2], [2, 2], [5, 2], [6, 6], [9, 6], [10, 10], [19, 10], [20, 20], [29, 20], [30, 30], [999, 750], [1000, 1000]]) assert.equal(at(n), from, `${n} entries`);
   assert.deepEqual(payoutRow(rows, 10).places, [5000, 3000, 2000]);
+});
+
+test('the table to start from goes up to the most entries a tournament takes, paying as the Default does from 30', () => {
+  assert.equal(STARTER_ROWS.at(-1).from, MAX_ENTRIES);
+  assert.ok(STARTER_ROWS.length <= MAX_PAYOUT_ROWS);
+  for (const r of STARTER_ROWS.filter(x => x.from >= 30)) assert.deepEqual(r.places, defaultPayout(r.from), `from ${r.from}`);
+  assert.equal(STARTER_ROWS.at(-1).places.length, 150, '1000 entries: the top 15% paid');
 });
 
 test('a payout table: each row exactly 100%, no place above the one before, rows starting at more entries', () => {
@@ -166,8 +173,9 @@ test('members see the row in force, for the entries so far until registration cl
 });
 
 test('the editor’s draft: rows and places added and taken away, read back, gaps refused', () => {
-  const d = draftOf(ROWS);
+  const d = draftOf(ROWS.slice(0, 4));
   assert.notEqual(d.rows[0].places, ROWS[0].places, 'a copy');
+  assert.equal(draftOf().rows.length, ROWS.length, 'a new table starts from them all');
   addRow(d);
   assert.deepEqual(d.rows.at(-1), {from: 30, places: [4000, 2500, 2000, 1500]});
   removeRow(d, 0);
