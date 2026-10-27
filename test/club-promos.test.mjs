@@ -81,7 +81,34 @@ test('settings: validated, rules in a sentence', () => {
   const p = newPromo(club, HH, T0);
   assert.equal(p.minPlayers, 4, 'four players dealt in by default');
   assert.equal(promoRules(p), 'Best Hold’em, Omaha 4 hand each day wins 50 (three of a kind or better).');
-  assert.equal(promoRules(newPromo(club, BONUS, T0)), 'Hold’em: straight flush 25, four of a kind 10, up to 2 of each a day.');
+  assert.equal(promoRules(newPromo(club, BONUS, T0)), 'Hold’em: straight flush 25 (up to 2 a day), four of a kind 10 (up to 2 a day).');
+  // Each hand its own cap (#277); capPerTier only fills in for one without.
+  const own = newPromo(club, {...BONUS, tiers: [{category: 'quads', amount: 1000, cap: 3}, {category: 'straight_flush', amount: 2500, cap: 0}]}, T0);
+  assert.deepEqual(own.tiers.map(t => [t.category, t.cap]), [['straight_flush', 0], ['quads', 3]]);
+  assert.equal(promoRules(own), 'Hold’em: straight flush 25, four of a kind 10 (up to 3 a day).');
+});
+
+test('hand bonuses: each hand’s cap is its own (#277)', () => {
+  const club = clubWith('ann', 'bob');
+  newPromo(club, {...BONUS, tiers: [{category: 'quads', amount: 1000, cap: 1}, {category: 'straight_flush', amount: 2500, cap: 0}]}, T0);
+  const ids = players(['ann', 'bob']);
+  const sf = () => rec({hands: [['9s', '8s'], ['Kc', 'Kd']], board: ['7s', '6s', '5s', 'Kh', 'Ks'], at: T0});
+  assert.equal(processHand(club, sf(), ids).paid.length, 2);
+  // Quads have paid their one today; straight flushes have no cap.
+  for (let i = 0; i < 3; i++) assert.deepEqual(processHand(club, sf(), ids).paid.map(a => a.category), ['straight_flush']);
+  assert.deepEqual(promosBody(club, T0).promos[0].caps.map(c => [c.category, c.used, c.cap]), [['straight_flush', 4, 0], ['quads', 1, 1]]);
+});
+
+test('a promotion from before each hand had its cap keeps its one cap for all', () => {
+  const club = clubWith('ann', 'bob');
+  const promo = newPromo(club, BONUS, T0);
+  for (const t of promo.tiers) delete t.cap;
+  promo.capPerTier = 1;
+  const ids = players(['ann', 'bob']);
+  const sf = () => rec({hands: [['9s', '8s'], ['Kc', 'Kd']], board: ['7s', '6s', '5s', 'Kh', 'Ks'], at: T0});
+  assert.equal(processHand(club, sf(), ids).paid.length, 2);
+  assert.equal(processHand(club, sf(), ids).paid.length, 0);
+  assert.match(promoRules(promo), /straight flush 25 \(up to 1 a day\), four of a kind 10 \(up to 1 a day\)/);
 });
 
 test('periods: hours, days, Monday weeks, sessions, in the manager’s time zone', () => {

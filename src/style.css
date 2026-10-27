@@ -2096,8 +2096,22 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .cl-promo-form fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .cl-promo-form .pl-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
 .cl-promo-form .cl-num { width: 6em; }
+/* A field inside its label: the label above it, as wide as the field. */
+.cl-promo-form .pl-row > .pl-label { width: auto; display: flex; flex-direction: column; gap: 4px; }
+.cl-promo-form .pl-row > .pl-label > .pl-text:not(.cl-num) { width: 13em; }
+.cl-promo-form .pl-row > .pl-label > .cl-time { width: 9em; }
+.cl-promo-form input[name="capPerPlayer"] { width: 8em; }
+.cl-promo-session { display: flex; flex-direction: column; gap: 8px; }
+.cl-promo-form [hidden] { display: none; }
+/* Bonuses: hand, prize and most per period, a row each. */
+.cl-promo-tiers { display: grid; grid-template-columns: minmax(0, 13em) 7em 8em; gap: 6px 10px; align-items: center; justify-content: start; }
+.cl-promo-tiers .pl-label { width: auto; }
+.cl-promo-tiers .pl-text { width: 100%; }
 .cl-promo-awards li { flex-wrap: wrap; }
-@media (max-width: 640px) { .cl-promo-form .cl-num { width: 5em; } }
+@media (max-width: 640px) {
+  .cl-promo-form .cl-num { width: 5em; }
+  .cl-promo-tiers { grid-template-columns: minmax(0, 1fr) 5.5em 6em; }
+}
 /* At a club table (#278): the promotions in a line above the felt, never
    over cards or seats; a prize or a new high hand takes the line for a moment. */
 .pl-promo-line { align-self: center; max-width: 100%; padding: 4px 12px; border-radius: 999px; background: rgba(243, 231, 201, 0.12); color: var(--fg); font-size: 13px; text-align: center; overflow-wrap: anywhere; }

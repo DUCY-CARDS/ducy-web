@@ -3,7 +3,7 @@
 // Manage (set up, pause, end, approve and void). The promotions themselves
 // are club-promos.js; clubs.js draws these and sends the manager's actions.
 
-import { CATEGORIES, CATEGORY_NAMES, PERIODS, promosAdmin, VOID_MS } from './club-promos.js';
+import { CATEGORIES, CATEGORY_NAMES, PERIODS, promosAdmin, tierCap, VOID_MS } from './club-promos.js';
 import { GAMES } from './club-tables.js';
 import { chipInput, chipText, parseChips } from './chip-format.js';
 import { ago } from './time-ago.js';
@@ -88,7 +88,7 @@ const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 6
 // The form for a new promotion, or for changing `edit` (its settings).
 function formHtml(edit, newKind = 'high_hand', cd = '') {
   const v = edit || {kind: newKind, games: ['nlhe'], every: 'day', prizes: [5000], minCategory: 'full_house', ties: 'split',
-    tiers: [{category: 'quads', amount: 1000}, {category: 'straight_flush', amount: 2500}, {category: 'royal_flush', amount: 10000}], capPerTier: 5, capPerPlayer: 0, minPlayers: 4, minPot: 0, budget: 0, days: [5], from: 20 * 60, to: 23 * 60};
+    tiers: [{category: 'quads', amount: 1000, cap: 5}, {category: 'straight_flush', amount: 2500, cap: 5}, {category: 'royal_flush', amount: 10000, cap: 5}], capPerPlayer: 0, minPlayers: 4, minPot: 0, budget: 0, days: [5], from: 20 * 60, to: 23 * 60};
   const kind = v.kind;
   let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}"${cd}>`;
   if (!edit) {
@@ -99,22 +99,26 @@ function formHtml(edit, newKind = 'high_hand', cd = '') {
   h += `<div class="pl-row"><label class="pl-label">Name <input class="pl-text" name="name" maxlength="40" value="${esc(v.name || '')}" placeholder="${kind === 'bonus' ? 'Hand bonuses' : 'High hand'}"></label></div>`;
   h += `<fieldset class="cl-promo-games"><legend class="pl-label">Games${kind === 'high_hand' ? ' (each its own contest)' : ''}</legend>${GAMES.map(g => `<label><input type="checkbox" name="games" value="${g.id}"${v.games.includes(g.id) ? ' checked' : ''}> ${esc(g.label)}</label>`).join(' ')}</fieldset>`;
   h += `<div class="pl-row"><label class="pl-label">Period <select class="pl-text" name="every" data-promoevery="1">${PERIODS.map(p => `<option value="${p}"${v.every === p ? ' selected' : ''}>${PERIOD_TEXT[p]}</option>`).join('')}</select></label></div>`;
-  h += `<div class="pl-row cl-promo-session"${v.every === 'session' ? '' : ' hidden'}>${DAY_TEXT.map((d, i) => `<label><input type="checkbox" name="days" value="${i}"${(v.days || []).includes(i) ? ' checked' : ''}> ${d}</label>`).join(' ')}
-    <label class="pl-label">From <input class="pl-text" type="time" name="from" value="${hhmm(v.from ?? 1200)}"></label><label class="pl-label">to <input class="pl-text" type="time" name="to" value="${hhmm(v.to ?? 1380)}"></label></div>`;
+  h += `<div class="cl-promo-session"${v.every === 'session' ? '' : ' hidden'}><div class="pl-row">${DAY_TEXT.map((d, i) => `<label><input type="checkbox" name="days" value="${i}"${(v.days || []).includes(i) ? ' checked' : ''}> ${d}</label>`).join(' ')}</div>
+    <div class="pl-row"><label class="pl-label">From <input class="pl-text cl-time" type="time" name="from" value="${hhmm(v.from ?? 1200)}"></label><label class="pl-label">To <input class="pl-text cl-time" type="time" name="to" value="${hhmm(v.to ?? 1380)}"></label></div></div>`;
   if (kind === 'high_hand') {
     const pz = v.prizes || [];
     h += `<div class="pl-row"><label class="pl-label">1st <input class="pl-text cl-num" name="p1" inputmode="decimal" value="${pz[0] ? chipInput(pz[0]) : ''}"></label><label class="pl-label">2nd <input class="pl-text cl-num" name="p2" inputmode="decimal" value="${pz[1] ? chipInput(pz[1]) : ''}"></label><label class="pl-label">3rd <input class="pl-text cl-num" name="p3" inputmode="decimal" value="${pz[2] ? chipInput(pz[2]) : ''}"></label></div>`;
     h += `<div class="pl-row"><label class="pl-label">At least <select class="pl-text" name="minCategory">${CAT_OPTIONS.map(c => `<option value="${c}"${v.minCategory === c ? ' selected' : ''}>${esc(tierName(c))}</option>`).join('')}</select></label>
       <label class="pl-label">Ties <select class="pl-text" name="ties"><option value="split"${v.ties !== 'first' ? ' selected' : ''}>Split the prize</option><option value="first"${v.ties === 'first' ? ' selected' : ''}>First to make it wins</option></select></label></div>`;
   } else {
+    // Each hand its prize and how many a period (#277); a hand pays only its
+    // highest bonus.
     const tiers = v.tiers || [];
-    h += '<div class="cl-promo-tiers"><span class="pl-label">Bonuses (a hand pays only its highest one)</span>';
+    h += '<div class="cl-promo-tiers" role="group" aria-label="Bonuses"><span class="pl-label">Hand</span><span class="pl-label">Prize</span><span class="pl-label">Most per period</span>';
     for (let i = 0; i < 4; i++) {
       const t = tiers[i] || {};
-      h += `<div class="pl-row"><select class="pl-text" name="tcat${i}"><option value="">—</option>${CAT_OPTIONS.map(c => `<option value="${c}"${t.category === c ? ' selected' : ''}>${esc(tierName(c))}</option>`).join('')}</select>
-        <input class="pl-text cl-num" name="tamt${i}" inputmode="decimal" aria-label="Prize" placeholder="Prize" value="${t.amount ? chipInput(t.amount) : ''}"></div>`;
+      const cap = t.category ? tierCap(v, t) : 0;
+      h += `<select class="pl-text" name="tcat${i}" aria-label="Hand"><option value="">—</option>${CAT_OPTIONS.map(c => `<option value="${c}"${t.category === c ? ' selected' : ''}>${esc(tierName(c))}</option>`).join('')}</select>`;
+      h += `<input class="pl-text" name="tamt${i}" inputmode="decimal" aria-label="Prize" value="${t.amount ? chipInput(t.amount) : ''}">`;
+      h += `<input class="pl-text" type="number" min="0" name="tcap${i}" aria-label="Most per period" placeholder="No limit" value="${cap || ''}">`;
     }
-    h += `</div><div class="pl-row"><label class="pl-label">At most <input class="pl-text cl-num" type="number" min="0" name="capPerTier" value="${v.capPerTier || ''}"> of each per period</label><label class="pl-label">and <input class="pl-text cl-num" type="number" min="0" name="capPerPlayer" value="${v.capPerPlayer || ''}"> per player</label> <span class="pl-meta">(blank: no limit)</span></div>`;
+    h += `</div><div class="pl-row"><label class="pl-label">Most per player <input class="pl-text cl-num" type="number" min="0" name="capPerPlayer" placeholder="No limit" value="${v.capPerPlayer || ''}"></label></div>`;
   }
   h += `<details class="cl-promo-more"${edit ? ' open' : ''}><summary>Conditions and budget</summary>
     <div class="pl-row"><label class="pl-label">Players dealt in, at least <input class="pl-text cl-num" type="number" min="2" max="9" name="minPlayers" value="${v.minPlayers ?? 4}"></label>
@@ -153,7 +157,7 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
         h += `<div class="cl-promo-board"><span class="pl-label">${esc(gameLabel(g))}</span>${list.length ? `<ol>${list.map(l => `<li><b>${esc(l.name)}</b> ${esc(lower(l.hand))} ${cardsHtml(l.cards)}</li>`).join('')}</ol>` : '<span class="pl-meta">No qualifying hand yet.</span>'}</div>`;
       }
     }
-    if (p.caps) h += `<ul class="cl-promo-caps">${p.caps.map(c => `<li>${esc(tierName(c.category))} ${chips(c.amount)}: ${c.used}${p.capPerTier ? ` of ${p.capPerTier}` : ''} paid</li>`).join('')}</ul>`;
+    if (p.caps) h += `<ul class="cl-promo-caps">${p.caps.map(c => `<li>${esc(tierName(c.category))} ${chips(c.amount)}: ${c.used}${c.cap ? ` of ${c.cap}` : ''} paid</li>`).join('')}</ul>`;
     h += `<div class="pl-actions"><button class="btn-small" data-cl="promo-edit" data-id="${esc(p.id)}"${cd}>Change</button>`;
     h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="${p.status === 'paused' ? 'running' : 'paused'}"${cd}>${p.status === 'paused' ? 'Resume' : 'Pause'}</button>`;
     h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="ended"${cd}>End</button></div></div>`;
@@ -206,8 +210,7 @@ export function readPromoForm(f) {
     out.minCategory = v('minCategory');
     out.ties = v('ties');
   } else {
-    out.tiers = [0, 1, 2, 3].map(i => ({category: v(`tcat${i}`), amount: amount(`tamt${i}`, 'A bonus')})).filter(t => t.category);
-    out.capPerTier = Number(v('capPerTier')) || 0;
+    out.tiers = [0, 1, 2, 3].map(i => ({category: v(`tcat${i}`), amount: amount(`tamt${i}`, 'A bonus'), cap: Number(v(`tcap${i}`)) || 0})).filter(t => t.category);
     out.capPerPlayer = Number(v('capPerPlayer')) || 0;
   }
   return out;
