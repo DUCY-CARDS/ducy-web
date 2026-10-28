@@ -2,6 +2,7 @@
 // the next event, safe formatting, and About on the invite screen.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { changedSince, cleanInfo, formatInfo, infoBody, isEmpty, MAX_EVENTS, MAX_INFO_TEXT, nextEvent, readInfo } from '../src/club-info.js';
 import { codeInfo } from '../relay/src/club-room.js';
 

@@ -3,13 +3,15 @@
 // ledger side (buying in on credit, repaying on standing up) is in
 // club-chips.js, and club-server.js runs the host's commands.
 //
-// Member field: credit, the limit (absent or 0: none). The balance is the
-// member's own chips off the table, negative for what they owe. For now only
-// the host sets limits; later a player's agent will too.
+// Member field: credit, the limit on their link (absent or 0: none,
+// club-money.js). The balance is the member's own chips off the table,
+// negative for what they owe. For now only the host sets limits; later a
+// player's agent will too.
 
 import { chipText } from './chip-format.js';
 import { answerRequest, available, creditOf, ensureChips, issue, owedBy } from './club-chips.js';
 import { logAction } from './club-log.js';
+import { backerOf, move } from './club-money.js';
 
 const whole = n => Number.isSafeInteger(n) && n >= 0 && n <= 1e12;
 
@@ -20,13 +22,19 @@ function member(club, id) {
   return m;
 }
 
+// The limit on the link member `m` plays through (#454): club-money.js
+// keeps m.credit in step.
+function setLimit(club, m, limit, now) {
+  move(club, {op: 'setCredit', member: m.id, backer: backerOf(club, m), credit: limit}, now);
+}
+
 // The host sets member `id`'s credit limit (0: none). Lowering it below what
 // they owe is allowed: they just have nothing available until they pay.
 export function setCredit(club, id, limit, now = Date.now()) {
   const m = member(club, id);
   if (!whole(limit)) throw new Error('The credit limit is a whole number of chips (0 for none).');
   if (limit === creditOf(m)) return m;
-  if (limit) m.credit = limit; else delete m.credit;
+  setLimit(club, m, limit, now);
   logAction(club, club.hostId, `${m.name}’s credit limit is now ${chipText(limit)}`, now);
   return m;
 }
@@ -39,7 +47,7 @@ export function raiseCredit(club, id, limit, now = Date.now()) {
   if (!m.request) throw new Error('There’s no request to answer.');
   const was = creditOf(m);
   if (!whole(limit) || limit <= was) throw new Error(`Raise the limit above ${chipText(was)}.`);
-  m.credit = limit;
+  setLimit(club, m, limit, now);
   answerRequest(club, id, 'granted', {given: limit - was, limit, now});
   logAction(club, club.hostId, `${m.name}’s credit limit raised to ${chipText(limit)}`, now, limit - was);
   return m;

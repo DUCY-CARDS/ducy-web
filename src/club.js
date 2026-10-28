@@ -49,7 +49,8 @@
 
 import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
-import { accountBody, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
+import { accountBody, backerTake, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
+import { backerOf, CLUB } from './club-money.js';
 import { readLobby } from './club-lobby.js';
 import { readInfo } from './club-info.js';
 
@@ -259,16 +260,21 @@ function setStatus(club, id, status, now, from) {
 // The host's decisions. Each returns the reply to send, or null if it didn't apply.
 export const approve = (club, id, now = Date.now()) => setStatus(club, id, 'member', now, ['pending']);
 export const decline = (club, id, now = Date.now()) => setStatus(club, id, 'declined', now, ['pending']);
-// Removing a member: the host takes back their whole club balance first
-// (#66), and any open chip request goes. Returns the replies to send (status,
-// and the account showing the reclaim), or null. A member seated at a table
-// is cashed out by the table first (#68).
+// Removing a member: their backer (the club, or their agent) takes back
+// their whole balance first (#66, #454), and any open chip request goes.
+// Returns the replies to send (status, and the account showing the
+// reclaim), or null. A member seated at a table is cashed out by the table
+// first (#68).
 export function removeMember(club, id, now = Date.now()) {
   ensureChips(club);
   const m = club.members[id];
   if (!m || !['member', 'pending'].includes(m.status) || m.seat) return null;
   const hadChips = m.balance > 0;
-  if (hadChips) reclaim(club, id, m.balance, now, 'Removed from the club');
+  if (hadChips) {
+    const backer = backerOf(club, m);
+    if (backer === CLUB) reclaim(club, id, m.balance, now, 'Removed from the club');
+    else backerTake(club, backer, id, m.balance, now, 'Removed from the club', 'reclaim');
+  }
   m.request = null;
   const status = setStatus(club, id, 'removed', now, ['member', 'pending']);
   return hadChips ? [status, account(club, id, 0)] : [status];

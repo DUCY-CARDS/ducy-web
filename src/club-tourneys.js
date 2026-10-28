@@ -27,12 +27,13 @@
 // - entries: [{n, member, at, place}] in order; a member's last entry is
 //   their current one, and place is set once it's knocked out (1: the winner).
 //
-// Club chips stay conserved: buy-ins move from a member's balance into the
-// tournament (`held`); a refund moves them back; prizes pay out what's held
-// plus the added chips, which are issued then.
+// Club chips stay conserved: buy-ins move down a member's path into the
+// tournament (`held`); a refund moves them back up it; prizes pay out what's
+// held plus the added chips, which are issued then (club-chips.js, #454).
 
 import { GAMES, aGame, defaultSeats, maxSeats } from './club-tables.js';
 import { chipText } from './chip-format.js';
+import { payTo, tourneyBuyIn } from './club-chips.js';
 
 export const MAX_TOURNEY_NAME = 40;
 export const MAX_ENTRIES = 1000;
@@ -121,13 +122,6 @@ function get(club, tid) {
   return t;
 }
 
-// A ledger entry, as club-chips.js keeps them.
-function record(club, m, kind, amount, now, tourney) {
-  const e = {n: club.chips.next++, at: now, kind, member: m.id, amount, balance: m.balance, tourney};
-  club.chips.ledger.push(e);
-  return e;
-}
-
 // A member's current entry, if any.
 export const entryOf = (t, id) => t.entries.findLast(e => e.member === id) || null;
 // Registered and not knocked out.
@@ -140,12 +134,11 @@ export const playerCount = t => new Set(t.entries.map(e => e.member)).size;
 
 // Takes the buy-in and adds an entry.
 function enter(club, t, m, now) {
-  if (m.balance < t.buyIn) throw new Error(`The buy-in is ${chipText(t.buyIn)} chips; you have ${chipText(m.balance)}.`);
-  m.balance -= t.buyIn;
+  // Down the member's path, within its room (#454).
+  if (t.buyIn > 0) tourneyBuyIn(club, m.id, t.id, t.buyIn, now);
   t.held += t.buyIn;
   const e = {n: t.entries.length + 1, member: m.id, at: now, place: null};
   t.entries.push(e);
-  if (t.buyIn > 0) record(club, m, 'tourney_buyin', t.buyIn, now, t.id);
   return e;
 }
 
@@ -173,8 +166,7 @@ export function unregister(club, tid, id, now = Date.now()) {
 
 function refund(club, t, m, now) {
   t.held -= t.buyIn;
-  m.balance += t.buyIn;
-  if (t.buyIn > 0) record(club, m, 'tourney_refund', t.buyIn, now, t.id);
+  if (t.buyIn > 0) payTo(club, m.id, 'refund', t.buyIn, now, 'tourney_refund', {tourney: t.id});
 }
 
 // Late registration or a re-entry (#80), while the tournament is running and
@@ -413,8 +405,7 @@ export function finishTourney(club, tid, winner, now = Date.now()) {
     const e = t.entries.find(x => x.place === i + 1);
     const m = e && club.members[e.member];
     if (!m || amount <= 0) return;
-    m.balance += amount;
-    record(club, m, 'tourney_prize', amount, now, t.id);
+    payTo(club, m.id, 'prize', amount, now, 'tourney_prize', {tourney: t.id});
     paid.push({member: m.id, place: i + 1, amount});
   });
   // What was paid: what was held, and the added chips, issued now.

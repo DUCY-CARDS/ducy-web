@@ -34,7 +34,7 @@
 //   hands:   [record]                       recent qualifying hands (#269)
 // }
 
-import { issue, MAX_CHIPS } from './club-chips.js';
+import { MAX_CHIPS, payTo, voidPrize } from './club-chips.js';
 import { GAMES } from './club-tables.js';
 import { chipText } from './chip-format.js';
 
@@ -343,9 +343,9 @@ function award(club, promo, period, {member, amount, rec, hand, kind, place = 0,
 
 function payAward(club, a, now) {
   const p = club.promos;
-  const e = issue(club, a.member, a.amount, now, `${a.promoName}: ${a.handName}`, 'promo');
-  e.promo = a.promo;
-  if (a.hand) e.hand = a.hand;
+  // Down the winner's path, as the club's prize (#454).
+  const e = payTo(club, a.member, 'prize', a.amount, now, 'promo', {promo: a.promo, note: `${a.promoName}: ${a.handName}`, ...(a.hand ? {hand: a.hand} : {})});
+  club.chips.issued += a.amount;
   a.entry = e.n;
   a.status = 'paid';
   a.paidAt = now;
@@ -550,11 +550,8 @@ export function voidAward(club, id, now = Date.now(), why = '') {
   if (a.status === 'paid') {
     const m = club.members[a.member];
     if (!m || m.balance < a.amount) throw new Error(`${a.name} has only ${chipText(m?.balance || 0)} chips in the club now; take what’s left from their balance first, or leave the award.`);
-    m.balance -= a.amount;
-    club.chips.reclaimed += a.amount;
-    const e = {n: club.chips.next++, at: now, kind: 'promo_void', member: m.id, amount: a.amount, balance: m.balance, promo: a.promo, note: `Voided: ${a.promoName}${why ? `, ${String(why).slice(0, 60)}` : ''}`};
-    if (a.hand) e.hand = a.hand;
-    club.chips.ledger.push(e);
+    // Back up the path it came down (#454).
+    voidPrize(club, m.id, a.amount, now, {promo: a.promo, note: `Voided: ${a.promoName}${why ? `, ${String(why).slice(0, 60)}` : ''}`, ...(a.hand ? {hand: a.hand} : {})});
     const pk = `${a.promo}|${a.period}`;
     if (p.paid[pk]) p.paid[pk] = Math.max(0, p.paid[pk] - a.amount);
   }

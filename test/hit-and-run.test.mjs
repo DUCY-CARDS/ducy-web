@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { fakeTables } from './fake-table.mjs';
+import './wasm.mjs';
 import { createTableHost } from '../src/club-host.js';
 
 // A table that answers every call with the state the test sets.

@@ -1,6 +1,7 @@
 // The club manager's pages and addresses (#398, src/club-nav.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { managerPage, NAV, navOf, pageHash, PAGES, pageTitle } from '../src/club-nav.js';
 
 test('the sidebar groups the pages by task', () => {

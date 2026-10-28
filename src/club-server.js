@@ -44,7 +44,8 @@
 
 import { signMessage } from './identity.js';
 import { account, approve, decline, hostReceive, removeMember, revokeInvite } from './club.js';
-import { declineRequest, grantRequest, issue, reclaim } from './club-chips.js';
+import { declineRequest, ensureChips, grantRequest, issue, reclaim } from './club-chips.js';
+import { startMoney } from './club-money.js';
 import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
 import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newTourney, payoutTableById, register, setPayout, setPayoutTable, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
@@ -95,8 +96,12 @@ export function createClubServer({
   const hostKeys = () => (hostKeysP ||= newKeyPair());
   const memberKeys = new Map();
   const keysReady = Promise.all(Object.entries(memberPubs).map(([id, pub]) => memberKey(id, pub, false)));
-  // Managers were removed (#454): the club's are plain members now.
-  if (dropManagers(club)) persist();
+  // Managers were removed (#454): the club's are plain members now. Its
+  // money runs on links (club-money.js), moved over the first time.
+  const onLinks = !!club.money;
+  ensureChips(club);
+  startMoney(club);
+  if (dropManagers(club) || !onLinks) persist();
 
   function changed() {
     persist();

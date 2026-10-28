@@ -1,16 +1,16 @@
 // Agents (#63: #74, #75, #76): members the host trusts to bring in and back
 // players. Pure functions over the club object; clubs.js carries messages.
 //
-// To the club, an agent and their players are one account. Each player's
-// club balance is their share, and the agent's own balance is what they
-// haven't handed out. The agent gives chips to their players and takes them
-// back (transfers inside the account). Credit: the agent's own balance may
-// go below zero, down to −their credit limit (the member's one credit,
-// #404, #445), so they can back players beyond the chips the host gave
-// them. Credit used is how far the whole account (own +
-// players' shares) is below zero; players' winnings raise it again. The host
-// records settlements (paid outside the app; chips are play money), which
-// raise the agent's balance.
+// On links (#454, club-money.js): each player's balance is their link with
+// the agent, and the agent's is their link with the club, which carries
+// their players' play too (a player's buy-in moves both). The agent gives
+// chips to their players and takes them back; giving costs them nothing
+// until the chips go on a table. Credit: the agent's link may go below
+// zero, down to −their credit limit (the member's one credit, #404, #445),
+// and no player's buy-in takes it further. Credit used is how far it is
+// below zero; players' winnings raise it again. The host records
+// settlements (paid outside the app; chips are play money), which raise
+// the agent's link.
 //
 // Member fields: agent: 'offered' | 'yes' (is an agent), agentInvite (their
 // own invite token); a player under an agent: agentOf.
@@ -19,7 +19,8 @@
 
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
-import { answerRequest, checkGrant, creditOf, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
+import { answerRequest, available, backerGive, backerTake, checkGrant, creditOf, declineRequest, ensureChips, issue } from './club-chips.js';
+import { CLUB, linkOf, move } from './club-money.js';
 import { logAction } from './club-log.js';
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
@@ -53,12 +54,21 @@ export function answerAgent(club, id, accept, now = Date.now()) {
 }
 
 // The host ends the agent role. Only once the agent's account isn't in
-// credit (they've settled up); their players become regular members.
+// credit (they've settled up), and they've settled with their players and
+// none is seated; their players then play through the club.
 export function revokeAgent(club, id, now = Date.now()) {
   const m = club.members[id];
   if (!m?.agent) return null;
-  if (m.agent === 'yes' && accountOf(club, id).creditUsed > 0) throw new Error(`${m.name}'s account is in credit: settle up first.`);
-  for (const p of Object.values(club.members)) if (p.agentOf === id) delete p.agentOf;
+  if (m.agent === 'yes') {
+    if (accountOf(club, id).creditUsed > 0) throw new Error(`${m.name}'s account is in credit: settle up first.`);
+    const open = playersOf(club, id).find(p => p.seat || (club.money && linkOf(club, p.id, id)?.balance));
+    if (open) throw new Error(`${m.name} and ${open.name} settle up first${open.seat ? ', after they leave their table' : ''}.`);
+  }
+  for (const p of Object.values(club.members)) {
+    if (p.agentOf !== id) continue;
+    delete p.agentOf;
+    if (m.agent === 'yes' && p.status === 'member') playThrough(club, p.id, CLUB, now);
+  }
   const was = m.agent;
   delete m.agent;
   delete m.agentInvite;
@@ -66,25 +76,39 @@ export function revokeAgent(club, id, now = Date.now()) {
   return {to: id, body: agentBodyRole(club, id)};
 }
 
-// The host puts a member under an agent (or none). A member has at most one.
+// Member `id` plays through `backer` from now on: their link with them,
+// made if it's new (#454).
+function playThrough(club, id, backer, now) {
+  if (!linkOf(club, id, backer)) move(club, {op: 'addLink', member: id, backer}, now);
+  move(club, {op: 'setThrough', member: id, backer}, now);
+}
+
+// The host puts a member under an agent (or none). A member has at most
+// one, and moves only with nothing on their link and not seated: their
+// chips stay where they are (#454).
 export function assignToAgent(club, playerId, agentId, now = Date.now()) {
   const p = club.members[playerId];
   if (!p || p.status !== 'member') throw new Error('No such member.');
   if (p.agent) throw new Error('Agents can’t play under another agent.');
   if (agentId && !isAgent(club, agentId)) throw new Error('Not an agent.');
+  if ((agentId || null) !== (p.agentOf || null)) {
+    if (p.seat) throw new Error(`${p.name} is at a table; they need to leave it first.`);
+    if (p.balance) throw new Error(`${p.name} has ${chipText(p.balance)} on their account: settle it first.`);
+    playThrough(club, playerId, agentId || CLUB, now);
+  }
   if (agentId) p.agentOf = agentId; else delete p.agentOf;
   logAction(club, club.hostId, agentId ? `${p.name} now plays under ${club.members[agentId].name}` : `${p.name} no longer plays under an agent`, now);
 }
 
-// The account: the agent's own balance, the players' shares, the total, and
-// how much credit it uses (#76).
+// The account: the agent's link with the club (`total`), their players'
+// shares, what's their own, and how much credit it uses (#76, #454).
 export function accountOf(club, id) {
   ensureChips(club);
   const a = club.members[id];
   const players = playersOf(club, id);
   const shares = players.reduce((s, p) => s + p.balance, 0);
-  const total = a.balance + shares;
-  return {own: a.balance, shares, total, limit: creditOf(a), creditUsed: Math.max(0, -total), room: creditOf(a) + a.balance, players};
+  const total = a.balance;
+  return {own: total - shares, shares, total, limit: creditOf(a), creditUsed: Math.max(0, -total), room: available(a), players};
 }
 
 // The host records a settlement from the agent (paid outside the app).
@@ -101,7 +125,8 @@ export function settle(club, id, amount, now = Date.now(), why = '') {
 export function tableResult(club, id) {
   let total = 0, session = 0;
   for (const e of club.chips.ledger) {
-    if (e.member !== id) continue;
+    // An agent's entries for their players' moves aren't their own play.
+    if (e.member !== id || e.player) continue;
     if (e.kind === 'buy_in' || e.kind === 'top_up') session -= e.amount;
     else if (e.kind === 'top_up_refund') session += e.amount;
     else if (e.kind === 'cash_out') { total += session + e.amount; session = 0; }
@@ -160,17 +185,18 @@ export function runAgent(club, by, cmd, now = Date.now()) {
       if (cmd.op === 'grant' && !p.request) throw new Error('There’s no request to grant.');
       if (cmd.op === 'grant') checkGrant(club, cmd.id);
       if (!Number.isSafeInteger(amt) || amt <= 0) throw new Error('Enter a whole number of chips above 0.');
-      // Inside the account: the agent's own balance may go negative, down to −limit.
-      const [out] = transfer(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note, {floor: -creditOf(a)});
+      // On their link with the agent: it costs the agent nothing until the
+      // chips go on a table (#454).
+      const e = backerGive(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note);
       if (cmd.op === 'grant') answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
       logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now, amt);
-      return {replies: [account(club, by, out.n - 1), account(club, cmd.id, out.n)]};
+      return {replies: [account(club, cmd.id, e.n - 1)]};
     }
     case 'take': {
       const p = mine(club, by, cmd.id);
-      const [out] = transfer(club, cmd.id, by, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} took back ${chipText(out.amount)} from ${p.name}`, now, out.amount);
-      return {replies: [account(club, cmd.id, out.n - 1), account(club, by, out.n)]};
+      const e = backerTake(club, by, cmd.id, Number(cmd.amount), now, cmd.note);
+      logAction(club, by, `${a.name} took back ${chipText(e.amount)} from ${p.name}`, now, e.amount);
+      return {replies: [account(club, cmd.id, e.n - 1)]};
     }
     case 'deny': {
       const p = mine(club, by, cmd.id);

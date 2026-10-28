@@ -4,6 +4,7 @@
 // node --test test/club-tourneys-ui.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { memberTourneysHtml, tourneyCallsFor } from '../src/club-tourneys-ui.js';
 
 const NOW = 1_000_000_000;

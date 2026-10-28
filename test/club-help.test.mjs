@@ -2,6 +2,7 @@
 // Run with: node --test test/club-help.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { createIdentity, signMessage, Verifier } from '../src/identity.js';
 import { approve, hostReceive, newClub } from '../src/club.js';
 import { answerHelp, askHelp, helpBody, MAX_HELP, openHelp, staffOnline } from '../src/club-help.js';

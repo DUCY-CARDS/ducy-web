@@ -3,6 +3,7 @@
 // Run with: node --test test/club-promos.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { approve, newClub } from '../src/club.js';
 import { balanceChange, checkOwnLedger, issue, totals } from '../src/club-chips.js';
 import {

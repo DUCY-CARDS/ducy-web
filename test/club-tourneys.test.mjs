@@ -8,6 +8,7 @@
 // conserved throughout.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { approve, newClub } from '../src/club.js';
 import { issue, totals } from '../src/club-chips.js';
 import {
