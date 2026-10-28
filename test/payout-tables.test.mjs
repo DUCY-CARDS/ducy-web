@@ -230,7 +230,7 @@ function memoryStorage() {
 }
 const wait = () => new Promise(r => setTimeout(r, 150));
 
-test('the club server: managers add, edit, rename and delete payout tables and pick one; members can’t; each is logged', async () => {
+test('the club server: the owner adds, edits, renames and deletes payout tables and picks one; members can’t; each is logged', async () => {
   const storage = memoryStorage();
   const owner = await createIdentity(), ben = await createIdentity(), cy = await createIdentity();
   const code = 'PAYT-ABLE';
@@ -251,44 +251,40 @@ test('the club server: managers add, edit, rename and delete payout tables and p
     await say(p, {type: 'join', invite, name});
     assert.equal((await cmd(owner, 'approve', {id: p.id})).error, '');
   }
-  assert.equal((await cmd(owner, 'offer_assistant', {id: ben.id})).error, '');
-  await say(ben, {type: 'role_reply', accept: true});
-  await wait();
-  await say(ben, {type: 'owner_hello'});
-  await wait();
 
-  // A member isn't answered.
+  // A member isn't answered, even one who was a manager before (#454).
+  server.club.members[ben.id].role = 'assistant';
   assert.equal(await cmd(cy, 'add_payout_table', {table: {name: 'Mine', rows: ROWS}}), undefined);
+  assert.equal(await cmd(ben, 'add_payout_table', {table: {name: 'Mine', rows: ROWS}}), undefined);
   assert.equal(server.club.payoutTables, undefined);
-  // The manager adds one, renames and edits it.
-  const add = await cmd(ben, 'add_payout_table', {table: {name: 'Standard', rows: ROWS}});
+  // The owner adds one, renames and edits it.
+  const add = await cmd(owner, 'add_payout_table', {table: {name: 'Standard', rows: ROWS}});
   assert.equal(add.error, '');
   const pid = add.value;
   assert.equal(server.club.payoutTables[0].name, 'Standard');
-  assert.match((await cmd(ben, 'add_payout_table', {table: {name: 'Bad', rows: [{from: 1, places: [5000]}]}})).error, /50\.00%/);
-  assert.equal((await cmd(ben, 'edit_payout_table', {id: pid, table: {name: 'Main'}})).error, '');
-  assert.equal((await cmd(ben, 'edit_payout_table', {id: pid, table: {rows: [{from: 1, places: [10000]}, {from: 6, places: [6000, 4000]}]}})).error, '');
+  assert.match((await cmd(owner, 'add_payout_table', {table: {name: 'Bad', rows: [{from: 1, places: [5000]}]}})).error, /50\.00%/);
+  assert.equal((await cmd(owner, 'edit_payout_table', {id: pid, table: {name: 'Main'}})).error, '');
+  assert.equal((await cmd(owner, 'edit_payout_table', {id: pid, table: {rows: [{from: 1, places: [10000]}, {from: 6, places: [6000, 4000]}]}})).error, '');
   assert.deepEqual(server.club.payoutTables[0].rows[1], {from: 6, places: [6000, 4000]});
   // A tournament made with it, then switched to Default and back.
-  const tid = (await cmd(ben, 'new_tourney', {tourney: {name: 'Sunday', buyIn: 0, stack: 1500, structure: LEVELS, opensAt: Date.now(), startsAt: Date.now() + 3600e3, payoutTable: pid}})).value;
+  const tid = (await cmd(owner, 'new_tourney', {tourney: {name: 'Sunday', buyIn: 0, stack: 1500, structure: LEVELS, opensAt: Date.now(), startsAt: Date.now() + 3600e3, payoutTable: pid}})).value;
   assert.ok(tid);
   const t = server.club.tourneys.find(x => x.id === tid);
   assert.equal(t.payoutTable, pid);
-  assert.match((await cmd(ben, 'delete_payout_table', {id: pid})).error, /Sunday pays by Main/);
-  assert.equal((await cmd(ben, 'set_payout_table', {id: tid, table: null})).error, '');
+  assert.match((await cmd(owner, 'delete_payout_table', {id: pid})).error, /Sunday pays by Main/);
+  assert.equal((await cmd(owner, 'set_payout_table', {id: tid, table: null})).error, '');
   assert.equal(t.payoutTable, undefined);
   assert.equal((await cmd(owner, 'set_payout_table', {id: tid, table: pid})).error, '');
   assert.equal(t.payoutTable, pid);
   assert.equal((await cmd(owner, 'set_payout_table', {id: tid, table: null})).error, '');
-  assert.equal((await cmd(ben, 'delete_payout_table', {id: pid})).error, '');
+  assert.equal((await cmd(owner, 'delete_payout_table', {id: pid})).error, '');
   assert.equal(server.club.payoutTables.length, 0);
   // Members get the tournaments with the row in force.
   const lobby = sent.filter(s => s.to === cy.id && s.data.body?.type === 'tourneys').at(-1)?.data.body;
   assert.deepEqual(lobby.tourneys[0].shares, [10000]);
   // Each in the log.
-  const mine = server.club.log.filter(l => l.by === ben.id).map(l => l.text);
-  for (const line of ['Added the payout table Standard', 'Renamed the payout table Standard to Main', 'Changed the payout table Main', 'Sunday pays by Default', 'Deleted the payout table Main']) {
+  const mine = server.club.log.filter(l => l.by === owner.id).map(l => l.text);
+  for (const line of ['Added the payout table Standard', 'Renamed the payout table Standard to Main', 'Changed the payout table Main', 'Sunday pays by Main', 'Sunday pays by Default', 'Deleted the payout table Main']) {
     assert.ok(mine.includes(line), line);
   }
-  assert.ok(server.club.log.some(l => l.by === owner.id && l.text === 'Sunday pays by Main'));
 });

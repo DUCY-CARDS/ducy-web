@@ -16,7 +16,6 @@ const { issue, reclaim, totals } = await import('../src/club-chips.js');
 const { newTable, reservationOf, reservations } = await import('../src/club-tables.js');
 const { clubEngine } = await import('../src/club-engine.js');
 const { createTableHost } = await import('../src/club-host.js');
-const { runAdmin } = await import('../src/club-roles.js');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(what, fn, ms = 30_000) {
@@ -31,7 +30,7 @@ async function until(what, fn, ms = 30_000) {
 
 const PEOPLE = ['ann', 'bob', 'cy', 'dee', 'eve'];
 
-// A club with Main (6 seats), Side (2 seats) and Big. Cy is a manager.
+// A club with Main (6 seats), Side (2 seats) and Big.
 function newClubWithTables() {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
   for (const id of PEOPLE) {
@@ -39,7 +38,6 @@ function newClubWithTables() {
     approve(club, id, 0);
     issue(club, id, 1000, 0);
   }
-  club.members.cy.role = 'assistant';
   newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0});
   newTable(club, {name: 'Side', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 2, turnSecs: 0});
   // Big's minimum, 1000, is everything each of them has.
@@ -197,15 +195,11 @@ test('the hit-and-run rule stops a move as it stops leaving; a manager’s move 
   assert.match(r.refused, /play 5 more hands/);
   assert.equal(reservationOf(club, side.id, 'bob'), null);
   assert.ok(!seated(club, 'bob').moving);
-  // A member who isn't a manager can't move him; Cy can.
-  assert.throws(() => runAdmin(club, 'dee', {op: 'move_player', table: main.id, id: 'bob', to: side.id}), /not a manager/);
-  assert.throws(() => runAdmin(club, 'cy', {op: 'move_player', table: main.id, id: 'bob', to: main.id}), /another open table/);
-  const a = runAdmin(club, 'cy', {op: 'move_player', table: main.id, id: 'bob', to: side.id});
-  assert.deepEqual(a.seat, {table: main.id, id: 'bob', to: side.id});
-  await host.movePlayer(a.seat.table, a.seat.id, a.seat.to, {by: 'cy'});
+  // The manager can move him.
+  await host.movePlayer(main.id, 'bob', side.id, {by: 'HOSTHOST'});
   await until('his message', () => moved(got, 'bob'));
-  assert.equal(club.log.at(-1).text, 'Cy moved Bob from Main to Side');
-  assert.equal(club.log.at(-1).by, 'cy');
+  assert.equal(club.log.at(-1).text, 'The manager moved Bob from Main to Side');
+  assert.equal(club.log.at(-1).by, 'HOSTHOST');
   assert.ok(reservationOf(club, side.id, 'bob'));
   assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out' && e.amount === 150));
   assert.ok(totals(club).conserved);

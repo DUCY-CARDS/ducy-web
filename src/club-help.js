@@ -1,13 +1,11 @@
 // Help requests (#192): a member asks whoever runs the club for help ("Can
-// someone top me up?", "Table 2 is stuck"); the host and the game
-// assistants see the open ones, reply, and mark them handled. Members see
-// who's around to answer. Pure functions over the club object;
-// club-server.js carries the messages.
+// someone top me up?", "Table 2 is stuck"); the host or owner sees the open
+// ones, replies, and marks them handled. Members see whether they're around
+// to answer. Pure functions over the club object; club-server.js carries the
+// messages.
 //
 // club.help: [{id, from, name, text, table, at, reply, handled: null | {by, at}}],
 // the last MAX_HELP, oldest first.
-
-import { isAssistant } from './club-roles.js';
 
 export const MAX_HELP = 50;
 export const MAX_HELP_TEXT = 200;
@@ -32,10 +30,10 @@ export function askHelp(club, from, text, table = '', now = Date.now()) {
   return h;
 }
 
-// The host (`by` = the club's hostId) or an assistant answers request `id`:
-// a reply, and/or marking it handled. Returns the request, or throws.
+// The host (`by` = the club's hostId) or owner answers request `id`: a
+// reply, and/or marking it handled. Returns the request, or throws.
 export function answerHelp(club, by, id, {reply = '', handled = true} = {}, now = Date.now()) {
-  if (by !== club.hostId && by !== club.ownerId && !isAssistant(club, by)) throw new Error('Only the club’s managers answer help requests.');
+  if (by !== club.hostId && by !== club.ownerId) throw new Error('Only the club’s manager answers help requests.');
   const h = (club.help || []).find(x => x.id === id);
   if (!h) throw new Error('No such help request.');
   const r = clean(reply, MAX_HELP_REPLY);
@@ -48,12 +46,10 @@ export const openHelp = club => (club.help || []).filter(h => !h.handled);
 
 // Who's around to help, given who's connected (`online`, a Set) and whether
 // the host's own page is running the club (a club run in the host's tab):
-// [{name, role: 'host' | 'assistant'}].
+// [{name, role: 'host'}], or none.
 export function staffOnline(club, online, hostHere = false) {
-  const out = [];
-  if (hostHere || (club.ownerId && online.has(club.ownerId))) out.push({name: club.members[club.ownerId]?.name || 'Manager', role: 'host'});
-  for (const id of online) if (isAssistant(club, id)) out.push({name: club.members[id].name, role: 'assistant'});
-  return out;
+  if (!hostHere && !(club.ownerId && online.has(club.ownerId))) return [];
+  return [{name: club.members[club.ownerId]?.name || 'Manager', role: 'host'}];
 }
 
 // What member `id` sees: who's around, and their own latest requests.
