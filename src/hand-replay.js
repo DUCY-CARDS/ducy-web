@@ -84,25 +84,28 @@ export function streetStarts(frames) {
   return out;
 }
 
-// Win/loss per table session from ledger entries (a member's own copy, or
-// the club's whole ledger): a session runs from a buy-in to the cash-out.
+// Win/loss per table session from ledger entries (club-money.js: a
+// member's own copy, or the club's whole ledger): a session runs from a
+// buy-in to the cash-out. Entries on someone else's link for a player's
+// move (`player`, an agent's) aren't a session of their own.
 // Returns [{member, table, start, end, put, took, net, open}], newest first.
 export function tableSessions(entries) {
   const open = new Map(); // member → session
   const out = [];
   for (const e of [...entries].sort((a, b) => a.n - b.n)) {
-    if (!['buy_in', 'top_up', 'top_up_refund', 'cash_out'].includes(e.kind)) continue;
+    if (e.player || !['buy_in', 'top_up', 'refund', 'cash_out'].includes(e.kind)) continue;
     let s = open.get(e.member);
-    // A top-up handed back (ducy#118) wasn't put on the table after all.
-    if (e.kind === 'top_up_refund') { if (s) { s.put -= e.amount; s.net = s.took - s.put; } continue; }
+    // A top-up handed back (ducy#118) wasn't put on the table after all; a
+    // refund about anything else is a tournament's.
+    if (e.kind === 'refund') { if (s && s.table === e.about) { s.put -= e.amount; s.net = s.took - s.put; } continue; }
     if (e.kind === 'buy_in' || !s) {
-      s = {member: e.member, table: e.table, start: e.at, end: null, put: 0, took: 0, net: 0, open: true};
+      s = {member: e.member, table: e.about, start: e.at, end: null, put: 0, took: 0, net: 0, open: true};
       open.set(e.member, s);
       out.push(s);
     }
     if (e.kind === 'cash_out') {
       s.took = e.amount; s.end = e.at; s.open = false; open.delete(e.member);
-    } else s.put += e.amount;
+    } else s.put -= e.amount;
     s.net = s.took - s.put;
   }
   return out.reverse();

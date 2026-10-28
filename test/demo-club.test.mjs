@@ -189,8 +189,8 @@ test('each demo club starts in its scenario’s state, and starts again the same
       assert.ok(first.members.filter(m => m.status === 'member' && !m.agent && !m.under).length >= 3, 'members with no agent');
       // The bots under an agent were given their chips by them (transfers), not by the manager.
       for (const a of agents) for (const p of acc[a.name].players) {
-        if (p.name !== 'Ivy Chen') assert.ok(club.chips.ledger.some(e => e.member === p.id && e.kind === 'transfer_in' && e.from === a.id), `${p.name} from ${a.name}`);
-        assert.ok(!club.chips.ledger.some(e => e.member === p.id && e.kind === 'issue'), `${p.name}: nothing from the manager`);
+        if (p.name !== 'Ivy Chen') assert.ok(club.money.ledger.some(e => e.member === p.id && e.kind === 'give' && e.backer === a.id), `${p.name} from ${a.name}`);
+        assert.ok(!club.money.ledger.some(e => e.member === p.id && e.kind === 'give' && e.backer === 'club'), `${p.name}: nothing from the manager`);
       }
     }
   }
@@ -227,7 +227,7 @@ test('a demo club opened again from storage, as after the page reloads, loses no
     await again.flush();
     const club = await again.club();
     assert.ok(totals(club).conserved, `opened after table save ${i + 1}: chips add up`);
-    assert.ok(!club.chips.ledger.some(e => e.kind === 'top_up'), `opened after table save ${i + 1}: no one bought in again`);
+    assert.ok(!club.money.ledger.some(e => e.kind === 'top_up'), `opened after table save ${i + 1}: no one bought in again`);
     conn.close();
     await again.flush();
   }
@@ -281,9 +281,9 @@ test('Quest’s players fill a demo club’s tables, play through the real table
   // One gets up (cashing out as anyone does) and a seat opens; one sits down in it later.
   const isBot = e => e.member in quest || (e.member !== people[0].ident.id && !people.some(x => x.ident.id === e.member));
   await until('a bot to leave and one to sit back down', async () => {
-    const ledger = (await relay.club()).chips.ledger;
+    const ledger = (await relay.club()).money?.ledger || [];
     const out = ledger.findIndex(e => e.kind === 'cash_out' && isBot(e));
-    return out >= 0 && ledger.slice(out + 1).some(e => e.kind === 'buy_in' && isBot(e) && e.table === ledger[out].table);
+    return out >= 0 && ledger.slice(out + 1).some(e => e.kind === 'buy_in' && isBot(e) && e.about === ledger[out].about);
   }, 120_000);
 
   await p.table({type: 'leave'});
@@ -522,7 +522,7 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   const club = await relay.club();
   assert.equal(club.members[ann.id].balance, 30_000);
   assert.ok(totals(club).conserved, 'every chip accounted for');
-  assert.ok(club.chips.ledger.some(e => e.member === ann.id && e.kind === 'cash_out'));
+  assert.ok(club.money.ledger.some(e => e.member === ann.id && e.kind === 'cash_out'));
   // The hands whose deal was chosen sent her no fair-deal result (it would
   // only say the deal wasn't fair); any other hand she checked is fair.
   for (const c of a.checks) assert.ok(c.ok, `hand ${c.hand}: ${c.why}`);

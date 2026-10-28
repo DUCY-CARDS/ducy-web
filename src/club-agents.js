@@ -19,7 +19,8 @@
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
 import { answerRequest, available, backerGive, backerTake, checkGrant, creditOf, declineRequest, ensureChips } from './club-chips.js';
-import { CLUB, linkOf, move } from './club-money.js';
+import { CLUB, entriesOf, linkOf, move } from './club-money.js';
+import { tableSessions, totalsByMember } from './hand-replay.js';
 import { logAction } from './club-log.js';
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
@@ -114,15 +115,7 @@ export function accountOf(club, id) {
 // table sessions they've finished (buy-ins and top-ups out, cash-outs in;
 // a session still running isn't counted).
 export function tableResult(club, id) {
-  let total = 0, session = 0;
-  for (const e of club.chips.ledger) {
-    // An agent's entries for their players' moves aren't their own play.
-    if (e.member !== id || e.player) continue;
-    if (e.kind === 'buy_in' || e.kind === 'top_up') session -= e.amount;
-    else if (e.kind === 'top_up_refund') session += e.amount;
-    else if (e.kind === 'cash_out') { total += session + e.amount; session = 0; }
-  }
-  return total;
+  return totalsByMember(tableSessions(entriesOf(club, id)))[id] || 0;
 }
 
 // Where a seated member is: their table's name (#428).
@@ -184,7 +177,7 @@ export function runAgent(club, by, cmd, now = Date.now()) {
     case 'take': {
       const p = mine(club, by, cmd.id);
       const e = backerTake(club, by, cmd.id, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} took back ${chipText(e.amount)} from ${p.name}`, now, e.amount);
+      logAction(club, by, `${a.name} took back ${chipText(-e.amount)} from ${p.name}`, now, -e.amount);
       return {replies: [account(club, cmd.id, e.n - 1)]};
     }
     case 'deny': {

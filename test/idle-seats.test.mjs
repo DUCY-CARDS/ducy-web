@@ -72,7 +72,7 @@ test('alone and not connected: stood up after the idle time, with the clock stop
   // seated is connected), which is how a seat was once held two weeks.
   await sit('ann');
   await until('ann stood up', () => !club.members.ann.seat, 5000);
-  const out = club.chips.ledger.filter(e => e.member === 'ann' && e.kind === 'cash_out').at(-1);
+  const out = club.money.ledger.filter(e => e.member === 'ann' && e.kind === 'cash_out').at(-1);
   assert.equal(out.amount, 150, 'her chips went back to her');
   assert.equal(club.members.ann.balance, 1000);
   assert.ok(totals(club).conserved);

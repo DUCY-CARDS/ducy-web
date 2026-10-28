@@ -31,7 +31,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
 } from './club.js';
-import { balanceChange, ensureChips, ledgerCsv, MAX_NOTE, totals } from './club-chips.js';
+import { ensureChips, ledgerCsv, MAX_NOTE, totals } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -42,7 +42,7 @@ import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import { accountOf, playersOf } from './club-agents.js';
-import { settleRows } from './club-money.js';
+import { entriesOf, entryView, ledgerOf, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
@@ -121,8 +121,6 @@ let seatedAt = null; // the club table this browser plays at: {code, table, hand
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-// Ledger entries that are chips given to you (a notice, #193).
-const GIVEN = ['issue', 'grant', 'transfer_in'];
 // Full tables you asked to hear about (#187): "code|table" keys, kept on
 // this device. A notice comes when one of them has a free seat.
 const SEAT_WATCH_KEY = 'ducySeatWatch';
@@ -939,7 +937,7 @@ function connectMembership(mem) {
     const key = (await entry.keys).pub;
     const body = mem.status === 'new'
       ? {type: 'join', club: mem.code, invite: mem.invite, name: nameIn(mem), key}
-      : {type: 'hello', club: mem.code, name: nameIn(mem), since: lastEntry(mem), key};
+      : {type: 'hello', club: mem.code, name: nameIn(mem), since: lastEntry(mem), ledger: 'links', key};
     sendToHost(mem.code, body);
     // Back at a club table after the host (or this page) reconnected.
     if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: nameIn(mem)}});
@@ -965,6 +963,7 @@ function connectMembership(mem) {
     }
     const before = mem.status;
     const hadEntries = new Set((mem.entries || []).map(e => e.n));
+    const hadLedger = mem.ledger;
     const hadTables = mem.tables ? new Set(mem.tables.map(t => t.id)) : null;
     if (await playerReceive(mem, msg)) {
       if (before !== 'member' && mem.status === 'member') {
@@ -975,11 +974,12 @@ function connectMembership(mem) {
       // Chips given to you, and a table opening, wherever you are (#193).
       const cname = mem.name || mem.code;
       if (msg.body?.type === 'account') {
-        const fresh = (mem.entries || []).filter(e => !hadEntries.has(e.n) && Date.now() - e.at < 3600e3);
-        const given = fresh.filter(e => GIVEN.includes(e.kind)).reduce((n, e) => n + e.amount, 0);
+        // A copy that just started again (club.js) has nothing new in it.
+        const fresh = mem.ledger === hadLedger ? (mem.entries || []).filter(e => !hadEntries.has(e.n) && Date.now() - e.at < 3600e3) : [];
+        const given = fresh.filter(e => e.kind === 'give').reduce((n, e) => n + e.amount, 0);
         if (given) notice(`${cname}: you were given ${chips(given)} chips.`);
         // Standing up (#404): "You left Main", the result and the balance after.
-        const out = fresh.findLast(e => e.kind === 'cash_out');
+        const out = fresh.findLast(e => e.kind === 'cash_out' && !e.player);
         if (out && hadEntries.size && Date.now() - out.at < 120e3) leftPanels.set(mem.code, out.n);
         // The table's Add chips panel shows what's available now.
         if (seatedAt?.code === mem.code) tableChanged();
@@ -1190,7 +1190,7 @@ function resultsHtml(entries, names = null, tableNames = {}) {
 // A promotion prize's hand (#278): a Replay button for a ledger entry that
 // names one. `who`: whose history to look in ('host', or your id).
 function promoReplayBtn(e, code, who) {
-  if (!e.hand || (e.kind !== 'promo' && e.kind !== 'promo_void')) return '';
+  if (!e.hand || (e.kind !== 'prize' && e.kind !== 'void')) return '';
   return ` <button class="link-btn" data-cl="promo-replay" data-code="${esc(code)}" data-who="${esc(who)}" data-hand="${esc(e.hand)}">Replay the hand</button>`;
 }
 
@@ -2116,15 +2116,17 @@ function memberPageHtml(id) {
   h += `<label>Limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}"></label>`;
   h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
   h += '<button class="btn-small primary" type="submit">Save</button></form>';
-  const mine = club.chips.ledger.filter(e => e.member === m.id);
+  const mine = entriesOf(club, m.id);
   if (mine.length) {
-    const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
+    const names = memberNames();
     h += '<section class="mg-sec"><h2>Chips</h2><ul class="cl-ledger">';
-    for (const e of [...mine].reverse().slice(0, 30)) h += ledgerLineHtml(e, tableNames);
+    for (const e of [...mine].reverse().slice(0, 30)) h += ledgerLineHtml(e, aboutNames(club), names, false);
     h += '</ul></section>';
   }
   return h;
 }
+
+const memberNames = () => Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
 
 // What a member is in the club, for their row and page (the owner, agents
 // and their players), as HTML. An agent's players, and a player's agent
@@ -2143,10 +2145,13 @@ function memberTags(m, links = false) {
 
 const statHtml = (label, value, cls = '') => `<div class="mg-stat"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls ? ` cl-${cls}` : ''}">${value}</b></div>`;
 
-// One ledger line, for the host: when, what, the change and the balance after.
-function ledgerLineHtml(e, tableNames = {}, names = null) {
-  const sign = balanceChange(e) < 0 ? '−' : '+';
-  return `<li><span class="pl-meta">${when(e.at)}</span> ${names ? `${esc(names[e.member] || e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.table && tableNames[e.table] ? ` (${esc(tableNames[e.table])})` : ''} <strong>${sign}${chips(e.amount)}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${signed(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
+// One ledger line, for the host: when, whose link (`who`), what and what
+// about, for whose move (an agent's link, for a player's), the change and the
+// balance after.
+function ledgerLineHtml(e, about = {}, names = {}, who = true) {
+  const sign = e.amount < 0 ? '−' : '+';
+  const name = id => esc(names[id] || id);
+  return `<li><span class="pl-meta">${when(e.at)}</span> ${who ? `${name(e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.about && about[e.about] ? ` (${esc(about[e.about])})` : ''}${e.player ? ` · ${name(e.player)}` : ''} <strong>${sign}${chips(Math.abs(e.amount))}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${signed(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
 }
 
 // The rest of what the host can do for a member, in a ⋯ menu (#143).
@@ -2348,9 +2353,10 @@ function settleHtml() {
 // results, and every chip movement (the ledger).
 function accountingHtml() {
   const t = totals(club);
-  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
-  const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
-  const results = totalsByMember(tableSessions(club.chips.ledger));
+  const names = memberNames();
+  const about = aboutNames(club);
+  const ledger = ledgerOf(club).map(e => entryView(club, e));
+  const results = totalsByMember(tableSessions(ledger));
   const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
   let h = '<table class="cl-acct"><tbody>';
   h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
@@ -2368,20 +2374,18 @@ function accountingHtml() {
     for (const m of members) h += `<tr><th><a href="#${ph('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${signed(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
     h += '</tbody></table>';
   }
-  h += resultsHtml(club.chips.ledger, names, tableNames);
-  const ledger = club.chips.ledger;
+  h += resultsHtml(ledger, names, about);
   if (ledger.length) {
-    // Filtered by member, kind and table, and exported as CSV (#188).
-    const shown = ledger.filter(e => (!ledgerFilter.member || e.member === ledgerFilter.member)
-      && (!ledgerFilter.kind || e.kind === ledgerFilter.kind) && (!ledgerFilter.table || e.table === ledgerFilter.table));
+    // Filtered by member, kind and what it was about, and exported as CSV (#188).
+    const shown = filterLedger(ledger);
     const sel = (key, all, opts) => `<select class="pl-text" data-lf="${key}"><option value="">${all}</option>${opts.map(([v, t]) => `<option value="${esc(v)}"${ledgerFilter[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
     const kinds = [...new Set(ledger.map(e => e.kind))].map(k => [k, KIND_TEXT[k] || k]);
     const people = [...new Set(ledger.map(e => e.member))].map(id => [id, names[id] || id]).sort((a, b) => a[1].localeCompare(b[1]));
-    const tables = [...new Set(ledger.filter(e => e.table).map(e => e.table))].map(id => [id, tableNames[id] || id]);
+    const abouts = [...new Set(ledger.filter(e => e.about).map(e => e.about))].map(id => [id, about[id] || id]);
     h += `<details class="cl-history" data-keep="ledger"><summary>Ledger (${ledger.length})</summary>`;
-    h += `<div class="pl-row cl-ledger-filters">${sel('member', 'Everyone', people)}${sel('kind', 'Everything', kinds)}${tables.length ? sel('table', 'Every table', tables) : ''}`;
+    h += `<div class="pl-row cl-ledger-filters">${sel('member', 'Everyone', people)}${sel('kind', 'Everything', kinds)}${abouts.length ? sel('table', 'Anywhere', abouts) : ''}`;
     h += `<button class="btn-small" data-cl="ledger-csv">Export CSV${shown.length < ledger.length ? ` (${shown.length})` : ''}</button></div><ul>`;
-    for (const e of [...shown].reverse().slice(0, 200)) h += ledgerLineHtml(e, tableNames, names);
+    for (const e of [...shown].reverse().slice(0, 200)) h += ledgerLineHtml(e, about, names);
     h += '</ul>';
     if (shown.length > 200) h += `<p class="pl-meta">The newest 200 of ${shown.length}; Export CSV has them all.</p>`;
     if (!shown.length) h += '<p class="pl-meta">Nothing matches.</p>';
@@ -2390,15 +2394,15 @@ function accountingHtml() {
   return h;
 }
 
-// The Accounting tab's ledger filters (#188): '' for all.
+// The Accounting tab's ledger filters (#188): '' for all. `table`: what an
+// entry was about (a table, tournament or promotion).
 let ledgerFilter = {member: '', kind: '', table: ''};
+const filterLedger = ledger => ledger.filter(e => (!ledgerFilter.member || e.member === ledgerFilter.member)
+  && (!ledgerFilter.kind || e.kind === ledgerFilter.kind) && (!ledgerFilter.table || e.about === ledgerFilter.table));
 
 function exportLedger() {
-  const names = Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
-  const tableNames = Object.fromEntries((club.tables || []).map(x => [x.id, x.name]));
-  const shown = club.chips.ledger.filter(e => (!ledgerFilter.member || e.member === ledgerFilter.member)
-    && (!ledgerFilter.kind || e.kind === ledgerFilter.kind) && (!ledgerFilter.table || e.table === ledgerFilter.table));
-  downloadFile(ledgerCsv(shown, names, tableNames, KIND_TEXT), `ducy-ledger-${myClubCode()}.csv`, 'text/csv');
+  const names = {...memberNames(), club: 'Club'};
+  downloadFile(ledgerCsv(filterLedger(ledgerOf(club)), names, aboutNames(club), KIND_TEXT), `ducy-ledger-${myClubCode()}.csv`, 'text/csv');
 }
 
 // Chip requests answered lately (#188), newest first, under Needs you.
@@ -2570,16 +2574,18 @@ function myChipsHtml(m) {
   const tableName = id => m.tables?.find(t => t.id === id)?.name || 'a table';
   let h = '<ul class="cl-ledger mg-rows">';
   for (const l of lines) {
-    const what = l.kind === 'left' ? `Left ${esc(tableName(l.table))}` : l.kind === 'at' ? `At ${esc(tableName(l.table))}` : esc(MEMBER_KIND[l.kind] || l.kind);
-    h += `<li class="mg-row"><span>${what}${l.note && l.note !== 'Settled' ? ` <span class="pl-meta">“${esc(l.note)}”</span>` : ''}</span><span class="pl-meta">${when(l.at)}</span>${l.entry ? promoReplayBtn(l.entry, m.code, me.id) : ''}`;
+    const what = l.kind === 'left' ? `Left ${esc(tableName(l.table))}` : l.kind === 'at' ? `At ${esc(tableName(l.table))}` : esc(KIND_TEXT[l.kind] || l.kind);
+    h += `<li class="mg-row"><span>${what}${l.note ? ` <span class="pl-meta">“${esc(l.note)}”</span>` : ''}</span><span class="pl-meta">${when(l.at)}</span>${l.entry ? promoReplayBtn(l.entry, m.code, me.id) : ''}`;
     h += `<span class="mg-row-end"><b class="${l.amount > 0 ? 'cl-up' : l.amount < 0 ? 'cl-down' : ''}">${signed(l.amount, true)}</b> → ${signed(l.balance)}</span></li>`;
   }
   return h + '</ul>';
 }
 
-const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', reclaim: 'Taken back by the manager', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settled', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided', links: 'Your players’ chips, now on your account'};
-// The member sees their own (#404): a settlement is their debt settled.
-const MEMBER_KIND = {...KIND_TEXT, settle: 'Debt settled'};
+// The money model's entry kinds (club-money.js).
+const KIND_TEXT = {give: 'Chips given', take_back: 'Chips taken back', buy_in: 'Bought in', top_up: 'Topped up', refund: 'Refunded', cash_out: 'Cashed out', tourney_buy_in: 'Tournament buy-in', prize: 'Prize', rake_share: 'Rake share', void: 'Prize voided', opening: 'Opening balance'};
+
+// The names of what entries are about: tables, tournaments and promotions.
+const aboutNames = c => Object.fromEntries([...(c.tables || []), ...(c.tourneys || []), ...(c.promos?.list || [])].map(x => [x.id, x.name]));
 
 // Club info for a member (#398): each section written, formatted.
 function memberInfoHtml(m) {

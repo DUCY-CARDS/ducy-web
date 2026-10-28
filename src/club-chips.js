@@ -4,15 +4,14 @@
 // Chips are play money (#61). Every move is made by the club money model
 // (club-money.js, #454): each member plays through a backer, the club or
 // their agent, and their balance is that link's. The club gives chips to
-// its own members (issue / grant) and takes them back (reclaim); an agent
-// gives and takes back their players' (backerGive, backerTake). A member
-// brings chips to a table (buy_in, top_up) down every link on their path,
-// and takes them back up it when they leave (cash_out); the tables (#68)
-// call those. Every movement is an entry in an append-only ledger: {n, at,
-// kind, member, amount, balance, note?, table?}, where `balance` is the
-// member's balance after it (an agent's entries for their players' moves
-// carry `player`). The host sends each member their own entries, signed, so
-// the member keeps a copy that proves their balance.
+// its own members (issue) and takes them back (reclaim); an agent gives and
+// takes back their players' (backerGive, backerTake). A member brings chips
+// to a table (buy_in, top_up) down every link on their path, and takes them
+// back up it when they leave (cash_out); the tables (#68) call those. Every
+// movement is in the model's ledger (club-money.js), and each function here
+// returns the member's own entry. The host sends each member the entries on
+// their own links, signed, so the member keeps a copy that proves their
+// balance.
 //
 // Conservation: issued − reclaimed = the club's links + all table stacks +
 // the buy-ins tournaments hold (club-tourneys.js). Promotion prizes
@@ -24,13 +23,12 @@
 // link may go to sit at a table (0, the default: not at all). A negative
 // balance is what they owe their backer. They buy in and top up from what's
 // available (`room`: balance + credit, and no more than every link above
-// them has), their own chips first; entries that drew on credit say how much
-// (`credit`). Standing up adds the stack to the balance, so what they owe is
-// paid back first (`repaid` on the cash-out) and anything still owed stays
-// negative (`owes`).
+// them has), their own chips first. Standing up adds the stack to the
+// balance, so what they owe is paid back first and anything still owed
+// stays negative.
 
 import { chipInput, chipText } from './chip-format.js';
-import { backerOf, CLUB, move } from './club-money.js';
+import { backerOf, CLUB, entriesOf, move } from './club-money.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
@@ -41,7 +39,10 @@ const note = s => String(s ?? '').trim().slice(0, MAX_NOTE);
 
 // Adds the chip fields to a club (new, or saved before #67).
 export function ensureChips(club) {
-  club.chips ??= {issued: 0, reclaimed: 0, next: 1, ledger: []};
+  club.chips ??= {issued: 0, reclaimed: 0};
+  // The older ledger copy, before the model's ledger (#454).
+  delete club.chips.ledger;
+  delete club.chips.next;
   club.ratholeHours ??= DEFAULT_RATHOLE_HOURS;
   for (const m of Object.values(club.members)) {
     m.balance ??= 0;
@@ -82,12 +83,12 @@ function direct(club, m) {
 // The member's own entry among a move's.
 const own = (entries, id) => entries.find(e => e.member === id && !e.player);
 
-// The club gives chips. `kind` is 'grant' when it answers a request.
-export function issue(club, id, amt, now = Date.now(), why = '', kind = 'issue') {
+// The club gives chips.
+export function issue(club, id, amt, now = Date.now(), why = '') {
   const m = member(club, id);
   amount(amt);
   direct(club, m);
-  const [e] = move(club, {op: 'give', backer: CLUB, member: id, amount: amt, note: note(why)}, now, {kind});
+  const [e] = move(club, {op: 'give', backer: CLUB, member: id, amount: amt, note: note(why)}, now);
   club.chips.issued += amt;
   return e;
 }
@@ -100,26 +101,26 @@ export function reclaim(club, id, amt, now = Date.now(), why = '') {
   amount(amt);
   if (amt > m.balance) throw new Error(`${m.name} only has ${chipText(m.balance)} chips in the club.`);
   direct(club, m);
-  const [e] = move(club, {op: 'takeBack', backer: CLUB, member: id, amount: amt, note: note(why)}, now, {kind: 'reclaim'});
+  const [e] = move(club, {op: 'takeBack', backer: CLUB, member: id, amount: amt, note: note(why)}, now);
   club.chips.reclaimed += amt;
   return e;
 }
 
 // A backer (an agent) gives one of their players chips (#76): it costs
 // them nothing until the chips go on a table.
-export function backerGive(club, backer, id, amt, now = Date.now(), why = '', kind = 'transfer_in') {
+export function backerGive(club, backer, id, amt, now = Date.now(), why = '') {
   member(club, id);
   amount(amt);
-  const [e] = move(club, {op: 'give', backer, member: id, amount: amt, note: note(why)}, now, {kind, extra: {from: backer}});
+  const [e] = move(club, {op: 'give', backer, member: id, amount: amt, note: note(why)}, now);
   return e;
 }
 
 // A backer takes back chips from one of their players, up to what they have.
-export function backerTake(club, backer, id, amt, now = Date.now(), why = '', kind = 'transfer_out') {
+export function backerTake(club, backer, id, amt, now = Date.now(), why = '') {
   const m = member(club, id);
   amount(amt);
   if (amt > m.balance) throw new Error(`${m.name} has ${chipText(Math.max(0, m.balance))} chips.`);
-  const [e] = move(club, {op: 'takeBack', backer, member: id, amount: amt, note: note(why)}, now, {kind, extra: {to: backer}});
+  const [e] = move(club, {op: 'takeBack', backer, member: id, amount: amt, note: note(why)}, now);
   return e;
 }
 
@@ -146,9 +147,6 @@ function tooMuch(m, amt) {
   if (!creditOf(m)) throw short(`You have ${chipText(Math.max(0, m.balance))} chips in the club.`);
   throw short(`You have ${chipText(available(m))} available (your chips and credit).`);
 }
-
-// What part of `amt`, taken from the balance, is drawn on credit.
-const drawn = (m, amt) => Math.max(0, amt - Math.max(0, m.balance));
 
 // A refusal from the money model, in the player's words.
 function refusal(m, e) {
@@ -211,7 +209,7 @@ export function grantRequest(club, id, amt, now = Date.now()) {
   if (!m.request) throw new Error('There’s no request to grant.');
   checkGrant(club, id);
   const given = amt ?? m.request.amount;
-  const e = issue(club, id, given, now, m.request.note, 'grant');
+  const e = issue(club, id, given, now, m.request.note);
   answerRequest(club, id, 'granted', {given, now});
   return e;
 }
@@ -241,17 +239,14 @@ export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
   if (amt < floor) throw new Error(floor > min ? `You left this table with ${chipText(floor)} chips less than ${club.ratholeHours} hours ago, so buy in for at least that.` : `The minimum buy-in is ${min}.`);
   if (amt > max) throw new Error(`The maximum buy-in is ${chipText(max)}.`);
   tooMuch(m, amt);
-  const credit = drawn(m, amt);
   let entries;
   try {
-    entries = move(club, {op: 'buyIn', member: id, table, amount: amt}, now, {kind: 'buy_in', extra: {table}});
+    entries = move(club, {op: 'buyIn', member: id, table, amount: amt}, now);
   } catch (e) { throw refusal(m, e); }
   // `put`: what they've brought to the table in all (buy-in and top-ups), to
   // tell when they're up there (club-tables.js handsToStay).
   m.seat = {table, stack: amt, put: amt};
-  const e = own(entries, id);
-  if (credit) e.credit = credit;
-  return e;
+  return own(entries, id);
 }
 
 // Adds chips to a seated member's stack between hands, capped so the stack
@@ -265,16 +260,13 @@ export function topUp(club, id, amt, max, now = Date.now()) {
   const moved = Math.min(amt, max - m.seat.stack);
   if (moved <= 0) return null;
   tooMuch(m, moved);
-  const credit = drawn(m, moved);
   let entries;
   try {
-    entries = move(club, {op: 'topUp', member: id, amount: moved}, now, {kind: 'top_up', extra: {table: m.seat.table}});
+    entries = move(club, {op: 'topUp', member: id, amount: moved}, now);
   } catch (e) { throw refusal(m, e); }
   m.seat.stack += moved;
   if (m.seat.put != null) m.seat.put += moved;
-  const e = own(entries, id);
-  if (credit) e.credit = credit;
-  return e;
+  return own(entries, id);
 }
 
 // The table handed back part of a top-up: added at the deal, it would have
@@ -286,7 +278,7 @@ export function refundTopUp(club, id, amt, now = Date.now()) {
   if (!m.seat) return null;
   m.seat.stack = Math.max(0, m.seat.stack - amt);
   if (m.seat.put != null) m.seat.put = Math.max(0, m.seat.put - amt);
-  return own(move(club, {op: 'refundTopUp', member: id, amount: amt}, now, {kind: 'top_up_refund', extra: {table: m.seat.table}}), id);
+  return own(move(club, {op: 'refundTopUp', member: id, amount: amt}, now), id);
 }
 
 // The table reports a seated member's stack after a hand.
@@ -298,26 +290,17 @@ export function setStack(club, id, stack) {
 
 // Stands a member up: their stack goes back up their path, and the rathole
 // rule starts for that table. What they owed is paid back from it first
-// (`repaid`); what they still owe after is `owes` (#404).
+// (#404). With nothing left, the cash-out is still an entry, at 0, so their
+// page knows they left.
 export function cashOut(club, id, now = Date.now()) {
   const m = club.members[id];
   if (!m?.seat) throw new Error('Not seated.');
   const {table, stack} = m.seat;
-  const repaid = Math.min(stack, owedBy(m));
   move(club, {op: 'setStack', member: id, stack}, now);
-  const entries = move(club, {op: 'cashOut', member: id}, now, {kind: 'cash_out', extra: {table}});
+  const entries = move(club, {op: 'cashOut', member: id}, now);
   m.seat = null;
   m.left = {...m.left, [table]: {stack, at: now}};
-  const owes = owedBy(m);
-  let e = own(entries, id);
-  if (!e) {
-    // Nothing to bring back: an entry all the same, so their page knows they left.
-    e = {n: club.chips.next++, at: now, kind: 'cash_out', member: id, amount: 0, balance: m.balance, table};
-    club.chips.ledger.push(e);
-  }
-  if (repaid) e.repaid = repaid;
-  if (owes) e.owes = owes;
-  return e;
+  return own(entries, id);
 }
 
 // A tournament buy-in (club-tourneys.js): `amt` down the member's path.
@@ -325,25 +308,25 @@ export function tourneyBuyIn(club, id, tourney, amt, now = Date.now()) {
   const m = member(club, id);
   if (amt > available(m)) throw new Error(`The buy-in is ${chipText(amt)} chips; you have ${chipText(available(m))}.`);
   try {
-    return own(move(club, {op: 'tourneyBuyIn', member: id, tourney, amount: amt}, now, {kind: 'tourney_buyin', extra: {tourney}}), id);
+    return own(move(club, {op: 'tourneyBuyIn', member: id, tourney, amount: amt}, now), id);
   } catch (e) { throw refusal(m, e); }
 }
 
-// Something the club pays a member, up their path: a tournament's refund
-// ('refund') or prize, or a promotion's ('prize'). `kind` and `extra` are
-// for their ledger entry.
-export function payTo(club, id, what, amt, now = Date.now(), kind = 'tourney_prize', extra = {}) {
+// Something the club pays a member, up their path: `what` is 'prize' (a
+// tournament's or a promotion's) or 'refund' (a tournament buy-in back);
+// `about` the tournament or promotion.
+export function payTo(club, id, what, amt, about, now = Date.now()) {
   // Removed since they entered, they're paid all the same.
   if (!club.members[id]) throw new Error('No such member.');
   ensureChips(club);
-  return own(move(club, {op: 'pay', member: id, kind: what, about: extra.tourney || extra.promo || '', amount: amt}, now, {kind, extra}), id);
+  return own(move(club, {op: 'pay', member: id, kind: what, about, amount: amt}, now), id);
 }
 
 // A promotion prize taken back, up the path it came down (club-promos.js).
-export function voidPrize(club, id, amt, now = Date.now(), extra = {}) {
+export function voidPrize(club, id, amt, promo, now = Date.now()) {
   const m = member(club, id);
   if (m.balance < amt) throw new Error(`${m.name} has only ${chipText(Math.max(0, m.balance))} chips in the club now; take what’s left from their balance first, or leave the award.`);
-  const e = own(move(club, {op: 'void', member: id, about: extra.promo || '', amount: amt}, now, {kind: 'promo_void', extra}), id);
+  const e = own(move(club, {op: 'void', member: id, about: promo, amount: amt}, now), id);
   club.chips.reclaimed += amt;
   return e;
 }
@@ -366,60 +349,49 @@ export function totals(club) {
 }
 
 // What a member is told about their account: balance, open request, and
-// their ledger entries after `since`, with their credit limit and what's
-// available to sit with (#404; older pages ignore them).
+// the entries on their own links after `since`, with their credit limit and
+// what's available to sit with (#404). `ledger: 'links'`: the entries are
+// the money model's (#454), numbered as its ledger; a copy kept from before
+// starts again.
 export function accountBody(club, id, since = 0) {
   ensureChips(club);
   const m = club.members[id];
   return {
     type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null, answer: m?.answer || null,
     credit: creditOf(m), available: available(m),
-    entries: club.chips.ledger.filter(e => e.member === id && e.n > since),
+    ledger: 'links', entries: entriesOf(club, id, since),
   };
 }
 
-// The change an entry makes to a member's balance.
-export function balanceChange(e) {
-  // Moving to links (#454): an agent's players' shares, as one line.
-  if (e.kind === 'links') return e.change || 0;
-  return {
-    issue: e.amount, grant: e.amount, settle: e.amount, cash_out: e.amount, transfer_in: e.amount,
-    // A top-up the table handed back (over its maximum) returns to the balance.
-    top_up_refund: e.amount,
-    reclaim: -e.amount, buy_in: -e.amount, top_up: -e.amount, transfer_out: -e.amount,
-    // Tournaments (club-tourneys.js).
-    tourney_buyin: -e.amount, tourney_refund: e.amount, tourney_prize: e.amount,
-    // High Hand promotions (club-promos.js): a prize, and a voided one.
-    promo: e.amount, promo_void: -e.amount,
-  }[e.kind] || 0;
-}
-
 // The ledger as CSV (#188): one row per entry, oldest first, with the
-// member's name, what happened (`kindText`), the table's name, the signed
-// change to their balance and the balance after, in plain amounts (1.5,
-// not 150 hundredths).
-export function ledgerCsv(entries, names = {}, tableNames = {}, kindText = {}) {
+// member's and backer's names, what happened (`kindText`), what it was
+// about (a table's, tournament's or promotion's name), the change to the
+// link and its balance after, in plain amounts (1.5, not 150 hundredths).
+export function ledgerCsv(entries, names = {}, aboutNames = {}, kindText = {}) {
   const cell = v => {
     const s = String(v ?? '');
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const rows = [['when', 'member', 'what', 'table', 'change', 'balance', 'note']];
+  const rows = [['when', 'member', 'with', 'what', 'about', 'change', 'balance', 'note']];
   for (const e of [...entries].sort((a, b) => a.n - b.n)) {
     rows.push([
-      new Date(e.at).toISOString(), names[e.member] || e.member, kindText[e.kind] || e.kind,
-      e.table ? tableNames[e.table] || e.table : '', chipInput(balanceChange(e)), chipInput(e.balance), e.note || '',
+      new Date(e.at).toISOString(), names[e.member] || e.member, names[e.backer] || e.backer, kindText[e.kind] || e.kind,
+      e.about ? aboutNames[e.about] || e.about : '', chipInput(e.amount), chipInput(e.balance), e.note || '',
     ]);
   }
   return rows.map(r => r.map(cell).join(',')).join('\n') + '\n';
 }
 
-// A player's check of their own copy: the entries add up to the balance the
-// host reports, and each entry's balance follows from the one before.
+// A player's check of their own copy: on each of their links, each entry's
+// balance follows from the one before, and the links add up to the balance
+// the host reports.
 export function checkOwnLedger(entries, balance) {
-  let b = 0;
+  const links = new Map();
   for (const e of [...entries].sort((x, y) => x.n - y.n)) {
-    b += balanceChange(e);
+    if (!Number.isSafeInteger(e.amount)) return false;
+    const b = (links.get(e.backer) || 0) + e.amount;
     if (b !== e.balance) return false;
+    links.set(e.backer, b);
   }
-  return b === balance;
+  return [...links.values()].reduce((s, b) => s + b, 0) === balance;
 }

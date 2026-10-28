@@ -13,6 +13,7 @@ if (haveWasm) await import('./wasm.mjs');
 const { approve, newClub } = await import('../src/club.js');
 const { issue, totals } = await import('../src/club-chips.js');
 const { setCredit } = await import('../src/club-credit.js');
+const { repaidBy } = await import('../src/club-money.js');
 const { newTable } = await import('../src/club-tables.js');
 const { clubEngine } = await import('../src/club-engine.js');
 const { createTableHost } = await import('../src/club-host.js');
@@ -89,9 +90,9 @@ test('removed after the hand, with Undo first; the usual cash-out, credit repaid
   assert.equal(seated(club, 'ann').table, t.id, 'still in the hand');
   for (const id of ['ann', 'bob', 'cy']) act(id);
   await until('ann stood up', () => !seated(club, 'ann'));
-  const out = club.chips.ledger.filter(e => e.member === 'ann' && e.kind === 'cash_out').at(-1);
-  assert.ok(out && out.table === t.id, 'cashed out at Main');
-  assert.equal(out.repaid, Math.min(out.amount, 150), 'what she owed is repaid first');
+  const out = club.money.ledger.filter(e => e.member === 'ann' && e.kind === 'cash_out').at(-1);
+  assert.ok(out && out.about === t.id, 'cashed out at Main');
+  assert.equal(repaidBy(out), Math.min(out.amount, 150), 'what she owed is repaid first');
   assert.equal(club.members.ann.balance, out.amount - 150);
   assert.ok(totals(club).conserved, 'every chip accounted for');
   // Her page hears it, with her result.

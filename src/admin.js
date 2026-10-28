@@ -214,13 +214,13 @@ function ledgerHtml() {
       <select id="lf-kind" aria-label="Kind"><option value="">Every kind</option>${kinds.map(k => `<option${ledgerFilter.kind === k ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select>
       <span class="muted">${rows.length} of ${all.length}</span>
       <button id="csv">CSV</button></div>`
-    + table(['No.', 'When', 'Kind', 'Member', '#Amount', '#Balance', 'Note', 'Table'], rows.slice(-500).reverse().map(e => tr([esc(e.n), when(e.at), esc(e.kind), esc(e.name || e.member), num(chips(e.amount)), num(chips(e.balance)), esc(e.note), esc(e.table)])));
+    + table(['No.', 'When', 'Kind', 'Member', 'With', '#Amount', '#Balance', 'Note', 'About'], rows.slice(-500).reverse().map(e => tr([esc(e.n), when(e.at), esc(e.kind), esc(e.name || e.member), esc(e.backerName || e.backer), num(chips(e.amount)), num(chips(e.balance)), esc(e.note), esc(e.about)])));
 }
 
 function downloadCsv() {
   const cell = v => (/[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
-  const lines = [['n', 'at', 'kind', 'member', 'name', 'amount', 'balance', 'note', 'table'].join(',')];
-  for (const e of ledgerRows()) lines.push([e.n, new Date(e.at).toISOString(), e.kind, e.member, e.name, e.amount / 100, e.balance / 100, e.note, e.table].map(cell).join(','));
+  const lines = [['n', 'at', 'tx', 'kind', 'member', 'name', 'backer', 'amount', 'balance', 'note', 'about'].join(',')];
+  for (const e of ledgerRows()) lines.push([e.n, new Date(e.at).toISOString(), e.tx, e.kind, e.member, e.name, e.backer, e.amount / 100, e.balance / 100, e.note, e.about].map(cell).join(','));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], {type: 'text/csv'}));
   a.download = `${club.code}-ledger.csv`;
@@ -258,7 +258,7 @@ function personHtml(p) {
     h += `<dl><dt>Role</dt><dd>${esc([c.owner ? 'owner' : '', m?.status, m?.role, m?.agent ? `agent ${m.agent}` : ''].filter(Boolean).join(', '))}</dd>`
       + (m ? `<dt>Name</dt><dd>${esc(m.name)}</dd><dt>Balance</dt><dd>${chips(m.balance)}</dd><dt>Joined</dt><dd>${day(m.joinedAt || m.requestedAt)}</dd>` : '')
       + `<dt>Last seen</dt><dd>${ago(c.lastSeen)}</dd></dl>`
-      + `<h3>Ledger</h3>${table(['No.', 'When', 'Kind', '#Amount', '#Balance', 'Note', 'Table'], [...(c.ledger || [])].reverse().map(e => tr([esc(e.n), when(e.at), esc(e.kind), num(chips(e.amount)), num(chips(e.balance)), esc(e.note), esc(e.table)])))}`
+      + `<h3>Ledger</h3>${table(['No.', 'When', 'Kind', 'Member', 'With', '#Amount', '#Balance', 'Note', 'About'], [...(c.ledger || [])].reverse().map(e => tr([esc(e.n), when(e.at), esc(e.kind), esc(e.member), esc(e.backer), num(chips(e.amount)), num(chips(e.balance)), esc(e.note), esc(e.about)])))}`
       + `<h3>Chip requests</h3>${table(['When', 'Outcome', '#Asked', '#Given', 'Note'], [...(c.requests || [])].reverse().map(r => tr([when(r.at), esc(r.outcome), num(chips(r.asked)), num(chips(r.given)), esc(r.note)])))}`
       + `<h3>Help requests</h3>${table(['When', 'Asked', 'Reply'], [...(c.help || [])].reverse().map(r => tr([when(r.at), esc(r.text), esc(r.reply)])))}`
       + `<h3>Activity log</h3>${table(['When', 'What'], [...(c.log || [])].reverse().map(e => tr([when(e.at), esc(e.text)])))}</section>`;

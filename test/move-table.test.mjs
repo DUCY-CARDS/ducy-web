@@ -100,8 +100,7 @@ test('between hands: the seat is held, they leave at once, and sit down there wi
   assert.equal(seated(club, 'bob'), null);
   assert.equal(club.members.bob.balance, 1000);
   assert.equal(club.members.bob.left[main.id].stack, 150);
-  assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out' && e.table === main.id));
-  assert.ok(!club.chips.ledger.some(e => e.kind === 'move'), 'no move entry: a leave and a join');
+  assert.ok(club.money.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out' && e.about === main.id));
   // Side is full meanwhile: Dee and Bob's held seat.
   assert.equal(host.seatedCounts()[side.id], 2);
   await host.handle(side.id, 'eve', {type: 'join'});
@@ -110,7 +109,7 @@ test('between hands: the seat is held, they leave at once, and sit down there wi
   await sit(host, side.id, 'bob', 120);
   await until('bob at Side', () => seated(club, 'bob')?.table === side.id);
   assert.equal(seated(club, 'bob').stack, 120);
-  assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'buy_in' && e.table === side.id && e.amount === 120));
+  assert.ok(club.money.ledger.some(e => e.member === 'bob' && e.kind === 'buy_in' && e.about === side.id && e.amount === -120));
   assert.equal(reservationOf(club, side.id, 'bob'), null, 'the hold is used up');
   assert.equal(host.seatedCounts()[side.id], 2);
   assert.ok(totals(club).conserved);
@@ -201,7 +200,7 @@ test('the hit-and-run rule stops a move as it stops leaving; a manager’s move 
   assert.equal(club.log.at(-1).text, 'The manager moved Bob from Main to Side');
   assert.equal(club.log.at(-1).by, 'HOSTHOST');
   assert.ok(reservationOf(club, side.id, 'bob'));
-  assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out' && e.amount === 150));
+  assert.ok(club.money.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out' && e.amount === 150));
   assert.ok(totals(club).conserved);
   // The owner's move, between hands, is the manager's.
   await sit(host, side.id, 'bob');
@@ -247,7 +246,7 @@ test('too little to buy in there: refused at once, or, short after the hand, the
     assert.equal(reservationOf(club, big.id, id), null);
     assert.ok(!moved(got, id));
   }
-  assert.ok(!club.chips.ledger.some(e => e.kind === 'cash_out'), 'no one stood up');
+  assert.ok(!(club.money?.ledger || []).some(e => e.kind === 'cash_out'), 'no one stood up');
   assert.equal(host.seatedCounts()[big.id], 0);
   assert.ok(totals(club).conserved);
   await host.close(main.id);
