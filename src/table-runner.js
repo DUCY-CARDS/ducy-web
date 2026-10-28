@@ -29,7 +29,7 @@
 //   {type: 'active', id, at}   a member's last activity, for their seat's record
 //   {type: 'idle', id}         idle too long: the club stands them up
 
-export const NEXT_HAND_MS = 1000;
+export const NEXT_HAND_MS = 3000;
 export const BOT_PACE_MS = 700;
 // Fair deals (#136): how long players have to send a commitment, then a
 // reveal, and how long a deal may wait for a round still under way before

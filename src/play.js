@@ -3359,7 +3359,7 @@ function renderTable() {
   h += '<span class="pl-tools">';
   h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
   // At someone else's table (a club's, a friend's) or one being watched,
-  // its host deals the next hand: a club table always on its own, 1 s
+  // its host deals the next hand: a club table always on its own, 3 s
   // after the last (#476). Nothing here would change that.
   const dealsHere = mode !== 'guest' && !watching;
   if (dealsHere && !alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
