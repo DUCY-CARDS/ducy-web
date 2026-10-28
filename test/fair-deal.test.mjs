@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { MultiTable, fairDeal, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
+import { fairDeal, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
 import { approve, newClub } from '../src/club.js';
 import { issue } from '../src/club-chips.js';
 import { newTable } from '../src/club-tables.js';
@@ -30,7 +30,7 @@ test('every hand is dealt from a seed the players helped make, and each playerâ€
   const ids = ['ann', 'bob', 'cy', 'dee'];
   const club = clubWith(...ids);
   const t = newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6});
-  const engine = clubEngine(MultiTable);
+  const engine = clubEngine();
   const players = Object.fromEntries(ids.map(id => [id, {fair: fairPlayer(), seen: new Map(), checks: [], commits: 0}]));
   // Dee never answers a fair-deal round (an old page, or a cheat).
   const silent = 'dee';

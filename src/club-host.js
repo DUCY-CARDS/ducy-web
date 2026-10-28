@@ -1,5 +1,5 @@
 // Runs a club's tables in the host's tab (#68). Each table is ducy's
-// MultiTable.club with its table runner (table-runner.js), in a worker
+// table run by ducy's table runner (ClubTable, club-engine.js), in a worker
 // (play-worker.js): no seat for the host, real chips. The runner has the
 // table's time (the turn clock, the next hand, away players, fair deals,
 // idle seats, the wait after a restart); this file is the club's side: it
@@ -36,9 +36,9 @@ import { creditOf, ratholeMin, refundTopUp } from './club-chips.js';
 import { logAction } from './club-log.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { dealClock, isDealing } from './club-overview.js';
-import { ASK_MS, IDLE_MS } from './table-runner.js';
-
-export { ASK_MS, IDLE_MS };
+// Idle seats (#421): how long without a hand, and how long to answer "Still here?".
+export const IDLE_MS = 10 * 60_000;
+export const ASK_MS = 2 * 60_000;
 
 let worker = null, nextId = 0;
 const pending = new Map();
@@ -71,11 +71,12 @@ export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => c
 // table-store.js); an always-on club passes its own (#93). `timers`
 // ({set(fn, ms) → handle, clear(handle)}) wakes each table's runner when it
 // asks; an always-on club's room backs it with its alarm (#135), so the
-// room can sleep between turns and a restart doesn't lose them.
+// room can sleep between turns and a restart doesn't lose them. `idleMs`,
+// `askMs` and `nextHandMs` (ducy's 3 s if not given) are for tests.
 export function createTableHost({
   club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {},
   call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
-  idleMs = IDLE_MS, askMs = ASK_MS, holdMs = HOLD_MS,
+  idleMs = IDLE_MS, askMs = ASK_MS, holdMs = HOLD_MS, nextHandMs,
 }) {
   const running = new Map(); // table id → {chain, players, view, complete, handNumber, asking: Set(seat), wakeT, ...}
   const at = new Map(); // member id → table id
@@ -316,7 +317,7 @@ export function createTableHost({
     const config = {
       seats: t.seats, minBuyIn: min, maxBuyIn: max, sb: t.sb, bb: t.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0],
       game: t.game, turnMs: t.turnSecs * 1000, sitOutMs: (t.sitOutMins ?? 10) * 60_000,
-      open: t.status === 'open', link: linkOk, idleMs, askMs,
+      open: t.status === 'open', link: linkOk, idleMs, askMs, nextHandMs,
     };
     let resumed = false;
     r.chain = (resume ? restore(t, r, config).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))

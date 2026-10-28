@@ -228,7 +228,7 @@ test('through a club room: added by the owner, paid over HTTP, kept across a res
   const owner = await createIdentity(), ann = await createIdentity();
   const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: CODE, name: 'Always On'}), CODE);
   const sent = [];
-  const open = () => openClub({storage, send: (to, data) => sent.push([to, data]), online: [], MultiTable: m.MultiTable});
+  const open = () => openClub({storage, send: (to, data) => sent.push([to, data]), online: []});
   let server = await open();
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: CODE, ...body})});
   await say(ann, {type: 'join', invite, name: 'Ann'});

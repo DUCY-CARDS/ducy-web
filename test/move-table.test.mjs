@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
-const { MultiTable } = haveWasm ? await import('./wasm.mjs').then(() => import('../wasm/ducy_wasm.js')) : {};
+if (haveWasm) await import('./wasm.mjs');
 const { approve, newClub } = await import('../src/club.js');
 const { issue, reclaim, totals } = await import('../src/club-chips.js');
 const { newTable, reservationOf, reservations } = await import('../src/club-tables.js');
@@ -49,7 +49,7 @@ function newClubWithTables() {
 // (check or call) only while `acting` says so, so a hand can be held.
 function hostFor(club, {store = new Map(), holdMs = 60_000} = {}) {
   const [main, side, big] = club.tables;
-  const engine = clubEngine(MultiTable);
+  const engine = clubEngine();
   const acting = new Set();
   const got = Object.fromEntries(PEOPLE.map(id => [id, []]));
   const last = {};

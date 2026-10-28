@@ -83,7 +83,7 @@ test('a club whose storage is lost is rebuilt from its backup, balances intact; 
     const code = 'BACK-UPPP';
     const storage = memoryStorage();
     const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Backed Up'}), code);
-    const server = await openClub({storage, send() {}, online: [owner.id, ann.id], MultiTable: m.MultiTable});
+    const server = await openClub({storage, send() {}, online: [owner.id, ann.id]});
     const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
     await say(ann, {type: 'join', invite, name: 'Ann'});
     await say(owner, {type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1});
@@ -95,7 +95,7 @@ test('a club whose storage is lost is rebuilt from its backup, balances intact; 
     // The room's storage is gone; a fresh room rebuilds the club.
     const fresh = memoryStorage();
     assert.equal(await pullBackup(cfg, fresh, code), true);
-    const again = await openClub({storage: fresh, send() {}, online: [], MultiTable: m.MultiTable});
+    const again = await openClub({storage: fresh, send() {}, online: []});
     assert.equal(again.club.members[ann.id].balance, 750);
     assert.equal(again.club.hostId, hostId, 'same signing identity, so members still trust it');
     assert.equal(again.club.ownerId, owner.id);

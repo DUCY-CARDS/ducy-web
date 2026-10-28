@@ -13,7 +13,6 @@ const haveWasm = existsSync(WASM);
 async function engine() {
   const m = await import('../wasm/ducy_wasm.js');
   m.initSync({module: readFileSync(WASM)});
-  return m.MultiTable;
 }
 
 // A room's storage, as the dev relay keeps it: values copied in and out.
@@ -48,7 +47,7 @@ function inbox(hostId) {
 const settle = () => new Promise(r => setTimeout(r, 50));
 
 test('an always-on club: created by its owner, joined, run by signed commands, and reopened from storage', {skip: !haveWasm && 'no wasm build'}, async () => {
-  const MultiTable = await engine();
+  await engine();
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'CLUB-TEST';
@@ -59,7 +58,7 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   await assert.rejects(createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Again'}), code), /in use/);
 
   let box = inbox(hostId);
-  let server = await openClub({storage, send: box.send, online: [], MultiTable});
+  let server = await openClub({storage, send: box.send, online: []});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
 
   // Ann asks to join; someone else can't run the club.
@@ -91,7 +90,7 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   // The room restarts: everything comes back from storage.
   await server.flush();
   box = inbox(hostId);
-  server = await openClub({storage, send: box.send, online: [owner.id, ann.id], MultiTable});
+  server = await openClub({storage, send: box.send, online: [owner.id, ann.id]});
   assert.equal(server.club.members[ann.id].balance, 500);
   assert.equal(server.club.tables.length, 1);
   await say(ann, {type: 'hello'});
@@ -108,7 +107,7 @@ test('a browser-run club moves to its room (#98): balances kept, members follow 
   const {newClub, approve, newMembership, playerReceive, hostReceive} = await import('../src/club.js');
   const {issue, totals} = await import('../src/club-chips.js');
   const {Verifier} = await import('../src/identity.js');
-  const MultiTable = await engine();
+  await engine();
   const host = await createIdentity(), ann = await createIdentity(), eve = await createIdentity();
   const code = 'MOVE-HERE';
 
@@ -131,7 +130,7 @@ test('a browser-run club moves to its room (#98): balances kept, members follow 
   const {hostId} = await importClub(storage, await signMessage(host, {type: 'import_club', club: code, data: club, senders: verifier.toJSON()}), code);
   assert.notEqual(hostId, host.id);
   const box = inbox(hostId);
-  const server = await openClub({storage, send: box.send, online: [host.id, ann.id], MultiTable});
+  const server = await openClub({storage, send: box.send, online: [host.id, ann.id]});
   assert.equal(server.club.ownerId, host.id, 'the host owns it now');
   assert.equal(server.club.members[ann.id].balance, 250);
   assert.ok(totals(server.club).conserved);
@@ -161,7 +160,7 @@ test('a browser-run club moves to its room (#98): balances kept, members follow 
 });
 
 test('the owner deletes an always-on club (#98): members are told, storage is wiped, usage reported', {skip: !haveWasm && 'no wasm build'}, async () => {
-  const MultiTable = await engine();
+  await engine();
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'GONE-SOON';
@@ -171,7 +170,7 @@ test('the owner deletes an always-on club (#98): members are told, storage is wi
   const box = inbox(hostId);
   let deleted = 0;
   const used = [];
-  const server = await openClub({storage, send: box.send, online: [owner.id, ann.id], MultiTable, onDeleted: () => { deleted++; }, onUsage: m => used.push(m)});
+  const server = await openClub({storage, send: box.send, online: [owner.id, ann.id], onDeleted: () => { deleted++; }, onUsage: m => used.push(m)});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
   await say(ann, {type: 'join', invite, name: 'Ann'});
   await say(owner, {type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1});

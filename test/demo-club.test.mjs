@@ -310,7 +310,7 @@ test('only the demo loads the demo relay: no real club or relay code imports it'
   assert.deepEqual(using('demo-bots.js'), ['src/demo-bot-worker.js', 'src/demo-relay.js']);
   assert.deepEqual(files.filter(f => /demo-bot-worker/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'))), ['src/demo-bots.js']);
   for (const f of ['relay/src/club-room.js', 'relay/src/worker.js', 'relay/dev-server.mjs', 'src/club-server.js', 'src/club-host.js', 'src/club-engine.js', 'src/club-log.js', 'src/club.js']) {
-    assert.doesNotMatch(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /simulate|riggable|pickSeed|demo-bots|SeatBot|pickPlayer/i, f);
+    assert.doesNotMatch(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'), /simulate|riggable|pickSeed|seedPicker|demo-bots|SeatBot|pickPlayer/i, f);
   }
 });
 

@@ -12,7 +12,7 @@
 //   - Simulate: the next hand's outcome for the person playing (win, lose,
 //     bust), or ten hands played for them. The table, ledger and cash-out are
 //     the real ones (club-server.js, club-host.js); what's chosen here is only
-//     the deal, through the engine this relay hands the club (riggable), and
+//     the deal, through the tables this relay hands the club (riggable), and
 //     the actions it sends for the bots and the person, signed like any
 //     member's. A real club's room never loads this file, and no message can
 //     ask a club for any of it (test/demo-club.test.mjs).
@@ -136,7 +136,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       storage: room.store,
       send: (to, data) => deliver(room, to, data),
       online: [...room.conns.keys()],
-      MultiTable: riggable(w, room),
+      ClubTable: riggable(w, room),
       record,
       // A backup proved (#395): the demo club isn't temporary any more.
       onProved: async () => {
@@ -583,29 +583,24 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     return passive;
   }
 
-  // The engine for the demo's club: ducy's MultiTable, except that a table's
-  // next hand is dealt from a seed picked here when someone at it has asked
-  // for an outcome (Win this hand, Lose this hand, Bust).
+  // The demo club's tables: ducy's ClubTable, except that a table's next
+  // hand is dealt from a seed picked here when someone at it has asked for
+  // an outcome (Win this hand, Lose this hand, Bust). ducy's table runner
+  // asks before every deal.
   function riggable(w, room) {
-    const wrap = (t, game) => new Proxy(t, {
-      get(target, prop) {
-        if (prop === 'newHand') return (now, seed) => dealChosen(target, game, now, seed);
-        const v = target[prop];
-        return typeof v === 'function' ? v.bind(target) : v;
-      },
-    });
-    const M = {club: (...a) => wrap(w.MultiTable.club(...a), a[6])};
-    if (w.MultiTable.restore) M.restore = (json, now) => wrap(w.MultiTable.restore(json, now), null);
-    return M;
+    const rig = (t, game) => { t.setSeedPicker(s => pick(s, game)); return t; };
+    return {
+      create: (id, c) => rig(w.ClubTable.create(id, c), c.game),
+      restore: (id, json, c, now) => { const t = w.ClubTable.restore(id, json, c, now); return t && rig(t, c.game); },
+    };
 
-    function dealChosen(t, game, now, seed) {
-      const s = t.state(now);
+    function pick(s, game) {
       const players = s.players || [];
       // Who'll be dealt in, in seat order (as Deal::from_seed deals).
       const dealt = players.filter(p => { const x = s.state.seats[p.seat]; return x && !x.empty && !x.sitting_out && num(x.stack) > 0; })
         .sort((a, b) => a.seat - b.seat).map(p => p.client_id);
       const target = dealt.find(id => { const p = room.plans.get(id); return p && p.kind !== 'play10' && p.hand == null; });
-      if (!target) return t.newHand(now, seed);
+      if (!target) return undefined;
       const plan = room.plans.get(target);
       // Against the bot with the most chips.
       const stack = id => num(s.state.seats[players.find(p => p.client_id === id).seat].stack);
@@ -613,14 +608,13 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       const g = game || GAME_BY_CARDS[num(s.state.hole_cards)] || 'nlhe';
       const want = dealt.indexOf(plan.kind === 'win' ? target : opp);
       const chosen = opp ? pickSeed(g, dealt.length, want) : null;
-      if (!chosen) return t.newHand(now, seed);
-      const res = t.newHand(now, chosen);
-      const hand = num(res.state?.hand_number);
+      if (!chosen) return undefined;
+      const hand = num(s.state.hand_number) + 1;
       plan.hand = hand;
       plan.opp = opp;
       for (const id of dealt) room.rigged.add(`${id}|${hand}`);
       changed();
-      return res;
+      return chosen;
     }
 
     // A seed whose deal has player `want` (of n) alone winning at showdown.

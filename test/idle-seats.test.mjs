@@ -12,7 +12,7 @@ import { PLAY_GAP_MS, playClock } from '../relay/src/club-room.js';
 import { limitsFrom, registry } from '../relay/src/registry.js';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
-const { MultiTable } = haveWasm ? await import('./wasm.mjs').then(() => import('../wasm/ducy_wasm.js')) : {};
+if (haveWasm) await import('./wasm.mjs');
 const { approve, newClub } = await import('../src/club.js');
 const { issue, totals } = await import('../src/club-chips.js');
 const { newTable } = await import('../src/club-tables.js');
@@ -40,7 +40,7 @@ function setUp({idleMs, askMs}) {
     issue(club, id, 1000, 0);
   }
   const t = newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0});
-  const engine = clubEngine(MultiTable);
+  const engine = clubEngine();
   const online = new Set(), acting = new Set();
   const got = {ann: [], bob: []};
   let host = null, plays = 0;

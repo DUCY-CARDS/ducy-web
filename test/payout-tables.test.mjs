@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 import { approve, newClub } from '../src/club.js';
@@ -236,7 +235,7 @@ test('the club server: the owner adds, edits, renames and deletes payout tables 
   const code = 'PAYT-ABLE';
   const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Payouts'}), code);
   const sent = [];
-  const server = await openClub({storage, send: (to, data) => sent.push({to, data}), online: [], MultiTable, timers: {set: () => 0, clear() {}}});
+  const server = await openClub({storage, send: (to, data) => sent.push({to, data}), online: [], timers: {set: () => 0, clear() {}}});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
   for (const p of [owner, ben, cy]) await server.message({from: p.id, event: 'open'});
   await say(owner, {type: 'owner_hello'});

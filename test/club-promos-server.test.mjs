@@ -5,7 +5,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 import { newPromo, processHand, promosBody } from '../src/club-promos.js';
@@ -54,7 +53,7 @@ test('a promotion pays its high hand on the alarm, and after the room wakes', as
     const sent = [];
     const send = (to, data) => sent.push({to, data});
     let clock = alarmTimers();
-    let server = await openClub({storage, send, online: [], MultiTable, timers: clock.timers});
+    let server = await openClub({storage, send, online: [], timers: clock.timers});
     const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
     for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'open'});
     await say(owner, {type: 'owner_hello'});
@@ -104,7 +103,7 @@ test('a promotion pays its high hand on the alarm, and after the room wakes', as
     server = null;
     mock.timers.setTime(T0 + 3 * H);
     clock = alarmTimers();
-    server = await openClub({storage, send, online: [owner.id, ann.id, bob.id], MultiTable, timers: clock.timers});
+    server = await openClub({storage, send, online: [owner.id, ann.id, bob.id], timers: clock.timers});
     await server.flush();
     assert.equal(server.club.members[ann.id].balance, 2000, 'paid when the room woke');
 
@@ -130,7 +129,7 @@ test('tournament hands reach a promotion that counts them', {skip: !ducy.ClubTou
   const promo = newPromo(club, {kind: 'high_hand', name: 'Tourney high hand', games: ['nlhe'], every: 'day', prizes: [500], minCategory: 'high_card', tourneys: true, tz: 0});
   const t = newTourney(club, {name: 'T', buyIn: 100, stack: 1500, structure: [{sb: 10, bb: 20, ante: 0, minutes: 30}], opensAt: 0, startsAt: Date.now() + 200, minPlayers: 2, maxPlayers: 9, tableSize: 9});
   for (const id of ids) register(club, t.id, id, 10);
-  const engine = clubEngine(ducy.MultiTable);
+  const engine = clubEngine();
   const seen = [];
   let host = null;
   const deliver = (to, msg) => queueMicrotask(() => {

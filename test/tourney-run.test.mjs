@@ -44,7 +44,7 @@ test('30 entrants on 4 tables play to a single winner, balanced and conserved, p
   for (const id of ids.slice(0, 30)) register(club, t.id, id, 10);
   // p24–p29 never come: blinded off. p24 comes back later.
   const absent = new Set(ids.slice(24, 30));
-  const engine = clubEngine(ducy.MultiTable);
+  const engine = clubEngine();
   const joined = new Set();
   let host = null;
   const deliver = (to, msg) => queueMicrotask(() => {
@@ -148,7 +148,7 @@ test('a tournament carries on when its host restarts, instead of being cancelled
   const makeHost = ({crashAfterOut = false} = {}) => {
     const life = {alive: true, calls: 0, restored: false, crashed: null};
     life.crashed = new Promise(r => { life.onCrash = r; });
-    const engine = clubEngine(ducy.MultiTable);
+    const engine = clubEngine();
     const h = createTourneyHost({
       club: () => club, save() {}, sendTable: (to, m) => life.alive && deliver(to, m), chipsChanged() {}, online: id => online.has(id),
       call: async (op, ...args) => {

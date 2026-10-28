@@ -35,7 +35,7 @@ const { BotTable, MultiTable, botPersonalities, loadGto } = wasm;
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
 // Club tables, and the clocks every hosted table runs on (the friends
 // table's is 'host').
-const clubs = clubEngine(MultiTable);
+const clubs = clubEngine();
 const now = clubs.now;
 let table = null;
 let host = null;

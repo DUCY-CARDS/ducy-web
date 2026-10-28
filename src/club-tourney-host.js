@@ -1,7 +1,7 @@
 // Runs a club's tournaments (#81), as club-host.js runs its cash tables:
 // ducy's ClubTournament (through club-engine.js) deals every table, moves
 // players to keep tables balanced and breaks them down to a final table,
-// and blinds off anyone absent. Its runner (tourney-runner.js, #458) has
+// and blinds off anyone absent. Its runner (ducy's ClubTourney, #458) has
 // the tournament's time: the level clock with its breaks and the pacing.
 // This file is the club's side: it starts each tournament at its time (or
 // cancels it, short of players), sends each player their own view, records
@@ -39,9 +39,9 @@ import { atStart, cancelTourney, finishTourney, isIn, knockedOut, lateEntry, pri
 import { browserTimers, workerCall } from './club-host.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { logAction } from './club-log.js';
-import { BOT_PACE_MS, NEXT_HAND_MS } from './tourney-runner.js';
-
 const TURN_MS = 30_000;
+export const NEXT_HAND_MS = 2500;
+export const BOT_PACE_MS = 700;
 export const tourneyTable = tid => `tourney:${tid}`;
 
 export function createTourneyHost({
