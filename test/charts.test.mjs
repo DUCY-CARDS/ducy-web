@@ -23,7 +23,9 @@ test('every listed chart file has whole spots: 169 cells, each mix adding up', (
   for (const bb of index.ducybot) {
     const d = read(`ducybot-${bb}.json`);
     assert.equal(d.bb, bb);
-    assert.ok(d.spots.length >= 30, `${bb} BB has its spots`);
+    // At 5 BB nearly every open is all-in, so nobody faces a 3-bet: the
+    // opens, the replies to them and the limped pot only.
+    assert.ok(d.spots.length >= (bb <= 5 ? 20 : 30), `${bb} BB has its spots`);
     for (const s of d.spots) {
       assert.equal(s.cells.length, 169, s.id);
       for (const c of s.cells) assert.ok(Math.abs(c.reduce((a, b) => a + b, 0) - 100) <= 3, `${s.id}: ${c}`);
