@@ -257,46 +257,66 @@ function wizardOnward() {
   location.hash = 'clubs/overview';
 }
 
-// The New table form (#113): three choices (game, blinds, seats) as
-// buttons, everything else under More options with good defaults. Native,
-// so the browser checks the numbers. The last choices are remembered.
+// The New table form (#113, #476): three choices (game, blinds, seats) as
+// buttons, everything else under More options with good defaults. Every
+// number is picked from a list, never typed. The last choices are
+// remembered, except Call time, which starts at the club's (Rules).
 // `wizard`: a step of creating a club (#111, #395), which can be skipped.
 const TABLE_KEY = 'ducyTableChoice';
-// In hundredths (chip-format.js): 100/200 shows as 1/2.
+// In hundredths (chip-format.js): 100/200 shows as 1/2. The first three are
+// buttons; the rest are under Other.
 const BLINDS = [[100, 200], [200, 500], [500, 1000]];
+const MORE_BLINDS = [[5, 10], [10, 25], [25, 50], [50, 100], [100, 300], [1000, 2000], [1000, 2500], [2500, 5000], [5000, 10000], [10000, 20000]];
 const SEATS = [2, 6, 8, 9];
+const MIN_BBS = [20, 30, 40, 50, 100];
+const MAX_BBS = [50, 100, 150, 200, 250, 300];
+const TURN_SECS = [15, 30, 60, 0];
+const SIT_OUT_MINS = [5, 10, 15, 30, 0];
+const CALL_TIMES = [0, 10, 20, 30, 50];
 const SHORT = {nlhe: 'Hold’em', plo4: 'Omaha', plo5: 'Omaha 5', plo6: 'Omaha 6'};
+const blindsText = ([s, b]) => `${chipText(s)}/${chipText(b)}`;
+const options = (list, on, text) => list.map(x => `<option value="${x}"${x === on ? ' selected' : ''}>${esc(text(x))}</option>`).join('');
+const nearest = (list, v) => (list.includes(v) ? v : list.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a)));
+
+// The seat buttons for `game`: only sizes it can deal to, and under Other
+// the rest of them (#476).
+function seatsHtml(game, wanted) {
+  const most = maxSeats(game);
+  const sizes = SEATS.filter(n => n <= most);
+  const others = Array.from({length: most - 1}, (_, i) => i + 2).filter(n => !sizes.includes(n));
+  const pick = sizes.includes(wanted) ? String(wanted) : others.includes(wanted) ? 'other' : String(Math.min(defaultSeats(game), most));
+  let h = sizes.map(n => tfRadio('seatsPick', n, n, pick === String(n))).join('');
+  if (others.length) h += tfRadio('seatsPick', 'other', 'Other', pick === 'other') + `<select class="pl-text tf-other tf-other-seats" name="seats" aria-label="Seats">${options(others, wanted, String)}</select>`;
+  return h;
+}
+
+const tfRadio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
 
 function tableFormHtml({wizard = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
-  const blinds = BLINDS.find(([s, b]) => s === last.sb && b === last.bb) ? `${last.sb}/${last.bb}` : last.sb ? 'other' : '100/200';
+  const all = [...BLINDS, ...MORE_BLINDS];
+  const lastBlinds = all.find(([s, b]) => s === last.sb && b === last.bb) || BLINDS[0];
+  const blinds = BLINDS.includes(lastBlinds) ? lastBlinds.join('/') : 'other';
   // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
   // for this game; never more than the game can deal to (PLO6: 6).
-  const most = maxSeats(game);
-  const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), most);
-  const seats = SEATS.includes(wanted) ? String(wanted) : 'other';
-  const radio = (name, value, label, on, off = false) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}${off ? ' disabled' : ''}>${label}</label>`;
+  const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), maxSeats(game));
   let h = `<form class="cl-tableform tf" data-tableform="1"${wizard ? ' data-wizard="1"' : ''}>`;
-  h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => radio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
-  h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(([s, b]) => radio('blinds', `${s}/${b}`, `${chipText(s)}/${chipText(b)}`, blinds === `${s}/${b}`)).join('')}${radio('blinds', 'other', 'Other', blinds === 'other')}</div></div>`;
-  h += `<div class="pl-row tf-other tf-other-blinds"><label>Small blind<input class="pl-text" name="sb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.sb || 100))}"></label><label>Big blind<input class="pl-text" name="bb" type="number" min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(last.bb || 200))}"></label></div>`;
-  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts">${SEATS.map(n => radio('seatsPick', n, n, seats === String(n), n > most)).join('')}${radio('seatsPick', 'other', 'Other', seats === 'other')}</div></div>`;
-  h += `<div class="pl-row tf-other tf-other-seats"><label>Seats<input class="pl-text" name="seats" type="number" min="2" max="${most}" step="1" value="${esc(wanted)}"></label></div>`;
-  // Sit-out limit (#70): this table's, starting from the club's default.
-  const defOut = club?.sitOutMins ?? 10;
+  h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => tfRadio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(x => tfRadio('blinds', x.join('/'), blindsText(x), blinds === x.join('/'))).join('')}${tfRadio('blinds', 'other', 'Other', blinds === 'other')}`;
+  h += `<select class="pl-text tf-other tf-other-blinds" name="blindsOther" aria-label="Blinds">${MORE_BLINDS.map(x => `<option value="${x.join('/')}"${x === lastBlinds ? ' selected' : ''}>${blindsText(x)}</option>`).join('')}</select></div></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts tf-seats">${seatsHtml(game, wanted)}</div></div>`;
   h += '<details class="tf-more" data-keep="tf-more"><summary>More options</summary><div class="tf-fields">';
   // Left empty, the table gets the name shown ("NLH - 1/2", numbered if
   // taken).
-  const [sb, bb] = blinds === 'other' ? [last.sb, last.bb] : blinds.split('/').map(Number);
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(game, sb, bb))}"></label>`;
-  h += `<label>Min buy-in (BB)<input class="pl-text" name="minBB" type="number" required min="1" step="1" value="${esc(last.minBB || 40)}"></label>`;
-  h += `<label>Max buy-in (BB)<input class="pl-text" name="maxBB" type="number" required min="1" step="1" value="${esc(last.maxBB || 100)}"></label>`;
-  h += `<label>Time to act<select class="pl-text" name="turnSecs">${[15, 30, 60, 0].map(s => `<option value="${s}"${s === (last.turnSecs ?? 30) ? ' selected' : ''}>${s ? s + ' s' : 'None'}</option>`).join('')}</select></label>`;
-  h += `<label>Sitting out<select class="pl-text" name="sitOutMins">${[5, 10, 15, 30, 0].map(m => `<option value="${m}"${m === defOut ? ' selected' : ''}>${m ? m + ' min' : 'No limit'}</option>`).join('')}</select></label>`;
-  // The hit-and-run rule: a player who's up plays this many more hands first.
-  const stay = last.stayHands ?? 0;
-  h += `<label>Once up, hands before leaving<select class="pl-text" name="stayHands">${[...new Set([0, 10, 20, 30, 50, stay])].sort((a, b) => a - b).map(n => `<option value="${n}"${n === stay ? ' selected' : ''}>${n ? n + ' hands' : 'Off'}</option>`).join('')}</select></label>`;
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(game, ...lastBlinds))}"></label>`;
+  h += `<label>Min buy-in<select class="pl-text" name="minBB">${options(MIN_BBS, nearest(MIN_BBS, last.minBB || 40), n => `${n} BB`)}</select></label>`;
+  h += `<label>Max buy-in<select class="pl-text" name="maxBB">${options(MAX_BBS, nearest(MAX_BBS, last.maxBB || 100), n => `${n} BB`)}</select></label>`;
+  h += `<label>Time to act<select class="pl-text" name="turnSecs">${options(TURN_SECS, last.turnSecs ?? 30, s => (s ? `${s} s` : 'None'))}</select></label>`;
+  // Sit-out limit (#70) and Call time (#476): the club's, unless this table sets its own.
+  h += `<label>Sitting out<select class="pl-text" name="sitOutMins">${options(SIT_OUT_MINS, club?.sitOutMins ?? 10, m => (m ? `${m} min` : 'No limit'))}</select></label>`;
+  const call = nearest(CALL_TIMES, club?.stayHands ?? 0);
+  h += `<label>Call time<select class="pl-text" name="stayHands">${options(CALL_TIMES, call, n => (n ? `${n} hands` : 'Off'))}</select></label>`;
   h += '</div></details>';
   h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-invite">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
@@ -305,35 +325,21 @@ function tableFormHtml({wizard = false} = {}) {
 
 const formTableName = (game, sb, bb) => defaultTableName(club || {tables: []}, game, sb, bb);
 
+// The blinds the form has picked, [sb, bb].
+const formBlinds = f => (f.elements.blinds.value === 'other' ? f.elements.blindsOther.value : f.elements.blinds.value).split('/').map(Number);
+
 // Keeps the New table form in step with its game and blinds: picking a game
-// picks its usual size, seat counts it can't deal to are greyed out, and the
+// picks its usual size, and shows only the sizes it can deal to; the
 // name's placeholder is the default name.
 function syncTableForm(f, gameChanged) {
-  const v = name => f.elements[name].value;
-  const game = v('game');
-  const most = maxSeats(game);
-  const seats = f.elements.seats;
-  seats.max = most;
-  for (const r of f.querySelectorAll('[name=seatsPick]')) {
-    if (r.value !== 'other') r.disabled = Number(r.value) > most;
-  }
-  const picked = f.querySelector('[name=seatsPick]:checked');
-  if (gameChanged || picked?.disabled) {
-    const n = defaultSeats(game);
-    const radio = f.querySelector(`[name=seatsPick][value="${n}"]`) || f.querySelector('[name=seatsPick][value=other]');
-    radio.checked = true;
-    seats.value = n;
-  }
-  if (Number(seats.value) > most) seats.value = most;
-  const blinds = v('blinds');
-  const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
-  if (Number.isSafeInteger(sb) && Number.isSafeInteger(bb)) f.elements.name.placeholder = formTableName(game, sb, bb);
+  const game = f.elements.game.value;
+  if (gameChanged) f.querySelector('.tf-seats').innerHTML = seatsHtml(game, defaultSeats(game));
+  f.elements.name.placeholder = formTableName(game, ...formBlinds(f));
 }
 
 function submitTable(f) {
   const v = name => f.elements[name].value;
-  const blinds = v('blinds');
-  const [sb, bb] = blinds === 'other' ? [parseChips(v('sb')), parseChips(v('bb'))] : blinds.split('/').map(Number);
+  const [sb, bb] = formBlinds(f);
   const seats = v('seatsPick') === 'other' ? Number(v('seats')) : Number(v('seatsPick'));
   const settings = {
     name: v('name'), game: v('game'), sb, bb,
@@ -341,15 +347,15 @@ function submitTable(f) {
     sitOutMins: Number(v('sitOutMins')),
     stayHands: Number(v('stayHands')),
   };
-  if (blinds === 'other' && !(Number.isSafeInteger(sb) && Number.isSafeInteger(bb) && sb >= 1 && sb <= bb)) {
-    // Said in the form, so what was typed stays (#186).
+  if (settings.maxBB < settings.minBB) {
+    // Said in the form, so what was picked stays (#186).
     let n = f.querySelector('.tf-note');
     if (!n) { n = document.createElement('p'); n.className = 'pl-desc pl-neterr tf-note'; f.querySelector('.cl-formacts').before(n); }
-    n.textContent = 'Blinds are amounts like 1 or 0.25: the small blind at least 0.01 and no more than the big blind.';
-    f.elements.sb.focus();
+    n.textContent = 'The maximum buy-in is at least the minimum.';
+    f.elements.maxBB.focus();
     return;
   }
-  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs, stayHands: settings.stayHands});
+  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
   // The form stays open if the table can't be opened, so nothing is lost.
   hostAct('new_table', {table: settings}).then(ok => {
     if (!ok) return;
@@ -388,12 +394,12 @@ function watchTable(id) {
     rows: () => seats.players.map(p => ({
       key: p.id, name: members[p.id]?.name || '', stack: seats.view?.seats?.[p.seat]?.stack ?? 0,
       note: p.removing ? 'Leaving after this hand' : p.moving ? `Moving to ${tableById(club, p.moving)?.name || 'another table'}` : '',
-      buttons: p.removing && !p.now ? [['keep', 'Undo']] : [],
-      items: p.removing ? (p.now ? [] : [['now', 'Remove now']]) : p.moving ? [['after', 'Remove from table'], ['now', 'Remove now']]
-        : [['after', 'Remove from table'], ['now', 'Remove now'], ...moveTo().map(x => [`move:${x.id}`, `Move to ${x.name}`])],
+      buttons: p.removing ? [['keep', 'Undo']] : [],
+      items: p.removing ? [] : p.moving ? [['after', 'Remove from table']]
+        : [['after', 'Remove from table'], ...moveTo().map(x => [`move:${x.id}`, `Move to ${x.name}`])],
     })),
     run: (pid, tool) => (tool.startsWith('move:') ? act('move_player', {table: id, id: pid, to: tool.slice(5)})
-      : act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid, now: tool === 'now'})),
+      : act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid})),
   };
   joinTableVia(handlers => {
     // An always-on club's table runs in its room: its view comes encrypted
@@ -543,7 +549,7 @@ function cashHtml() {
     // Who's at it, each with a ⋯ to remove them from the table (#414).
     const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
     const others = tables.filter(x => x.status === 'open' && x.id !== t.id).map(x => ({id: x.id, name: x.name, room: tableRunning(x.id) && (counts[x.id] || 0) < x.seats}));
-    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, now: !!m.seat.removing?.now, moving: m.seat.moving?.to || ''})), '', others);
+    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, moving: m.seat.moving?.to || ''})), '', others);
     h += '</li>';
   }
   return h + '</ul>';
@@ -557,9 +563,9 @@ function tableStatusHtml(t) {
   return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)} · ${deal}</span>`;
 }
 
-// Who's at table `tid` ([{id, name, stack, removing, now, moving}]), each
-// with a ⋯ to remove them (#414): after this hand, or now; "Leaving after
-// this hand" with Undo meanwhile. Or to move them (#425) to one of `others`
+// Who's at table `tid` ([{id, name, stack, removing, moving}]), each with a
+// ⋯ to remove them (#414) after this hand: "Leaving after this hand" with
+// Undo meanwhile. Or to move them (#425) to one of `others`
 // ([{id, name, room}], the club's other open tables) with room.
 let moveMenu = ''; // `${table}|${player}`: Move to… open
 function seatedHtml(tid, players, dis = '', others = []) {
@@ -571,14 +577,14 @@ function seatedHtml(tid, players, dis = '', others = []) {
     h += `<li><span>${esc(p.name)} ${chips(p.stack)}</span>`;
     if (p.removing) {
       h += '<span class="pl-meta">Leaving after this hand</span>';
-      if (!p.now) h += `<button class="link-btn" data-cl="seat-keep" data-id="${esc(p.id)}"${at}${dis}>Undo</button>`;
+      h += `<button class="link-btn" data-cl="seat-keep" data-id="${esc(p.id)}"${at}${dis}>Undo</button>`;
     } else if (p.moving) h += `<span class="pl-meta">Moving to ${esc(others.find(x => x.id === p.moving)?.name || 'another table')}</span>`;
     else if (!dis && moveMenu === `${tid}|${p.id}`) {
       h += '<span class="cl-move-to"><span class="pl-meta">Move to</span>';
       for (const x of room) h += `<button class="btn-small" data-cl="seat-move-to" data-id="${esc(p.id)}" data-to="${esc(x.id)}"${at}>${esc(x.name)}</button>`;
       h += '<button class="link-btn" data-cl="seat-move-cancel">Cancel</button></span>';
     } else if (!dis) {
-      const items = [['seat-remove', 'Remove from table'], ['seat-remove-now', 'Remove now'], ...(room.length ? [['seat-move', 'Move to…']] : [])];
+      const items = [['seat-remove', 'Remove from table'], ...(room.length ? [['seat-move', 'Move to…']] : [])];
       h += menuHtml(`More for ${p.name}`, items, p.id, '', at);
     }
     h += '</li>';
@@ -2251,6 +2257,11 @@ function rulesHtml() {
   h += '<div class="pl-row"><span class="pl-label">Sit-out limit</span><div class="pl-opts">';
   h += [5, 10, 15, 30, 0].map(m => `<button class="cc-btn${(club.sitOutMins ?? 10) === m ? ' on' : ''}" data-cl="sitout-mins" data-mins="${m}">${m ? m + ' min' : 'None'}</button>`).join('');
   h += '</div></div>';
+  // Call time (#476): the hands a player who's up plays before leaving, for
+  // new tables; each table can set its own.
+  h += '<div class="pl-row"><span class="pl-label">Call time</span><div class="pl-opts">';
+  h += CALL_TIMES.map(n => `<button class="cc-btn${(club.stayHands ?? 0) === n ? ' on' : ''}" data-cl="call-time" data-hands="${n}">${n ? n + ' hands' : 'Off'}</button>`).join('');
+  h += '</div></div>';
   // Asking to join with the club code alone (#393): off by default.
   if (remote) {
     h += `<div class="pl-row"><span class="pl-label">Join by code (${esc(club.code)})</span><div class="pl-opts">`;
@@ -2656,7 +2667,7 @@ function memberTablesHtml(m, hostHere) {
     h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
     if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
     // The hit-and-run rule, before you sit.
-    if (t.stayHands > 0) h += `<span class="pl-meta cl-why">Once you’re up here, you play ${t.stayHands} more hands before you can leave.</span>`;
+    if (t.stayHands > 0) h += `<span class="pl-meta cl-why">Call time ${t.stayHands} hands: once you’re up here, you play them before you can leave.</span>`;
     if (here) h += '<button class="btn-small primary" data-cl="to-table">Back to the table</button>';
     else if (sitForm === `${m.code}|${t.id}` && !why) h += sitFormHtml(m, t, r);
     else {
@@ -2914,6 +2925,7 @@ async function onClickIn(e) {
   else if (act === 'quick') { const f = b.closest('form'); if (f?.elements.amount) f.elements.amount.value = b.dataset.v; }
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
   else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
+  else if (act === 'call-time') hostAct('settings', {stayHands: Number(b.dataset.hands)});
   else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
@@ -2944,9 +2956,9 @@ async function onClickIn(e) {
   else if (act === 'help-done') answerHelpReq(b.dataset.id, b.closest('form')?.elements.reply?.value || '', true);
   else if (act === 'close-table') { closingTable = b.dataset.table; render(); }
   else if (act === 'watch') watchTable(b.dataset.table);
-  else if (act === 'seat-remove' || act === 'seat-remove-now' || act === 'seat-keep') {
+  else if (act === 'seat-remove' || act === 'seat-keep') {
     b.closest('details')?.removeAttribute('open');
-    hostAct(act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id, now: act === 'seat-remove-now'});
+    hostAct(act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id});
   }
   // Moving a player to another table (#425).
   else if (act === 'seat-move') { b.closest('details')?.removeAttribute('open'); moveMenu = `${b.dataset.table}|${b.dataset.id}`; render(); }
@@ -3190,7 +3202,7 @@ export async function openClubs(el, v = 'clubs') {
     });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
-      if (f && ['game', 'blinds', 'sb', 'bb'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      if (f && ['game', 'blinds', 'blindsOther'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
       // The New tournament form: a game's usual table size, and no more than it deals to.
       // What a tournament pays by (#424): Default or a club payout table.
       const pick = e.target.dataset?.paypick;

@@ -108,7 +108,7 @@ test('removed after the hand, with Undo first; the usual cash-out, credit repaid
   await host.close(t.id);
 });
 
-test('removed now: folded out of the hand in play, no Undo', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('a removal never takes anyone out of a hand: they finish it (#476)', {skip: !haveWasm && 'no wasm build'}, async () => {
   const {club, t, host, watch, act, got} = setUp();
   await host.start(t);
   host.watch(t.id, u => { if (u.type === 'state') Object.assign(watch, u); });
@@ -117,20 +117,21 @@ test('removed now: folded out of the hand in play, no Undo', {skip: !haveWasm &&
     await host.handle(t.id, id, {type: 'request_chips', amount: 150});
   }
   await until('a hand in play', () => watch.view && !watch.view.complete && Number(watch.view.hand_number) >= 1);
+  const hand = Number(watch.view.hand_number);
+  // An older page asking for "now" gets the same: after the hand.
   await host.removePlayer(t.id, 'bob', {now: true, by: 'HOSTHOST'});
   const bobSeat = watch.players.find(p => p.id === 'bob');
-  assert.ok(bobSeat.removing && bobSeat.now);
-  assert.ok(watch.view.seats[bobSeat.seat].away, 'his hand is folded for him (he acts no more)');
-  // His page hears at once (the engine sends him nothing more), still seated.
-  await until('his message', () => got.bob.some(u => u.type === 'removed'));
+  assert.deepEqual([bobSeat.removing, bobSeat.now], [true, undefined]);
+  assert.ok(!watch.view.seats[bobSeat.seat].away, 'still in the hand');
   assert.ok(seated(club, 'bob'));
-  assert.throws(() => host.keepPlayer(t.id, 'bob'), /already leaving/);
-  for (const id of ['cy', 'dee']) act(id);
+  // Undo is there until the hand ends.
+  host.keepPlayer(t.id, 'bob');
+  await host.removePlayer(t.id, 'bob', {by: 'HOSTHOST'});
+  for (const id of ['bob', 'cy', 'dee']) act(id);
   await until('bob stood up', () => !seated(club, 'bob'));
-  const log = club.log.at(-1);
-  assert.equal(log.text, 'The manager removed Bob from Main');
-  assert.equal(log.by, 'HOSTHOST');
-  assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out'));
+  assert.ok(Number(watch.view.hand_number) >= hand, 'once that hand was over');
+  assert.ok(got.bob.some(u => u.type === 'removed'));
+  assert.equal(club.log.at(-1).text, 'The manager removed Bob from Main');
   assert.ok(totals(club).conserved);
   await host.close(t.id);
 });

@@ -3358,8 +3358,12 @@ function renderTable() {
     `<button type="button" class="pl-menu-item" data-act="${act}"${on == null ? '' : ` aria-pressed="${on}"`}${title ? ` title="${title}"` : ''}><span>${label}</span>${on == null ? '' : `<b>${on ? 'On' : 'Off'}</b>`}</button>`;
   h += '<span class="pl-tools">';
   h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
-  if (!alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
-  if (autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="How long the last hand stays up before the next is dealt"><span>Time between hands</span><b>${setup.dealSecs}s</b></button>`;
+  // At someone else's table (a club's, a friend's) or one being watched,
+  // its host deals the next hand: a club table always on its own, 3 s
+  // after the last (#476). Nothing here would change that.
+  const dealsHere = mode !== 'guest' && !watching;
+  if (dealsHere && !alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
+  if (dealsHere && autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="How long the last hand stays up before the next is dealt"><span>Time between hands</span><b>${setup.dealSecs}s</b></button>`;
   if (!ladder && !watching) h += `<button type="button" class="pl-menu-item" data-act="runpref" title="When everyone’s all-in: ask each time (once after ${RUN_SECS} seconds), or always run it twice, or always once"><span>Run it twice</span><b>${RUN_LABELS[runPref()].replace('Run twice: ', '')}</b></button>`;
   if (reviewTable() && mode === 'solo') {
     h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against Ducybot as soon as you make it');

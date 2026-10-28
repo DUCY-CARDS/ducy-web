@@ -71,6 +71,8 @@ import { HOST_KEEP_DAYS } from './hand-store.js';
 const SETTINGS = {
   ratholeHours: n => Number.isSafeInteger(n) && n >= 0 && n <= 24 * 30,
   sitOutMins: n => Number.isSafeInteger(n) && n >= 0 && n <= 240,
+  // Call time (#476): new tables' hands to play once up, before leaving.
+  stayHands: n => Number.isSafeInteger(n) && n >= 0 && n <= 500,
   keepDays: n => Number.isSafeInteger(n) && n >= 1 && n <= 3650,
   // Let people ask to join with the club code, no invite link (#393).
   codeJoin: v => typeof v === 'boolean',
@@ -619,10 +621,10 @@ export function createClubServer({
       broadcastTourneys();
     },
     // Removing a player from a table without closing it (#414): after the
-    // hand in play, or `now`; keep_player is Undo.
-    remove_player: async ({table, id, now = false}) => {
+    // hand in play, never in the middle of it (#476); keep_player is Undo.
+    remove_player: async ({table, id}) => {
       if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
-      await tableHost.removePlayer(table, String(id), {now: !!now, by: actor()});
+      await tableHost.removePlayer(table, String(id), {by: actor()});
       changed();
     },
     keep_player: async ({table, id}) => {

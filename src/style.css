@@ -864,12 +864,14 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .tf-opt:has(input:focus-visible) { outline: 2px solid var(--teal); outline-offset: 2px; }
 .tf-other { display: none !important; }
 .tf:has([name=blinds][value=other]:checked) .tf-other-blinds,
-.tf:has([name=seatsPick][value=other]:checked) .tf-other-seats { display: flex !important; }
-.tf-other label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
+.tf:has([name=seatsPick][value=other]:checked) .tf-other-seats { display: inline-block !important; }
+/* Other's list beside the buttons (#476). */
+.tf .pl-opts select.tf-other { width: auto; min-width: 7em; }
 .tf-more summary, .cl-card details.tf-more summary { cursor: pointer; font-size: 13px; color: var(--fg-muted); }
-.tf-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; padding-top: 8px; }
-.tf-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--fg); }
-.tf-fields .pl-text { width: 100%; }
+/* Every field fits its cell, however long its label (#476). */
+.tf-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 8px 12px; padding-top: 8px; }
+.tf-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--fg); }
+.tf-fields .pl-text { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .cl-more { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
 /* My clubs (#143): what needs you, the sub-tabs, ⋯ menus and the settings dialog. */
 .cl-needs { border: 1px solid var(--amber); border-radius: var(--radius); padding: 8px 12px; background: var(--amber-faint); }

@@ -410,31 +410,32 @@ export function createTableHost({
   // ---- the manager removes a player (#414) ----
   //
   // Member `id` leaves table `tid` after the hand in play (at once if
-  // they're not in it), or `now`, folding out of it. They stand up through
+  // they're not in it), with Undo until then. They stand up through
   // the engine's remove, as when they leave, so the cash-out (credit repaid
   // first) and the rathole rule are the usual ones; the hit-and-run rule
   // doesn't hold them. The pending removal is kept on their seat
   // (seat.removing), so the manager's page shows it and a restart keeps it.
   // `by`: who removed them, for the activity log.
 
-  // {removing: true, now?: true} while member `id` is being removed from `tid`, else {}.
+  // {removing: true} while member `id` is being removed from `tid`, else {}.
   function removalOf(id, tid) {
     const s = club().members[id]?.seat;
-    return s?.table === tid && s.removing ? {removing: true, ...(s.removing.now ? {now: true} : {})} : {};
+    return s?.table === tid && s.removing ? {removing: true} : {};
   }
 
-  function removePlayer(tid, id, {now = false, by = null} = {}) {
+  // A removal never takes anyone out of a hand: they finish it (#476).
+  function removePlayer(tid, id, {by = null} = {}) {
     const r = running.get(tid);
     const m = club().members[id];
     const p = r?.players.find(x => x.client_id === id);
     if (!p || m?.seat?.table !== tid) throw new Error(`${m?.name || 'That player'} isn’t at that table.`);
-    m.seat.removing = {by, at: Date.now(), ...(now || m.seat.removing?.now ? {now: true} : {})};
+    m.seat.removing = {by, at: Date.now()};
     save();
     // They're going: owing hands no longer blinds them off, and they're not
     // asked if they're still here.
     run(tid, {type: 'mustPlay', id, on: false});
     run(tid, {type: 'leaving', id, on: true});
-    if (now || !inHand(r, p)) return standUp(tid, p);
+    if (!inHand(r, p)) return standUp(tid, p);
     // Watchers see "Leaving after this hand".
     return run(tid, {type: 'state'});
   }
@@ -444,7 +445,7 @@ export function createTableHost({
     const r = running.get(tid);
     const s = club().members[id]?.seat;
     if (!r || s?.table !== tid || !s.removing) return null;
-    if (s.removing.now || r.removed?.has(id)) throw new Error('They’re already leaving.');
+    if (r.removed?.has(id)) throw new Error('They’re already leaving.');
     delete s.removing;
     // The hit-and-run count is told again, and holds again.
     r.stay?.delete(id);
