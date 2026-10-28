@@ -6,7 +6,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 import { newKeyPair } from '../src/e2e.js';
@@ -48,7 +47,7 @@ test('a room evicted mid-hand wakes on its alarm: the player to act times out an
   const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Alarms'}), code);
   const send = () => {};
   let clock = alarmTimers();
-  let server = await openClub({storage, send, online: [], MultiTable, timers: clock.timers});
+  let server = await openClub({storage, send, online: [], timers: clock.timers});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
   for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'open'});
   await say(owner, {type: 'owner_hello'});
@@ -90,7 +89,7 @@ test('a room evicted mid-hand wakes on its alarm: the player to act times out an
   server = null;
   await sleep(1500); // the turn runs out meanwhile
   clock = alarmTimers();
-  server = await openClub({storage, send, online: [owner.id, ann.id, bob.id], MultiTable, timers: clock.timers});
+  server = await openClub({storage, send, online: [owner.id, ann.id, bob.id], timers: clock.timers});
   // The player to act times out, the hand finishes, and the next is dealt.
   assert.ok(await until(async () => (await hands()) >= 1, 15_000), 'the hand finished after waking');
   assert.ok((await seatedStack()) > dealtSeq);
@@ -108,7 +107,7 @@ test('a table whose seated players are all gone sets no ticking timers, so the r
   const code = 'IDLE-TEST';
   const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Idle'}), code);
   const clock = alarmTimers();
-  const server = await openClub({storage, send: () => {}, online: [], MultiTable, timers: clock.timers});
+  const server = await openClub({storage, send: () => {}, online: [], timers: clock.timers});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
   for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'open'});
   await say(owner, {type: 'owner_hello'});

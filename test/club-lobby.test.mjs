@@ -3,7 +3,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage, Verifier } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive } from '../src/club.js';
 import { LOBBY_KEEP, LOBBY_MAX_AGE_MS, lobbyBody, onlineList, readLobby, sayInLobby } from '../src/club-lobby.js';
@@ -95,7 +94,7 @@ test('in an always-on club, members online get who’s here and the chat; the ow
   const code = 'LOBB-YCHT';
   const {invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Lobby'}), code);
   const sent = [];
-  const server = await openClub({storage, send: (to, data) => sent.push({to, data}), online: [], MultiTable});
+  const server = await openClub({storage, send: (to, data) => sent.push({to, data}), online: []});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
   for (const p of [owner, ann, bob]) await server.message({from: p.id, event: 'open'});
   let id = 1;

@@ -52,14 +52,13 @@ import { limitsFrom, registry, removesAt } from './registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
 import { serviceHttp, serviceInRoom } from './service-http.js';
-import { initSync, MultiTable } from '../../wasm/ducy_wasm.js';
+import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
 // The engine, for always-on clubs: set up once per Worker instance.
 let engineReady = false;
-function engine() {
+function loadEngine() {
   if (!engineReady) { initSync({module: wasmModule}); engineReady = true; }
-  return MultiTable;
 }
 
 // Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
@@ -286,9 +285,10 @@ export class Room {
     if (this.clubP) return this.clubP;
     if (!(await this.state.storage.get('club')) && !(code && await this.rebuild(code))) return null;
     const online = [...new Set(this.state.getWebSockets('guest').map(g => this.guestId(g)))];
+    loadEngine();
     this.clubP = this.status(code)
       .then(({record}) => openClub({
-        storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, MultiTable: engine(), record,
+        storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, record,
         onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
       onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),

@@ -1,10 +1,10 @@
-// A club's tables in ducy's engine (MultiTable.club, from ducy-wasm), each
-// run by its table runner (table-runner.js), kept by table id. Shared by the
-// page's worker (play-worker.js), where the host's tab runs a club, and by
-// the relay's Worker, where an always-on club runs (#93). Ops:
+// A club's tables in ducy's engine (ducy-wasm), each run by ducy's table
+// runner (ClubTable, #452), kept by table id. Shared by the page's worker
+// (play-worker.js), where the host's tab runs a club, and by the relay's
+// Worker, where an always-on club runs (#93). Ops:
 //   runnerCreate(id, config) | runnerRestore(id, json, config) → whether it
 //     could | runnerEvent(id, event) → the runner's step (the time is
-//     added) | runnerSave(id) → JSON or null | runnerDrop(id)
+//     added) | runnerSave(id) → JSON | runnerDrop(id)
 // config = {seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs,
 // sitOutMs}, and the runner's own options (open, link, active, idleMs, askMs).
 //
@@ -12,55 +12,29 @@
 // real time, minus the time it was stopped (clockPause(key, on)) because
 // the host couldn't reach anyone.
 //
-// Tournaments (#81, club-tourney-host.js): ducy's ClubTournament, each run
-// by its tourney runner (tourney-runner.js, #458): tourneyCreate(id,
-// config, players, turnMs, runner) | tourneyRestore(id, json, runner) |
-// tourneyEvent(id, event) → the runner's step (the time is added) |
-// tourneyTable(id, table) | tourneySave(id) | tourneyDrop(id). `runner` =
-// the runner's options (structure, levelMs, nextHandMs, botPaceMs, step,
-// stepLeftMs, level, hands).
+// Tournaments (#81, club-tourney-host.js): each run by ducy's tournament
+// runner (ClubTourney, #458): tourneyCreate(id, config, players, turnMs,
+// runner) | tourneyRestore(id, json, runner) | tourneyEvent(id, event) →
+// the runner's step (the time is added) | tourneyTable(id, table) |
+// tourneySave(id) | tourneyDrop(id). `runner` = the runner's options
+// (structure, levelMs, nextHandMs, botPaceMs, step, stepLeftMs, level, hands).
+//
+// The wasm must be loaded first (the page's worker and the relay do it).
 
-import { fairCommitment, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
-import { tableRunner } from './table-runner.js';
-import { tourneyRunner } from './tourney-runner.js';
-// The whole module too: ClubTournament is only in newer builds.
 import * as ducy from '../wasm/ducy_wasm.js';
 
-const fair = {secret: fairSecret, commitment: fairCommitment, seed: fairSeed};
-
-// ducy's own runner (ducy-play's runner, #452), the same events in and
-// steps out as table-runner.js; an older ducy-wasm doesn't have it.
-const rustRunner = ducy.ClubTable
-  ? {
-    create: (id, c) => ducy.ClubTable.create(id, c),
-    restore: (id, json, c) => ducy.ClubTable.restore(id, json, c, Date.now()) ?? null,
-    wrap: t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), free: () => t.free()}),
-  }
-  : null;
-
-// ducy's own tournament runner (ducy-play's tourney_runner, #458), as
-// tourney-runner.js; an older ducy-wasm doesn't have it.
+const wrapTable = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), free: () => t.free()});
 const wrapTourney = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), tableView: table => t.tableView(table), free: () => t.free()});
 
-// `MultiTable`: ducy's (the real engine) or a stand-in a test scripts. With
-// ducy's, tables and tournaments run on ducy's runners when it has them;
-// table-runner.js and tourney-runner.js run them otherwise.
-export function clubEngine(MultiTable) {
+// `ClubTable`: ducy's, or one the demo's relay makes {create, restore}.
+export function clubEngine(ClubTable = ducy.ClubTable) {
   const runners = new Map();
   const clocks = new Map();
   const tourneys = new Map();
-  const rust = MultiTable === ducy.MultiTable ? rustRunner : null;
-  const rustTourney = MultiTable === ducy.MultiTable && !!ducy.ClubTourney;
 
   function now(key) {
     const c = clocks.get(key);
     return c ? (c.at ?? Date.now()) - c.lost : Date.now();
-  }
-
-  // Runs table `t` for table id with `config`'s runner options.
-  function runWith(id, t, config) {
-    t.setSitOutLimit(config.sitOutMs ?? 10 * 60_000);
-    keep(id, tableRunner(t, {...config, id, fair}));
   }
 
   function keep(id, r) {
@@ -75,26 +49,16 @@ export function clubEngine(MultiTable) {
 
   const ops = {
     runnerCreate: (id, c) => {
-      if (rust) { keep(id, rust.wrap(rust.create(id, c))); return true; }
-      const t = MultiTable.club(c.seats, BigInt(c.minBuyIn), BigInt(c.maxBuyIn), BigInt(c.sb), BigInt(c.bb), BigInt(c.seed), c.game, BigInt(c.turnMs));
-      runWith(id, t, c);
+      keep(id, wrapTable(ClubTable.create(id, c)));
       return true;
     },
     // A table saved with runnerSave, waiting for its people (throws if it
     // can't be loaded). One saved holding a chip request (before #427)
     // isn't resumed: the ledger may have paid it.
     runnerRestore: (id, json, c) => {
-      if (rust) {
-        const t = rust.restore(id, json, c);
-        if (!t) return false;
-        keep(id, rust.wrap(t));
-        return true;
-      }
-      if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
-      // Times in the snapshot are time left, so the restored table starts a fresh clock.
-      const t = MultiTable.restore(json, Date.now());
-      if (t.state(Date.now()).chipRequests?.length) { t.free?.(); return false; }
-      runWith(id, t, {...c, paused: true});
+      const t = ClubTable.restore(id, json, c, Date.now());
+      if (!t) return false;
+      keep(id, wrapTable(t));
       return true;
     },
     runnerEvent: (id, ev) => {
@@ -102,20 +66,17 @@ export function clubEngine(MultiTable) {
       if (!r) throw new Error(`no table ${id}`);
       return r.event(ev, Date.now());
     },
-    // The table as JSON for resuming it after a restart (#107); null with an
-    // older ducy-wasm, which can't save tables.
+    // The table as JSON for resuming it after a restart (#107).
     runnerSave: id => runners.get(id)?.save(Date.now()) ?? null,
     runnerDrop: id => { runners.get(id)?.free(); return runners.delete(id); },
     // A tournament (#81): every table of it, for remote players. `config` =
     // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},
     // `players` = [{id, name}], seated at random; all absent until they join.
     tourneyCreate: (id, config, players, turnMs, runner) => {
-      if (rustTourney) { keepTourney(id, wrapTourney(ducy.ClubTourney.create(id, config, players, turnMs, runner))); return true; }
-      if (!ducy.ClubTournament) throw new Error('this ducy-wasm has no tournaments');
-      keepTourney(id, tourneyRunner(new ducy.ClubTournament(config, players, turnMs), {...runner, id}));
+      keepTourney(id, wrapTourney(ducy.ClubTourney.create(id, config, players, turnMs, runner)));
       return true;
     },
-    // An event for tournament id's runner (tourney-runner.js); the time is added.
+    // An event for tournament id's runner; the time is added.
     tourneyEvent: (id, ev) => {
       const r = tourneys.get(id);
       if (!r) throw new Error(`no tournament ${id}`);
@@ -125,14 +86,12 @@ export function clubEngine(MultiTable) {
     tourneyTable: (id, table) => tourneys.get(id)?.tableView(table) ?? null,
     tourneyDrop: id => { tourneys.get(id)?.free(); return tourneys.delete(id); },
     // The tournament as JSON, hands in play and clocks included, for
-    // resuming it after the host restarts; null with a ducy-wasm that can't.
+    // resuming it after the host restarts.
     tourneySave: id => tourneys.get(id)?.save(Date.now()) ?? null,
     // A tournament saved with tourneySave, its runner's clock where `runner`
     // says; throws if it can't be loaded.
     tourneyRestore: (id, json, runner) => {
-      if (rustTourney) { keepTourney(id, wrapTourney(ducy.ClubTourney.restore(id, json, runner, Date.now()))); return true; }
-      if (!ducy.ClubTournament?.restore) throw new Error('this ducy-wasm can’t restore tournaments');
-      keepTourney(id, tourneyRunner(ducy.ClubTournament.restore(json, Date.now()), {...runner, id}));
+      keepTourney(id, wrapTourney(ducy.ClubTourney.restore(id, json, runner, Date.now())));
       return true;
     },
     // Stops (on) or restarts the friends table's clock: while stopped no

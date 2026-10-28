@@ -186,7 +186,7 @@ async function runToEnd(hostPlays) {
   const ids = Array.from({length: 19}, (_, i) => `g${i}`);
   if (hostPlays) joinPrivate(club, HOST_ID, 'Ann', 1);
   for (const id of ids) joinPrivate(club, id, id.toUpperCase(), 1);
-  const engine = clubEngine(ducy.MultiTable);
+  const engine = clubEngine();
   let host = null;
   const joined = new Set();
   const deliver = (to, msg) => queueMicrotask(() => {

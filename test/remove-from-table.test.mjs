@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
-const { MultiTable } = haveWasm ? await import('./wasm.mjs').then(() => import('../wasm/ducy_wasm.js')) : {};
+if (haveWasm) await import('./wasm.mjs');
 const { approve, newClub } = await import('../src/club.js');
 const { issue, totals } = await import('../src/club-chips.js');
 const { setCredit } = await import('../src/club-credit.js');
@@ -38,7 +38,7 @@ function setUp() {
   }
   setCredit(club, 'ann', 500);
   const t = newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, stayHands: 5});
-  const engine = clubEngine(MultiTable);
+  const engine = clubEngine();
   // Each player acts (check or call) only while `acting` says so, so a hand
   // can be held where the test wants it.
   const acting = new Set();

@@ -210,8 +210,9 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 
 // Opens the club in this room, if there is one: a running club server
 // (club-server.js), with `online` (the member IDs connected now) told it's
-// open. `send(to, data)` delivers to a member's connections; `MultiTable` is
-// the initialised engine. Returns null when the room isn't a club.
+// open, on ducy's engine (the wasm must be loaded). `send(to, data)`
+// delivers to a member's connections. Returns null when the room isn't a club.
+// `ClubTable`: ducy's unless given (club-engine.js).
 // `onUsage(minutes, at)`: the club's tables were in play that long, by time
 // `at` (registry.js counts it against the free plan on that day). `onDeleted()`: the owner deleted the
 // club and its storage is gone; the caller drops the server and its
@@ -224,14 +225,14 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // `onProved(owner)`: the owner proved a backup works (#395, the
 // backup_proved action); the caller records it in the registry and
 // resolves to the club's new record.
-export async function openClub({storage, send, online = [], MultiTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, timers = null, record = null}) {
+export async function openClub({storage, send, online = [], ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
   const verifier = new Verifier((await storage.get('verifier')) || {});
   const hostKeyPair = await keyPairFromJSON(await storage.get('hostKey'));
   const memberPubs = (await storage.get('memberPubs')) || {};
-  const engine = clubEngine(MultiTable);
+  const engine = clubEngine(ClubTable);
   // Saves go out in order, one at a time.
   let saving = Promise.resolve();
   // Once the club is deleted nothing more is saved, so it can't come back.

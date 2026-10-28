@@ -17,7 +17,6 @@ import { serviceHttp, serviceInRoom } from './src/service-http.js';
 let engineP = null;
 const engine = () => (engineP ||= import('../wasm/ducy_wasm.js').then(m => {
   m.initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
-  return m.MultiTable;
 }));
 
 // Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
@@ -104,11 +103,10 @@ async function clubOf(room, code) {
     room.rebuildChecked = true;
     if (!(await pullBackup(backups, storageOf(room), code).catch(e => { console.warn('club: not rebuilt:', e); return false; }))) return null;
   }
-  room.club ||= Promise.all([engine(), reg.status(code)]).then(([MultiTable, {record}]) => openClub({
+  room.club ||= Promise.all([engine(), reg.status(code)]).then(([, {record}]) => openClub({
     storage: storageOf(room),
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],
-    MultiTable,
     record,
     onUsage: (minutes, at) => reg.used(minutes, at ?? Date.now(), code),
     onSaved: () => scheduleBackup(room, code),
