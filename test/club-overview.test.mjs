@@ -206,6 +206,6 @@ test('notifications: each kind, newest first, with what its quick actions need',
   assert.deepEqual(managerNotices(c, {cleared}).map(n => n.kind), ['prize', 'help', 'at_limit', 'chips', 'join']);
   // A table dealing again, or a debt settled, says nothing.
   t.dealing = dealClock(t.dealing, true, NOW);
-  issue(c, 'dee', 20_000, NOW, 'Settled', 'settle');
+  issue(c, 'dee', 20_000, NOW, 'Cash');
   assert.ok(!managerNotices(c).some(n => n.kind === 'stopped' || n.kind === 'left_owing'));
 });

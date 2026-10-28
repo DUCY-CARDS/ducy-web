@@ -10,7 +10,7 @@ import {
   accountBody, available, buyIn, cashOut, checkOwnLedger, declineRequest, grantRequest, issue, owedBy, refundTopUp,
   requestChips, setStack, topUp, totals,
 } from '../src/club-chips.js';
-import { creditNotices, creditRow, raiseCredit, setCredit, settleDebt } from '../src/club-credit.js';
+import { creditNotices, creditRow, raiseCredit, setCredit } from '../src/club-credit.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import { answerAgent, assignToAgent, offerAgent, runAgent } from '../src/club-agents.js';
 
@@ -208,22 +208,17 @@ test('an agent can’t grant chips to a player of theirs at their credit limit',
   assert.equal(ann(club).answer.outcome, 'declined');
 });
 
-test('settling debt: the host records what was received, up to what is owed', () => {
+test('paying up: the host gives what was received, with a note (#454)', () => {
   const club = clubWith('ann', 'bob');
   setCredit(club, 'ann', 500, 0);
-  assert.throws(() => settleDebt(club, 'ann', 100), /doesn’t owe the club anything/);
   buyIn(club, 'ann', 't1', 300, LIMITS, 1);
   play(club, 'ann', 0);
   cashOut(club, 'ann', 2);
-  assert.throws(() => settleDebt(club, 'ann', 400), /ann owes 3\./);
-  assert.throws(() => settleDebt(club, 'ann', 0), /above 0/);
-  const e = settleDebt(club, 'ann', 200, 3, 'cash');
-  assert.deepEqual([e.kind, e.amount, e.balance, e.note], ['settle', 200, -100, 'cash']);
-  assert.equal(settleDebt(club, 'ann', 100, 4).note, 'Settled');
-  assert.equal(ann(club).balance, 0);
+  assert.equal(ann(club).balance, -300);
+  const e = issue(club, 'ann', 300, 3, 'cash');
+  assert.deepEqual([e.kind, e.amount, e.balance, e.note], ['issue', 300, 0, 'cash']);
   assert.equal(available(ann(club)), 500);
-  assert.match(club.log.at(-1).text, /Recorded 1 settled by ann/);
-  assert.ok(totals(club).conserved, 'settled chips are issued, so the books add up');
+  assert.ok(totals(club).conserved);
   assert.ok(checkOwnLedger(accountBody(club, 'ann').entries, 0));
 });
 
@@ -257,7 +252,7 @@ test('notifications: a player at their limit asking, and a player who stood up o
     {kind: 'left_owing', member: 'bob', name: 'bob', owes: 60, owesNow: 60, table: 't1', at: 3, n: club.chips.ledger.at(-1).n},
     {kind: 'at_limit', member: 'ann', name: 'ann', asked: 50, credit: 100, available: 0, table: 't1', at: 2},
   ]);
-  settleDebt(club, 'bob', 60, 4);
+  issue(club, 'bob', 60, 4, 'cash');
   declineRequest(club, 'ann');
   assert.deepEqual(creditNotices(club).map(n => [n.kind, n.owesNow]), [['left_owing', 0]], 'settled: still listed, owing nothing now');
 });

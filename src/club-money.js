@@ -161,3 +161,13 @@ export function linkOf(club, id, backer = club.money?.accounts?.[id]?.through) {
 
 // Whom member `id` plays through now: the club, their agent, or null.
 export const throughOf = (club, id) => club.money?.accounts?.[id]?.through ?? null;
+
+// What `backer` settles with the people below them (the Settle page): each
+// of their links with a balance, largest first, as {member, balance};
+// below zero, the member owes the backer. An agent's link carries their
+// players' play too, so it's their whole tree's result.
+export function settleRows(club, backer = CLUB) {
+  return (club.money?.links || []).filter(l => l.backer === backer && l.balance)
+    .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance) || a.member.localeCompare(b.member))
+    .map(l => ({member: l.member, balance: l.balance}));
+}

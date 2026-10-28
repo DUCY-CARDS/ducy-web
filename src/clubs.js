@@ -41,7 +41,8 @@ import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
-import { accountOf, playersOf, settle } from './club-agents.js';
+import { accountOf, playersOf } from './club-agents.js';
+import { settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
@@ -670,7 +671,6 @@ const FORM_TEXT = {
   deny: m => ({label: `Decline ${m.name}’s request for ${chips(m.request?.amount)}`, submit: 'Decline', noAmount: true, note: true, notePlaceholder: 'Why (optional; they see it)'}),
   // Agents (#74, #76): their credit limit is their member one (#445).
   agent: () => ({submit: 'Offer', noAmount: true, note: false}),
-  settle: m => ({label: `Record a settlement from ${m.name} (credit used ${chips(accountOf(club, m.id).creditUsed)})`, submit: 'Record', value: accountOf(club, m.id).creditUsed || '', max: null, note: true}),
 };
 
 // A native form: the browser checks the amount (required, in steps of
@@ -827,7 +827,7 @@ function onSubmitIn(e) {
     e.preventDefault();
     const amount = parseChips(gf.elements.amount.value);
     agentForm = null;
-    agentCmd(gf.dataset.code, {op: gf.dataset.agentform, id: gf.dataset.id, amount});
+    agentCmd(gf.dataset.code, {op: gf.dataset.agentform, id: gf.dataset.id, amount, note: gf.elements.note?.value || ''});
     render();
     return;
   }
@@ -838,7 +838,7 @@ function onSubmitIn(e) {
   const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
   chipForm = null;
-  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent', settle: 'settle', debt: 'settle_debt'}[kind];
+  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent'}[kind];
   if (op) hostAct(op, {id, amount, note: why});
 }
 
@@ -1927,6 +1927,7 @@ function pageHtml(at) {
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
   if (page === 'member') return memberPageHtml(member);
+  if (page === 'settle') return pageHead('Settle') + settleHtml();
   if (page === 'chips') return pageHead('Chips') + accountingHtml();
   if (page === 'info') return pageHead('Club info') + infoEditHtml();
   if (page === 'rules') return pageHead('Rules') + rulesHtml();
@@ -2085,9 +2086,9 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
   return h;
 }
 
-// A member's own page (#398): their chips, Give and Take back, their credit
-// limit and Settle debt (#404), and the rest of what a manager can do for
-// them.
+// A member's own page (#398): their chips, Give and Take back (paying up
+// too, with a note, #454), their credit limit (#404), and the rest of what
+// a manager can do for them.
 function memberPageHtml(id) {
   const m = club.members[id];
   const back = `<a class="link-btn mg-back" href="#${ph('members')}">‹ Members</a>`;
@@ -2107,10 +2108,8 @@ function memberPageHtml(id) {
   h += '</div>';
   h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give chips</button>`;
   h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
-  if (c.owes) h += `<button class="btn-small primary" data-cl="debt" data-id="${esc(m.id)}">Settle debt</button>`;
   h += memberMenuHtml(m) + '</div>';
-  if (chipForm?.id === m.id && chipForm.kind === 'debt') h += debtFormHtml(m, c);
-  else if (chipForm?.id === m.id) h += chipFormHtml(m);
+  if (chipForm?.id === m.id) h += chipFormHtml(m);
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
   // Credit (#404): the limit (0 for none), and what it leaves them.
   h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
@@ -2125,17 +2124,6 @@ function memberPageHtml(id) {
     h += '</ul></section>';
   }
   return h;
-}
-
-// Settle debt (#404): what was received (cash, a transfer), up to what they
-// owe, and the balance it leaves.
-function debtFormHtml(m, c) {
-  let h = `<form class="mg-card" data-chipform="debt" data-id="${esc(m.id)}"><b>Settle debt</b>`;
-  h += `<div class="pl-avail"><span>${esc(m.name)} owes</span><b>${chips(c.owes)}</b></div>`;
-  h += `<label>Received <input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="0.01" max="${chipInput(c.owes)}" step="${CHIP_STEP}" value="${chipInput(c.owes)}" data-after="${c.balance}"></label>`;
-  h += `<label>Note <input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Cash, transfer…"></label>`;
-  h += `<div class="pl-avail"><span>Balance after</span><b data-after-out="1">${signed(c.balance + c.owes)}</b></div>`;
-  return h + `<span class="pl-actions"><button class="btn-small primary" type="submit" data-label="Record">Record ${chips(c.owes)}</button><button class="btn-small" type="button" data-cl="cancel-form">Cancel</button></span></form>`;
 }
 
 // What a member is in the club, for their row and page (the owner, agents
@@ -2165,7 +2153,7 @@ function ledgerLineHtml(e, tableNames = {}, names = null) {
 function memberMenuHtml(m) {
   const items = [];
   if (m.id === club.ownerId) return '';
-  if (m.agent === 'yes') items.push(['settle', 'Record a settlement'], ['revoke-agent', 'Stop being an agent']);
+  if (m.agent === 'yes') items.push(['revoke-agent', 'Stop being an agent']);
   else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
   else if (!m.agentOf) items.push(['make-agent', 'Make agent']);
   items.push(['remove', 'Remove from the club']);
@@ -2336,6 +2324,26 @@ function readInfoForm(f) {
 // The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
 let promoForm = null, promoNote = '';
 
+// The Settle page (#454): the club's links with its own members, whoever
+// owes, largest first (an agent's row is all of their players' play too),
+// and whether the books add up. Paying up is Give or Take back, with a
+// note, on the member's page.
+function settleHtml() {
+  const rows = settleRows(club);
+  let h = '';
+  if (!rows.length) h += '<p class="pl-meta">All settled.</p>';
+  else {
+    h += '<table class="cl-acct cl-settle"><tbody>';
+    for (const r of rows) {
+      const m = club.members[r.member];
+      h += `<tr><th><a href="#${ph('member', r.member)}">${esc(m?.name || r.member)}</a></th><td>${r.balance < 0 ? 'Owes the club' : 'Club owes'}</td><td class="${r.balance < 0 ? 'cl-down' : 'cl-up'}">${chips(Math.abs(r.balance))}</td></tr>`;
+    }
+    h += '</tbody></table>';
+  }
+  h += totals(club).conserved ? '<p class="pl-meta">Adds up ✓</p>' : '<p class="pl-desc pl-neterr">Doesn’t add up.</p>';
+  return h;
+}
+
 // The Accounting tab: where the club's chips are, each member's balance and
 // results, and every chip movement (the ledger).
 function accountingHtml() {
@@ -2354,7 +2362,6 @@ function accountingHtml() {
   // Credit players (#404): what's owed each way.
   if (t.owedToClub) h += `<tr><th>Owed to the club</th><td>${chips(t.owedToClub)}</td></tr>`;
   h += '</tbody></table>';
-  h += t.conserved ? '<p class="pl-meta">Adds up ✓</p>' : '<p class="pl-desc pl-neterr">Doesn’t add up.</p>';
   const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
   if (members.length) {
     h += '<h2>Results</h2><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
@@ -2468,7 +2475,7 @@ function memberHomeHtml(m, manage = '') {
   h += `<span class="cl-home-chips${m.balance < 0 ? ' owes' : ''}"${m.entries?.length && !mismatch ? ' title="Your copy of the ledger adds up to this balance"' : ''}>Balance ${signed(m.balance)}</span>`;
   if (m.credit) h += `<span class="cl-home-chips">Credit limit ${chips(m.credit)}</span>`;
   h += '</div>';
-  h += leftPanelHtml(m) + settledHtml(m);
+  h += leftPanelHtml(m);
   if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
   if (m.error) h += `<p class="pl-desc pl-neterr cl-err">${esc(m.error)}</p>`;
   // No backup of the club proved yet (#395): it may not last.
@@ -2568,12 +2575,6 @@ function myChipsHtml(m) {
     h += `<span class="mg-row-end"><b class="${l.amount > 0 ? 'cl-up' : l.amount < 0 ? 'cl-down' : ''}">${signed(l.amount, true)}</b> → ${signed(l.balance)}</span></li>`;
   }
   return h + '</ul>';
-}
-
-// A debt the manager recorded as settled (#404), for a day.
-function settledHtml(m) {
-  const e = (m.entries || []).findLast(x => x.kind === 'settle' && Date.now() - x.at < 864e5);
-  return e ? `<p class="cl-settled"><span aria-hidden="true">✓</span> Debt settled: ${chips(e.amount)}</p>` : '';
 }
 
 const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', reclaim: 'Taken back by the manager', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settled', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided', links: 'Your players’ chips, now on your account'};
@@ -2713,6 +2714,7 @@ function agentFormHtml(code, x) {
   let h = `<form class="cl-chipform" data-agentform="${kind}" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
   h += `<label class="cl-formlabel" for="cl-gamt">${esc(label)}</label>`;
   h += `<input class="pl-text" id="cl-gamt" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}"${kind === 'take' ? ` max="${chipInput(x.balance)}"` : ''} value="${esc(amountValue(value))}" placeholder="Chips">`;
+  if (kind !== 'grant') h += `<input class="pl-text" name="note" maxlength="${MAX_NOTE}" placeholder="Note (optional)">`;
   h += `<button class="btn-small primary" type="submit">${kind === 'take' ? 'Take back' : 'Give'}</button><button class="btn-small" type="button" data-cl="cancel-gform">Cancel</button></form>`;
   return h;
 }
@@ -2757,11 +2759,6 @@ function agentHtml(m, hostHere, {page = false} = {}) {
   h += '</div>';
   // Close to the limit: say so before a give fails (#190).
   if (a.limit && a.room <= 0.2 * a.limit) h += '<span class="pl-neterr">Near your credit limit</span>';
-  if (a.settlements?.length) {
-    h += `<details class="cl-history" data-keep="settle:${esc(m.code)}"><summary>Settlements recorded (${a.settlements.length})</summary><ul>`;
-    for (const s of [...a.settlements].reverse()) h += `<li><span class="pl-meta">${when(s.at)}</span> ${chips(s.amount)}${s.note && s.note !== 'Settlement' ? ` <span class="pl-meta">“${esc(s.note)}”</span>` : ''}</li>`;
-    h += '</ul></details>';
-  }
   h += `<div class="pl-row"><span class="pl-label">Your link</span><div class="pl-opts cl-link"><input class="pl-text" readonly value="${esc(agentLink(m))}" data-aglink="${esc(m.code)}"><button class="btn-small" data-cl="ag-copy" data-code="${esc(m.code)}">Copy</button></div></div>`;
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.recruits.length) {
@@ -2800,8 +2797,8 @@ const ROLE_TEXT = {
     name: 'agent',
     can: ['bring in your own players with your own invite link', 'give your players chips from your balance, on credit up to your limit', 'take chips back from them and answer their requests'],
     cannot: ['create chips, or act for members who aren’t your players'],
-    note: 'Credit you use is settled with the owner outside ducy; they record each settlement.',
-    hostNote: 'They settle the credit they use with you outside ducy; you record each settlement.',
+    note: 'Credit you use is settled with the owner outside ducy; they record each payment as chips given or taken back.',
+    hostNote: 'They settle the credit they use with you outside ducy; you record each payment as chips given or taken back.',
   },
 };
 
@@ -2924,7 +2921,6 @@ async function onClickIn(e) {
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
-  else if (act === 'debt') openChipForm('debt', b.dataset.id);
   else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }
@@ -2939,7 +2935,6 @@ async function onClickIn(e) {
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The host: agents.
   else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
-  else if (act === 'settle') openChipForm('settle', b.dataset.id);
   else if (act === 'revoke-agent') hostAct('revoke_agent', {id: b.dataset.id});
   // A member: answering an agent offer.
   else if (act === 'agent-yes' || act === 'agent-no') sendToHost(b.dataset.code, {type: 'agent_reply', club: b.dataset.code, accept: act === 'agent-yes'});
@@ -3234,15 +3229,6 @@ export async function openClubs(el, v = 'clubs') {
       // A payout table being edited (#424): kept as it's typed, over redraws.
       const ptf = e.target.closest?.('form[data-paytable]');
       if (ptf) { syncPayTable(ptf); return; }
-      // Settle debt (#404): the balance it leaves, and the amount on its button.
-      if (e.target.dataset?.after != null) {
-        const f = e.target.form, n = parseChips(e.target.value);
-        if (!Number.isSafeInteger(n)) return;
-        f.querySelector('[data-after-out]').textContent = signed(Number(e.target.dataset.after) + n);
-        const go = f.querySelector('[data-label]');
-        go.textContent = `${go.dataset.label} ${chips(n)}`;
-        return;
-      }
       // The Members order, on a phone (#426): the first page of it.
       if (e.target.dataset?.msort) { location.hash = ph('members', '', {...managerPage(location.hash), sort: e.target.value, n: 1}); return; }
       // An agent's players (#426); none picked: everyone.

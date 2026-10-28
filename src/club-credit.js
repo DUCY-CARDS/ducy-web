@@ -1,7 +1,8 @@
 // Credit players (#404): members who may sit down with chips borrowed from
 // the club, up to a credit limit. Pure functions over the club object; the
 // ledger side (buying in on credit, repaying on standing up) is in
-// club-chips.js, and club-server.js runs the host's commands.
+// club-chips.js, and club-server.js runs the host's commands. Paying the
+// club back is the host giving chips, with a note (#454).
 //
 // Member field: credit, the limit on their link (absent or 0: none,
 // club-money.js). The balance is the member's own chips off the table,
@@ -9,7 +10,7 @@
 // player's agent will too.
 
 import { chipText } from './chip-format.js';
-import { answerRequest, available, creditOf, ensureChips, issue, owedBy } from './club-chips.js';
+import { answerRequest, available, creditOf, ensureChips, owedBy } from './club-chips.js';
 import { logAction } from './club-log.js';
 import { backerOf, move } from './club-money.js';
 
@@ -51,19 +52,6 @@ export function raiseCredit(club, id, limit, now = Date.now()) {
   answerRequest(club, id, 'granted', {given: limit - was, limit, now});
   logAction(club, club.hostId, `${m.name}’s credit limit raised to ${chipText(limit)}`, now, limit - was);
   return m;
-}
-
-// The host records `amt` received from a member who owes the club (cash, a
-// transfer: `why`). Their balance goes up by it, up to what they owe; the
-// ledger shows it as 'settle'.
-export function settleDebt(club, id, amt, now = Date.now(), why = '') {
-  const m = member(club, id);
-  const owed = owedBy(m);
-  if (!owed) throw new Error(`${m.name} doesn’t owe the club anything.`);
-  if (Number.isSafeInteger(amt) && amt > owed) throw new Error(`${m.name} owes ${chipText(owed)}.`);
-  const e = issue(club, id, amt, now, why || 'Settled', 'settle');
-  logAction(club, club.hostId, `Recorded ${chipText(amt)} settled by ${m.name}`, now, amt);
-  return e;
 }
 
 // A member's credit at a glance, for the host's Members list: balance

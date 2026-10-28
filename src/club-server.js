@@ -52,9 +52,9 @@ import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newT
 import { createTourneyHost } from './club-tourney-host.js';
 import { dropManagers, logAction } from './club-log.js';
 import {
-  agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, settle,
+  agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent,
 } from './club-agents.js';
-import { raiseCredit, setCredit, settleDebt } from './club-credit.js';
+import { raiseCredit, setCredit } from './club-credit.js';
 import { answerHelp, askHelp, helpBody, staffOnline } from './club-help.js';
 import { lobbyBody, sayInLobby } from './club-lobby.js';
 import { addService, checkRequest, revokeService, runRequest, ServiceError, updateService } from './club-services.js';
@@ -507,13 +507,11 @@ export function createClubServer({
     take: ({id, amount, note = ''}) => chips(id, () => reclaim(club, id, amount, Date.now(), note)),
     grant: ({id, amount}) => chips(id, () => grantRequest(club, id, amount)),
     deny: ({id, note = ''}) => chips(id, () => { declineRequest(club, id, note); return null; }),
-    settle: ({id, amount, note = ''}) => chips(id, () => settle(club, id, amount, Date.now(), note)),
-    // Credit players (#404): a member's credit limit (0: none), raising it to
-    // answer a request at the limit (the other answer is deny), and money
-    // received from someone who owes.
+    // Credit players (#404): a member's credit limit (0: none), and raising it
+    // to answer a request at the limit (the other answer is deny). Paying up
+    // is give or take, with a note (#454).
     set_credit: ({id, amount}) => chips(id, () => { setCredit(club, id, amount); return null; }),
     raise_credit: ({id, amount}) => chips(id, () => { raiseCredit(club, id, amount); return null; }),
-    settle_debt: ({id, amount, note = ''}) => chips(id, () => settleDebt(club, id, amount, Date.now(), note)),
     offer_agent: ({id}) => reply(offerAgent(club, id)),
     revoke_agent: ({id}) => reply(revokeAgent(club, id)),
     assign_agent: ({id, agent}) => { assignToAgent(club, id, agent || null); changed(); },

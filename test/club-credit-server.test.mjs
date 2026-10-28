@@ -23,7 +23,7 @@ function memoryStorage() {
 // Signed messages go out after signing: a moment for them.
 const wait = () => new Promise(r => setTimeout(r, 150));
 
-test('the owner sets a limit, answers a request at it by raising it, and records a settlement', async () => {
+test('the owner sets a limit, answers a request at it by raising it, and records a payment', async () => {
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'CRED-ITPL';
@@ -64,13 +64,12 @@ test('the owner sets a limit, answers a request at it by raising it, and records
   assert.deepEqual([lastAccount().credit, lastAccount().available, lastAccount().request], [70000, 20000, null]);
   assert.deepEqual([lastAccount().answer.outcome, lastAccount().answer.given, lastAccount().answer.limit], ['granted', 20000, 70000]);
 
-  // She pays some of it back outside ducy; the owner records it.
-  assert.match((await cmd('settle_debt', {id: ann.id, amount: 60000})).error, /owes 500/);
-  assert.equal((await cmd('settle_debt', {id: ann.id, amount: 30000, note: 'cash'})).error, '');
+  // She pays some of it back outside ducy; the owner gives it, with a note (#454).
+  assert.equal((await cmd('give', {id: ann.id, amount: 30000, note: 'cash'})).error, '');
   const a = lastAccount();
   assert.equal(a.balance, -20000);
   assert.equal(a.available, 50000);
-  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['settle', 30000, 'cash']]);
+  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['issue', 30000, 'cash']]);
   assert.equal(totals(club).owedToClub, 20000);
 });
 

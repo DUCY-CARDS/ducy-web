@@ -6,7 +6,7 @@ import { managerPage, NAV, navOf, pageHash, PAGES, pageTitle } from '../src/club
 
 test('the sidebar groups the pages by task', () => {
   assert.deepEqual(NAV.map(g => g.group), ['', 'Games', 'Members', 'Settings']);
-  assert.deepEqual(PAGES, ['overview', 'cash', 'tourneys', 'promos', 'requests', 'members', 'chips', 'info', 'rules', 'backup', 'history']);
+  assert.deepEqual(PAGES, ['overview', 'cash', 'tourneys', 'promos', 'requests', 'members', 'settle', 'chips', 'info', 'rules', 'backup', 'history']);
   assert.equal(pageTitle('backup'), 'Backup and devices');
 });
 
