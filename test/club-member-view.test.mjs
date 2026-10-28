@@ -5,11 +5,11 @@ import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { chipLines, leftSummary } from '../src/club-member-view.js';
 import { buyIn, cashOut, ensureChips, issue, setStack, topUp } from '../src/club-chips.js';
-import { setCredit, settleDebt } from '../src/club-credit.js';
+import { setCredit } from '../src/club-credit.js';
 
 const L = {min: 8000, max: 20_000};
 
-test('a credit player’s chips: sessions as lines, a debt settled', () => {
+test('a credit player’s chips: sessions as lines, a debt paid', () => {
   const c = ensureChips({code: 'C', hostId: 'h', members: {ann: {id: 'ann', name: 'Ann', status: 'member'}, bo: {id: 'bo', name: 'Bo', status: 'member'}}});
   issue(c, 'bo', 100_000, 1);
   issue(c, 'ann', 5000, 2);
@@ -31,12 +31,12 @@ test('a credit player’s chips: sessions as lines, a debt settled', () => {
   ]);
   assert.deepEqual(leftSummary(mine(), out), {table: 'main', net: -22_000, balance: -17_000, owes: 17_000});
   assert.equal(leftSummary(mine(), 999), null);
-  // Stands up from PLO with 150: still owes 120; the manager records 100 settled.
+  // Stands up from PLO with 150: still owes 120; pays 100, which the manager gives with a note.
   setStack(c, 'ann', 15_000);
   cashOut(c, 'ann', 40);
-  settleDebt(c, 'ann', 10_000, 50, 'Cash');
+  issue(c, 'ann', 10_000, 50, 'Cash');
   const lines = chipLines(mine());
-  assert.deepEqual(lines.slice(0, 2).map(l => [l.kind, l.amount, l.balance, l.note ?? '']), [['settle', 10_000, -2000, 'Cash'], ['left', 5000, -12_000, '']]);
+  assert.deepEqual(lines.slice(0, 2).map(l => [l.kind, l.amount, l.balance, l.note ?? '']), [['issue', 10_000, -2000, 'Cash'], ['left', 5000, -12_000, '']]);
 });
 
 test('a top-up handed back belongs to its session, and one with none is skipped', () => {

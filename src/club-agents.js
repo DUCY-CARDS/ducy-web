@@ -8,9 +8,8 @@
 // until the chips go on a table. Credit: the agent's link may go below
 // zero, down to −their credit limit (the member's one credit, #404, #445),
 // and no player's buy-in takes it further. Credit used is how far it is
-// below zero; players' winnings raise it again. The host records
-// settlements (paid outside the app; chips are play money), which raise
-// the agent's link.
+// below zero; players' winnings raise it again. Paying up (outside the app;
+// chips are play money) is the host giving or taking back chips, with a note.
 //
 // Member fields: agent: 'offered' | 'yes' (is an agent), agentInvite (their
 // own invite token); a player under an agent: agentOf.
@@ -19,7 +18,7 @@
 
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
-import { answerRequest, available, backerGive, backerTake, checkGrant, creditOf, declineRequest, ensureChips, issue } from './club-chips.js';
+import { answerRequest, available, backerGive, backerTake, checkGrant, creditOf, declineRequest, ensureChips } from './club-chips.js';
 import { CLUB, linkOf, move } from './club-money.js';
 import { logAction } from './club-log.js';
 
@@ -111,14 +110,6 @@ export function accountOf(club, id) {
   return {own: total - shares, shares, total, limit: creditOf(a), creditUsed: Math.max(0, -total), room: available(a), players};
 }
 
-// The host records a settlement from the agent (paid outside the app).
-export function settle(club, id, amount, now = Date.now(), why = '') {
-  if (!isAgent(club, id)) throw new Error('Not an agent.');
-  const e = issue(club, id, amount, now, why || 'Settlement', 'settle');
-  logAction(club, club.hostId, `Recorded a settlement of ${chipText(amount)} from ${club.members[id].name}`, now, Number(amount));
-  return e;
-}
-
 // A member's result at the tables (#190): what they won or lost over the
 // table sessions they've finished (buy-ins and top-ups out, cash-outs in;
 // a session still running isn't counted).
@@ -140,9 +131,8 @@ function tableName(club, seat) {
   return (club.tables || []).find(t => t.id === seat.table)?.name || 'A table';
 }
 
-// What an agent sees: their account, recruits waiting, their players (with
-// their results at the tables, #190, and where they're playing, #428), and
-// the settlements recorded.
+// What an agent sees: their account, recruits waiting, and their players
+// (with their results at the tables, #190, and where they're playing, #428).
 export function agentBody(club, id) {
   const a = accountOf(club, id);
   return {
@@ -157,7 +147,6 @@ export function agentBody(club, id) {
       id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat, result: tableResult(club, m.id),
       ...(m.seat ? {table: tableName(club, m.seat), stack: m.seat.stack || 0} : {}),
     })),
-    settlements: club.chips.ledger.filter(e => e.member === id && e.kind === 'settle').slice(-10).map(e => ({at: e.at, amount: e.amount, note: e.note || ''})),
   };
 }
 

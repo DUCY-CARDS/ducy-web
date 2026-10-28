@@ -7,10 +7,10 @@ import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, removeMember } from '../src/club.js';
 import { accountBody, checkOwnLedger, ensureChips, issue, totals } from '../src/club-chips.js';
 import { setCredit } from '../src/club-credit.js';
-import { startMoney } from '../src/club-money.js';
+import { settleRows, startMoney } from '../src/club-money.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import {
-  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, settle, tableResult,
+  accountOf, agentBody, answerAgent, assignToAgent, isAgent, offerAgent, playersOf, revokeAgent, runAgent, tableResult,
 } from '../src/club-agents.js';
 
 function clubWith(...ids) {
@@ -73,7 +73,7 @@ test('#63 example A: buying in on credit', () => {
   assert.ok(totals(club).conserved);
 });
 
-test('#63 example B: losing, then settling', () => {
+test('#63 example B: losing, then paying up', () => {
   const {club, t} = setup();
   runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});
   chipsForTable(club, 'p', t, 800);
@@ -81,17 +81,17 @@ test('#63 example B: losing, then settling', () => {
   // club's own totals aren't checked in this example).
   leftTable(club, 'p', 0);
   assert.equal(accountOf(club, 'a').total, -300);
-  settle(club, 'a', 300);
+  issue(club, 'a', 300, 5, 'Cash');
   assert.equal(accountOf(club, 'a').total, 0);
   assert.equal(accountOf(club, 'a').creditUsed, 0);
 });
 
-test('the agent view: players’ results at the tables and the settlements recorded (#190)', () => {
+test('the agent view: players’ results at the tables, and a payment on their own copy (#190, #454)', () => {
   const {club, t} = setup();
   runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});
   chipsForTable(club, 'p', t, 800);
   leftTable(club, 'p', 0);
-  settle(club, 'a', 300, 5, 'cash at the bar');
+  issue(club, 'a', 300, 5, 'cash at the bar');
   runAgent(club, 'a', {op: 'give', id: 'q', amount: 200});
   chipsForTable(club, 'q', t, 200);
   leftTable(club, 'q', 450);
@@ -102,7 +102,7 @@ test('the agent view: players’ results at the tables and the settlements recor
   assert.equal(tableResult(club, 'q'), 250);
   const v = agentBody(club, 'a');
   assert.deepEqual(v.players.map(x => [x.id, x.result]), [['p', -800], ['q', 250], ['r', 0]]);
-  assert.deepEqual(v.settlements, [{at: 5, amount: 300, note: 'cash at the bar'}]);
+  assert.deepEqual(accountBody(club, 'a').entries.filter(e => e.kind === 'issue').map(e => [e.amount, e.note]), [[500, undefined], [300, 'cash at the bar']]);
 });
 
 test('the agent view: where each player sits, and what the agent would owe if they stood up (#428)', () => {
@@ -128,6 +128,21 @@ test('the agent view: where each player sits, and what the agent would owe if th
   assert.throws(() => chipsForTable(club, 'q', t, 100), e => e.short && /your agent can’t back more/.test(e.message));
   assert.equal(agentBody(club, 'a').room, 0);
   assert.equal(club.members.q.room, 0, 'the least room on their path');
+});
+
+test('Settle: the club’s rows are its own members, an agent’s row their whole tree; an agent’s rows are their players (#454)', () => {
+  const {club, t} = setup();
+  club.members.x = {id: 'x', name: 'X', status: 'pending', requestedAt: 0};
+  approve(club, 'x', 0);
+  issue(club, 'x', 50);
+  runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});
+  runAgent(club, 'a', {op: 'give', id: 'q', amount: 100});
+  chipsForTable(club, 'p', t, 800);
+  leftTable(club, 'p', 0); // the agent's link: 500 − 800
+  assert.deepEqual(settleRows(club), [{member: 'a', balance: -300}, {member: 'x', balance: 50}]);
+  assert.deepEqual(settleRows(club, 'a'), [{member: 'q', balance: 100}], 'P is square with A; R has nothing');
+  issue(club, 'a', 300, 2, 'Cash');
+  assert.deepEqual(settleRows(club), [{member: 'x', balance: 50}]);
 });
 
 test('#63 example C: winning pays credit back', () => {
@@ -166,7 +181,7 @@ test('#63 example E: lowering the limit below credit used', () => {
   assert.equal(club.members.p.seat.stack, 1000);
   runAgent(club, 'a', {op: 'give', id: 'q', amount: 100});
   assert.throws(() => chipsForTable(club, 'q', t, 2), /your agent can’t back more/);
-  settle(club, 'a', 200); // −300: back above −400
+  issue(club, 'a', 200); // −300: back above −400
   chipsForTable(club, 'q', t, 100);
   assert.equal(accountOf(club, 'a').creditUsed, 400);
 });
@@ -216,7 +231,7 @@ test('ledgers: every agent move adds up on both links, and the host keeps the fi
   leftTable(club, 'r', 0);
   assert.equal(accountOf(club, 'a').creditUsed, 300);
   assert.throws(() => revokeAgent(club, 'a'), /account is in credit: settle up first/);
-  settle(club, 'a', 300);
+  issue(club, 'a', 300);
   // Q still has 300 from A: they settle that first too.
   assert.throws(() => revokeAgent(club, 'a'), /A and Q settle up first/);
   runAgent(club, 'a', {op: 'take', id: 'q', amount: 300});
