@@ -38,7 +38,7 @@
 import { atStart, cancelTourney, finishTourney, isIn, knockedOut, lateEntry, prizes, startTourney, tourneyById } from './club-tourneys.js';
 import { browserTimers, workerCall } from './club-host.js';
 import { dropTable, getTable, putTable } from './table-store.js';
-import { logAction } from './club-roles.js';
+import { logAction } from './club-log.js';
 import { BOT_PACE_MS, NEXT_HAND_MS } from './tourney-runner.js';
 
 const TURN_MS = 30_000;

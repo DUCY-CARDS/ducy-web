@@ -1,5 +1,5 @@
 // The host side of a club: the members' signed messages, the club's tables,
-// encrypted table updates, assistants' and agents' commands, and everything
+// encrypted table updates, agents' commands, and everything
 // the host can do (`run`). It runs wherever the club lives: today the host's
 // tab (clubs.js), and for an always-on club the relay's Worker (#93). No
 // page, no storage of its own: the caller passes in how to save and send.
@@ -36,7 +36,7 @@
 //                  expires, temporary, provedAt, removesAt}; setLimits()
 //                  may change it too
 //   lastSeen()     when each player was last heard from, {id: ms}, kept by
-//                  an always-on club's room (#401); its managers see it (#426)
+//                  an always-on club's room (#401); its owner sees it (#426)
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -49,12 +49,12 @@ import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableBy
 import { createTableHost } from './club-host.js';
 import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newTourney, payoutTableById, register, setPayout, setPayoutTable, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
-import { adminBody, answerRole, checkManagerOp, isAssistant, logAction, managerLogText, offerAssistant, revokeRole, runAdmin } from './club-roles.js';
+import { dropManagers, logAction } from './club-log.js';
 import {
   agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent, settle,
 } from './club-agents.js';
 import { raiseCredit, setCredit, settleDebt } from './club-credit.js';
-import { answerHelp, askHelp, helpBody, openHelp, staffOnline } from './club-help.js';
+import { answerHelp, askHelp, helpBody, staffOnline } from './club-help.js';
 import { lobbyBody, sayInLobby } from './club-lobby.js';
 import { addService, checkRequest, revokeService, runRequest, ServiceError, updateService } from './club-services.js';
 import { chatLimiter } from './table-chat.js';
@@ -93,6 +93,8 @@ export function createClubServer({
   const hostKeys = () => (hostKeysP ||= newKeyPair());
   const memberKeys = new Map();
   const keysReady = Promise.all(Object.entries(memberPubs).map(([id, pub]) => memberKey(id, pub, false)));
+  // Managers were removed (#454): the club's are plain members now.
+  if (dropManagers(club)) persist();
 
   function changed() {
     persist();
@@ -135,27 +137,23 @@ export function createClubServer({
     return sends;
   }
 
-  // Assistants (#62) see the club change as it happens: after any change, the
-  // online ones get a fresh view (at most every 200 ms); agents (#75) their
-  // account and players.
+  // Agents (#75) see their account and players change as it happens, and an
+  // always-on club's owner the club: after any change, at most every 200 ms.
   let adminTimer = null;
   function scheduleAdmin() {
     if (adminTimer) return;
     adminTimer = setTimeout(() => {
       adminTimer = null;
-      const body = adminView();
-      for (const id of online) if (isAssistant(club, id)) sendToPlayer({to: id, body});
       for (const id of online) if (isAgent(club, id)) sendToPlayer({to: id, body: agentBody(club, id)});
       sendOwnerView();
     }, 200);
   }
 
-  // An always-on club's owner and its managers (#417) see the whole club,
-  // as their page's copy. It carries the club's key for encrypted table
-  // updates, for watching a table (#125).
-  const managers = () => [club.ownerId, ...Object.values(club.members).filter(m => m.status === 'member' && m.role === 'assistant').map(m => m.id)].filter(id => id && online.has(id));
+  // An always-on club's owner sees the whole club, as their page's copy. It
+  // carries the club's key for encrypted table updates, for watching a
+  // table (#125).
   async function sendOwnerView() {
-    const to = club.ownerId ? managers() : [];
+    const to = club.ownerId && online.has(club.ownerId) ? [club.ownerId] : [];
     if (!to.length) return;
     const running = (club.tables || []).filter(t => tableHost?.running(t.id)).map(t => t.id);
     // A copy: signing waits on WebCrypto, and the club may change before the
@@ -167,23 +165,20 @@ export function createClubServer({
     for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId, seen}});
   }
 
-  // The owner or a manager watching a table (#73, #125): its spectator view,
-  // encrypted to them like a member's table updates. One table each.
+  // The owner watching a table (#73, #125): its spectator view, encrypted
+  // to them like a member's table updates. One table at a time.
   const watching = new Map(); // who → stop
   function unwatch(who = club.ownerId) { watching.get(who)?.(); watching.delete(who); }
 
-  // The owner's or a manager's check-in, or one of their actions (run):
-  // they get the result, then the club as it is now. Managers do all but
-  // the owner's own (OWNER_ONLY); what they do is logged as theirs.
+  // The owner's check-in, or one of their actions (run): they get the
+  // result, then the club as it is now.
   async function handleOwner({type, from, body}) {
     if (type === 'owner_cmd') {
       let error = '', value = null;
       const op = String(body.op), args = body.args && typeof body.args === 'object' ? body.args : {};
-      const owner = from === club.ownerId;
       try {
-        if (!owner && !isAssistant(club, from)) throw new Error('Only the club’s managers can do that.');
-        if (!owner) checkManagerOp(club, from, op, args);
-        value = (await runAs(owner ? null : from, op, args)) ?? null;
+        if (from !== club.ownerId) throw new Error('Only the club’s owner can do that.');
+        value = (await run(op, args)) ?? null;
       } catch (e) { error = e.message || String(e); }
       // Results are plain data (e.g. the list of hands, #125).
       value = value === undefined ? null : JSON.parse(JSON.stringify(value));
@@ -193,13 +188,11 @@ export function createClubServer({
   }
 
   const seatedCounts = () => tableHost?.seatedCounts() || {};
-  // An assistant's view, with the open help requests (#192).
-  const adminView = () => ({...adminBody(club, seatedCounts()), help: openHelp(club)});
 
   // Help requests (#192): member `id` gets who's around and their own
-  // requests; when the host or an assistant comes or goes, every member
-  // online hears about it.
-  const isStaff = id => id === club.ownerId || isAssistant(club, id);
+  // requests; when the owner comes or goes, every member online hears
+  // about it.
+  const isStaff = id => id === club.ownerId;
   const sendHelp = id => sendToPlayer({to: id, body: helpBody(club, id, staffOnline(club, online, hostInTab))});
   function broadcastHelp() {
     for (const id of online) if (club.members[id]?.status === 'member') sendHelp(id);
@@ -396,38 +389,17 @@ export function createClubServer({
     tourneyHost.startAll();
   }
 
-  // A role answer, or an assistant's or agent's command, already verified as from `from`.
+  // An agent's answer to the offer, or their command, already verified as from `from`.
   function handleAdmin({type, from, body}) {
-    if (type === 'role_reply' || type === 'agent_reply') {
-      const r = (type === 'role_reply' ? answerRole : answerAgent)(club, from, !!body.accept);
+    if (type === 'agent_reply') {
+      const r = answerAgent(club, from, !!body.accept);
       if (r) sendToPlayer(r);
-      if (type === 'role_reply') broadcastHelp();
       return;
     }
     try {
-      // An assistant answering a help request (#192).
-      if (type === 'admin_cmd' && body.cmd?.op === 'help_answer') {
-        const h = answerHelp(club, from, String(body.cmd.id), {reply: body.cmd.reply, handled: body.cmd.handled !== false});
-        if (online.has(h.from)) sendHelp(h.from);
-        sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
-        return;
-      }
-      const r = (type === 'agent_cmd' ? runAgent : runAdmin)(club, from, body.cmd, Date.now(), limits);
+      const r = runAgent(club, from, body.cmd, Date.now());
       for (const rep of r.replies) sendToPlayer(rep);
       if (r.approved && tableHost) sendToPlayer({to: r.approved, body: tablesNow()});
-      if (r.table?.start && tableHost) started(tableHost.start(r.table.start));
-      if (r.table?.close) tableHost ? tableHost.close(r.table.close) : (tableById(club, r.table.close).status = 'closed');
-      // Removing a player from a table, or Undo (#414).
-      if (r.seat) {
-        if (!tableHost?.running(r.seat.table)) throw new Error('That table isn’t running.');
-        const p = r.seat.keep ? tableHost.keepPlayer(r.seat.table, r.seat.id)
-          : r.seat.to ? tableHost.movePlayer(r.seat.table, r.seat.id, r.seat.to, {by: from})
-          : tableHost.removePlayer(r.seat.table, r.seat.id, {now: r.seat.now, by: from});
-        Promise.resolve(p).catch(e => console.warn(e));
-      }
-      if (r.table) broadcastTables();
-      // An assistant's promotion command (#274).
-      if (r.promos) { promoPaid(r.paid || []); broadcastPromos(); armPromos(); }
       sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: ''}});
     } catch (e) {
       sendToPlayer({to: from, body: {type: 'admin_result', club: club.code, error: e.message}});
@@ -481,14 +453,12 @@ export function createClubServer({
     const m = club.members[msg.from];
     if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
-      // table updates, their role, and an assistant or agent their view.
+      // table updates, and an agent their view.
       if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
       if (club.info) sendToPlayer({to: msg.from, body: infoBody(club)});
       sendToPlayer({to: msg.from, body: {type: 'host_key', club: club.code, key: (await hostKeys()).pub}});
-      if (m.role) sendToPlayer({to: msg.from, body: {type: 'role', club: club.code, role: m.role}});
-      if (isAssistant(club, msg.from)) sendToPlayer({to: msg.from, body: adminView()});
       sendHelp(msg.from);
       if (m.agent) sendToPlayer({to: msg.from, body: {type: 'agent_role', club: club.code, agent: m.agent}});
       if (isAgent(club, msg.from)) sendToPlayer({to: msg.from, body: agentBody(club, msg.from)});
@@ -540,8 +510,6 @@ export function createClubServer({
     offer_agent: ({id}) => reply(offerAgent(club, id)),
     revoke_agent: ({id}) => reply(revokeAgent(club, id)),
     assign_agent: ({id, agent}) => { assignToAgent(club, id, agent || null); changed(); },
-    offer_assistant: ({id}) => reply(offerAssistant(club, id)),
-    revoke_role: ({id}) => { reply(revokeRole(club, id)); broadcastHelp(); },
     // Answering a help request (#192): a reply, and/or marking it handled.
     help_answer: ({id, reply: text = '', handled = true}) => {
       const h = answerHelp(club, actor(), String(id), {reply: text, handled});
@@ -571,7 +539,7 @@ export function createClubServer({
     // The owner of an always-on club watches table `table` from their page
     // (#125); in a host's tab, watching goes through `watch` below instead.
     watch: ({table}) => {
-      if (!club.ownerId) throw new Error('Only an always-on club’s managers watch this way.');
+      if (!club.ownerId) throw new Error('Only an always-on club’s owner watches this way.');
       if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
       if (!memberKeys.has(actor())) throw new Error('This page couldn’t set up encryption with the club. Reload and try again.');
       const who = actor();
@@ -686,9 +654,8 @@ export function createClubServer({
     },
   };
 
-  // Who the action running now is by, for the activity log.
-  let acting = null;
-  const actor = () => acting || club.ownerId || club.hostId;
+  // Who the actions are by, for the activity log.
+  const actor = () => club.ownerId || club.hostId;
 
   // `extraOps`: actions only where the club runs can do them (an always-on
   // club's room: deleting the club, #98).
@@ -696,26 +663,6 @@ export function createClubServer({
     if (Object.hasOwn(extraOps, op)) return extraOps[op](args);
     if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
     return OPS[op](args);
-  }
-
-  // Runs `op` for manager `by` (#417; null: the owner or host). Everything
-  // a manager does goes in the activity log as theirs: the lines the op
-  // writes itself, or else one saying what they did (managerLogText).
-  async function runAs(by, op, args) {
-    if (!by) return run(op, args);
-    club.log ??= [];
-    const before = club.log.length;
-    acting = by;
-    try {
-      const value = await run(op, args);
-      const added = club.log.slice(before);
-      for (const l of added) if (l.by === club.hostId || l.by === club.ownerId) l.by = by;
-      const text = !added.length && managerLogText(club, by, op, args);
-      if (text) { logAction(club, by, text); changed(); }
-      return value;
-    } finally {
-      acting = null;
-    }
   }
 
   // A service's signed request (club-services.js), from the relay's HTTP

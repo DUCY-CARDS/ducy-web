@@ -150,7 +150,7 @@ export const REQUEST_LOG = 100;
 // (m.answer: {asked, given, outcome, note, at}), and the club keeps it in
 // club.requestLog (newest last, REQUEST_LOG at most). `outcome` is
 // 'granted' or 'declined'; `note` is the reason for a decline; `by` who
-// answered when it wasn't the host (an assistant or agent). `limit`: the
+// answered when it wasn't the host (an agent). `limit`: the
 // credit limit was raised to it instead of chips given (#404; `given` is
 // the extra credit, so older pages read it as granted).
 export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', limit = null, now = Date.now()} = {}) {
@@ -176,14 +176,14 @@ export function grantRequest(club, id, amt, now = Date.now()) {
   return e;
 }
 
-// The host (or an assistant or agent, `by`) declines a request, saying why
+// The host (or an agent, `by`) declines a request, saying why
 // if they like. False if there's none.
 export function declineRequest(club, id, why = '', now = Date.now(), by = '') {
   return !!answerRequest(club, id, 'declined', {why, by, now});
 }
 
-// One member gives chips to another from their own club balance (a game
-// assistant, #62): two entries, so each sees their side. Total chips don't
+// One member gives chips to another from their own club balance (an agent
+// and their player, #76): two entries, so each sees their side. Total chips don't
 // change. `floor` is the lowest balance the giver may end at: 0, or below
 // zero for an agent drawing on credit (#76). Returns [out, in].
 export function transfer(club, from, to, amt, now = Date.now(), why = '', {floor = 0} = {}) {

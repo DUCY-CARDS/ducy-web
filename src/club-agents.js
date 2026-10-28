@@ -20,7 +20,7 @@
 import { approve, decline, account, newInvite } from './club.js';
 import { chipText } from './chip-format.js';
 import { answerRequest, checkGrant, creditOf, declineRequest, ensureChips, issue, transfer } from './club-chips.js';
-import { logAction } from './club-roles.js';
+import { logAction } from './club-log.js';
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
 export const playersOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'member');

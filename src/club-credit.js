@@ -9,7 +9,7 @@
 
 import { chipText } from './chip-format.js';
 import { answerRequest, available, creditOf, ensureChips, issue, owedBy } from './club-chips.js';
-import { logAction } from './club-roles.js';
+import { logAction } from './club-log.js';
 
 const whole = n => Number.isSafeInteger(n) && n >= 0 && n <= 1e12;
 

@@ -2,7 +2,7 @@
 // helping run one, apart from the player app (index.html), where people
 // join clubs and play. It loads only the club code (clubs.js in its
 // 'manage' mode): the club you run (its tables, members, chips, promotions,
-// history and settings), the clubs where you're a game assistant or agent,
+// history and settings), the clubs where you're an agent,
 // and starting or restoring a club.
 //
 //   #clubs           the list, and starting a club

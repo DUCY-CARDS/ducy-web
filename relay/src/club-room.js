@@ -288,7 +288,7 @@ export async function openClub({storage, send, online = [], MultiTable, onUsage 
     server.setRecord(await onProved(club.ownerId));
   }
   // When each player was last heard from, for the admin page's People
-  // (#401) and the managers' Members (#426): saved at most once a minute
+  // (#401) and the owner's Members (#426): saved at most once a minute
   // per player.
   const seen = (await storage.get('seen')) || {};
   const server = createClubServer({

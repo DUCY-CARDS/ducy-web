@@ -7,7 +7,6 @@ import { MultiTable } from '../wasm/ducy_wasm.js';
 import { createIdentity, signMessage, Verifier } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive } from '../src/club.js';
 import { LOBBY_KEEP, LOBBY_MAX_AGE_MS, lobbyBody, onlineList, readLobby, sayInLobby } from '../src/club-lobby.js';
-import { answerRole, offerAssistant } from '../src/club-roles.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 
 function clubWith(...ids) {
@@ -41,10 +40,8 @@ test('who’s online: the host first, then members by name, with their table', (
   club.members.pend = {id: 'pend', name: 'Pending', status: 'pending'};
   club.tables = [{id: 't1', name: 'NLH 1/2'}];
   club.members.zed.seat = {table: 't1', stack: 100};
-  offerAssistant(club, 'bo');
-  answerRole(club, 'bo', true);
   const ids = new Set(['zed', 'amy', 'bo', 'pend']);
-  assert.deepEqual(onlineList(club, ids).map(x => [x.name, x.role, x.table]), [['AMY', '', ''], ['BO', 'assistant', ''], ['ZED', '', 'NLH 1/2']]);
+  assert.deepEqual(onlineList(club, ids).map(x => [x.name, x.role, x.table]), [['AMY', '', ''], ['BO', '', ''], ['ZED', '', 'NLH 1/2']]);
   assert.equal(onlineList(club, ids, true)[0].role, 'host');
   // An always-on club's owner is the host when they're online.
   club.ownerId = 'OWNEROWN';

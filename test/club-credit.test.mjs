@@ -11,7 +11,6 @@ import {
 } from '../src/club-chips.js';
 import { creditNotices, creditRow, raiseCredit, setCredit, settleDebt } from '../src/club-credit.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
-import { offerAssistant, answerRole, runAdmin } from '../src/club-roles.js';
 import { answerAgent, assignToAgent, offerAgent, runAgent } from '../src/club-agents.js';
 
 const LIMITS = {min: 10, max: 1000};
@@ -166,19 +165,14 @@ test('the host changes the limit: raising it, removing it, lowering it below the
 });
 
 test('at the limit, a request may only be answered by raising the limit or no', () => {
-  const club = clubWith('ann', 'bob', 'asst');
-  issue(club, 'asst', 1000, 0);
-  offerAssistant(club, 'asst');
-  answerRole(club, 'asst', true);
+  const club = clubWith('ann', 'bob');
   setCredit(club, 'ann', 200, 0);
   chipsForTable(club, 'ann', newTable(club, {sb: 1, bb: 2, minBB: 40, maxBB: 100}), 200, 1);
   // Nothing left: she asks the manager from the table.
   const q = requestChips(club, 'ann', 100, 'rebuy', 2, {table: 'T1'});
   assert.deepEqual(q, {amount: 100, note: 'rebuy', at: 2, table: 'T1', atLimit: true});
   assert.throws(() => grantRequest(club, 'ann', 100), /at their credit limit: raise it, or say no/);
-  assert.throws(() => runAdmin(club, 'asst', {op: 'grant', id: 'ann'}), /at their credit limit/);
   assert.equal(ann(club).balance, -200, 'never given chips past the limit');
-  assert.equal(club.members.asst.balance, 1000);
   // Raising: above the current limit only.
   assert.throws(() => raiseCredit(club, 'ann', 200), /Raise the limit above 2/);
   raiseCredit(club, 'ann', 350, 3);

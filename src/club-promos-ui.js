@@ -138,9 +138,8 @@ function formHtml(edit, newKind = 'high_hand', cd = '') {
 // awards (approve or void), and the latest qualifying hands.
 export const hostPromosHtml = (club, opts = {}, now = Date.now()) => promosPartHtml(promosAdmin(club, now), {...opts, replay: club.code}, now);
 
-// The same from promosAdmin's data `a`, for the host or (`code`: their
-// club's) an assistant, whose buttons carry the code so they go to the
-// host (#274); `disabled` while the club can't be reached.
+// The same from promosAdmin's data `a`; `code` puts the club's code on the
+// buttons, and `disabled` while the club can't be reached.
 // `replay`: the club's code, for the host, whose history holds the hands
 // behind the prizes (#278).
 export function promosPartHtml(a, {form = null, note = '', code = '', disabled = false, replay = ''} = {}, now = Date.now()) {

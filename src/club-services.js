@@ -31,7 +31,7 @@
 
 import { checkSignature, fromB64url, isPlayerId, parseShownId, playerIdFor, showId } from './identity.js';
 import { issue, reclaim, ensureChips } from './club-chips.js';
-import { logAction } from './club-roles.js';
+import { logAction } from './club-log.js';
 import { CHIP_SCALE, chipText } from './chip-format.js';
 
 export const SKEW_MS = 5 * 60_000;

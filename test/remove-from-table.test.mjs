@@ -1,7 +1,7 @@
 // The manager removes a player from a table without closing it (#414): after
 // the hand in play, or now (folding them out of it), with Undo before the
 // hand ends; the usual cash-out (credit repaid first), the hit-and-run rule
-// overridden, the log entry, and an assistant doing it. A real club table
+// overridden, and the log entry. A real club table
 // (club-host.js and ducy's engine). Needs the wasm build in wasm/.
 // Run with: node --test test/remove-from-table.test.mjs
 import test from 'node:test';
@@ -16,7 +16,6 @@ const { setCredit } = await import('../src/club-credit.js');
 const { newTable } = await import('../src/club-tables.js');
 const { clubEngine } = await import('../src/club-engine.js');
 const { createTableHost } = await import('../src/club-host.js');
-const { adminBody, runAdmin } = await import('../src/club-roles.js');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(what, fn, ms = 30_000) {
@@ -29,7 +28,7 @@ async function until(what, fn, ms = 30_000) {
   }
 }
 
-// A club with ann, bob and cy; cy is an assistant. Ann plays on credit.
+// A club with ann, bob, cy and dee. Ann plays on credit.
 function setUp() {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
   for (const id of ['ann', 'bob', 'cy', 'dee']) {
@@ -38,7 +37,6 @@ function setUp() {
     if (id !== 'ann') issue(club, id, 1000, 0);
   }
   setCredit(club, 'ann', 500);
-  club.members.cy.role = 'assistant';
   const t = newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, stayHands: 5});
   const engine = clubEngine(MultiTable);
   // Each player acts (check or call) only while `acting` says so, so a hand
@@ -110,7 +108,7 @@ test('removed after the hand, with Undo first; the usual cash-out, credit repaid
   await host.close(t.id);
 });
 
-test('removed now: folded out of the hand in play, no Undo; an assistant can, a member can’t', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('removed now: folded out of the hand in play, no Undo', {skip: !haveWasm && 'no wasm build'}, async () => {
   const {club, t, host, watch, act, got} = setUp();
   await host.start(t);
   host.watch(t.id, u => { if (u.type === 'state') Object.assign(watch, u); });
@@ -119,12 +117,7 @@ test('removed now: folded out of the hand in play, no Undo; an assistant can, a 
     await host.handle(t.id, id, {type: 'request_chips', amount: 150});
   }
   await until('a hand in play', () => watch.view && !watch.view.complete && Number(watch.view.hand_number) >= 1);
-  // A member who isn't staff can't; Cy, an assistant, can.
-  assert.throws(() => runAdmin(club, 'dee', {op: 'remove_player', table: t.id, id: 'bob', now: true}), /not a manager/);
-  assert.throws(() => runAdmin(club, 'cy', {op: 'remove_player', table: t.id, id: 'ann', now: true}), /isn’t at that table/);
-  const r = runAdmin(club, 'cy', {op: 'remove_player', table: t.id, id: 'bob', now: true});
-  assert.deepEqual(r.seat, {table: t.id, id: 'bob', now: true});
-  await host.removePlayer(r.seat.table, r.seat.id, {now: true, by: 'cy'});
+  await host.removePlayer(t.id, 'bob', {now: true, by: 'HOSTHOST'});
   const bobSeat = watch.players.find(p => p.id === 'bob');
   assert.ok(bobSeat.removing && bobSeat.now);
   assert.ok(watch.view.seats[bobSeat.seat].away, 'his hand is folded for him (he acts no more)');
@@ -132,13 +125,11 @@ test('removed now: folded out of the hand in play, no Undo; an assistant can, a 
   await until('his message', () => got.bob.some(u => u.type === 'removed'));
   assert.ok(seated(club, 'bob'));
   assert.throws(() => host.keepPlayer(t.id, 'bob'), /already leaving/);
-  // Assistants see who's at each table, and who's leaving.
-  assert.deepEqual(adminBody(club).tables[0].players.find(p => p.id === 'bob'), {id: 'bob', name: 'Bob', stack: seated(club, 'bob').stack, removing: true, now: true});
   for (const id of ['cy', 'dee']) act(id);
   await until('bob stood up', () => !seated(club, 'bob'));
   const log = club.log.at(-1);
-  assert.equal(log.text, 'Cy removed Bob from Main');
-  assert.equal(log.by, 'cy');
+  assert.equal(log.text, 'The manager removed Bob from Main');
+  assert.equal(log.by, 'HOSTHOST');
   assert.ok(club.chips.ledger.some(e => e.member === 'bob' && e.kind === 'cash_out'));
   assert.ok(totals(club).conserved);
   await host.close(t.id);

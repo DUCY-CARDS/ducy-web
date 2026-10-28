@@ -23,9 +23,7 @@
 //                                        tables are table 'tourney:<id>' (#81)
 //   {type: 'tourney', club, tourney, op} op: 'register' | 'unregister' (#77), or
 //                                        'enter' (late registration or re-entry, #80)
-//   {type: 'role_reply', club, accept}   answer to an assistant offer (#62)
-//   {type: 'admin_cmd', club, cmd}       an assistant's command (club-roles.js)
-//   {type: 'help_ask', club, text, table}   ask the host and assistants for help (#192)
+//   {type: 'help_ask', club, text, table}   ask the host for help (#192)
 //   {type: 'lobby_say', club, text}      a line in the lobby chat (club-lobby.js)
 // Host → player bodies:
 //   {type: 'status', club, name, status} status: 'pending' | 'member' | 'declined'
@@ -38,9 +36,7 @@
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
 //   {type: 'tourney_error', club, tourney, reason}   why a tournament op was refused
-//   {type: 'role', club, role}           'offered' | 'assistant' | null (#62)
-//   {type: 'admin', club, pending, members, tables}   an assistant's view
-//   {type: 'admin_result', club, error}  how an assistant's command went
+//   {type: 'admin_result', club, error}  how an agent's command went
 //   {type: 'host_key', club, key}        the host's session key for table updates
 //   {type: 'help', club, staff, mine}    who's around to help, and your latest
 //                                        help requests (club-help.js, #192)
@@ -156,11 +152,8 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
   const m = club.members[id];
   // An always-on club's owner (#93), who runs it from their page: their
   // check-ins and commands. The caller handles them (club-server.js).
-  // Its managers (#417) run it from the same page; the caller keeps the
-  // owner's actions to the owner (club-server.js).
   if (body.type === 'owner_hello' || body.type === 'owner_cmd') {
-    const manager = m?.status === 'member' && m.role === 'assistant';
-    if (!club.ownerId || (id !== club.ownerId && !manager)) return {replies: [], changed: false, reason: 'not the owner'};
+    if (!club.ownerId || id !== club.ownerId) return {replies: [], changed: false, reason: 'not the owner'};
     return {replies: [], changed: false, owner: {type: body.type, from: id, body}};
   }
   if (body.type === 'join') {
@@ -199,9 +192,9 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
     if (m?.status === 'member') replies.push(account(club, id, body.since));
     return {replies, changed};
   }
-  // Game assistants (#62) and agents (#74–#76): an answer to a role offer,
-  // or a command. The caller handles them (club-roles.js, club-agents.js).
-  if (['role_reply', 'admin_cmd', 'agent_reply', 'agent_cmd'].includes(body.type)) {
+  // Agents (#74–#76): an answer to the agent offer, or a command. The
+  // caller handles them (club-agents.js).
+  if (body.type === 'agent_reply' || body.type === 'agent_cmd') {
     if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
     return {replies: [], changed: false, admin: {type: body.type, from: id, body}};
   }
@@ -356,7 +349,7 @@ export async function playerReceive(mem, env) {
     mem.promos = {promos: Array.isArray(b.promos) ? b.promos : [], recent: Array.isArray(b.recent) ? b.recent : []};
     return true;
   }
-  // A manager's view of the whole club, and how their action went (#417).
+  // The owner's view of the whole club, and how their action went (#93).
   if (b.type === 'owner_view') {
     mem.hostSeq = env.seq;
     if (!b.data || typeof b.data !== 'object') return false;
@@ -382,17 +375,6 @@ export async function playerReceive(mem, env) {
   if (b.type === 'tourney_error') {
     mem.hostSeq = env.seq;
     mem.tourneyError = {tourney: b.tourney, reason: String(b.reason || '')};
-    return true;
-  }
-  if (b.type === 'role') {
-    mem.hostSeq = env.seq;
-    mem.role = b.role || null;
-    if (mem.role !== 'assistant') mem.admin = null;
-    return true;
-  }
-  if (b.type === 'admin') {
-    mem.hostSeq = env.seq;
-    mem.admin = {pending: b.pending || [], members: b.members || [], tables: b.tables || [], help: b.help || [], promos: b.promos || null};
     return true;
   }
   // The host's key for this session's encrypted table updates (e2e.js),

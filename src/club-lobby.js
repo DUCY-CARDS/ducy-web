@@ -31,8 +31,8 @@ export function sayInLobby(club, from, text, now = Date.now()) {
 
 // Who's online, given who's connected (`online`, a Set) and whether the
 // host's own page is running the club: [{id, name, role, table}], role
-// 'host' | 'assistant' | '', and the name of the table they're at ('' if
-// none). The host first, then by name.
+// 'host' | '', and the name of the table they're at ('' if none). The host
+// first, then by name.
 export function onlineList(club, online, hostHere = false) {
   const tables = Object.fromEntries((club.tables || []).map(t => [t.id, t.name]));
   const out = [];
@@ -42,7 +42,7 @@ export function onlineList(club, online, hostHere = false) {
   for (const id of online) {
     const m = club.members[id];
     if (id === club.ownerId || m?.status !== 'member') continue;
-    rest.push({id, name: m.name, role: m.role === 'assistant' ? 'assistant' : '', table: m.seat ? tables[m.seat.table] || 'a table' : ''});
+    rest.push({id, name: m.name, role: '', table: m.seat ? tables[m.seat.table] || 'a table' : ''});
   }
   rest.sort((a, b) => a.name.localeCompare(b.name));
   return [...out, ...rest];
@@ -57,7 +57,7 @@ export function lobbyBody(club, online, hostHere = false, now = Date.now()) {
 // {online, chat}, checked and cut to size.
 export function readLobby(b) {
   const online = (Array.isArray(b.online) ? b.online : []).slice(0, 500).filter(x => x && typeof x.name === 'string').map(x => ({
-    id: String(x.id || ''), name: chatName(x.name), role: ['host', 'assistant'].includes(x.role) ? x.role : '', table: cleanChat(x.table || '').slice(0, 50),
+    id: String(x.id || ''), name: chatName(x.name), role: x.role === 'host' ? 'host' : '', table: cleanChat(x.table || '').slice(0, 50),
   }));
   const chat = (Array.isArray(b.chat) ? b.chat : []).slice(-LOBBY_KEEP).filter(x => x && typeof x.text === 'string').map(x => ({
     id: String(x.id || ''), name: chatName(x.name), text: cleanChat(x.text), at: Number(x.at) || 0, host: !!x.host,

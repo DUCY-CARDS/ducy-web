@@ -33,7 +33,7 @@ import {
   pruneReservations, reservations, reserveSeat, stayText, syncStacks, tableById, tableLedgerN,
 } from './club-tables.js';
 import { creditOf, ratholeMin, refundTopUp } from './club-chips.js';
-import { logAction } from './club-roles.js';
+import { logAction } from './club-log.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { dealClock, isDealing } from './club-overview.js';
 import { ASK_MS, IDLE_MS } from './table-runner.js';
