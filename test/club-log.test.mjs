@@ -3,6 +3,7 @@
 // Run with: node --test test/club-log.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { approve, newClub } from '../src/club.js';
 import { newTable } from '../src/club-tables.js';
 import { bigMove, dropManagers, isBigMove, logAction, MAX_LOG } from '../src/club-log.js';

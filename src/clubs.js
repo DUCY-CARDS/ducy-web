@@ -31,7 +31,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
 } from './club.js';
-import { balanceChange, ensureChips, issue, ledgerCsv, MAX_NOTE, reclaim, totals } from './club-chips.js';
+import { balanceChange, ensureChips, ledgerCsv, MAX_NOTE, totals } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -195,9 +195,17 @@ const tableRunning = id => (isRemote() ? !!own().view?.running?.includes(id) : !
 // How running tournaments are going (club-tourney-host.js).
 const tourneyLive = () => (isRemote() ? own().view?.tourneys || {} : server?.tourneyLive?.() || {});
 
+// The club's money runs in ducy's engine (club-money.js, #454), so this
+// page loads it before the club it runs starts.
+let pageEngine = null;
+const loadEngine = () => (pageEngine ||= import('../wasm/ducy_wasm.js').then(w => w.default({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)})));
+
 function startHosting() {
   if (!club || hostNet || isRemote()) return;
-  if (!server) newServer();
+  if (!server) {
+    loadEngine().then(() => { if (!server) newServer(); startHosting(); }, e => { note = `The club couldn’t start: ${e.message}`; render(); });
+    return;
+  }
   hostNet = connect(club.code, 'host', '', {
     // Tables start once this tab is the club's host: a second tab, refused
     // by the relay, never runs (or resumes) them.
@@ -2557,7 +2565,7 @@ function settledHtml(m) {
   return e ? `<p class="cl-settled"><span aria-hidden="true">✓</span> Debt settled: ${chips(e.amount)}</p>` : '';
 }
 
-const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', reclaim: 'Taken back by the manager', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settled', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided'};
+const KIND_TEXT = {issue: 'Given by the manager', grant: 'Request granted', reclaim: 'Taken back by the manager', buy_in: 'Bought in', top_up: 'Topped up', top_up_refund: 'Top-up handed back (over the table maximum)', cash_out: 'Cashed out', transfer_in: 'Received chips', transfer_out: 'Gave chips', settle: 'Settled', tourney_buyin: 'Tournament buy-in', tourney_refund: 'Tournament buy-in refunded', tourney_prize: 'Tournament prize', promo: 'Promotion prize', promo_void: 'Promotion prize voided', links: 'Your players’ chips, now on your account'};
 // The member sees their own (#404): a settlement is their debt settled.
 const MEMBER_KIND = {...KIND_TEXT, settle: 'Debt settled'};
 

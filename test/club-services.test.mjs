@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import './wasm.mjs';
 import { createIdentity, signMessage, showId } from '../src/identity.js';
 import { newClub, approve } from '../src/club.js';
 import { hostReceive } from '../src/club.js';

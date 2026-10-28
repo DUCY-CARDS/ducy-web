@@ -3,6 +3,7 @@
 // hold its owner's player ID.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { createIdentity, exportLockedIdentity } from '../src/identity.js';
 import { clubBackupText, openBackup, proveClubBackup } from '../src/club-backup.js';
 

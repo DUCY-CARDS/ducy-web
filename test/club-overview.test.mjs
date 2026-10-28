@@ -7,6 +7,7 @@ import {
   DAY, dealClock, dealingMs, durationText, isDealing, lastActive, lastPlayed, memberFilter, overviewNumbers, PAGE_SIZE, pageOf, SORTS, sortMembers,
   tableSummaries, todaysTourneys,
 } from '../src/club-overview.js';
+import './wasm.mjs';
 import { clearableKeys, managerNotices, raiseTo } from '../src/club-notices.js';
 import { buyIn, cashOut, ensureChips, issue, requestChips, setStack } from '../src/club-chips.js';
 import { newTable } from '../src/club-tables.js';

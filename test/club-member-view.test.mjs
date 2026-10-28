@@ -2,6 +2,7 @@
 // a table session as one line, and the result when they stand up.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { chipLines, leftSummary } from '../src/club-member-view.js';
 import { buyIn, cashOut, ensureChips, issue, setStack, topUp } from '../src/club-chips.js';
 import { setCredit, settleDebt } from '../src/club-credit.js';
