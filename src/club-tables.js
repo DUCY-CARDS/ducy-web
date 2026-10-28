@@ -70,7 +70,7 @@ export function checkTableLimit(club, limits) {
 
 // Adds a table to the club from the host's choices; throws on bad input,
 // or when the club's `limits` (#265) allow no more.
-export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS, stayHands = 0} = {}, now = Date.now(), limits = null) {
+export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB = 40, maxBB = 100, seats = defaultSeats(game), turnSecs = 30, sitOutMins = club.sitOutMins ?? DEFAULT_SIT_OUT_MINS, stayHands = club.stayHands ?? 0} = {}, now = Date.now(), limits = null) {
   ensureTables(club);
   checkTableLimit(club, limits);
   if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
@@ -83,7 +83,7 @@ export function newTable(club, {name = '', game = 'nlhe', sb = 1, bb = 2, minBB 
   if (!Number.isSafeInteger(turnSecs) || turnSecs < 0) throw new Error('Pick a turn time.');
   if (!Number.isSafeInteger(sitOutMins) || sitOutMins < 0) throw new Error('Pick a sit-out limit.');
   if (!Number.isSafeInteger(stayHands) || stayHands < 0 || stayHands > MAX_STAY_HANDS) {
-    throw new Error(`Hands to play once up: 0 (off) to ${MAX_STAY_HANDS}.`);
+    throw new Error(`Call time: 0 (off) to ${MAX_STAY_HANDS} hands.`);
   }
   const t = {
     id: tableId(), name: String(name).trim().slice(0, MAX_TABLE_NAME) || defaultTableName(club, game, sb, bb),
