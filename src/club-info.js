@@ -1,14 +1,17 @@
 // Club info (#398): what the managers write for members, in a few fixed
 // sections, each optional. Kept with the club (club.info) and sent to
 // members like the tables ({type: 'info', club, info}); About the club also
-// shows on the invite screen (relay/src/club-room.js codeInfo). Pure: the
-// checks, the safe formatting and what changed.
+// shows on the invite screen (relay/src/club-room.js codeInfo). The host's
+// checks are ducy-play's club rules (club-rules.js); here, a member's copy,
+// the safe formatting and what changed.
 //
 //   info: {about, chips, rules: text; events: [{at, text}]; at: {section: when it last changed}}
 //
 // Formatting is simple and safe: everything is escaped first; then blank
 // lines make paragraphs, lines starting "- " a list, **bold**, and links,
 // [words](https://…) or a bare https:// address. Nothing else is markup.
+
+import { cleanClubInfo } from './club-rules.js';
 
 export const SECTIONS = [
   ['about', 'About the club'],
@@ -22,37 +25,22 @@ const TEXTS = ['about', 'chips', 'rules'];
 
 const text = (s, max) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
 
-// The events as kept: a time and a few words each, by time.
-function events(list) {
-  return (Array.isArray(list) ? list : [])
+// Club info as given (the host's form), checked: each section trimmed to
+// its length, and `at` saying when each changed since `prev` (the info it
+// replaces).
+export const cleanInfo = cleanClubInfo;
+
+// Club info from the club's host (a member's copy), cut to size, without
+// changing when each section changed.
+export function readInfo(x) {
+  if (!x || typeof x !== 'object') return null;
+  const out = {about: '', chips: '', rules: '', events: [], at: {}};
+  for (const k of TEXTS) out[k] = text(x[k], MAX_INFO_TEXT);
+  out.events = (Array.isArray(x.events) ? x.events : [])
     .map(e => ({at: Number(e?.at), text: text(e?.text, MAX_EVENT_TEXT).replace(/\n/g, ' ')}))
     .filter(e => Number.isSafeInteger(e.at) && e.at > 0 && e.text)
     .sort((a, b) => a.at - b.at)
     .slice(0, MAX_EVENTS);
-}
-
-// Club info as given (a manager's form, or a message), checked: each
-// section trimmed to its length, and `at` saying when each changed since
-// `prev` (the info it replaces).
-export function cleanInfo(input, prev = null, now = Date.now()) {
-  const out = {about: '', chips: '', rules: '', events: [], at: {}};
-  for (const k of TEXTS) out[k] = text(input?.[k], MAX_INFO_TEXT);
-  out.events = events(input?.events);
-  for (const [k] of SECTIONS) {
-    const same = JSON.stringify(out[k]) === JSON.stringify(prev?.[k] ?? (k === 'events' ? [] : ''));
-    const was = Number(prev?.at?.[k]) || 0;
-    if (!same) out.at[k] = now;
-    else if (was) out.at[k] = was;
-  }
-  return out;
-}
-
-// Club info from the club's host (a member's copy), without changing when
-// each section changed.
-export function readInfo(x) {
-  if (!x || typeof x !== 'object') return null;
-  const out = cleanInfo(x, null, 0);
-  out.at = {};
   for (const [k] of SECTIONS) if (Number.isSafeInteger(x.at?.[k]) && x.at[k] > 0) out.at[k] = x.at[k];
   return out;
 }

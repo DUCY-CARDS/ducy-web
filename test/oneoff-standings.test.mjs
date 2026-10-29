@@ -5,6 +5,7 @@
 // node --test test/oneoff-standings.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { atTable, cashOut, cashStandings, give, handBack, newLedger, settleUp, standingsCsv } from '../src/oneoff-standings.js';
 import { settleHtml, signed, standingsHtml, fileName } from '../src/oneoff-standings-ui.js';
 import { HOST_ID, autoPrizes, joinPrivate, lobbyBody, newPrivateTourney, prizeList, prizeTotals, privateClub, results, setPrizes, theTourney, tourneySettle, tourneyStandings } from '../src/private-tourney.js';

@@ -53,6 +53,7 @@ import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
 import { accountBody, backerTake, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
 import { backerOf, CLUB } from './club-money.js';
+import { nameKey, newRules, rules } from './club-rules.js';
 import { readLobby } from './club-lobby.js';
 import { readInfo } from './club-info.js';
 
@@ -60,49 +61,27 @@ export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
 const TOKEN_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-export function clubName(s) {
-  const name = String(s ?? '').trim().replace(/\s+/g, ' ');
-  if (!name) throw new Error('Give the club a name.');
-  if (name.length > MAX_CLUB_NAME) throw new Error(`Club names can be at most ${MAX_CLUB_NAME} characters.`);
-  return name;
-}
+// A club's name, tidied; throws if it's empty or too long.
+export const clubName = s => newRules(s, '', '').name;
 
-const playerName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_PLAYER_NAME) || 'Player';
+// Names in a club are unique (#450): ducy-play's nameKey says what a name
+// reads as, whatever its case, spacing, punctuation, accents and look-alike
+// letters.
+export { nameKey };
 
-// Names in a club are unique (#450), so no one can pass for someone already
-// in it: two names are the same if they read the same, whatever their case,
-// spacing, punctuation and accents, and with look-alike letters (Cyrillic,
-// Greek, 0 for o…) taken as the letters they look like.
-const LOOKALIKE = {
-  а: 'a', в: 'b', е: 'e', ё: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ї: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w',
-  α: 'a', β: 'b', ε: 'e', η: 'n', ι: 'i', κ: 'k', μ: 'u', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'u', χ: 'x', ω: 'w',
-  0: 'o', 1: 'l', 3: 'e', 5: 's', '|': 'l', ı: 'i', ł: 'l', ø: 'o', đ: 'd', ß: 'ss',
-};
-export function nameKey(s) {
-  const plain = String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
-  const key = [...plain].map(c => LOOKALIKE[c] ?? c).join('').replace(/[^\p{L}\p{N}]/gu, '');
-  return key || plain.trim();
-}
-
-// The member or person asking to join, other than `id`, whose name reads as
-// `name`; or null.
-export function nameTakenBy(club, id, name) {
-  const key = nameKey(name);
-  return Object.values(club.members).find(m => m.id !== id && (m.status === 'member' || m.status === 'pending') && nameKey(m.name) === key) || null;
-}
-
+// An agent's invite token (club-agents.js).
 export function newInvite() {
   return Array.from(crypto.getRandomValues(new Uint8Array(12)), b => TOKEN_CHARS[b % TOKEN_CHARS.length]).join('');
 }
 
 export function newClub(name, code, hostId, now = Date.now()) {
-  return ensureChips({v: 1, code, name: clubName(name), hostId, invite: newInvite(), createdAt: now, members: {}});
+  return ensureChips(newRules(name, code, hostId, now));
 }
 
 // A new invite token; the old link stops working for people who haven't
 // asked to join yet. Pending requests and members aren't affected.
 export function revokeInvite(club) {
-  club.invite = newInvite();
+  rules(club, {op: 'revokeInvite'});
 }
 
 // The invite link for `club` on a page at `base` (location.href), carrying
@@ -141,108 +120,36 @@ export function parseInvite(href) {
 
 export const statusBody = (club, id) => ({type: 'status', club: club.code, name: club.name, status: club.members[id]?.status || 'unknown'});
 
-const reply = (club, id) => ({to: id, body: statusBody(club, id)});
-
 // The host handles one envelope from the relay. Returns {replies: [{to, body}],
 // changed, reason}: replies to sign and send, whether the club changed (save
-// it), and why a message was refused.
+// it), and why a message was refused. ducy-play's club rules decide joins,
+// names and who may send what; what they pass on is the caller's (club-server.js):
+//   owner    an always-on club's owner's check-in or command (#93)
+//   admin    an agent's answer or command (#74–#76, club-agents.js)
+//   table    a command for a club table (#68, club-host.js), signed, so a
+//            player can prove what they did
+//   tourney  registering for a tournament, and the like (club-tourneys.js)
+//   help     a help request (club-help.js, #192)
+//   lobby    a line in the lobby chat (club-lobby.js)
+// Chip requests (#67, from a table when nothing's left to add there, #404)
+// and a member's account on hello are handled here (club-chips.js).
 export async function hostReceive(club, verifier, env, now = Date.now()) {
   const v = await verifier.verify(env);
   if (!v.ok) return {replies: [], changed: false, reason: v.reason};
   const id = v.from, body = v.body || {};
-  if (body.club !== club.code) return {replies: [], changed: false, reason: 'wrong club'};
   ensureChips(club);
-  const m = club.members[id];
-  // An always-on club's owner (#93), who runs it from their page: their
-  // check-ins and commands. The caller handles them (club-server.js).
-  if (body.type === 'owner_hello' || body.type === 'owner_cmd') {
-    if (!club.ownerId || id !== club.ownerId) return {replies: [], changed: false, reason: 'not the owner'};
-    return {replies: [], changed: false, owner: {type: body.type, from: id, body}};
+  const {account: since, chips, ...r} = rules(club, {op: 'receive', from: id, body}, now);
+  // A new request gets the chip fields.
+  if (r.changed) ensureChips(club);
+  if (since !== undefined) r.replies.push(account(club, id, since));
+  if (!chips) return r;
+  try {
+    if (chips.type === 'chip_request') requestChips(club, id, chips.amount, chips.note, now, {table: chips.table});
+    else cancelRequest(club, id);
+  } catch (e) {
+    return {replies: [account(club, id, Infinity)], changed: false, reason: e.message};
   }
-  if (body.type === 'join') {
-    const name = playerName(body.name);
-    // Someone in the club already goes by it (#450): they're told, and pick another.
-    const taken = nameTakenBy(club, id, name);
-    if (m?.status === 'member' || m?.status === 'pending') {
-      if (taken && m.name !== name) return {replies: [{to: id, body: {...statusBody(club, id), nameTaken: name}}], changed: false, reason: 'name taken'};
-      const changed = m.name !== name;
-      m.name = name;
-      return {replies: [reply(club, id)], changed};
-    }
-    // Asking with the club's code alone, no invite (#393): only when the club
-    // lets people (codeJoin, off by default). Otherwise they're told to ask
-    // for the invite link, and not the club's name.
-    if (!body.invite && club.codeJoin !== true) return {replies: [{to: id, body: {type: 'status', club: club.code, status: 'invite_only'}}], changed: false, reason: 'no invite'};
-    // The club's link, or an agent's (#74): their recruits wait for the agent.
-    const agent = body.invite && Object.values(club.members).find(a => a.agent === 'yes' && a.status === 'member' && a.agentInvite === body.invite);
-    if (body.invite && body.invite !== club.invite && !agent) return {replies: [{to: id, body: {...statusBody(club, id), status: 'bad_invite'}}], changed: false, reason: 'bad invite'};
-    if (taken) return {replies: [{to: id, body: {...statusBody(club, id), status: 'unknown', nameTaken: name}}], changed: false, reason: 'name taken'};
-    // New, or asking again after being declined or removed.
-    club.members[id] = {...m, id, name, status: 'pending', requestedAt: now};
-    if (agent) club.members[id].agentOf = agent.id;
-    ensureChips(club);
-    return {replies: [reply(club, id)], changed: true};
-  }
-  if (body.type === 'hello') {
-    let changed = false, nameTaken = '';
-    if (m && body.name) {
-      const name = playerName(body.name);
-      // A new name someone else in the club goes by is refused (#450).
-      if (m.name !== name && nameTakenBy(club, id, name)) nameTaken = name;
-      else { changed = m.name !== name; m.name = name; }
-    }
-    const replies = [nameTaken ? {to: id, body: {...statusBody(club, id), nameTaken}} : reply(club, id)];
-    // `since` counts in the money model's ledger only from a copy that
-    // already is one (#454); an older copy gets every entry.
-    if (m?.status === 'member') replies.push(account(club, id, body.ledger === 'links' ? body.since : 0));
-    return {replies, changed};
-  }
-  // Agents (#74–#76): an answer to the agent offer, or a command. The
-  // caller handles them (club-agents.js).
-  if (body.type === 'agent_reply' || body.type === 'agent_cmd') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    return {replies: [], changed: false, admin: {type: body.type, from: id, body}};
-  }
-  // A command for one of the club's tables (#68): signed, so a player can
-  // prove what they did. The caller runs it (club-host.js).
-  if (body.type === 'table') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    if (typeof body.table !== 'string' || !body.cmd || typeof body.cmd !== 'object') return {replies: [], changed: false, reason: 'bad table command'};
-    return {replies: [], changed: false, table: {id: body.table, cmd: body.cmd, from: id}};
-  }
-  // Registering for a tournament, and the like (club-tourneys.js): the
-  // caller runs it (club-server.js).
-  if (body.type === 'tourney') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    if (typeof body.tourney !== 'string' || !['register', 'unregister', 'enter'].includes(body.op)) return {replies: [], changed: false, reason: 'bad tournament command'};
-    return {replies: [], changed: false, tourney: {id: body.tourney, op: body.op, from: id}};
-  }
-  // A help request (club-help.js, #192): the caller records it and tells
-  // whoever's around (club-server.js).
-  if (body.type === 'help_ask') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    if (typeof body.text !== 'string' || !body.text.trim()) return {replies: [], changed: false, reason: 'bad help request'};
-    return {replies: [], changed: false, help: {from: id, text: body.text, table: typeof body.table === 'string' ? body.table : ''}};
-  }
-  // A line in the lobby chat (club-lobby.js): the caller records it and
-  // sends the lobby to everyone online (club-server.js).
-  if (body.type === 'lobby_say') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    if (typeof body.text !== 'string' || !body.text.trim()) return {replies: [], changed: false, reason: 'bad lobby message'};
-    return {replies: [], changed: false, lobby: {from: id, text: body.text}};
-  }
-  if (body.type === 'chip_request' || body.type === 'cancel_request') {
-    if (m?.status !== 'member') return {replies: [reply(club, id)], changed: false, reason: 'not a member'};
-    try {
-      // Asked from a table, when nothing's left to add there (#404).
-      if (body.type === 'chip_request') requestChips(club, id, body.amount, body.note, now, {table: body.table});
-      else cancelRequest(club, id);
-    } catch (e) {
-      return {replies: [account(club, id, Infinity)], changed: false, reason: e.message};
-    }
-    return {replies: [account(club, id, Infinity)], changed: true};
-  }
-  return {replies: [], changed: false, reason: 'unknown message'};
+  return {replies: [account(club, id, Infinity)], changed: true};
 }
 
 // A member's account as a reply. `since` is the last entry they have, so
@@ -252,18 +159,9 @@ export function account(club, id, since = 0) {
   return {to: id, body: accountBody(club, id, s)};
 }
 
-function setStatus(club, id, status, now, from) {
-  const m = club.members[id];
-  if (!m || !from.includes(m.status)) return null;
-  m.status = status;
-  if (status === 'member') m.joinedAt = now;
-  m.changedAt = now;
-  return reply(club, id);
-}
-
 // The host's decisions. Each returns the reply to send, or null if it didn't apply.
-export const approve = (club, id, now = Date.now()) => setStatus(club, id, 'member', now, ['pending']);
-export const decline = (club, id, now = Date.now()) => setStatus(club, id, 'declined', now, ['pending']);
+export const approve = (club, id, now = Date.now()) => rules(club, {op: 'approve', id}, now);
+export const decline = (club, id, now = Date.now()) => rules(club, {op: 'decline', id}, now);
 // Removing a member: their backer (the club, or their agent) takes back
 // their whole balance first (#66, #454), and any open chip request goes.
 // Returns the replies to send (status, and the account showing the
@@ -271,8 +169,8 @@ export const decline = (club, id, now = Date.now()) => setStatus(club, id, 'decl
 // first (#68).
 export function removeMember(club, id, now = Date.now()) {
   ensureChips(club);
+  if (!rules(club, {op: 'removable', id})) return null;
   const m = club.members[id];
-  if (!m || !['member', 'pending'].includes(m.status) || m.seat) return null;
   const hadChips = m.balance > 0;
   if (hadChips) {
     const backer = backerOf(club, m);
@@ -280,7 +178,7 @@ export function removeMember(club, id, now = Date.now()) {
     else backerTake(club, backer, id, m.balance, now, 'Removed from the club');
   }
   m.request = null;
-  const status = setStatus(club, id, 'removed', now, ['member', 'pending']);
+  const status = rules(club, {op: 'remove', id}, now);
   return hadChips ? [status, account(club, id, 0)] : [status];
 }
 

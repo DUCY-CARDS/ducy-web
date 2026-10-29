@@ -64,7 +64,8 @@ import {
   approveAward, editPromo, newPromo, nextSettle, processHand, promosAdmin, promosBody, setPromoStatus, settlePeriods, voidAward,
 } from './club-promos.js';
 import { chipText } from './chip-format.js';
-import { cleanInfo, infoBody } from './club-info.js';
+import { infoBody } from './club-info.js';
+import { rules } from './club-rules.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -640,7 +641,7 @@ export function createClubServer({
     },
     // Club info (#398): its sections, sent to every member online.
     set_info: ({info}) => {
-      club.info = cleanInfo(info || {}, club.info);
+      rules(club, {op: 'setInfo', info: info && typeof info === 'object' ? info : {}});
       logAction(club, actor(), 'Updated the club info');
       changed();
       const body = infoBody(club);

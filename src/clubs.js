@@ -3187,6 +3187,8 @@ export function startClubs() {
 // Draws tab `v` of the Play section (see the views above) into `el`.
 export async function openClubs(el, v = 'clubs') {
   if (!root) {
+    // The club rules the page draws from are ducy-play's (#455).
+    await loadEngine().catch(e => { note = `The club couldn’t start: ${e.message}`; });
     root = el;
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);

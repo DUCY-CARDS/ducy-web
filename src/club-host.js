@@ -29,7 +29,7 @@
 // table until the hand is over (ducy's engine), so the time starts then.
 
 import {
-  canJoin, cashOutTable, chipsForTable, dropReservation, handsToStay, heldSeats, HOLD_MS, leftTable, limits, nextLapse,
+  canJoin, cashOutTable, chipsForTable, dropReservation, handsToStay, heldSeats, holdFrom, HOLD_MS, leftTable, limits, nextLapse,
   pruneReservations, reservations, reserveSeat, stayText, syncStacks, tableById, tableLedgerN,
 } from './club-tables.js';
 import { creditOf, ratholeMin, refundTopUp } from './club-chips.js';
@@ -583,11 +583,10 @@ export function createTableHost({
   // they reserved, if they weren't in a hand: they left at once).
   function movedOut(t, id, to, chips) {
     const c = club(), now = Date.now();
-    const e = c.waitlist?.[to]?.find(x => x.member === id);
-    if (e) e.until = now + holdMs;
+    const held = holdFrom(c, to, id, now, holdMs);
     armHolds();
     const dest = tableById(c, to);
-    sendTable(id, {type: 'table', table: t.id, update: {type: 'moved', to, name: dest?.name || '', chips, ...(e ? {until: e.until} : {})}});
+    sendTable(id, {type: 'table', table: t.id, update: {type: 'moved', to, name: dest?.name || '', chips, ...(held ? {until: now + holdMs} : {})}});
   }
 
   // Seats held at table `tid` for people not at it yet.
