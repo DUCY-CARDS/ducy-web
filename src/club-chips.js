@@ -28,14 +28,14 @@
 // stays negative.
 
 import { chipInput, chipText } from './chip-format.js';
-import { backerOf, CLUB, entriesOf, move } from './club-money.js';
+import { CLUB, entriesOf, entryView, move } from './club-money.js';
+import { book } from './club-book.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
 export const MAX_NOTE = 80;
 
 const ok = a => Number.isSafeInteger(a) && a > 0 && a <= MAX_CHIPS;
-const note = s => String(s ?? '').trim().slice(0, MAX_NOTE);
 
 // Adds the chip fields to a club (new, or saved before #67).
 export function ensureChips(club) {
@@ -71,57 +71,39 @@ function amount(a) {
   return a;
 }
 
-const nameOf = (club, id) => club.members[id]?.name || id;
-
-// Chips from the club go only to its own members: an agent's players get
-// theirs from their agent.
-function direct(club, m) {
-  const b = backerOf(club, m);
-  if (b !== CLUB) throw new Error(`${m.name} plays under ${nameOf(club, b)}: their chips come from them.`);
-}
-
 // The member's own entry among a move's.
 const own = (entries, id) => entries.find(e => e.member === id && !e.player);
 
-// The club gives chips.
+// A number for the book: whole chips, or null (refused as an amount).
+const num = a => (Number.isFinite(a) ? a : null);
+
+// An entry the book made, as pages see it.
+const made = (club, e) => entryView(club, e);
+
+// The club gives chips: only to its own members (an agent's players get
+// theirs from their agent).
 export function issue(club, id, amt, now = Date.now(), why = '') {
-  const m = member(club, id);
-  amount(amt);
-  direct(club, m);
-  const [e] = move(club, {op: 'give', backer: CLUB, member: id, amount: amt, note: note(why)}, now);
-  club.chips.issued += amt;
-  return e;
+  ensureChips(club);
+  return made(club, book(club, {op: 'issue', id, amount: num(amt), note: String(why ?? '')}, now));
 }
 
 // The club takes chips back from a member's balance (not from a table).
 export function reclaim(club, id, amt, now = Date.now(), why = '') {
-  const m = club.members[id];
   ensureChips(club);
-  if (!m) throw new Error('No such member.');
-  amount(amt);
-  if (amt > m.balance) throw new Error(`${m.name} only has ${chipText(m.balance)} chips in the club.`);
-  direct(club, m);
-  const [e] = move(club, {op: 'takeBack', backer: CLUB, member: id, amount: amt, note: note(why)}, now);
-  club.chips.reclaimed += amt;
-  return e;
+  return made(club, book(club, {op: 'reclaim', id, amount: num(amt), note: String(why ?? '')}, now));
 }
 
 // A backer (an agent) gives one of their players chips (#76): it costs
 // them nothing until the chips go on a table.
 export function backerGive(club, backer, id, amt, now = Date.now(), why = '') {
-  member(club, id);
-  amount(amt);
-  const [e] = move(club, {op: 'give', backer, member: id, amount: amt, note: note(why)}, now);
-  return e;
+  ensureChips(club);
+  return made(club, book(club, {op: 'backerGive', backer, id, amount: num(amt), note: String(why ?? '')}, now));
 }
 
 // A backer takes back chips from one of their players, up to what they have.
 export function backerTake(club, backer, id, amt, now = Date.now(), why = '') {
-  const m = member(club, id);
-  amount(amt);
-  if (amt > m.balance) throw new Error(`${m.name} has ${chipText(Math.max(0, m.balance))} chips.`);
-  const [e] = move(club, {op: 'takeBack', backer, member: id, amount: amt, note: note(why)}, now);
-  return e;
+  ensureChips(club);
+  return made(club, book(club, {op: 'backerTake', backer, id, amount: num(amt), note: String(why ?? '')}, now));
 }
 
 // A credit player's limit and what they may bring to a table now (#404):
@@ -160,26 +142,16 @@ function refusal(m, e) {
 // available is at their limit (`atLimit`): the host may only raise the
 // limit or say no.
 export function requestChips(club, id, amt, why = '', now = Date.now(), {table = ''} = {}) {
-  const m = member(club, id);
-  m.request = {amount: amount(amt), note: note(why), at: now};
-  if (typeof table === 'string' && table) m.request.table = table.slice(0, 40);
-  if (creditOf(m) && amt > available(m)) m.request.atLimit = true;
-  return m.request;
+  ensureChips(club);
+  book(club, {op: 'requestChips', id, amount: num(amt), note: String(why ?? ''), table: typeof table === 'string' ? table : ''}, now);
+  return club.members[id].request;
 }
 
 // Throws if a request may not be granted with chips: a credit player at
 // their limit is never given chips past it (#404).
-export function checkGrant(club, id) {
-  const m = club.members[id];
-  if (m?.request?.atLimit) throw new Error(`${m.name} is at their credit limit: raise it, or say no.`);
-}
+export const checkGrant = (club, id) => { book(club, {op: 'checkGrant', id}); };
 
-export function cancelRequest(club, id) {
-  const m = club.members[id];
-  if (!m?.request) return false;
-  m.request = null;
-  return true;
-}
+export const cancelRequest = (club, id) => book(club, {op: 'cancelRequest', id});
 
 // How many answered requests the club keeps (#188).
 export const REQUEST_LOG = 100;
@@ -192,32 +164,21 @@ export const REQUEST_LOG = 100;
 // was raised to it instead of chips given (#404; `given` is the extra
 // credit, so older pages read it as granted).
 export function answerRequest(club, id, outcome, {given = 0, why = '', by = '', limit = null, now = Date.now()} = {}) {
-  const m = member(club, id);
-  if (!m.request) return null;
-  const a = {asked: m.request.amount, given, outcome, note: note(why), at: now, ...(limit != null ? {limit} : {})};
-  m.answer = a;
-  m.request = null;
-  club.requestLog ??= [];
-  club.requestLog.push({member: id, ...a, ...(by ? {by} : {})});
-  if (club.requestLog.length > REQUEST_LOG) club.requestLog.splice(0, club.requestLog.length - REQUEST_LOG);
-  return a;
+  ensureChips(club);
+  return book(club, {op: 'answerRequest', id, outcome, given, note: String(why ?? ''), by, limit}, now);
 }
 
 // The host grants a request, for the amount asked or a different one.
 export function grantRequest(club, id, amt, now = Date.now()) {
-  const m = member(club, id);
-  if (!m.request) throw new Error('There’s no request to grant.');
-  checkGrant(club, id);
-  const given = amt ?? m.request.amount;
-  const e = issue(club, id, given, now, m.request.note);
-  answerRequest(club, id, 'granted', {given, now});
-  return e;
+  ensureChips(club);
+  return made(club, book(club, {op: 'grantRequest', id, amount: amt == null ? null : num(amt)}, now));
 }
 
 // The host (or an agent, `by`) declines a request, saying why if they
 // like. False if there's none.
 export function declineRequest(club, id, why = '', now = Date.now(), by = '') {
-  return !!answerRequest(club, id, 'declined', {why, by, now});
+  ensureChips(club);
+  return book(club, {op: 'declineRequest', id, note: String(why ?? ''), by}, now);
 }
 
 // The smallest buy-in allowed at `table` because of the rathole rule (#67):
