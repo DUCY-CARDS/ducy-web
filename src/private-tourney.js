@@ -18,17 +18,18 @@
 // pay more than the entries (an overlay) or less. They can change until the
 // end. Points are only for settling up afterwards: the tables play with
 // tournament chips, and club chips never move.
+//
+// ducy-play's club_oneoff (oneOff, #457) has the names, points, what
+// players see, the results and standings; here the stand-in club is kept.
 
 import { newClub } from './club.js';
-import { MAX_ENTRIES, entryCount, newTourney, payoutShares, playerCount, register, setPayout, unregister } from './club-tourneys.js';
-import { settleUp } from './oneoff-standings.js';
+import { MAX_ENTRIES, newTourney, register, setPayout, unregister } from './club-tourneys.js';
+import { ask, settleUp } from './oneoff-standings.js';
 
 export const MAX_POINTS = 1e9;
-const points = n => Number.isSafeInteger(n) && n >= 0 && n <= MAX_POINTS;
 
 // The host's own seat, in the stand-in club (relay ids are UUIDs, so it can't clash).
 export const HOST_ID = 'host';
-const MAX_NAME = 20;
 
 // The payout choices: the club defaults (about the top 15%, by the number of
 // entries), a fixed split, or the host's own payout table by entries (#424,
@@ -50,7 +51,7 @@ export function privateClub(code, hostName, now = Date.now()) {
   return club;
 }
 
-export const cleanName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_NAME);
+export const cleanName = s => ask({op: 'cleanName', name: String(s ?? '')});
 
 // The tournament, from the setup form: {name, game, stack, tableSize,
 // structure, payout, rows, buyIn} (payout: one of PAYOUTS' ids; rows, for
@@ -61,8 +62,7 @@ export const cleanName = s => String(s ?? '').trim().replace(/\s+/g, ' ').slice(
 // Throws why the settings won't do.
 export function newPrivateTourney(club, s, now = Date.now()) {
   if (club.tourneys?.length) throw new Error('This game has a tournament already.');
-  const buyIn = s.buyIn ?? 0;
-  if (!points(buyIn)) throw new Error('The buy-in is a whole number of points, 0 or more.');
+  const buyIn = ask({op: 'checkBuyIn', buyIn: s.buyIn ?? null});
   const host = club.members[HOST_ID];
   const t = newTourney(club, {
     name: String(s.name ?? '').trim() || `${host.name}’s tournament`, game: s.game, buyIn: 0, added: 0,
@@ -85,12 +85,8 @@ export const theTourney = club => club.tourneys?.[0] || null;
 
 // `name` as nobody else in the club has it: "Ann", then "Ann 2", and so on.
 function uniqueName(club, id, name) {
-  const taken = new Set(Object.values(club.members).filter(m => m.id !== id).map(m => m.name.toLowerCase()));
-  if (!taken.has(name.toLowerCase())) return name;
-  for (let n = 2; ; n++) {
-    const s = `${name.slice(0, MAX_NAME - String(n).length - 1)} ${n}`;
-    if (!taken.has(s.toLowerCase())) return s;
-  }
+  const taken = Object.values(club.members).filter(m => m.id !== id).map(m => m.name);
+  return ask({op: 'uniqueName', taken, name});
 }
 
 // Player `id` (their relay id) registers as `name`, before the start. Asking
@@ -129,32 +125,20 @@ export function leavePrivate(club, id, now = Date.now()) {
 
 // The paid places now: [{place, share}] (share in basis points); no more
 // places than entries.
-export function paidPlaces(t) {
-  return payoutShares(t).slice(0, Math.max(1, entryCount(t))).map((share, i) => ({place: i + 1, share}));
-}
+export const paidPlaces = t => ask({op: 'paidPlaces', tourney: t});
 
 // ---- points (#403) ----
 
-const buyInOf = t => t.points?.buyIn ?? 0;
-
 // The prizes the buy-ins make, split by the payout shares (index 0: first);
 // rounding remainders go to first, so they add up to the entries exactly.
-export function autoPrizes(t) {
-  const total = entryCount(t) * buyInOf(t);
-  const out = paidPlaces(t).map(p => Math.floor((total * p.share) / 10000));
-  out[0] += total - out.reduce((a, b) => a + b, 0);
-  return out;
-}
+export const autoPrizes = t => ask({op: 'autoPrizes', tourney: t});
 
 // The prizes in force: the host's, or the split of the buy-ins.
-export const prizeList = t => (t.points?.prizes ? t.points.prizes.slice() : autoPrizes(t));
+export const prizeList = t => ask({op: 'prizeList', tourney: t});
 
 // The prizes' total against the entries': {prizes, entries, added} (added
 // below 0 when the prizes pay out less than came in).
-export function prizeTotals(t) {
-  const prizes = prizeList(t).reduce((a, b) => a + b, 0), entries = entryCount(t) * buyInOf(t);
-  return {prizes, entries, added: prizes - entries};
-}
+export const prizeTotals = t => ask({op: 'prizeTotals', tourney: t});
 
 // The host sets the prizes: whole points, by place from first (any amounts,
 // in any order). null goes back to the split of the buy-ins. Until the end.
@@ -164,9 +148,7 @@ export function setPrizes(club, list) {
   if (!t) throw new Error('No tournament here.');
   if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.');
   t.points ??= {buyIn: 0, prizes: null};
-  if (list == null) { t.points.prizes = null; return t; }
-  if (!Array.isArray(list) || !list.length || list.length > MAX_ENTRIES || !list.every(points)) throw new Error('Prizes are whole numbers of points, 0 or more.');
-  t.points.prizes = list.slice();
+  t.points.prizes = list == null ? null : ask({op: 'checkPrizes', list});
   return t;
 }
 
@@ -175,43 +157,18 @@ export function setPrizes(club, list) {
 export function lobbyBody(club, live = null) {
   const t = theTourney(club);
   if (!t) return null;
-  const name = id => club.members[id]?.name || '?';
-  return {
-    type: 't_lobby', code: club.code, host: name(HOST_ID),
-    id: t.id, name: t.name, game: t.game, stack: t.stack, tableSize: t.tableSize, structure: t.structure,
-    status: t.status, why: t.why || '', startedAt: t.startedAt || null, endedAt: t.endedAt || null,
-    players: t.entries.map(e => ({id: e.member, name: name(e.member), place: e.place ?? null})),
-    count: playerCount(t), paid: paidPlaces(t),
-    // Points (#403): everyone sees the prizes as they are now.
-    buyIn: buyInOf(t), prizes: prizeList(t), custom: !!t.points?.prizes, totals: prizeTotals(t),
-    ...(live ? {live} : {}),
-  };
+  return ask({op: 'lobbyBody', code: club.code, members: club.members, tourney: t, live: live ?? null});
 }
 
 // The finishing places so far, best first: [{place, id, name, share,
 // amount}] (share and amount 0 out of the money; amount in points).
-export function results(body) {
-  const shares = new Map(body.paid.map(p => [p.place, p.share]));
-  return body.players.filter(p => p.place != null).sort((a, b) => a.place - b.place)
-    .map(p => ({place: p.place, id: p.id, name: p.name, share: shares.get(p.place) || 0, amount: body.prizes?.[p.place - 1] || 0}));
-}
+export const results = body => ask({op: 'results', body});
 
 // The standings at the end (#403), the biggest winner first: [{id, name,
 // buyIn, won, added, net}]. What the prizes pay beyond the entries comes
 // from the host (`added`, below 0 when they pay less), in their row,
 // whether or not they played. [] before the end.
-export function tourneyStandings(body) {
-  if (body?.status !== 'finished') return [];
-  const won = new Map(results(body).map(r => [r.id, r.amount]));
-  const rows = body.players.map(p => ({id: p.id, name: p.name, buyIn: body.buyIn || 0, won: won.get(p.id) || 0, added: 0}));
-  const added = rows.reduce((s, r) => s + r.won - r.buyIn, 0);
-  if (added) {
-    let host = rows.find(r => r.id === HOST_ID);
-    if (!host) rows.push((host = {id: HOST_ID, name: body.host, buyIn: 0, won: 0, added: 0}));
-    host.added = added;
-  }
-  return rows.map(r => ({...r, net: r.won - r.buyIn - r.added})).sort((a, b) => b.net - a.net || a.name.localeCompare(b.name));
-}
+export const tourneyStandings = body => (body ? ask({op: 'standings', body}) : []);
 
 // Who owes whom at the end, in points.
 export const tourneySettle = body => settleUp(tourneyStandings(body));

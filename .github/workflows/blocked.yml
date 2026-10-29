@@ -1,0 +1,25 @@
+name: Blocked
+
+# A PR labelled "blocked" waits on another PR, usually in ducy, to merge
+# first. This check fails while the label is on, and master requires it, so
+# a blocked PR can't be merged. Take the label off once what it waits on has
+# merged.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  not-blocked:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not blocked
+        if: contains(github.event.pull_request.labels.*.name, 'blocked')
+        run: |
+          echo "::error::This PR is labelled blocked: it waits on another PR to merge first."
+          exit 1
+      - name: Clear to merge
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'blocked') }}
+        run: echo "Not blocked."
