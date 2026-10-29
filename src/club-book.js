@@ -22,16 +22,22 @@ function merge(to, from) {
   return to;
 }
 
-// Runs `op` on the club's book; returns its value. Throws why, if refused.
+// Runs `op` on the club's book; returns its value. Throws why, if refused:
+// `short` set when it's for want of chips (a table then offers to ask the
+// manager for more, #404).
 export function book(club, op, now = Date.now()) {
   // A club not on links yet moves onto them first (club-money.js).
   if (!club.money) startMoney(club, now);
   const part = {
-    code: club.code, hostId: club.hostId, ownerId: club.ownerId, members: club.members, money: club.money,
+    code: club.code, hostId: club.hostId, ownerId: club.ownerId, ratholeHours: club.ratholeHours, members: club.members, money: club.money,
     chips: club.chips, requestLog: club.requestLog || [], log: club.log || [],
   };
   const r = ducy.clubBook(JSON.stringify(part), op, now);
-  if (!r.ok) throw new Error(r.message);
+  if (!r.ok) {
+    const e = new Error(r.message);
+    if (r.short) e.short = true;
+    throw e;
+  }
   if (r.club) {
     merge(club.members, r.club.members);
     club.money = r.club.money;

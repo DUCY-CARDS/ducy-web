@@ -27,15 +27,13 @@
 // balance, so what they owe is paid back first and anything still owed
 // stays negative.
 
-import { chipInput, chipText } from './chip-format.js';
-import { CLUB, entriesOf, entryView, move } from './club-money.js';
+import { chipInput } from './chip-format.js';
+import { CLUB, entriesOf, entryView } from './club-money.js';
 import { book } from './club-book.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
 export const MAX_NOTE = 80;
-
-const ok = a => Number.isSafeInteger(a) && a > 0 && a <= MAX_CHIPS;
 
 // Adds the chip fields to a club (new, or saved before #67).
 export function ensureChips(club) {
@@ -58,21 +56,6 @@ export function ensureChips(club) {
   }
   return club;
 }
-
-function member(club, id) {
-  const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Not a member of this club.');
-  ensureChips(club);
-  return m;
-}
-
-function amount(a) {
-  if (!ok(a)) throw new Error('Enter a whole number of chips above 0.');
-  return a;
-}
-
-// The member's own entry among a move's.
-const own = (entries, id) => entries.find(e => e.member === id && !e.player);
 
 // A number for the book: whole chips, or null (refused as an amount).
 const num = a => (Number.isFinite(a) ? a : null);
@@ -113,29 +96,6 @@ export function backerTake(club, backer, id, amt, now = Date.now(), why = '') {
 export const creditOf = m => m?.credit || 0;
 export const owedBy = m => Math.max(0, -(m?.balance || 0));
 export const available = m => m?.room ?? Math.max(0, (m?.balance || 0) + creditOf(m));
-
-// An Error saying a player has too little available; the table offers to
-// ask the manager for more (#404).
-function short(msg) {
-  const e = new Error(msg);
-  e.short = true;
-  return e;
-}
-
-function tooMuch(m, amt) {
-  if (amt <= available(m)) return;
-  const own = Math.max(0, (m.balance || 0) + creditOf(m));
-  if (available(m) < own) throw short(`You have ${chipText(available(m))} available: your agent can’t back more right now.`);
-  if (!creditOf(m)) throw short(`You have ${chipText(Math.max(0, m.balance))} chips in the club.`);
-  throw short(`You have ${chipText(available(m))} available (your chips and credit).`);
-}
-
-// A refusal from the money model, in the player's words.
-function refusal(m, e) {
-  if (e.money?.code === 'room') return short(`You have ${chipText(available(m))} available: your agent can’t back more right now.`);
-  if (e.money?.code === 'overdue') return new Error('What you owe is overdue: pay it back to play.');
-  return e;
-}
 
 // A member asks for chips; a new request replaces an older one. `table`:
 // asked from that table (#404). A credit player asking for more than is
@@ -190,24 +150,20 @@ export function ratholeMin(club, id, table, now = Date.now()) {
   return now - left.at < club.ratholeHours * 3600e3 ? left.stack : 0;
 }
 
+// A table move by the club's book, its entry as pages see it (or null).
+function moved(club, op, now) {
+  ensureChips(club);
+  const e = book(club, op, now);
+  return e ? made(club, e) : null;
+}
+
 // Sits a member at `table` with `amt` chips down their path, within the
-// table's limits ({min, max}) and the rathole rule.
+// table's limits ({min, max}) and the rathole rule. Their seat keeps `put`:
+// what they've brought to the table in all (buy-in and top-ups), to tell
+// when they're up there (club-tables.js handsToStay). Too little available
+// throws an Error with `short` set: the table offers to ask the manager.
 export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
-  const m = member(club, id);
-  amount(amt);
-  if (m.seat) throw new Error('Already seated at a table.');
-  const floor = Math.max(min, ratholeMin(club, id, table, now));
-  if (amt < floor) throw new Error(floor > min ? `You left this table with ${chipText(floor)} chips less than ${club.ratholeHours} hours ago, so buy in for at least that.` : `The minimum buy-in is ${min}.`);
-  if (amt > max) throw new Error(`The maximum buy-in is ${chipText(max)}.`);
-  tooMuch(m, amt);
-  let entries;
-  try {
-    entries = move(club, {op: 'buyIn', member: id, table, amount: amt}, now);
-  } catch (e) { throw refusal(m, e); }
-  // `put`: what they've brought to the table in all (buy-in and top-ups), to
-  // tell when they're up there (club-tables.js handsToStay).
-  m.seat = {table, stack: amt, put: amt};
-  return own(entries, id);
+  return moved(club, {op: 'buyIn', id, table, amount: num(amt), limits: {min, max}}, now);
 }
 
 // Adds chips to a seated member's stack between hands, capped so the stack
@@ -215,31 +171,14 @@ export function buyIn(club, id, table, amt, {min, max}, now = Date.now()) {
 // available is refused, not cut down: the table adds what it asked for
 // (#404).
 export function topUp(club, id, amt, max, now = Date.now()) {
-  const m = member(club, id);
-  amount(amt);
-  if (!m.seat) throw new Error('Not seated.');
-  const moved = Math.min(amt, max - m.seat.stack);
-  if (moved <= 0) return null;
-  tooMuch(m, moved);
-  let entries;
-  try {
-    entries = move(club, {op: 'topUp', member: id, amount: moved}, now);
-  } catch (e) { throw refusal(m, e); }
-  m.seat.stack += moved;
-  if (m.seat.put != null) m.seat.put += moved;
-  return own(entries, id);
+  return moved(club, {op: 'topUp', id, amount: num(amt), max: Number.isFinite(max) && max < Number.MAX_SAFE_INTEGER ? max : null}, now);
 }
 
 // The table handed back part of a top-up: added at the deal, it would have
 // taken the stack over the table's maximum (allenpiscitello/ducy#118). Those
 // chips leave the seat and go back up the path.
 export function refundTopUp(club, id, amt, now = Date.now()) {
-  const m = member(club, id);
-  amount(amt);
-  if (!m.seat) return null;
-  m.seat.stack = Math.max(0, m.seat.stack - amt);
-  if (m.seat.put != null) m.seat.put = Math.max(0, m.seat.put - amt);
-  return own(move(club, {op: 'refundTopUp', member: id, amount: amt}, now), id);
+  return moved(club, {op: 'refundTopUp', id, amount: num(amt)}, now);
 }
 
 // The table reports a seated member's stack after a hand.
@@ -253,44 +192,19 @@ export function setStack(club, id, stack) {
 // rule starts for that table. What they owed is paid back from it first
 // (#404). With nothing left, the cash-out is still an entry, at 0, so their
 // page knows they left.
-export function cashOut(club, id, now = Date.now()) {
-  const m = club.members[id];
-  if (!m?.seat) throw new Error('Not seated.');
-  const {table, stack} = m.seat;
-  move(club, {op: 'setStack', member: id, stack}, now);
-  const entries = move(club, {op: 'cashOut', member: id}, now);
-  m.seat = null;
-  m.left = {...m.left, [table]: {stack, at: now}};
-  return own(entries, id);
-}
+export const cashOut = (club, id, now = Date.now()) => moved(club, {op: 'cashOut', id}, now);
 
 // A tournament buy-in (club-tourneys.js): `amt` down the member's path.
-export function tourneyBuyIn(club, id, tourney, amt, now = Date.now()) {
-  const m = member(club, id);
-  if (amt > available(m)) throw new Error(`The buy-in is ${chipText(amt)} chips; you have ${chipText(available(m))}.`);
-  try {
-    return own(move(club, {op: 'tourneyBuyIn', member: id, tourney, amount: amt}, now), id);
-  } catch (e) { throw refusal(m, e); }
-}
+export const tourneyBuyIn = (club, id, tourney, amt, now = Date.now()) => moved(club, {op: 'tourneyBuyIn', id, tourney, amount: num(amt)}, now);
 
 // Something the club pays a member, up their path: `what` is 'prize' (a
 // tournament's or a promotion's) or 'refund' (a tournament buy-in back);
-// `about` the tournament or promotion.
-export function payTo(club, id, what, amt, about, now = Date.now()) {
-  // Removed since they entered, they're paid all the same.
-  if (!club.members[id]) throw new Error('No such member.');
-  ensureChips(club);
-  return own(move(club, {op: 'pay', member: id, kind: what, about, amount: amt}, now), id);
-}
+// `about` the tournament or promotion. A member removed since they entered
+// is paid all the same.
+export const payTo = (club, id, what, amt, about, now = Date.now()) => moved(club, {op: 'pay', id, what, amount: num(amt), about: String(about ?? '')}, now);
 
 // A promotion prize taken back, up the path it came down (club-promos.js).
-export function voidPrize(club, id, amt, promo, now = Date.now()) {
-  const m = member(club, id);
-  if (m.balance < amt) throw new Error(`${m.name} has only ${chipText(Math.max(0, m.balance))} chips in the club now; take what’s left from their balance first, or leave the award.`);
-  const e = own(move(club, {op: 'void', member: id, about: promo, amount: amt}, now), id);
-  club.chips.reclaimed += amt;
-  return e;
-}
+export const voidPrize = (club, id, amt, promo, now = Date.now()) => moved(club, {op: 'voidPrize', id, amount: num(amt), promo: String(promo ?? '')}, now);
 
 // The club's books. `owedToClub` adds up what its direct members owe it,
 // `owedToPlayers` what it owes them (#404). An agent's link is their
