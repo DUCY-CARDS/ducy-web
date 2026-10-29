@@ -1,7 +1,7 @@
 // Club tournaments (#64): creating one and registering (#77), prize payouts
 // (#79), late registration and re-entries (#80), and the results of running
-// one (#81, club-tourney-host.js runs the tables). Pure functions over the
-// club object from club.js; no DOM or network.
+// one (#81, club-tourney-host.js runs the tables). ducy-play's club_tourneys
+// (clubTourneys, from ducy-wasm, #457) runs the rules; here the chips move.
 //
 // A tournament: {id, name, game, buyIn, added, stack, structure, opensAt,
 // startsAt, minPlayers, maxPlayers, tableSize, lateLevel, reentry,
@@ -18,8 +18,7 @@
 //   An older {places: [basis points]} is a table of one row from 1 entry.
 // - payoutTable: the id of the club payout table it pays by (#424), if any:
 //   club.payoutTables, [{id, name, rows}]. Neither: the defaults.
-// - paidShares: once it's finished, the shares it paid by, so later edits
-//   to its table don't rewrite what it paid.
+// - paidShares: once it's finished, the shares it paid by.
 // A payout table's rows: [{from, places}], `from` the number of entries
 // the row starts at (ascending), `places` basis points by place adding up
 // to exactly 10 000. A row is in force until the next one starts.
@@ -28,19 +27,48 @@
 //   their current one, and place is set once it's knocked out (1: the winner).
 //
 // Club chips stay conserved: buy-ins move down a member's path into the
-// tournament (`held`); a refund moves them back up it; prizes pay out what's
-// held plus the added chips, which are issued then (club-chips.js, #454).
+// tournament (`held`), taken before the entry is made; a refund moves them
+// back up it; prizes pay out what's held plus the added chips, which are
+// issued then (club-chips.js, #454).
+//
+// Needs ducy's wasm loaded (the relay, the host's page, tests: ./wasm.mjs).
 
-import { GAMES, aGame, defaultSeats, maxSeats } from './club-tables.js';
-import { chipText } from './chip-format.js';
+import * as ducy from '../wasm/ducy_wasm.js';
 import { payTo, tourneyBuyIn } from './club-chips.js';
 
 export const MAX_TOURNEY_NAME = 40;
 export const MAX_ENTRIES = 1000;
-const MAX_CHIPS = 1e12;
+export const MAX_PAYOUT_TABLES = 20;
+export const MAX_PAYOUT_ROWS = 50;
+export const MAX_PAYOUT_NAME = 30;
 
-const whole = n => Number.isSafeInteger(n);
-const chips = n => whole(n) && n >= 0 && n <= MAX_CHIPS;
+const plain = v => v && typeof v === 'object' && !Array.isArray(v);
+
+// `to` made like `from`, keeping `to`'s objects where both have one.
+function merge(to, from) {
+  for (const k of Object.keys(to)) if (!(k in from)) delete to[k];
+  for (const [k, v] of Object.entries(from)) to[k] = plain(to[k]) && plain(v) ? merge(to[k], v) : v;
+  return to;
+}
+
+// Each of `list` made like the same id's in `from`, keeping the objects.
+const byId = (list, from) => {
+  const had = new Map((list || []).map(x => [x.id, x]));
+  return from.map(x => (had.has(x.id) ? merge(had.get(x.id), x) : x));
+};
+
+// Runs `op` on the club's tournaments; returns its value. A tournament or
+// payout table someone holds stays the one in the club. Throws why, if refused.
+function rules(club, op, now = Date.now()) {
+  const part = {code: club.code, members: club.members || {}, tourneys: club.tourneys || [], payoutTables: club.payoutTables || []};
+  const r = ducy.clubTourneys(JSON.stringify(part), op, now);
+  if (!r.ok) throw new Error(r.message);
+  if (r.club) {
+    club.tourneys = byId(club.tourneys, r.club.tourneys);
+    club.payoutTables = byId(club.payoutTables, r.club.payoutTables);
+  }
+  return r.value;
+}
 
 export function ensureTourneys(club) {
   club.tourneys ??= [];
@@ -48,79 +76,6 @@ export function ensureTourneys(club) {
 }
 
 export const tourneyById = (club, id) => (club.tourneys || []).find(t => t.id === id) || null;
-
-// The tournaments members can see: not cancelled or finished long ago.
-export function visibleTourneys(club, now = Date.now()) {
-  return ensureTourneys(club).filter(t => !['finished', 'cancelled'].includes(t.status) || now - (t.endedAt || 0) < 7 * 864e5);
-}
-
-// Checks a blind structure's shape (ducy checks it fully; see tourney-structure.js).
-function structure(steps) {
-  if (!Array.isArray(steps) || !steps.length || steps.length > 200) throw new Error('Add at least one blind level.');
-  const out = steps.map(s => {
-    if (!whole(s.minutes) || s.minutes < 1) throw new Error('Every level needs its minutes.');
-    if (s.break) return {break: true, minutes: s.minutes};
-    if (!whole(s.sb) || !whole(s.bb) || !whole(s.ante ?? 0) || s.sb < 1 || s.bb < s.sb || (s.ante ?? 0) < 0) throw new Error('Blinds are whole chips, the big blind at least the small.');
-    return {sb: s.sb, bb: s.bb, ante: s.ante ?? 0, minutes: s.minutes};
-  });
-  if (!out.some(s => !s.break)) throw new Error('Add at least one blind level.');
-  return out;
-}
-
-// The club's plan allows `limits.tourneysPerDay` tournaments a day (#265):
-// at most that many, not cancelled, starting within any 24 hours. Throws if
-// one starting at `startsAt` would be too many. No limits: no cap.
-export function checkTourneyLimit(club, startsAt, limits) {
-  const most = limits?.tourneysPerDay;
-  if (!Number.isSafeInteger(most)) return;
-  const near = ensureTourneys(club).filter(t => t.status !== 'cancelled' && Math.abs(t.startsAt - startsAt) < 864e5).length;
-  if (near >= most) {
-    throw new Error(most === 0 ? 'This club can’t run tournaments. Ask ducy about it.' : `This club can run ${most} ${most === 1 ? 'tournament' : 'tournaments'} a day, and ${most === 1 ? 'another starts' : `${most} others start`} within 24 hours of this one. Pick another time, or ask ducy for more.`);
-  }
-}
-
-// A new tournament. Throws why the settings won't do, or when the club's
-// `limits` (#265) allow no more that day.
-export function newTourney(club, s = {}, now = Date.now(), limits = null) {
-  ensureTourneys(club);
-  const name = String(s.name ?? '').trim().slice(0, MAX_TOURNEY_NAME) || `Tournament ${club.tourneys.length + 1}`;
-  const game = s.game || 'nlhe';
-  if (!GAMES.some(g => g.id === game)) throw new Error('Pick a game.');
-  const buyIn = s.buyIn ?? 0, added = s.added ?? 0, stack = s.stack;
-  if (!chips(buyIn) || !chips(added)) throw new Error('The buy-in and added prize pool are 0 or more chips.');
-  if (!whole(stack) || stack < 20 || stack > 1e9) throw new Error('The starting stack must be at least 20 chips.');
-  const opensAt = s.opensAt ?? now, startsAt = s.startsAt;
-  if (!whole(opensAt) || !whole(startsAt)) throw new Error('Pick when registration opens and when it starts.');
-  if (startsAt < opensAt) throw new Error('It must start after registration opens.');
-  checkTourneyLimit(club, startsAt, limits);
-  const minPlayers = s.minPlayers ?? 2, maxPlayers = s.maxPlayers ?? 100;
-  if (!whole(minPlayers) || minPlayers < 2 || !whole(maxPlayers) || maxPlayers < minPlayers || maxPlayers > MAX_ENTRIES) throw new Error('At least 2 players, and a maximum no smaller than the minimum.');
-  const most = maxSeats(game);
-  const tableSize = s.tableSize ?? defaultSeats(game);
-  if (!whole(tableSize) || tableSize < 2 || tableSize > most) throw new Error(`${aGame(game)} table seats 2 to ${most}.`);
-  const lateLevel = s.lateLevel ?? 0, maxReentries = s.maxReentries ?? 0;
-  if (!whole(lateLevel) || lateLevel < 0 || !whole(maxReentries) || maxReentries < 0) throw new Error('Late registration is up to a level, from 0.');
-  if (s.payoutTable && !payoutTableById(club, s.payoutTable)) throw new Error('No such payout table.');
-  const t = {
-    id: Math.random().toString(36).slice(2, 8), name, game, buyIn, added, stack, structure: structure(s.structure),
-    opensAt, startsAt, minPlayers, maxPlayers, tableSize, lateLevel, reentry: !!s.reentry, maxReentries,
-    payout: null, ...(s.payoutTable ? {payoutTable: s.payoutTable} : {}), status: 'scheduled', entries: [], held: 0, createdAt: now,
-  };
-  club.tourneys.push(t);
-  return t;
-}
-
-function member(club, id) {
-  const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Not a member of this club.');
-  return m;
-}
-
-function get(club, tid) {
-  const t = tourneyById(club, tid);
-  if (!t) throw new Error('No such tournament.');
-  return t;
-}
 
 // A member's current entry, if any.
 export const entryOf = (t, id) => t.entries.findLast(e => e.member === id) || null;
@@ -132,139 +87,69 @@ export const pool = t => t.entries.length * t.buyIn + t.added;
 // Different players registered.
 export const playerCount = t => new Set(t.entries.map(e => e.member)).size;
 
-// Takes the buy-in and adds an entry.
-function enter(club, t, m, now) {
-  // Down the member's path, within its room (#454).
-  if (t.buyIn > 0) tourneyBuyIn(club, m.id, t.id, t.buyIn, now);
-  t.held += t.buyIn;
-  const e = {n: t.entries.length + 1, member: m.id, at: now, place: null};
-  t.entries.push(e);
-  return e;
+// A new tournament. Throws why the settings won't do, or when the club's
+// `limits` (#265: tourneysPerDay) allow no more that day.
+export function newTourney(club, s = {}, now = Date.now(), limits = null) {
+  const most = Number.isSafeInteger(limits?.tourneysPerDay) ? limits.tourneysPerDay : null;
+  return tourneyById(club, rules(club, {op: 'new', s, most}, now).id);
 }
 
 // A member registers before the start (#77): registration must be open and
-// the tournament not full.
+// the tournament not full. The buy-in goes down their path first.
 export function register(club, tid, id, now = Date.now()) {
-  const t = get(club, tid), m = member(club, id);
-  if (t.status !== 'scheduled') throw new Error('Registration is closed.');
-  if (now < t.opensAt) throw new Error('Registration isn’t open yet.');
-  if (isIn(t, id)) throw new Error('You’re registered already.');
-  if (playerCount(t) >= t.maxPlayers) throw new Error('The tournament is full.');
-  return enter(club, t, m, now);
+  const buyIn = rules(club, {op: 'checkRegister', tid, id}, now);
+  if (buyIn > 0) tourneyBuyIn(club, id, tid, buyIn, now);
+  return rules(club, {op: 'register', tid, id}, now);
 }
 
 // A member unregisters before the start, and gets the buy-in back.
 export function unregister(club, tid, id, now = Date.now()) {
-  const t = get(club, tid), m = member(club, id);
-  if (t.status !== 'scheduled') throw new Error('It has started: you can’t unregister now.');
-  const i = t.entries.findIndex(e => e.member === id);
-  if (i < 0) throw new Error('You aren’t registered.');
-  t.entries.splice(i, 1);
-  t.entries.forEach((e, k) => { e.n = k + 1; });
-  refund(club, t, m, now);
-}
-
-function refund(club, t, m, now) {
-  t.held -= t.buyIn;
-  if (t.buyIn > 0) payTo(club, m.id, 'refund', t.buyIn, t.id, now);
+  const back = rules(club, {op: 'unregister', tid, id}, now);
+  if (back.amount > 0) payTo(club, id, 'refund', back.amount, tid, now);
 }
 
 // Late registration or a re-entry (#80), while the tournament is running and
 // `level` (from 0, the level being played) is no later than the last
 // registration level. Returns the new entry.
 export function lateEntry(club, tid, id, level, now = Date.now()) {
-  const t = get(club, tid), m = member(club, id);
-  if (t.status !== 'running' || level >= t.lateLevel) throw new Error('Late registration is closed.');
-  const mine = t.entries.filter(e => e.member === id);
-  if (mine.length) {
-    if (isIn(t, id)) throw new Error('You’re still in.');
-    if (!t.reentry) throw new Error('This tournament has no re-entries.');
-    if (t.maxReentries && mine.length - 1 >= t.maxReentries) throw new Error(`You can re-enter ${t.maxReentries} time${t.maxReentries === 1 ? '' : 's'} at most.`);
-  } else if (playerCount(t) >= t.maxPlayers) throw new Error('The tournament is full.');
-  return enter(club, t, m, now);
+  const buyIn = rules(club, {op: 'checkLateEntry', tid, id, level}, now);
+  if (buyIn > 0) tourneyBuyIn(club, id, tid, buyIn, now);
+  return rules(club, {op: 'lateEntry', tid, id, level}, now);
 }
 
 // What to do at the start time: 'start', or 'cancel' when fewer than the
 // minimum registered; null before then.
 export function atStart(t, now = Date.now()) {
-  if (t.status !== 'scheduled' || now < t.startsAt) return null;
-  return playerCount(t) >= t.minPlayers ? 'start' : 'cancel';
+  return rules({tourneys: [t]}, {op: 'atStart', tid: t.id}, now);
 }
 
 // Cancels a tournament that hasn't finished: every buy-in goes back (the
 // added chips were never paid). Also used when a running tournament can't go
 // on (its host restarted).
 export function cancelTourney(club, tid, now = Date.now(), why = '') {
-  const t = get(club, tid);
-  if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.');
-  for (const e of t.entries) {
-    const m = club.members[e.member];
-    if (m) refund(club, t, m, now);
-  }
-  t.status = 'cancelled';
-  t.why = why;
-  t.endedAt = now;
-  return t;
+  for (const back of rules(club, {op: 'cancel', tid, why}, now)) payTo(club, back.member, 'refund', back.amount, tid, now);
+  return tourneyById(club, tid);
 }
 
 export function startTourney(club, tid, now = Date.now()) {
-  const t = get(club, tid);
-  if (t.status !== 'scheduled') throw new Error('It isn’t waiting to start.');
-  t.status = 'running';
-  t.startedAt = now;
-  return t;
+  rules(club, {op: 'start', tid}, now);
+  return tourneyById(club, tid);
 }
 
-// ---- payouts (#79) ----
+// ---- payouts (#79, #424) ----
 
-// How many places the defaults pay for `entries` entries: about the top 15%.
-export function paidPlaces(entries) {
-  if (entries <= 3) return 1;
-  if (entries <= 6) return 2;
-  if (entries <= 10) return 3;
-  return Math.ceil(entries * 0.15);
-}
-
-// The default shares for `entries` entries, in basis points (1/100 of a
-// percent) adding up to exactly 10 000: a standard falling curve, the
-// rounding remainder to first place.
-export function defaultPayout(entries) {
-  const n = paidPlaces(Math.max(1, entries));
-  const w = Array.from({length: n}, (_, i) => 1 / (i + 1) ** 1.2);
-  const sum = w.reduce((a, b) => a + b, 0);
-  const bp = w.map(x => Math.floor((x / sum) * 10000));
-  bp[0] += 10000 - bp.reduce((a, b) => a + b, 0);
-  return bp;
-}
-
-// ---- payout tables by entries (#424) ----
-
-export const MAX_PAYOUT_TABLES = 20;
-export const MAX_PAYOUT_ROWS = 50;
-export const MAX_PAYOUT_NAME = 30;
-
-// Checks one row's shares: whole basis points above 0, none more than the
-// place above, adding up to exactly 10 000. Returns a copy; throws why not.
-function checkPlaces(places, where = '') {
-  if (!Array.isArray(places) || !places.length || places.length > MAX_ENTRIES || !places.every(p => whole(p) && p > 0)) throw new Error(`${where}Each paid place needs a share above 0.`);
-  if (places.some((p, i) => i && p > places[i - 1])) throw new Error(`${where}A place can’t pay more than the one above it.`);
-  const sum = places.reduce((a, b) => a + b, 0);
-  if (sum !== 10000) throw new Error(`${where}The payouts add up to ${(sum / 100).toFixed(2)}%, not 100%.`);
-  return places.slice();
-}
+// The default shares for `entries` entries, in basis points adding up to
+// exactly 10 000: about the top 15% paid, on a falling curve.
+export const defaultPayout = entries => Array.from(ducy.defaultPayout(Math.max(0, entries)));
 
 // Checks a payout table's rows: at least one, each starting at more entries
-// than the one before (from 1), each row's shares as checkPlaces. Returns a
+// than the one before (from 1), each row's shares whole basis points above
+// 0, none more than the place above, adding up to exactly 10 000. Returns a
 // clean copy; throws why not.
 export function checkPayoutRows(rows) {
-  if (!Array.isArray(rows) || !rows.length) throw new Error('Add at least one row.');
-  if (rows.length > MAX_PAYOUT_ROWS) throw new Error(`At most ${MAX_PAYOUT_ROWS} rows.`);
-  return rows.map((r, i) => {
-    const from = r?.from;
-    if (!whole(from) || from < 1 || from > MAX_ENTRIES) throw new Error(`Row ${i + 1}: entries are a whole number from 1 to ${MAX_ENTRIES}.`);
-    if (i && from <= rows[i - 1].from) throw new Error('Each row starts at more entries than the one above it.');
-    return {from, places: checkPlaces(r.places, rows.length > 1 ? `From ${from} entries: ` : '')};
-  });
+  const r = ducy.checkPayoutRows(JSON.stringify(rows ?? null));
+  if (!r.ok) throw new Error(r.message);
+  return r.rows;
 }
 
 // The row in force for `entries` entries: the last that starts at or below
@@ -284,92 +169,46 @@ export function payoutRows(t, club = null) {
   return null;
 }
 
+const payouts = (t, club) => ducy.tourneyPayouts(JSON.stringify(t), JSON.stringify(club?.payoutTables || []));
+
 // The shares in force: what it paid by once finished; else the row in force
 // for the entries so far, or the defaults for them. `club`: for club tables.
-export function payoutShares(t, club = null) {
-  if (t.paidShares) return t.paidShares;
-  const rows = payoutRows(t, club);
-  return rows ? payoutRow(rows, entryCount(t)).places : defaultPayout(entryCount(t));
-}
+export const payoutShares = (t, club = null) => payouts(t, club).shares;
 
 // The prizes for the current pool, by place (index 0: first), adding up to
 // exactly the pool; rounding remainders go to first place. No more places
 // than entries: what places beyond them would get goes to first too.
-export function prizes(t, club = null) {
-  const total = pool(t);
-  const shares = payoutShares(t, club).slice(0, Math.max(1, entryCount(t)));
-  const out = shares.map(bp => Math.floor((total * bp) / 10000));
-  out[0] += total - out.reduce((a, b) => a + b, 0);
-  return out;
-}
-
-const notOver = t => { if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.'); };
+export const prizes = (t, club = null) => payouts(t, club).prizes;
 
 // The tournament's own payouts: a table {rows}, a single list of shares (a
 // table of one row from 1 entry), or null to go back to the defaults. It
 // then pays by no club table.
 export function setPayout(club, tid, payout) {
-  const t = get(club, tid);
-  notOver(t);
-  delete t.payoutTable;
-  if (payout == null) { t.payout = null; return t; }
-  t.payout = Array.isArray(payout) ? {rows: [{from: 1, places: checkPlaces(payout)}]} : {rows: checkPayoutRows(payout.rows)};
-  return t;
+  rules(club, {op: 'setPayout', tid, payout: payout ?? null});
+  return tourneyById(club, tid);
 }
 
 // The tournament pays by club table `id`, or (null) the defaults.
 export function setPayoutTable(club, tid, id) {
-  const t = get(club, tid);
-  notOver(t);
-  if (id == null) { delete t.payoutTable; t.payout = null; return t; }
-  if (!payoutTableById(club, id)) throw new Error('No such payout table.');
-  t.payoutTable = id;
-  t.payout = null;
-  return t;
-}
-
-function tableName(club, name, except = null) {
-  const n = String(name ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_PAYOUT_NAME);
-  if (!n) throw new Error('Name the payout table.');
-  if (n.toLowerCase() === 'default') throw new Error('“Default” is ducy’s payouts: pick another name.');
-  if ((club.payoutTables || []).some(p => p.id !== except && p.name.toLowerCase() === n.toLowerCase())) throw new Error(`There’s a payout table called ${n} already.`);
-  return n;
+  rules(club, {op: 'setPayoutTable', tid, table: id ?? null});
+  return tourneyById(club, tid);
 }
 
 // A new club payout table {name, rows}. Returns it; throws why not.
 export function addPayoutTable(club, s = {}) {
-  club.payoutTables ??= [];
-  if (club.payoutTables.length >= MAX_PAYOUT_TABLES) throw new Error(`A club has at most ${MAX_PAYOUT_TABLES} payout tables.`);
-  const p = {id: Math.random().toString(36).slice(2, 8), name: tableName(club, s.name), rows: checkPayoutRows(s.rows)};
-  club.payoutTables.push(p);
-  return p;
+  return payoutTableById(club, rules(club, {op: 'addPayoutTable', s}).id);
 }
 
 // Renames a club payout table and/or changes its rows. The tournaments
 // still to finish that pay by it follow; finished ones keep what they paid.
 export function editPayoutTable(club, id, s = {}) {
-  const p = payoutTableById(club, id);
-  if (!p) throw new Error('No such payout table.');
-  const name = s.name == null ? p.name : tableName(club, s.name, id);
-  const rows = s.rows == null ? p.rows : checkPayoutRows(s.rows);
-  p.name = name;
-  p.rows = rows;
-  return p;
+  rules(club, {op: 'editPayoutTable', id, s});
+  return payoutTableById(club, id);
 }
-
-// The tournaments still to finish that pay by club table `id`.
-export const tourneysUsing = (club, id) => ensureTourneys(club).filter(t => t.payoutTable === id && !['finished', 'cancelled'].includes(t.status));
 
 // Deletes a club payout table, unless a tournament still to finish pays by
 // it (switch those first). Returns the table.
-export function deletePayoutTable(club, id) {
-  const p = payoutTableById(club, id);
-  if (!p) throw new Error('No such payout table.');
-  const using = tourneysUsing(club, id);
-  if (using.length) throw new Error(`${using.map(t => t.name).join(', ')} ${using.length === 1 ? 'pays' : 'pay'} by ${p.name}: pick another payout for ${using.length === 1 ? 'it' : 'them'} first.`);
-  club.payoutTables = club.payoutTables.filter(x => x !== p);
-  return p;
-}
+export const deletePayoutTable = (club, id) => rules(club, {op: 'deletePayoutTable', id});
 
 // ---- results (#81) ----
 
@@ -377,65 +216,20 @@ export function deletePayoutTable(club, id) {
 // are numbered in the order they happen: entries registered late change the
 // count, so final places are set at the finish (finishTourney).
 export function knockedOut(club, tid, id, place) {
-  const t = get(club, tid);
-  const e = entryOf(t, id);
-  if (e && e.place == null) {
-    e.place = place;
-    e.out = (t.outs = (t.outs || 0) + 1);
-  }
-  return e;
+  rules(club, {op: 'knockedOut', tid, id, place});
+  return entryOf(tourneyById(club, tid), id);
 }
 
 // The tournament has a winner: places are final, and the prizes go into
 // winners' club balances. Returns [{member, place, amount}].
 export function finishTourney(club, tid, winner, now = Date.now()) {
-  const t = get(club, tid);
-  if (t.status !== 'running') throw new Error('It isn’t running.');
-  // Final places: the winner first, then everyone else in the reverse of
-  // the order they went out, over all the entries (late ones too).
-  const w = entryOf(t, winner);
-  const gone = t.entries.filter(e => e !== w && e.out != null).sort((a, b) => a.out - b.out);
-  gone.forEach((e, i) => { e.place = t.entries.length - i; });
-  if (w) w.place = 1;
-  // What it pays by, kept: later edits to its payout table don't change it.
-  t.paidShares = payoutShares(t, club).slice();
-  const amounts = prizes(t, club);
-  const paid = [];
-  amounts.forEach((amount, i) => {
-    const e = t.entries.find(x => x.place === i + 1);
-    const m = e && club.members[e.member];
-    if (!m || amount <= 0) return;
-    payTo(club, m.id, 'prize', amount, t.id, now);
-    paid.push({member: m.id, place: i + 1, amount});
-  });
-  // What was paid: what was held, and the added chips, issued now.
-  const out = paid.reduce((s, p) => s + p.amount, 0);
-  club.chips.issued += out - t.held;
-  t.held = 0;
-  t.status = 'finished';
-  t.endedAt = now;
-  t.paid = paid;
+  const {paid, issued} = rules(club, {op: 'finish', tid, winner}, now);
+  for (const p of paid) payTo(club, p.member, 'prize', p.amount, tid, now);
+  // What was paid beyond what was held: the added chips, issued now.
+  club.chips.issued += issued;
   return paid;
 }
 
 // What members see of the club's tournaments (the lobby), with how running
 // ones are going (`live`: {[tid]: {level, playersLeft, ...}} from the host).
-export function tourneysBody(club, live = {}, now = Date.now()) {
-  return {
-    type: 'tourneys', club: club.code,
-    tourneys: visibleTourneys(club, now).map(t => {
-      const names = id => club.members[id]?.name || '?';
-      return {
-        id: t.id, name: t.name, game: t.game, buyIn: t.buyIn, added: t.added, stack: t.stack,
-        opensAt: t.opensAt, startsAt: t.startsAt, minPlayers: t.minPlayers, maxPlayers: t.maxPlayers, tableSize: t.tableSize,
-        lateLevel: t.lateLevel, reentry: t.reentry, maxReentries: t.maxReentries, status: t.status, why: t.why || '',
-        entries: entryCount(t), players: [...new Set(t.entries.map(e => e.member))].map(id => ({id, name: names(id)})),
-        in: t.entries.filter(e => e.place == null).map(e => e.member),
-        places: t.entries.filter(e => e.place != null).map(e => ({id: e.member, name: names(e.member), place: e.place})),
-        // The row in force (#424): each paid place's share, in basis points.
-        pool: pool(t), prizes: prizes(t, club), shares: payoutShares(t, club).slice(0, Math.max(1, entryCount(t))), structure: t.structure,
-        ...(live[t.id] ? {live: live[t.id]} : {}),
-      };
-    }),
-  };
-}
+export const tourneysBody = (club, live = {}, now = Date.now()) => rules(club, {op: 'body', live}, now);
