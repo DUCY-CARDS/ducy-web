@@ -6,6 +6,13 @@ import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember } from '../src/hand-replay.js';
 
+// A finished hand's table view as ducy gives it, from what a test sets.
+const full = v => ({
+  street: null, pot: 0, current_bet: 0, hero: 0, seat: 0, pot_limit: false, to_act: null, legal: null, complete: true, ...v,
+  pots: (v.pots || []).map(p => ({eligible: [], awards: [], winning_hand: null, ...p})),
+  seats: v.seats.map(s => ({id: '', human: true, away: false, street_bet: 0, all_in: false, ...s})),
+});
+
 // A finished heads-up hand as the host sees it: Ann (seat 0, button and small
 // blind) raises, Bob calls, flop bet and call, turn checks, Bob bets the
 // river and Ann folds. No showdown, so no hole cards.
@@ -21,7 +28,7 @@ function view(cards = [null, null]) {
     {type: 'bet', seat: 1, to: 20, all_in: false}, {type: 'fold', seat: 0},
     {type: 'award', seat: 1, pot: 0, amount: 48},
   ];
-  return {
+  return full({
     hand_number: 7, small_blind: 1, big_blind: 2, button: 0, hole_cards: 2, board: ['Ah', '7c', '2d', 'Ks', '3h'],
     showdown: false, pots: [{amount: 48}], events: ev,
     seats: [
@@ -29,7 +36,7 @@ function view(cards = [null, null]) {
       {name: 'Bob', stack: 234, net: 14, won: 48, folded: false, cards: cards[1], empty: false, sitting_out: false},
       {name: '', stack: 0, net: 0, won: 0, folded: false, cards: null, empty: true, sitting_out: false},
     ],
-  };
+  });
 }
 
 test('a record keeps what the viewer saw and nothing else', () => {
@@ -88,7 +95,7 @@ test('table sessions and totals come from the ledger', () => {
 });
 
 test('missed blinds posted on coming back replay as dead (pot) and live (bet)', () => {
-  const rec = handRecord({club: 'c', table: 't', tableName: 'T', game: 'nlhe', who: 'host', view: {
+  const rec = handRecord({club: 'c', table: 't', tableName: 'T', game: 'nlhe', who: 'host', view: full({
     hand_number: 9, small_blind: 1, big_blind: 2, button: 2, hole_cards: 2, board: [], showdown: false, pots: [{amount: 6}],
     events: [
       {type: 'small_blind', seat: 0, amount: 1}, {type: 'big_blind', seat: 1, amount: 2},
@@ -101,7 +108,7 @@ test('missed blinds posted on coming back replay as dead (pot) and live (bet)', 
       {name: 'B', stack: 104, net: 4, won: 6, folded: false, cards: null, empty: false, sitting_out: false},
       {name: 'C', stack: 97, net: -3, won: 0, folded: true, cards: null, empty: false, sitting_out: false},
     ],
-  }});
+  })});
   const f = replayFrames(rec);
   const afterPost = f[3];
   assert.equal(afterPost.text, 'C posts missed blinds: 0.01 dead + 0.02 live');

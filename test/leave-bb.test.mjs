@@ -1,6 +1,7 @@
 // "Leave before my big blind": who posts the next big blind (leave-bb.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { nextBigBlind } from '../src/leave-bb.js';
 
 const seat = (stack = 100, more = {}) => ({stack, empty: false, sitting_out: false, ...more});

@@ -8,29 +8,18 @@
 // and a player's shows their own. So a record never holds anyone's unshown
 // cards. Seat numbers are the viewer's (they're seat 0).
 
-import { replayFrames as ducyReplayFrames } from '../wasm/ducy_wasm.js';
+import { handRecord as ducyRecord, recordFrames } from '../wasm/ducy_wasm.js';
 import { chipText } from './chip-format.js';
 
 export const STREETS = ['preflop', 'flop', 'turn', 'river'];
 
 const num = v => Number(v);
 
-// The record for a finished hand. `who` is 'host' or the viewer's player id.
+// The record for a finished hand (ducy_play::hands::HandRecord), from its
+// table view. `who` is 'host' or the viewer's player id. A run twice or a
+// bomb pot's second board is `board2` (#267 counts each board).
 export function handRecord({club, table, tableName, game, view, who}, now = Date.now()) {
-  const seats = view.seats.map((s, i) => ({
-    i, name: s.name, cards: s.cards || null, stackEnd: num(s.stack), net: num(s.net), won: num(s.won),
-    folded: !!s.folded, inHand: !s.empty && !s.sitting_out,
-  }));
-  return {
-    id: `${club}:${table}:${num(view.hand_number)}:${now}`,
-    club, table, tableName, game, who, at: now,
-    hand: num(view.hand_number), sb: num(view.small_blind), bb: num(view.big_blind), button: num(view.button),
-    holeCards: num(view.hole_cards), board: view.board || [], showdown: !!view.showdown,
-    // Run twice or a bomb pot's second board (#267 counts each board).
-    ...(view.second_board?.length ? {board2: view.second_board} : {}),
-    pot: (view.pots || []).reduce((s, p) => s + num(p.amount), 0) || seats.reduce((s, x) => s + x.won, 0),
-    seats, events: view.events || [],
-  };
+  return ducyRecord(view, {club, table, tableName, game, who}, now);
 }
 
 // Who won what, for a list row: "Ann +12".
@@ -41,13 +30,11 @@ export function summary(rec) {
 
 // The hand as a list of frames, one before any action and one after each
 // event: {street, board, pot, seats: [{name, stack, bet, folded, allIn,
-// cards, inHand}], text, event}. ducy replays it (replayFrames, from
-// ducy_play::replay); the record adds names, cards and who was in the hand.
-// Stacks start at each seat's final stack minus its net result.
+// cards, inHand}], text, event}. ducy replays it (recordFrames, from
+// ducy_play::replay), each seat starting at its final stack minus its net
+// result; the record adds names, cards and who was in the hand.
 export function replayFrames(rec) {
-  const start = rec.seats.map(s => BigInt(s.inHand ? s.stackEnd - s.net : s.stackEnd));
-  const frames = ducyReplayFrames(rec.events, BigUint64Array.from(start), rec.seats.map(s => s.name));
-  return frames.map(f => ({
+  return recordFrames(rec).map(f => ({
     street: f.street, board: f.board, pot: num(f.pot),
     text: (f.event != null && amountText(rec.events[f.event], i => rec.seats[i]?.name || `Seat ${i}`)) || f.text,
     event: f.event == null ? null : rec.events[f.event],
