@@ -67,13 +67,15 @@ test('replaying rebuilds stacks, bets and the pot action by action, ending where
 
 test('table sessions and totals come from the ledger', () => {
   const entries = [
-    {n: 1, at: 1, kind: 'issue', member: 'ann', amount: 1000},
-    {n: 2, at: 2, kind: 'buy_in', member: 'ann', table: 't1', amount: 200},
-    {n: 3, at: 3, kind: 'buy_in', member: 'bob', table: 't1', amount: 150},
-    {n: 4, at: 4, kind: 'top_up', member: 'ann', table: 't1', amount: 50},
-    {n: 5, at: 5, kind: 'cash_out', member: 'ann', table: 't1', amount: 310},
-    {n: 6, at: 6, kind: 'buy_in', member: 'ann', table: 't2', amount: 100},
-    {n: 7, at: 7, kind: 'cash_out', member: 'ann', table: 't2', amount: 40},
+    {n: 1, at: 1, kind: 'give', member: 'ann', amount: 1000},
+    {n: 2, at: 2, kind: 'buy_in', member: 'ann', about: 't1', amount: -200},
+    {n: 3, at: 3, kind: 'buy_in', member: 'bob', about: 't1', amount: -150},
+    // Bob's agent's link moves with his buy-in: not a session of the agent's.
+    {n: 4, at: 3, kind: 'buy_in', member: 'al', player: 'bob', about: 't1', amount: -150},
+    {n: 5, at: 4, kind: 'top_up', member: 'ann', about: 't1', amount: -50},
+    {n: 6, at: 5, kind: 'cash_out', member: 'ann', about: 't1', amount: 310},
+    {n: 7, at: 6, kind: 'buy_in', member: 'ann', about: 't2', amount: -100},
+    {n: 8, at: 7, kind: 'cash_out', member: 'ann', about: 't2', amount: 40},
   ];
   const s = tableSessions(entries);
   assert.equal(s.length, 3);

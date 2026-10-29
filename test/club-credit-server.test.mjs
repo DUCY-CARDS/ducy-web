@@ -69,7 +69,7 @@ test('the owner sets a limit, answers a request at it by raising it, and records
   const a = lastAccount();
   assert.equal(a.balance, -20000);
   assert.equal(a.available, 50000);
-  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['issue', 30000, 'cash']]);
+  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['give', 30000, 'cash']]);
   assert.equal(totals(club).owedToClub, 20000);
 });
 
@@ -77,7 +77,7 @@ test('the owner sets a limit, answers a request at it by raising it, and records
 test('at a table: a buy-in on credit is approved; past what is available, refused with an offer to ask', async t => {
   const table = {id: 't1', name: 'One', seats: 6, sb: 1, bb: 2, game: 'nlhe', turnSecs: 0, status: 'open', minBB: 20, maxBB: 100};
   const club = {
-    code: 'ABCD-EFGH', tables: [table], chips: {issued: 0, reclaimed: 0, next: 1, ledger: []}, ratholeHours: 0,
+    code: 'ABCD-EFGH', tables: [table], chips: {issued: 0, reclaimed: 0}, ratholeHours: 0,
     members: {
       ann: {id: 'ann', name: 'Ann', status: 'member', balance: 0, credit: 300},
       bob: {id: 'bob', name: 'Bob', status: 'member', balance: 0, credit: 100},
@@ -100,7 +100,7 @@ test('at a table: a buy-in on credit is approved; past what is available, refuse
   assert.equal(club.members.ann.seat?.stack, 200);
   assert.deepEqual(changed, ['ann']);
   assert.equal(club.members.ann.balance, -200);
-  assert.equal(club.chips.ledger.at(-1).credit, 200);
+  assert.deepEqual([club.money.ledger.at(-1).kind, club.money.ledger.at(-1).amount, club.money.ledger.at(-1).balance], ['buy_in', -200, -200], 'all of it on credit');
   await th.handle('t1', 'bob', {type: 'join'});
   await th.handle('t1', 'bob', {type: 'request_chips', amount: 150});
   await settle();

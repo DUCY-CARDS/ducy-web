@@ -166,7 +166,7 @@ export function unregister(club, tid, id, now = Date.now()) {
 
 function refund(club, t, m, now) {
   t.held -= t.buyIn;
-  if (t.buyIn > 0) payTo(club, m.id, 'refund', t.buyIn, now, 'tourney_refund', {tourney: t.id});
+  if (t.buyIn > 0) payTo(club, m.id, 'refund', t.buyIn, t.id, now);
 }
 
 // Late registration or a re-entry (#80), while the tournament is running and
@@ -405,7 +405,7 @@ export function finishTourney(club, tid, winner, now = Date.now()) {
     const e = t.entries.find(x => x.place === i + 1);
     const m = e && club.members[e.member];
     if (!m || amount <= 0) return;
-    payTo(club, m.id, 'prize', amount, now, 'tourney_prize', {tourney: t.id});
+    payTo(club, m.id, 'prize', amount, t.id, now);
     paid.push({member: m.id, place: i + 1, amount});
   });
   // What was paid: what was held, and the added chips, issued now.

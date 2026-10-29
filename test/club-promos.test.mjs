@@ -5,7 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { approve, newClub } from '../src/club.js';
-import { balanceChange, checkOwnLedger, issue, totals } from '../src/club-chips.js';
+import { checkOwnLedger, issue, totals } from '../src/club-chips.js';
+import { entriesOf } from '../src/club-money.js';
 import {
   approveAward, bestWithTwo, editPromo, handName, newPromo, nextSettle, periodOf, processHand, promosAdmin, promosBody, promoRules,
   score5, setPromoStatus, settlePeriods, shownHands, voidAward,
@@ -153,9 +154,11 @@ test('high hand of the period: each game’s best, paid at the end; ties split (
   assert.deepEqual(paid.map(a => [a.member, a.amount, a.game]), [['ann', 5000, 'nlhe'], ['ann', 5000, 'plo4']]);
   assert.equal(club.members.ann.balance, 10000);
   assert.ok(totals(club).conserved);
-  const mine = club.chips.ledger.filter(e => e.member === 'ann');
+  const mine = entriesOf(club, 'ann');
   assert.ok(checkOwnLedger(mine, club.members.ann.balance), 'members’ own copies still add up');
-  assert.equal(balanceChange(mine[0]), 5000);
+  // The award names its entry, and the entry the award's hand.
+  const prize = mine.find(e => e.n === paid[0].entry);
+  assert.deepEqual([prize.kind, prize.amount, prize.about, prize.note, prize.hand], ['prize', 5000, promo.id, `${promo.name}: ${paid[0].handName}`, paid[0].hand]);
   assert.equal(nextSettle(club), null);
   assert.equal(club.promos.history.length, 2);
 
@@ -261,9 +264,10 @@ test('voiding: within 24 hours, chips taken back, the next best offered (#276)',
   const later = T0 + D + 3 * H;
   const {offered} = voidAward(club, a.id, later, 'collusion');
   assert.equal(club.members.ann.balance, 0);
-  assert.equal(club.chips.ledger.at(-1).kind, 'promo_void');
+  const v = entriesOf(club, 'ann').at(-1);
+  assert.deepEqual([v.kind, v.amount, v.n, v.note], ['void', -5000, a.voidEntry, `Voided: ${a.promoName}, collusion`]);
   assert.ok(totals(club).conserved);
-  assert.ok(checkOwnLedger(club.chips.ledger.filter(e => e.member === 'ann'), 0));
+  assert.ok(checkOwnLedger(entriesOf(club, 'ann'), 0));
   assert.equal(offered.member, 'bob');
   assert.equal(offered.status, 'held', 'offered, for the manager to approve');
   approveAward(club, offered.id, later);
@@ -344,5 +348,5 @@ test('the host runs promotions; members see the banner (#274, #278)', async () =
   const [w] = settlePeriods(club, T0 + D);
   voidAward(club, w.id, T0 + D, 'test');
   assert.equal(club.members.ann.balance, 0);
-  assert.equal(club.chips.ledger.at(-1).kind, 'promo_void');
+  assert.equal(entriesOf(club, 'ann').at(-1).kind, 'void');
 });

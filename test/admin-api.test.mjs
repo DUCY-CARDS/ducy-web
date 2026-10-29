@@ -119,7 +119,8 @@ async function clubStorage() {
   await s.put('club', {
     code: 'AAAA-BBBB', name: 'Owls', ownerId: 'own', hostId: 'host', invite: 'x', createdAt: 1,
     members: {bob: {id: 'bob', name: 'Bob', status: 'member', balance: 500, role: 'assistant'}, cy: {id: 'cy', name: 'Cy', status: 'pending', balance: 0}},
-    chips: {issued: 500, reclaimed: 0, next: 2, ledger: [{n: 1, at: 5, kind: 'issue', member: 'bob', amount: 500, balance: 500}]},
+    chips: {issued: 500, reclaimed: 0},
+    money: {links: [{member: 'bob', backer: 'club', balance: 500, credit: 0}], accounts: {bob: {through: 'club'}}, ledger: [{n: 1, at: 5, tx: 1, member: 'bob', backer: 'club', kind: 'give', amount: 500, balance: 500, note: null, about: null}]},
     requestLog: [{member: 'bob', asked: 100, given: 100, outcome: 'granted', at: 4}],
     help: [{id: 'h1', from: 'bob', name: 'Bob', text: 'stuck', at: 6, handled: null}],
     log: [{at: 7, by: 'bob', text: 'Bob opened a table'}],
@@ -146,7 +147,9 @@ test('a club in full: chats and cards hidden unless shown', async () => {
   assert.ok(!JSON.stringify(hid).includes('hi all'));
   assert.ok(!JSON.stringify(hid).includes('Ah'));
   // Everything else it stores.
-  assert.equal(hid.ledger[0].name, 'Bob');
+  assert.deepEqual([hid.ledger[0].name, hid.ledger[0].backerName], ['Bob', 'Club']);
+  assert.equal(hid.links.length, 1);
+  assert.equal(hid.money, undefined, 'the ledger once, not twice');
   assert.equal(hid.requestLog.length, 1);
   assert.equal(hid.help[0].text, 'stuck');
   assert.equal(hid.log.length, 1);

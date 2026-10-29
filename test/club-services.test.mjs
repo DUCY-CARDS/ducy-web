@@ -81,8 +81,8 @@ test('a service gives chips within its budget and caps, and the history says so'
   assert.equal(out.balance, 200, 'in chips');
   assert.equal(out.budget, 800);
   assert.equal(club.members[ann.id].balance, 200 * C, 'kept in hundredths');
-  const e = club.chips.ledger.at(-1);
-  assert.equal(e.kind, 'issue');
+  const e = club.money.ledger.at(-1);
+  assert.equal(e.kind, 'give');
   assert.equal(e.note, 'Rewards server: League week 1');
   assert.match(club.log.at(-1).text, /Rewards server \(service\) gave Ann 200/);
   assert.equal(club.log.at(-1).by, svc.id);

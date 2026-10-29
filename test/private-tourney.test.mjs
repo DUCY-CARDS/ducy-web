@@ -228,7 +228,7 @@ async function runToEnd(hostPlays) {
   assert.equal(b.host, 'Ann');
   // Tournament chips only: no club chips moved.
   assert.equal(club.chips.issued, 0);
-  assert.deepEqual(club.chips.ledger, []);
+  assert.deepEqual(club.money?.ledger || [], []);
   assert.ok(Object.values(club.members).every(m => m.balance === 0));
 }
 

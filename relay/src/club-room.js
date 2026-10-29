@@ -136,7 +136,8 @@ export async function adminView(storage, what, {reveal = false, id = ''} = {}) {
     return {
       member: m && {...m, lastSeen: seen[id] || null},
       lastSeen: seen[id] || null,
-      ledger: (club.chips?.ledger || []).filter(e => e.member === id),
+      // Their links up, and the ones their players have with them.
+      ledger: (club.money?.ledger || []).filter(e => e.member === id || e.backer === id),
       requests: (club.requestLog || []).filter(r => r.member === id),
       help: (club.help || []).filter(h => h.from === id),
       log: log.filter(e => e.by === id || (m?.name && String(e.text || '').includes(m.name))),
@@ -148,13 +149,14 @@ export async function adminView(storage, what, {reveal = false, id = ''} = {}) {
     const rec = await storage.get(h.key);
     if (rec) hands.push(reveal ? rec : handNoCards(rec));
   }
-  const {lobby, members: _, chips, promos, ...rest} = club;
+  const {lobby, members: _, chips, money, promos, ...rest} = club;
   return {
     ...rest,
     members: members.map(m => ({...m, lastSeen: seen[m.id] || null})),
     ownerSeen: seen[club.ownerId] || null,
     chips: {issued: chips?.issued || 0, reclaimed: chips?.reclaimed || 0},
-    ledger: (chips?.ledger || []).map(e => ({...e, name: nameOf(e.member)})),
+    links: money?.links || [],
+    ledger: (money?.ledger || []).map(e => ({...e, name: nameOf(e.member), backerName: e.backer === 'club' ? 'Club' : nameOf(e.backer)})),
     promos: promos && {...promos, hands: reveal ? promos.hands : undefined},
     hands,
     revealed: reveal,
@@ -328,7 +330,7 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
       tourneys: (club.tourneys || []).filter(t => ['scheduled', 'running'].includes(t.status) || Date.now() - (t.endedAt || 0) < 7 * 864e5)
         .map(t => ({name: t.name, game: t.game, status: t.status, startsAt: t.startsAt, entries: t.entries.length})),
       hands: {kept: index.length, lastDay: index.filter(h => h.at >= day).length, last: index.length ? index[index.length - 1].at : null},
-      ledger: (club.chips?.ledger || []).slice(-15).map(e => ({at: e.at, kind: e.kind, amount: e.amount, member: club.members[e.member]?.name || e.member})),
+      ledger: (club.money?.ledger || []).slice(-15).map(e => ({at: e.at, kind: e.kind, amount: e.amount, member: club.members[e.member]?.name || e.member})),
       limits: server.limits(),
     };
   };

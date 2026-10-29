@@ -9,6 +9,7 @@ import {
   accountBody, buyIn, cashOut, checkOwnLedger, declineRequest, grantRequest, issue, ledgerCsv, ratholeMin, reclaim,
   refundTopUp, REQUEST_LOG, requestChips, setStack, topUp, totals,
 } from '../src/club-chips.js';
+import { ledgerOf } from '../src/club-money.js';
 
 const H = 3600e3;
 
@@ -26,7 +27,7 @@ test('issue and reclaim move the balance and keep the club conserved', () => {
   issue(club, 'ann', 500, 1);
   reclaim(club, 'ann', 200, 2, 'settled');
   assert.equal(club.members.ann.balance, 300);
-  assert.deepEqual(club.chips.ledger.map(e => [e.kind, e.amount, e.balance]), [['issue', 500, 500], ['reclaim', 200, 300]]);
+  assert.deepEqual(ledgerOf(club).map(e => [e.kind, e.member, e.backer, e.amount, e.balance, e.note]), [['give', 'ann', 'club', 500, 500, null], ['take_back', 'ann', 'club', -200, 300, 'settled']]);
   assert.ok(totals(club).conserved);
   assert.throws(() => reclaim(club, 'ann', 301), /only has 3 chips/);
   assert.throws(() => issue(club, 'ann', 0), /above 0/);
@@ -40,7 +41,7 @@ test('requests: ask, replace, grant (for a different amount), decline', () => {
   requestChips(club, 'ann', 400, 'rebuy', 2);
   assert.deepEqual(club.members.ann.request, {amount: 400, note: 'rebuy', at: 2});
   const e = grantRequest(club, 'ann', 250, 3);
-  assert.equal(e.kind, 'grant');
+  assert.equal(e.kind, 'give');
   assert.equal(e.note, 'rebuy');
   assert.equal(club.members.ann.balance, 250);
   assert.equal(club.members.ann.request, null);
@@ -71,12 +72,12 @@ test('answered requests: the member is told how, and the club keeps a log (#188)
 test('the ledger as CSV: names, signed changes in plain amounts, quoting (#188)', () => {
   const club = clubWith('ann');
   issue(club, 'ann', 500, Date.UTC(2026, 9, 1), 'welcome, "friend"');
-  reclaim(club, 'ann', 150, Date.UTC(2026, 9, 2));
-  const csv = ledgerCsv(club.chips.ledger, {ann: 'Ann'}, {}, {issue: 'Given by the host', reclaim: 'Taken back'});
+  buyIn(club, 'ann', 't1', 200, {min: 1, max: 500}, Date.UTC(2026, 9, 2));
+  const csv = ledgerCsv(ledgerOf(club), {ann: 'Ann', club: 'Club'}, {t1: 'Main'}, {give: 'Given', buy_in: 'Bought in'});
   assert.equal(csv, [
-    'when,member,what,table,change,balance,note',
-    '2026-10-01T00:00:00.000Z,Ann,Given by the host,,5,5,"welcome, ""friend"""',
-    '2026-10-02T00:00:00.000Z,Ann,Taken back,,-1.5,3.5,',
+    'when,member,with,what,about,change,balance,note',
+    '2026-10-01T00:00:00.000Z,Ann,Club,Given,,5,5,"welcome, ""friend"""',
+    '2026-10-02T00:00:00.000Z,Ann,Club,Bought in,Main,-2,3,',
     '',
   ].join('\n'));
 });
@@ -143,7 +144,7 @@ test('removing a member reclaims their balance', () => {
   assert.equal(replies[1].body.balance, 0);
   assert.equal(club.members.ann.balance, 0);
   assert.equal(club.members.ann.request, null);
-  assert.equal(club.chips.ledger.at(-1).kind, 'reclaim');
+  assert.equal(ledgerOf(club).at(-1).kind, 'take_back');
   assert.ok(totals(club).conserved);
 });
 
@@ -166,8 +167,18 @@ test('a player’s own ledger checks out against the balance, and tampering is c
   assert.equal(body.balance, 560);
   assert.ok(checkOwnLedger(body.entries, body.balance));
   assert.equal(checkOwnLedger(body.entries, 600), false);
-  const tampered = body.entries.map(e => (e.kind === 'issue' ? {...e, amount: 900} : e));
+  const tampered = body.entries.map(e => (e.kind === 'give' ? {...e, amount: 900} : e));
   assert.equal(checkOwnLedger(tampered, body.balance), false);
+});
+
+test('standing up with nothing left is still a cash-out entry', () => {
+  const club = clubWith('ann');
+  issue(club, 'ann', 500, 1);
+  buyIn(club, 'ann', 't1', 200, {min: 1, max: 500}, 2);
+  setStack(club, 'ann', 0);
+  const e = cashOut(club, 'ann', 3);
+  assert.deepEqual([e.kind, e.amount, e.balance, e.about], ['cash_out', 0, 300, 't1']);
+  assert.ok(checkOwnLedger(accountBody(club, 'ann').entries, 300));
 });
 
 test('a top-up the table hands back still checks out in the player’s own ledger', () => {
@@ -179,7 +190,7 @@ test('a top-up the table hands back still checks out in the player’s own ledge
   refundTopUp(club, 'ann', 40, 4);
   const body = accountBody(club, 'ann');
   assert.equal(body.balance, 240);
-  assert.equal(body.entries.at(-1).kind, 'top_up_refund');
+  assert.deepEqual([body.entries.at(-1).kind, body.entries.at(-1).about], ['refund', 't1']);
   assert.ok(checkOwnLedger(body.entries, body.balance), 'the refund counts toward the balance');
 });
 
@@ -200,7 +211,7 @@ test('over the wire: request chips, host grants, player keeps a signed copy that
   assert.deepEqual(mem.request.amount, 300);
 
   grantRequest(club, ann.id, 300);
-  const hello = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, since: lastEntry(mem)}));
+  const hello = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, since: lastEntry(mem), ledger: 'links'}));
   await deliver(hello.replies);
   assert.equal(mem.balance, 300);
   assert.equal(mem.request, null);
@@ -209,13 +220,38 @@ test('over the wire: request chips, host grants, player keeps a signed copy that
   assert.equal(mem.receipts.length, 1);
 
   // A second hello sends nothing new.
-  const again = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, since: lastEntry(mem)}));
+  const again = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, since: lastEntry(mem), ledger: 'links'}));
   assert.deepEqual(again.replies[1].body.entries, []);
 
   // Non-members can't ask for chips.
   const eve = await createIdentity();
   const no = await hostReceive(club, verifier, await signMessage(eve, {type: 'chip_request', club: club.code, amount: 5}));
   assert.equal(no.reason, 'not a member');
+});
+
+test('an older copy of the ledger starts again from the money model’s, keeping the old one (#454)', async () => {
+  const host = await createIdentity(), ann = await createIdentity();
+  const club = newClub('Friday Game', 'ABCD-EFGH', host.id, 0);
+  const verifier = new Verifier();
+  const mem = newMembership({code: club.code, invite: club.invite, hostId: host.id});
+  const deliver = async replies => { for (const r of replies) assert.ok(await playerReceive(mem, await signMessage(host, r.body))); };
+  await deliver((await hostReceive(club, verifier, await signMessage(ann, {type: 'join', club: club.code, invite: club.invite, name: 'Ann'}))).replies);
+  await deliver([approve(club, ann.id)]);
+  issue(club, ann.id, 300, 1);
+  // A copy from before, numbered as the older ledger.
+  const old = [{n: 40, at: 0, kind: 'issue', member: ann.id, amount: 300, balance: 300}];
+  Object.assign(mem, {entries: old, receipts: ['old receipt']});
+  assert.equal(lastEntry(mem), 0, 'an older copy asks for everything');
+  // An older page's hello, with `since` in the old numbering: every entry.
+  const hello = await hostReceive(club, verifier, await signMessage(ann, {type: 'hello', club: club.code, since: 40}));
+  assert.equal(hello.replies[1].body.entries.length, 1);
+  await deliver(hello.replies);
+  assert.equal(mem.ledger, 'links');
+  assert.deepEqual(mem.before, {entries: old, receipts: ['old receipt']});
+  assert.deepEqual(mem.entries.map(e => [e.kind, e.amount]), [['give', 300]]);
+  assert.equal(mem.receipts.length, 1);
+  assert.ok(mem.ledgerOk);
+  assert.equal(lastEntry(mem), mem.entries[0].n);
 });
 
 test('a request cancelled while the host is away goes when they read it (#188)', async () => {

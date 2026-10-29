@@ -12,7 +12,7 @@
 import { chipText } from './chip-format.js';
 import { answerRequest, available, creditOf, ensureChips, owedBy } from './club-chips.js';
 import { logAction } from './club-log.js';
-import { backerOf, move } from './club-money.js';
+import { backerOf, move, ownEntries } from './club-money.js';
 
 const whole = n => Number.isSafeInteger(n) && n >= 0 && n <= 1e12;
 
@@ -71,10 +71,11 @@ export function creditNotices(club, keep = 50) {
     const q = m.request;
     if (q?.atLimit) out.push({kind: 'at_limit', member: m.id, name: m.name, asked: q.amount, credit: creditOf(m), available: available(m), table: q.table || '', at: q.at});
   }
-  const left = club.chips.ledger.filter(e => e.kind === 'cash_out' && e.owes).slice(-keep);
+  // Cash-outs that left the player's own link below zero.
+  const left = ownEntries(club).filter(e => e.kind === 'cash_out' && e.balance < 0).slice(-keep);
   for (const e of left) {
     const m = club.members[e.member];
-    out.push({kind: 'left_owing', member: e.member, name: m?.name || e.member, owes: e.owes, owesNow: owedBy(m), table: e.table, at: e.at, n: e.n});
+    out.push({kind: 'left_owing', member: e.member, name: m?.name || e.member, owes: -e.balance, owesNow: owedBy(m), table: e.about, at: e.at, n: e.n});
   }
   return out.sort((a, b) => b.at - a.at);
 }

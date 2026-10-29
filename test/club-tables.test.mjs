@@ -81,16 +81,16 @@ test('members see the rathole window, and the buy-in it means for them (#187)', 
   assert.deepEqual(buyInRange(seen, [], 2, now), {min: 8000, max: 20000, rathole: 0});
   // Left with 150 an hour ago: at least 150 now; another table's cash-out doesn't count.
   const entries = [
-    {kind: 'buy_in', table: t.id, amount: 10000, at: now - H2},
-    {kind: 'cash_out', table: t.id, amount: 15000, at: now - H2 / 2},
-    {kind: 'cash_out', table: 'other', amount: 19000, at: now - 1000},
+    {kind: 'buy_in', about: t.id, amount: -10000, at: now - H2},
+    {kind: 'cash_out', about: t.id, amount: 15000, at: now - H2 / 2},
+    {kind: 'cash_out', about: 'other', amount: 19000, at: now - 1000},
   ];
   assert.deepEqual(buyInRange(seen, entries, 2, now), {min: 15000, max: 20000, rathole: 15000});
   // After the window, or with the rule off: back to the table's range.
   assert.equal(buyInRange(seen, entries, 2, now + H2).min, 8000);
   assert.equal(buyInRange(seen, entries, 0, now).min, 8000);
   // Never above the table's maximum.
-  assert.equal(buyInRange(seen, [{kind: 'cash_out', table: t.id, amount: 50000, at: now}], 2, now).min, 20000);
+  assert.equal(buyInRange(seen, [{kind: 'cash_out', about: t.id, amount: 50000, at: now}], 2, now).min, 20000);
 });
 
 test('who can join: members only, open tables only, one table at a time', () => {
@@ -253,7 +253,7 @@ test('a top-up the table hands back returns to the balance, and the totals still
   assert.equal(club.members.ann.balance, before + 30);
   syncStacks(club, [{client_id: 'ann', chips: 200}, {client_id: 'bob', chips: 120}]);
   assert.ok(totals(club).conserved, 'every chip accounted for');
-  const s = tableSessions(club.chips.ledger).find(x => x.member === 'ann');
+  const s = tableSessions(club.money.ledger).find(x => x.member === 'ann');
   assert.equal(s.put, 170, 'the session counts only what stayed on the table');
 });
 

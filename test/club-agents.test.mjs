@@ -102,7 +102,7 @@ test('the agent view: players’ results at the tables, and a payment on their o
   assert.equal(tableResult(club, 'q'), 250);
   const v = agentBody(club, 'a');
   assert.deepEqual(v.players.map(x => [x.id, x.result]), [['p', -800], ['q', 250], ['r', 0]]);
-  assert.deepEqual(accountBody(club, 'a').entries.filter(e => e.kind === 'issue').map(e => [e.amount, e.note]), [[500, undefined], [300, 'cash at the bar']]);
+  assert.deepEqual(accountBody(club, 'a').entries.filter(e => e.kind === 'give').map(e => [e.amount, e.note]), [[500, undefined], [300, 'cash at the bar']]);
 });
 
 test('the agent view: where each player sits, and what the agent would owe if they stood up (#428)', () => {
@@ -254,20 +254,19 @@ test('a club from before links: an agent’s link is their chips and their playe
   Object.assign(club.members.q, {agentOf: 'a', balance: 0, seat: {table: 't1', stack: 400, put: 300}});
   Object.assign(club.members.a, {balance: -500});
   Object.assign(club.members.d, {balance: 250});
-  club.chips = {issued: 750, reclaimed: 0, next: 1, ledger: []};
-  for (const [id, amount] of [['a', 500], ['d', 250]]) club.chips.ledger.push({n: club.chips.next++, at: 0, kind: 'issue', member: id, amount, balance: amount});
-  club.chips.ledger.push({n: club.chips.next++, at: 0, kind: 'transfer_out', member: 'a', amount: 1000, balance: -500});
-  club.chips.ledger.push({n: club.chips.next++, at: 0, kind: 'transfer_in', member: 'p', amount: 1000, balance: 1000});
-  club.chips.ledger.push({n: club.chips.next++, at: 0, kind: 'buy_in', member: 'p', amount: 400, balance: 600});
-  delete club.money;
+  // The older ledger copy it kept.
+  club.chips = {issued: 750, reclaimed: 0, next: 3, ledger: [{n: 1, at: 0, kind: 'issue', member: 'a', amount: 500, balance: 500}, {n: 2, at: 0, kind: 'issue', member: 'd', amount: 250, balance: 250}]};
   startMoney(club, 1);
   assert.equal(club.money.accounts.p.through, 'a');
   assert.deepEqual(['a', 'p', 'q', 'd'].map(id => club.members[id].balance), [100, 600, 0, 250]);
   assert.equal(accountOf(club, 'a').own, -500, 'their own part is what it was');
+  // Each link's balance is its first entry, so every copy adds up from it.
   for (const id of ['a', 'p', 'd']) {
     const b = accountBody(club, id);
+    assert.deepEqual(b.entries.map(e => [e.kind, e.amount]), [['opening', club.members[id].balance]], id);
     assert.ok(checkOwnLedger(b.entries, b.balance), id);
   }
+  assert.deepEqual(club.chips, {issued: 750, reclaimed: 0}, 'the older copy is gone');
   // Q stands up up the path they're seated on.
   leftTable(club, 'q', 900);
   assert.deepEqual([club.members.q.balance, club.members.a.balance], [900, 1000]);

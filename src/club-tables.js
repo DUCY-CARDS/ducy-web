@@ -14,6 +14,7 @@
 // follows each seated member's stack, so the club's totals add up.
 
 import { buyIn, cashOut, ensureChips, setStack, topUp } from './club-chips.js';
+import { ledgerOf } from './club-money.js';
 import { chipInput } from './chip-format.js';
 
 // `short` names tables by default ("NLH - 1/2"); `seats` is the most a game
@@ -126,7 +127,7 @@ export function tablesBody(club, seatedCounts = {}) {
 // stack they left the table with less than `ratholeHours` ago (the rule's
 // floor, club-chips.js ratholeMin), or 0.
 export function buyInRange(t, entries = [], ratholeHours = 0, now = Date.now()) {
-  const left = [...entries].reverse().find(e => e.kind === 'cash_out' && e.table === t.id);
+  const left = [...entries].reverse().find(e => e.kind === 'cash_out' && !e.player && e.about === t.id);
   const rathole = left && ratholeHours && now - left.at < ratholeHours * 3600e3 ? left.amount : 0;
   return {min: Math.min(t.max, Math.max(t.min, rathole)), max: t.max, rathole};
 }
@@ -285,6 +286,6 @@ export function nextLapse(club) {
 // that entry is out of step with the ledger and isn't resumed.
 export function tableLedgerN(club, tid) {
   let n = 0;
-  for (const e of club.chips?.ledger || []) if (e.table === tid && e.n > n) n = e.n;
+  for (const e of ledgerOf(club)) if (e.about === tid && e.n > n) n = e.n;
   return n;
 }

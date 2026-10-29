@@ -46,8 +46,8 @@ test('registering takes the buy-in, unregistering refunds it, and the pool is bu
   assert.equal(entryCount(t), 2);
   conserved(club);
   // The ledger has both sides.
-  const kinds = club.chips.ledger.filter(e => e.member === 'p2').map(e => e.kind);
-  assert.deepEqual(kinds, ['issue', 'tourney_buyin', 'tourney_refund']);
+  const kinds = club.money.ledger.filter(e => e.member === 'p2').map(e => e.kind);
+  assert.deepEqual(kinds, ['give', 'tourney_buy_in', 'refund']);
   assert.throws(() => register(club, t.id, 'p9', 200), /Not a member/);
 });
 

@@ -11,6 +11,7 @@
 // The same measure can bill by table-hours later (#268).
 
 import { owedBy, totals } from './club-chips.js';
+import { ownEntries } from './club-money.js';
 import { openTables } from './club-tables.js';
 
 export const DAY = 864e5;
@@ -40,10 +41,10 @@ export function durationText(ms) {
 
 // When each member last played (a table or tournament entry in the
 // ledger), by id.
-const PLAYED = new Set(['buy_in', 'top_up', 'cash_out', 'tourney_buyin']);
+const PLAYED = new Set(['buy_in', 'top_up', 'cash_out', 'tourney_buy_in']);
 export function lastPlayed(club) {
   const out = {};
-  for (const e of club.chips?.ledger || []) if (PLAYED.has(e.kind) && e.at > (out[e.member] || 0)) out[e.member] = e.at;
+  for (const e of ownEntries(club)) if (PLAYED.has(e.kind) && e.at > (out[e.member] || 0)) out[e.member] = e.at;
   return out;
 }
 

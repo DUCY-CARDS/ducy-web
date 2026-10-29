@@ -13,8 +13,10 @@
 //   {type: 'join', club, invite, name}   ask to join (or update a pending request);
 //                                        no invite: by the club's code, when the
 //                                        club allows it (codeJoin, #393)
-//   {type: 'hello', club, name, since}   a member or applicant checking in; `since`
-//                                        is the last ledger entry they have
+//   {type: 'hello', club, name, since, ledger}   a member or applicant checking in;
+//                                        `since` is the last ledger entry they have,
+//                                        `ledger: 'links'` when their copy is the
+//                                        money model's (#454)
 //   {type: 'chip_request', club, amount, note, table?}   ask the host for chips (#67),
 //                                        from a table when nothing's available (#404)
 //   {type: 'cancel_request', club}
@@ -31,7 +33,7 @@
 //                                        | 'invite_only' (asked by code, #393);
 //                                        nameTaken: the name asked for, when
 //                                        someone in the club has it (#450)
-//   {type: 'account', club, balance, request, entries, credit, available}
+//   {type: 'account', club, balance, request, entries, credit, available, ledger}
 //                                        see club-chips.js (credit: #404)
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
@@ -190,7 +192,9 @@ export async function hostReceive(club, verifier, env, now = Date.now()) {
       else { changed = m.name !== name; m.name = name; }
     }
     const replies = [nameTaken ? {to: id, body: {...statusBody(club, id), nameTaken}} : reply(club, id)];
-    if (m?.status === 'member') replies.push(account(club, id, body.since));
+    // `since` counts in the money model's ledger only from a copy that
+    // already is one (#454); an older copy gets every entry.
+    if (m?.status === 'member') replies.push(account(club, id, body.ledger === 'links' ? body.since : 0));
     return {replies, changed};
   }
   // Agents (#74–#76): an answer to the agent offer, or a command. The
@@ -273,7 +277,7 @@ export function removeMember(club, id, now = Date.now()) {
   if (hadChips) {
     const backer = backerOf(club, m);
     if (backer === CLUB) reclaim(club, id, m.balance, now, 'Removed from the club');
-    else backerTake(club, backer, id, m.balance, now, 'Removed from the club', 'reclaim');
+    else backerTake(club, backer, id, m.balance, now, 'Removed from the club');
   }
   m.request = null;
   const status = setStatus(club, id, 'removed', now, ['member', 'pending']);
@@ -424,6 +428,14 @@ export async function playerReceive(mem, env) {
     delete mem.cancelQueued;
     // How their last request was answered (#188).
     if (b.answer !== undefined) mem.answer = b.answer || null;
+    // The club's moved to the money model's ledger (#454): the copy starts
+    // again from its entries, and the older one is kept with its receipts.
+    if (b.ledger === 'links' && mem.ledger !== 'links') {
+      if (mem.entries?.length) mem.before = {entries: mem.entries, receipts: mem.receipts || []};
+      mem.entries = [];
+      mem.receipts = [];
+      mem.ledger = 'links';
+    }
     const have = new Set((mem.entries || []).map(e => e.n));
     const fresh = (Array.isArray(b.entries) ? b.entries : []).filter(e => Number.isSafeInteger(e?.n) && !have.has(e.n));
     mem.entries = [...(mem.entries || []), ...fresh].sort((x, y) => x.n - y.n);
@@ -435,5 +447,5 @@ export async function playerReceive(mem, env) {
   return false;
 }
 
-// The last ledger entry this player has, for 'hello'.
-export const lastEntry = mem => (mem.entries?.length ? mem.entries[mem.entries.length - 1].n : 0);
+// The last ledger entry this player has, for 'hello' (0: an older copy, or none).
+export const lastEntry = mem => (mem.ledger === 'links' && mem.entries?.length ? mem.entries[mem.entries.length - 1].n : 0);

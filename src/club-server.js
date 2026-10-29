@@ -45,7 +45,7 @@
 import { signMessage } from './identity.js';
 import { account, approve, decline, hostReceive, removeMember, revokeInvite } from './club.js';
 import { declineRequest, ensureChips, grantRequest, issue, reclaim } from './club-chips.js';
-import { startMoney } from './club-money.js';
+import { ledgerOf, startMoney } from './club-money.js';
 import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
 import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newTourney, payoutTableById, register, setPayout, setPayoutTable, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
@@ -244,7 +244,7 @@ export function createClubServer({
 
   // A member's account after a chip change.
   const accountTo = id => {
-    const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
+    const n = ledgerOf(club).findLast(e => e.member === id)?.n;
     sendToPlayer(account(club, id, n ? n - 1 : Infinity));
   };
 
@@ -361,10 +361,7 @@ export function createClubServer({
       club: () => club,
       save: () => { persist(); scheduleAdmin(); onChange(); },
       sendTable: sendSealed,
-      chipsChanged: id => {
-        const n = club.chips.ledger.filter(e => e.member === id).at(-1)?.n;
-        sendToPlayer(account(club, id, n ? n - 1 : Infinity));
-      },
+      chipsChanged: accountTo,
       tablesChanged: () => { broadcastTables(); onChange(); },
       online: id => online.has(id),
       onPlay,

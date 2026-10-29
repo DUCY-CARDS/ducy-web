@@ -11,15 +11,21 @@
 //              own chips and their players', as the club sees it)
 //   m.credit   that link's credit limit
 //   m.room     what they can bring to a table: the least room on their path
-// and each move's entries on those links are added to club.chips.ledger in
-// its older form ({n, kind, member, amount, balance, …}; `player` when the
-// move was a player's, on their agent's link), so pages and members' copies
-// carry on until they read links themselves.
+//
+// The ledger is club.money.ledger: one entry per link per move, {n, at, tx,
+// member, backer, kind, amount, balance, note, about}, where `amount` is the
+// change to the link's balance (below zero: toward the backer) and `about`
+// the table, tournament or promotion. Kinds: give, take_back, buy_in,
+// top_up, refund, cash_out, tourney_buy_in, prize, rake_share, void,
+// opening. The entries of one move along a path share a `tx`, the player's
+// own link first; `entryView` adds whose move it was (`player`) to the
+// others, and a prize's hand.
 //
 // The first time, a club is moved onto links: a player under an agent gets
 // a link with the agent at their balance, an agent one with the club at
 // their own chips plus their players', everyone else one with the club, and
-// anyone seated a session on their path.
+// anyone seated a session on their path. Each link's balance is its first
+// entry ('opening').
 //
 // Needs ducy's wasm loaded (the relay, the host's page, tests: ./wasm.mjs).
 // Pages only read the mirrors and club.money.
@@ -72,8 +78,6 @@ function migrate(club, cm, now) {
     const shares = isAgent(club, m.id) ? members.filter(p => backerOf(club, p) === m.id).reduce((s, p) => s + (p.balance || 0), 0) : 0;
     const balance = (m.balance || 0) + shares;
     if (balance) run(cm, {op: 'openBalance', member: m.id, backer, balance}, now);
-    // Their own ledger copy still adds up: the shares come in as one line.
-    if (shares) club.chips.ledger.push({n: club.chips.next++, at: now, kind: 'links', member: m.id, amount: Math.abs(shares), change: shares, balance});
   }
   for (const m of members) {
     if (m.seat) run(cm, {op: 'openSession', member: m.id, table: m.seat.table, stack: m.seat.stack || 0, put: m.seat.put ?? m.seat.stack ?? 0}, now);
@@ -128,12 +132,10 @@ export function startMoney(club, now = Date.now()) {
   sync(club, load(club, now));
 }
 
-// Makes one move (a ClubMoney op, {op, …}) and returns its entries in the
-// ledger's older form, on each link someone plays through: `kind` names
-// them (or `kinds`, by the model's kind), and `extra` is added to each.
-// Throws an Error with `money` ({code, …}) if the model refuses it; nothing
-// changes then.
-export function move(club, op, now = Date.now(), {kind = null, kinds = {}, extra = {}} = {}) {
+// Makes one move (a ClubMoney op, {op, …}) and returns its entries, as
+// entryView shows them. Throws an Error with `money` ({code, …}) if the
+// model refuses it; nothing changes then.
+export function move(club, op, now = Date.now()) {
   const cm = load(club, now);
   let entries;
   try {
@@ -141,18 +143,57 @@ export function move(club, op, now = Date.now(), {kind = null, kinds = {}, extra
   } finally {
     sync(club, cm);
   }
-  const through = id => club.money.accounts[id]?.through;
-  const out = [];
-  for (const e of entries) {
-    if (through(e.member) !== e.backer) continue;
-    const old = {n: club.chips.next++, at: e.at, kind: kinds[e.kind] || kind || e.kind, member: e.member, amount: Math.abs(e.amount), balance: e.balance, ...extra};
-    if (e.note) old.note = e.note;
-    if (op.member && e.member !== op.member) old.player = op.member;
-    club.chips.ledger.push(old);
-    out.push(old);
+  return entries.map(e => entryView(club, e));
+}
+
+// The club's ledger, oldest first.
+export const ledgerOf = club => club.money?.ledger || [];
+
+const PATH_MOVES = new Set(['buy_in', 'top_up', 'refund', 'cash_out', 'tourney_buy_in', 'prize', 'void']);
+
+// An entry as pages and members' copies have it: `player` when it's on
+// someone else's link for a player's move along their path (an agent's, for
+// their player's buy-in), and for a promotion prize or its void, the award's
+// `hand` and a note naming it.
+export function entryView(club, e) {
+  const out = {...e};
+  if (!e.note) delete out.note;
+  if (!e.about) delete out.about;
+  const ledger = ledgerOf(club);
+  if (PATH_MOVES.has(e.kind) && ledger[e.n - 1]?.n === e.n) {
+    let i = e.n - 1;
+    while (i > 0 && ledger[i - 1].tx === e.tx) i--;
+    if (ledger[i].member !== e.member) out.player = ledger[i].member;
+  }
+  if (e.kind === 'prize' || e.kind === 'void') {
+    const a = (club.promos?.awards || []).find(x => x.entry === e.n || x.voidEntry === e.n);
+    if (a?.hand) out.hand = a.hand;
+    if (a) out.note = e.kind === 'void' ? `Voided: ${a.promoName}${a.voidWhy ? `, ${a.voidWhy}` : ''}` : `${a.promoName}: ${a.handName}`;
   }
   return out;
 }
+
+// The club's ledger without the entries on other links for a player's
+// move: each move's first entry, on the player's own link.
+export function ownEntries(club) {
+  const out = [];
+  let tx = null;
+  for (const e of ledgerOf(club)) {
+    if (e.tx !== tx) out.push(e);
+    tx = e.tx;
+  }
+  return out;
+}
+
+// Member `id`'s own entries (on their links up) after entry `since`.
+export const entriesOf = (club, id, since = 0) => ledgerOf(club).filter(e => e.member === id && e.n > since).map(e => entryView(club, e));
+
+// What an entry drew on credit (a buy-in, top-up or tournament buy-in that
+// took the link below zero), or paid back (a cash-out that brought it up
+// toward zero), from the balances before and after.
+const owing = b => Math.max(0, -b);
+export const drawnOn = e => Math.max(0, owing(e.balance) - owing(e.balance - e.amount));
+export const repaidBy = e => Math.max(0, owing(e.balance - e.amount) - owing(e.balance));
 
 // A link of member `id`'s (with whoever they play through, by default), from club.money.
 export function linkOf(club, id, backer = club.money?.accounts?.[id]?.through) {

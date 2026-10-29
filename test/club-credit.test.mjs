@@ -13,6 +13,7 @@ import {
 import { creditNotices, creditRow, raiseCredit, setCredit } from '../src/club-credit.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import { answerAgent, assignToAgent, offerAgent, runAgent } from '../src/club-agents.js';
+import { drawnOn, ledgerOf, repaidBy } from '../src/club-money.js';
 
 const LIMITS = {min: 10, max: 1000};
 
@@ -48,9 +49,9 @@ test('a member has no credit unless the host sets it, and never goes below zero 
   buyIn(club, 'ann', 't1', 100, LIMITS);
   assert.throws(() => topUp(club, 'ann', 10, 1000), e => e.short && /You have 0 chips/.test(e.message));
   assert.equal(ann(club).balance, 0);
-  assert.equal(club.chips.ledger.at(-1).credit, undefined, 'nothing drawn on credit');
+  assert.equal(drawnOn(ledgerOf(club).at(-1)), 0, 'nothing drawn on credit');
   cashOut(club, 'ann');
-  assert.equal(club.chips.ledger.at(-1).repaid, undefined);
+  assert.equal(repaidBy(ledgerOf(club).at(-1)), 0);
   assert.ok(totals(club).conserved);
 });
 
@@ -59,14 +60,14 @@ test('example: limit 500, sit with 200 on credit, win to 300, stand: balance 100
   setCredit(club, 'ann', 500, 0);
   assert.equal(available(ann(club)), 500);
   const e = buyIn(club, 'ann', 't1', 200, LIMITS, 1);
-  assert.equal(e.credit, 200, 'the credit draw is logged');
+  assert.equal(drawnOn(e), 200, 'the credit draw shows in the balances');
   assert.equal(ann(club).balance, -200);
   assert.equal(available(ann(club)), 300);
   assert.ok(totals(club).conserved, 'the chips on the table offset what is owed');
   play(club, 'ann', 300);
   const out = cashOut(club, 'ann', 2);
-  assert.equal(out.repaid, 200);
-  assert.equal(out.owes, undefined);
+  assert.equal(repaidBy(out), 200);
+  assert.equal(out.balance, 100);
   assert.equal(ann(club).balance, 100);
   assert.equal(available(ann(club)), 600);
   assert.equal(owedBy(ann(club)), 0);
@@ -80,8 +81,8 @@ test('example: limit 500, sit with 200, lose it all, stand: balance −200, avai
   buyIn(club, 'ann', 't1', 200, LIMITS, 1);
   play(club, 'ann', 0);
   const out = cashOut(club, 'ann', 2);
-  assert.equal(out.repaid, undefined, 'nothing to pay back with');
-  assert.equal(out.owes, 200);
+  assert.equal(repaidBy(out), 0, 'nothing to pay back with');
+  assert.equal(out.balance, -200);
   assert.equal(ann(club).balance, -200);
   assert.equal(available(ann(club)), 300);
   assert.ok(totals(club).conserved);
@@ -94,7 +95,7 @@ test('example: balance 50, sit with 200: 50 of their own, 150 on credit', () => 
   setCredit(club, 'ann', 500, 0);
   issue(club, 'ann', 50, 0);
   const e = buyIn(club, 'ann', 't1', 200, LIMITS, 1);
-  assert.equal(e.credit, 150);
+  assert.equal(drawnOn(e), 150);
   assert.equal(ann(club).balance, -150);
   assert.equal(available(ann(club)), 350);
 });
@@ -106,7 +107,7 @@ test('a buy-in or top-up is capped at what is available; top-ups draw on credit 
   assert.throws(() => buyIn(club, 'ann', 't1', 700, LIMITS), e => e.short && /You have 6 available/.test(e.message));
   buyIn(club, 'ann', 't1', 50, LIMITS, 1);
   const t = topUp(club, 'ann', 300, 1000, 2);
-  assert.equal(t.credit, 250, '50 own left, then 250 credit');
+  assert.equal(drawnOn(t), 250, '50 own left, then 250 credit');
   assert.equal(available(ann(club)), 250);
   assert.throws(() => topUp(club, 'ann', 300, 1000, 3), /You have 2\.50 available/);
   topUp(club, 'ann', 250, 1000, 3);
@@ -129,17 +130,17 @@ test('an earlier debt is repaid from a later win', () => {
   assert.equal(ann(club).balance, -200);
   // Next session: 100 more on credit, and a big win.
   const e = buyIn(club, 'ann', 't1', 100, LIMITS, 3);
-  assert.equal(e.credit, 100);
+  assert.equal(drawnOn(e), 100);
   play(club, 'ann', 450);
   const out = cashOut(club, 'ann', 4);
-  assert.equal(out.repaid, 300, 'this session’s 100 and the earlier 200');
+  assert.equal(repaidBy(out), 300, 'this session’s 100 and the earlier 200');
   assert.equal(ann(club).balance, 150);
   // A smaller win pays back as far as it goes.
   buyIn(club, 'ann', 't1', 400, LIMITS, 5);
   play(club, 'ann', 100);
   const short = cashOut(club, 'ann', 6);
-  assert.equal(short.repaid, 100);
-  assert.equal(short.owes, 150);
+  assert.equal(repaidBy(short), 100);
+  assert.equal(short.balance, -150);
   assert.equal(ann(club).balance, -150);
   assert.ok(totals(club).conserved);
 });
@@ -216,7 +217,7 @@ test('paying up: the host gives what was received, with a note (#454)', () => {
   cashOut(club, 'ann', 2);
   assert.equal(ann(club).balance, -300);
   const e = issue(club, 'ann', 300, 3, 'cash');
-  assert.deepEqual([e.kind, e.amount, e.balance, e.note], ['issue', 300, 0, 'cash']);
+  assert.deepEqual([e.kind, e.amount, e.balance, e.note], ['give', 300, 0, 'cash']);
   assert.equal(available(ann(club)), 500);
   assert.ok(totals(club).conserved);
   assert.ok(checkOwnLedger(accountBody(club, 'ann').entries, 0));
@@ -249,7 +250,7 @@ test('notifications: a player at their limit asking, and a player who stood up o
   play(club, 'bob', 40);
   cashOut(club, 'bob', 3);
   assert.deepEqual(creditNotices(club), [
-    {kind: 'left_owing', member: 'bob', name: 'bob', owes: 60, owesNow: 60, table: 't1', at: 3, n: club.chips.ledger.at(-1).n},
+    {kind: 'left_owing', member: 'bob', name: 'bob', owes: 60, owesNow: 60, table: 't1', at: 3, n: ledgerOf(club).at(-1).n},
     {kind: 'at_limit', member: 'ann', name: 'ann', asked: 50, credit: 100, available: 0, table: 't1', at: 2},
   ]);
   issue(club, 'bob', 60, 4, 'cash');
@@ -261,12 +262,12 @@ test('at a table: a credit buy-in, a top-up past what is available is refused, s
   const club = clubWith('ann');
   setCredit(club, 'ann', 300, 0);
   const t = newTable(club, {sb: 1, bb: 2, minBB: 40, maxBB: 100}); // 80 to 200
-  assert.equal(chipsForTable(club, 'ann', t, 200, 1).credit, 200);
+  assert.equal(drawnOn(chipsForTable(club, 'ann', t, 200, 1)), 200);
   assert.throws(() => chipsForTable(club, 'ann', t, 150, 2), e => e.short);
-  assert.equal(chipsForTable(club, 'ann', t, 100, 2).credit, 100);
+  assert.equal(drawnOn(chipsForTable(club, 'ann', t, 100, 2)), 100);
   play(club, 'ann', 360);
   const out = leftTable(club, 'ann', 360, 3);
-  assert.equal(out.repaid, 300);
+  assert.equal(repaidBy(out), 300);
   assert.equal(ann(club).balance, 60);
   assert.ok(totals(club).conserved);
 });

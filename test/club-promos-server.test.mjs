@@ -91,7 +91,7 @@ test('a promotion pays its high hand on the alarm, and after the room wakes', as
     await server.flush();
     await wait();
     assert.equal(server.club.members[ann.id].balance, 1000, 'paid on the alarm');
-    assert.equal(server.club.chips.ledger.at(-1).kind, 'promo');
+    assert.equal(server.club.money.ledger.at(-1).kind, 'prize');
     assert.ok(totals(server.club).conserved);
     assert.ok(sent.some(s => s.to === ann.id && s.data.body?.type === 'promo_event' && /you won 10/.test(s.data.body.text)));
 
@@ -112,7 +112,7 @@ test('a promotion pays its high hand on the alarm, and after the room wakes', as
     await server.message({from: owner.id, data: await signMessage(owner, {club: code, type: 'owner_cmd', op: 'void_award', args: {id: awards.at(-1).id, why: 'test'}, id: 99})});
     await server.flush();
     assert.equal(server.club.members[ann.id].balance, 1000);
-    assert.equal(server.club.chips.ledger.at(-1).kind, 'promo_void');
+    assert.equal(server.club.money.ledger.at(-1).kind, 'void');
     for (const t of server.club.tables || []) t.status = 'closed';
   } finally {
     mock.timers.reset();
