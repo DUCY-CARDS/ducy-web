@@ -43,42 +43,26 @@
 // (owner_result), and get the whole club after every change (owner_view).
 
 import { signMessage } from './identity.js';
-import { account, approve, decline, hostReceive, removeMember, revokeInvite } from './club.js';
-import { declineRequest, ensureChips, grantRequest, issue, reclaim } from './club-chips.js';
+import { account, hostReceive } from './club.js';
+import { ensureChips } from './club-chips.js';
 import { ledgerOf, startMoney } from './club-money.js';
 import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
-import { addPayoutTable, cancelTourney, deletePayoutTable, editPayoutTable, newTourney, payoutTableById, register, setPayout, setPayoutTable, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
+import { cancelTourney, newTourney, register, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
-import { dropManagers, logAction } from './club-log.js';
-import {
-  agentBody, answerAgent, assignToAgent, isAgent, offerAgent, revokeAgent, runAgent,
-} from './club-agents.js';
-import { raiseCredit, setCredit } from './club-credit.js';
-import { answerHelp, askHelp, helpBody, staffOnline } from './club-help.js';
+import { dropManagers } from './club-log.js';
+import { agentBody, answerAgent, isAgent, runAgent } from './club-agents.js';
+import { askHelp, helpBody, staffOnline } from './club-help.js';
 import { lobbyBody, sayInLobby } from './club-lobby.js';
 import { addService, checkRequest, revokeService, runRequest, ServiceError, updateService } from './club-services.js';
 import { chatLimiter } from './table-chat.js';
 import { handRecord } from './hand-replay.js';
-import {
-  approveAward, editPromo, newPromo, nextSettle, processHand, promosAdmin, promosBody, setPromoStatus, settlePeriods, voidAward,
-} from './club-promos.js';
+import { nextSettle, processHand, promosBody, settlePeriods } from './club-promos.js';
 import { chipText } from './chip-format.js';
 import { infoBody } from './club-info.js';
-import { rules } from './club-rules.js';
+import { command, HOSTED } from './club-commands.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
-
-// A host's settings and what each may be.
-const SETTINGS = {
-  ratholeHours: n => Number.isSafeInteger(n) && n >= 0 && n <= 24 * 30,
-  sitOutMins: n => Number.isSafeInteger(n) && n >= 0 && n <= 240,
-  // Call time (#476): new tables' hands to play once up, before leaving.
-  stayHands: n => Number.isSafeInteger(n) && n >= 0 && n <= 500,
-  keepDays: n => Number.isSafeInteger(n) && n >= 1 && n <= 3650,
-  // Let people ask to join with the club code, no invite link (#393).
-  codeJoin: v => typeof v === 'boolean',
-};
 
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, engine = {},
@@ -278,12 +262,15 @@ export function createClubServer({
     for (const id of memberIds()) sendToPlayer({to: id, body});
   }
   const promoEvent = (to, kind, text) => sendToPlayer({to, body: {type: 'promo_event', club: club.code, kind, text}});
-  function promoPaid(awards) {
+  // Winners online hear they won.
+  function promoEvents(awards) {
     for (const a of awards) {
-      if (a.status !== 'paid') continue;
-      accountTo(a.member);
-      if (online.has(a.member)) promoEvent(a.member, 'award', `${a.promoName}: you won ${chipText(a.amount)} for ${midSentence(a.handName)}.`);
+      if (a.status === 'paid' && online.has(a.member)) promoEvent(a.member, 'award', `${a.promoName}: you won ${chipText(a.amount)} for ${midSentence(a.handName)}.`);
     }
+  }
+  function promoPaid(awards) {
+    for (const a of awards) if (a.status === 'paid') accountTo(a.member);
+    promoEvents(awards);
   }
   // A finished hand at a club table: bonuses and leaderboards.
   // Resolves to whether the hand counted for any promotion (qualifying or not).
@@ -473,52 +460,11 @@ export function createClubServer({
     if (r.changed || r.replies.length) changed();
   }
 
-  // A decision about member `id` (approve, decline, remove): tell them.
-  async function decide(fn, id) {
-    const rep = fn(club, id);
-    if (!rep) return;
-    changed();
-    for (const r of [rep].flat()) await sendToPlayer(r);
-    // A new member gets the tables straight away.
-    if (fn === approve && tableHost) sendToPlayer({to: id, body: tablesNow()});
-    broadcastLobby();
-  }
-
-  // A chip change for member `id`; then they get their updated account.
-  function chips(id, fn) {
-    const e = fn();
-    changed();
-    return sendToPlayer(account(club, id, e?.n ? e.n - 1 : Infinity));
-  }
-
-  // Sends a reply, if there is one, and saves.
-  const reply = r => { if (r) { sendToPlayer(r); changed(); } };
-
-  // Everything the host can do. Each takes one object of arguments, and
-  // throws (with a message for the host) when it can't be done.
+  // Everything else the host can do: what drives the running tables and
+  // tournaments, services, and the host's lobby line. (The club host runs
+  // the rest: HOSTED, club-commands.js.) Each takes one object of
+  // arguments, and throws (with a message for the host) when it can't be done.
   const OPS = {
-    approve: ({id}) => decide(approve, id),
-    decline: ({id}) => decide(decline, id),
-    remove: ({id}) => decide(removeMember, id),
-    revoke_invite: () => { revokeInvite(club); changed(); },
-    give: ({id, amount, note = ''}) => chips(id, () => issue(club, id, amount, Date.now(), note)),
-    take: ({id, amount, note = ''}) => chips(id, () => reclaim(club, id, amount, Date.now(), note)),
-    grant: ({id, amount}) => chips(id, () => grantRequest(club, id, amount)),
-    deny: ({id, note = ''}) => chips(id, () => { declineRequest(club, id, note); return null; }),
-    // Credit players (#404): a member's credit limit (0: none), and raising it
-    // to answer a request at the limit (the other answer is deny). Paying up
-    // is give or take, with a note (#454).
-    set_credit: ({id, amount}) => chips(id, () => { setCredit(club, id, amount); return null; }),
-    raise_credit: ({id, amount}) => chips(id, () => { raiseCredit(club, id, amount); return null; }),
-    offer_agent: ({id}) => reply(offerAgent(club, id)),
-    revoke_agent: ({id}) => reply(revokeAgent(club, id)),
-    assign_agent: ({id, agent}) => { assignToAgent(club, id, agent || null); changed(); },
-    // Answering a help request (#192): a reply, and/or marking it handled.
-    help_answer: ({id, reply: text = '', handled = true}) => {
-      const h = answerHelp(club, actor(), String(id), {reply: text, handled});
-      changed();
-      if (online.has(h.from)) sendHelp(h.from);
-    },
     // The host's line in the lobby chat.
     lobby_say: ({text}) => lobbySay(actor(), text),
     // Services (club-services.js): outside servers that give chips within
@@ -526,13 +472,6 @@ export function createClubServer({
     service_add: async args => { const s = await addService(club, args || {}); changed(); return s.id; },
     service_update: ({id, ...args}) => { updateService(club, String(id), args); changed(); },
     service_revoke: ({id}) => { revokeService(club, String(id)); changed(); },
-    settings: values => {
-      for (const [k, v] of Object.entries(values)) {
-        if (!SETTINGS[k]?.(v)) throw new Error(`Not a valid ${k}.`);
-      }
-      Object.assign(club, values);
-      changed();
-    },
     new_table: ({table}) => {
       const t = newTable(club, table, Date.now(), limits);
       changed();
@@ -568,59 +507,6 @@ export function createClubServer({
       for (const m of who) accountTo(m);
       broadcastTourneys();
     },
-    // High Hand promotions (#267): set up, change (from the next period),
-    // pause, resume or end one; approve a prize held over the budget, or
-    // void one within 24 hours.
-    new_promo: ({promo}) => {
-      const p = newPromo(club, promo);
-      changed();
-      broadcastPromos();
-      armPromos();
-      return p.id;
-    },
-    edit_promo: ({id, promo}) => { editPromo(club, String(id), promo); changed(); broadcastPromos(); },
-    promo_status: ({id, status}) => { setPromoStatus(club, String(id), String(status)); changed(); broadcastPromos(); armPromos(); },
-    approve_award: ({id}) => { promoPaid([approveAward(club, String(id))]); changed(); broadcastPromos(); },
-    void_award: ({id, why = ''}) => {
-      const {award, offered} = voidAward(club, String(id), Date.now(), why);
-      accountTo(award.member);
-      changed();
-      broadcastPromos();
-      return offered ? {offered: offered.id, name: offered.name} : null;
-    },
-    promos: () => promosAdmin(club),
-    // A tournament's own payouts: {rows}, a list of shares, or null (the defaults).
-    set_payout: ({id, places, rows}) => {
-      setPayout(club, id, rows ? {rows} : places ?? null);
-      changed();
-      broadcastTourneys();
-    },
-    // Club payout tables by entries (#424): added, edited (renamed, rows),
-    // deleted; and the one a tournament pays by (null: the defaults).
-    add_payout_table: ({table}) => {
-      const p = addPayoutTable(club, table || {});
-      logAction(club, actor(), `Added the payout table ${p.name}`);
-      changed();
-      return p.id;
-    },
-    edit_payout_table: ({id, table}) => {
-      const was = payoutTableById(club, String(id))?.name;
-      const p = editPayoutTable(club, String(id), table || {});
-      logAction(club, actor(), was && was !== p.name ? `Renamed the payout table ${was} to ${p.name}` : `Changed the payout table ${p.name}`);
-      changed();
-      broadcastTourneys();
-    },
-    delete_payout_table: ({id}) => {
-      const p = deletePayoutTable(club, String(id));
-      logAction(club, actor(), `Deleted the payout table ${p.name}`);
-      changed();
-    },
-    set_payout_table: ({id, table}) => {
-      const t = setPayoutTable(club, String(id), table ? String(table) : null);
-      logAction(club, actor(), `${t.name} pays by ${payoutTableById(club, t.payoutTable)?.name || 'Default'}`);
-      changed();
-      broadcastTourneys();
-    },
     // Removing a player from a table without closing it (#414): after the
     // hand in play, never in the middle of it (#476); keep_player is Undo.
     remove_player: async ({table, id}) => {
@@ -639,14 +525,6 @@ export function createClubServer({
       await tableHost.movePlayer(table, String(id), String(to), {by: actor()});
       changed();
     },
-    // Club info (#398): its sections, sent to every member online.
-    set_info: ({info}) => {
-      rules(club, {op: 'setInfo', info: info && typeof info === 'object' ? info : {}});
-      logAction(club, actor(), 'Updated the club info');
-      changed();
-      const body = infoBody(club);
-      for (const id of memberIds()) sendToPlayer({to: id, body});
-    },
     close_table: ({table}) => {
       const t = tableById(club, table);
       if (!t || t.status !== 'open') return;
@@ -660,10 +538,38 @@ export function createClubServer({
   // Who the actions are by, for the activity log.
   const actor = () => club.ownerId || club.hostId;
 
+  // A command the club host runs (club-commands.js, #456): it changes the
+  // club, then what it means for everyone else is carried out here.
+  async function hosted(op, args) {
+    const out = command(club, op, args);
+    changed();
+    for (const r of out.replies) await sendToPlayer(r);
+    for (const a of out.accounts) sendToPlayer(account(club, a.id, a.since ?? Infinity));
+    // A new member gets the tables straight away.
+    if (tableHost) for (const id of out.tablesTo) sendToPlayer({to: id, body: tablesNow()});
+    for (const id of out.helpTo) if (online.has(id)) sendHelp(id);
+    if (op === 'approve_award') {
+      const a = club.promos?.awards?.find(x => x.id === String(args.id));
+      if (a) promoEvents([a]);
+    }
+    const tell = new Set(out.tell);
+    if (tell.has('lobby')) broadcastLobby();
+    if (tell.has('tables')) broadcastTables();
+    if (tell.has('tourneys')) broadcastTourneys();
+    if (tell.has('promos')) broadcastPromos();
+    if (tell.has('info')) {
+      const body = infoBody(club);
+      for (const id of memberIds()) sendToPlayer({to: id, body});
+    }
+    if (out.armPromos) armPromos();
+    return out.value ?? undefined;
+  }
+
   // `extraOps`: actions only where the club runs can do them (an always-on
   // club's room: deleting the club, #98).
   function run(op, args = {}) {
     if (Object.hasOwn(extraOps, op)) return extraOps[op](args);
+    if (HOSTED.has(op)) return hosted(op, args && typeof args === 'object' ? args : {});
     if (!Object.hasOwn(OPS, op)) throw new Error(`no host action ${op}`);
     return OPS[op](args);
   }
