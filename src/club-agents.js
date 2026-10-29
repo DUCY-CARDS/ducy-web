@@ -15,89 +15,36 @@
 // own invite token); a player under an agent: agentOf.
 // Agents recruit with their own invite link and approve their own players;
 // the host can still decline or remove anyone and assign or reassign members.
+// ducy-play's club book (club-book.js, #456) runs the role and the
+// commands; what an agent sees is drawn here.
 
-import { approve, decline, account, newInvite } from './club.js';
-import { chipText } from './chip-format.js';
-import { answerRequest, available, backerGive, backerTake, checkGrant, creditOf, declineRequest, ensureChips } from './club-chips.js';
-import { CLUB, entriesOf, linkOf, move } from './club-money.js';
+import { account } from './club.js';
+import { available, creditOf, ensureChips } from './club-chips.js';
+import { entriesOf } from './club-money.js';
 import { tableSessions, totalsByMember } from './hand-replay.js';
-import { logAction } from './club-log.js';
+import { book } from './club-book.js';
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
 export const playersOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'member');
 export const recruitsOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'pending');
 
-const agentBodyRole = (club, id) => ({type: 'agent_role', club: club.code, agent: club.members[id]?.agent || null});
-
 // The host offers member `id` the agent role. Their credit limit is the one
-// they have as a member (#445).
-export function offerAgent(club, id) {
-  const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Only members can be agents.');
-  if (m.agent === 'yes') throw new Error(`${m.name} is already an agent.`);
-  if (m.agentOf) throw new Error(`${m.name} plays under an agent; unassign them first.`);
-  m.agent = 'offered';
-  return {to: id, body: agentBodyRole(club, id)};
-}
+// they have as a member (#445). Returns the reply to send them.
+export const offerAgent = (club, id) => book(club, {op: 'offerAgent', id});
 
-export function answerAgent(club, id, accept, now = Date.now()) {
-  const m = club.members[id];
-  if (m?.agent !== 'offered') return null;
-  if (accept) {
-    m.agent = 'yes';
-    m.agentInvite = newInvite();
-    logAction(club, id, `${m.name} became an agent (credit limit ${chipText(creditOf(m))})`, now);
-  } else {
-    delete m.agent;
-  }
-  return {to: id, body: agentBodyRole(club, id)};
-}
+// Member `id` answers the offer; the reply to send them, or null.
+export const answerAgent = (club, id, accept, now = Date.now()) => book(club, {op: 'answerAgent', id, accept: !!accept}, now);
 
 // The host ends the agent role. Only once the agent's account isn't in
 // credit (they've settled up), and they've settled with their players and
 // none is seated; their players then play through the club.
-export function revokeAgent(club, id, now = Date.now()) {
-  const m = club.members[id];
-  if (!m?.agent) return null;
-  if (m.agent === 'yes') {
-    if (accountOf(club, id).creditUsed > 0) throw new Error(`${m.name}'s account is in credit: settle up first.`);
-    const open = playersOf(club, id).find(p => p.seat || (club.money && linkOf(club, p.id, id)?.balance));
-    if (open) throw new Error(`${m.name} and ${open.name} settle up first${open.seat ? ', after they leave their table' : ''}.`);
-  }
-  for (const p of Object.values(club.members)) {
-    if (p.agentOf !== id) continue;
-    delete p.agentOf;
-    if (m.agent === 'yes' && p.status === 'member') playThrough(club, p.id, CLUB, now);
-  }
-  const was = m.agent;
-  delete m.agent;
-  delete m.agentInvite;
-  if (was === 'yes') logAction(club, club.hostId, `${m.name} is no longer an agent`, now);
-  return {to: id, body: agentBodyRole(club, id)};
-}
-
-// Member `id` plays through `backer` from now on: their link with them,
-// made if it's new (#454).
-function playThrough(club, id, backer, now) {
-  if (!linkOf(club, id, backer)) move(club, {op: 'addLink', member: id, backer}, now);
-  move(club, {op: 'setThrough', member: id, backer}, now);
-}
+export const revokeAgent = (club, id, now = Date.now()) => book(club, {op: 'revokeAgent', id}, now);
 
 // The host puts a member under an agent (or none). A member has at most
 // one, and moves only with nothing on their link and not seated: their
 // chips stay where they are (#454).
 export function assignToAgent(club, playerId, agentId, now = Date.now()) {
-  const p = club.members[playerId];
-  if (!p || p.status !== 'member') throw new Error('No such member.');
-  if (p.agent) throw new Error('Agents can’t play under another agent.');
-  if (agentId && !isAgent(club, agentId)) throw new Error('Not an agent.');
-  if ((agentId || null) !== (p.agentOf || null)) {
-    if (p.seat) throw new Error(`${p.name} is at a table; they need to leave it first.`);
-    if (p.balance) throw new Error(`${p.name} has ${chipText(p.balance)} on their account: settle it first.`);
-    playThrough(club, playerId, agentId || CLUB, now);
-  }
-  if (agentId) p.agentOf = agentId; else delete p.agentOf;
-  logAction(club, club.hostId, agentId ? `${p.name} now plays under ${club.members[agentId].name}` : `${p.name} no longer plays under an agent`, now);
+  book(club, {op: 'assignAgent', id: playerId, agent: agentId || null}, now);
 }
 
 // The account: the agent's link with the club (`total`), their players'
@@ -143,50 +90,13 @@ export function agentBody(club, id) {
   };
 }
 
-function mine(club, agentId, playerId) {
-  const p = club.members[playerId];
-  if (!p || p.agentOf !== agentId) throw new Error('Not one of your players.');
-  return p;
-}
-
-// An agent's command (sent signed through the host). Returns {replies} or throws.
+// An agent's command (sent signed through the host): approving or
+// declining their recruits, giving, granting, taking back, or denying a
+// request. Returns {replies, approved} or throws. A give goes on the
+// player's link with the agent: it costs the agent nothing until the chips
+// go on a table (#454).
 export function runAgent(club, by, cmd, now = Date.now()) {
-  if (!isAgent(club, by)) throw new Error('You’re not an agent in this club.');
-  const a = club.members[by];
-  switch (cmd?.op) {
-    case 'approve': case 'decline': {
-      const p = club.members[cmd.id];
-      if (!p || p.agentOf !== by || p.status !== 'pending') throw new Error('No such request.');
-      const r = (cmd.op === 'approve' ? approve : decline)(club, cmd.id, now);
-      logAction(club, by, `${a.name} ${cmd.op === 'approve' ? 'approved' : 'declined'} ${p.name}`, now);
-      return {replies: [r], approved: cmd.op === 'approve' ? cmd.id : null};
-    }
-    case 'give': case 'grant': {
-      const p = mine(club, by, cmd.id);
-      const amt = Number(cmd.op === 'grant' ? (cmd.amount ?? p.request?.amount) : cmd.amount);
-      if (cmd.op === 'grant' && !p.request) throw new Error('There’s no request to grant.');
-      if (cmd.op === 'grant') checkGrant(club, cmd.id);
-      if (!Number.isSafeInteger(amt) || amt <= 0) throw new Error('Enter a whole number of chips above 0.');
-      // On their link with the agent: it costs the agent nothing until the
-      // chips go on a table (#454).
-      const e = backerGive(club, by, cmd.id, amt, now, cmd.op === 'grant' ? p.request.note : cmd.note);
-      if (cmd.op === 'grant') answerRequest(club, cmd.id, 'granted', {given: amt, by, now});
-      logAction(club, by, `${a.name} ${cmd.op === 'grant' ? 'granted' : 'gave'} ${p.name} ${chipText(amt)}`, now, amt);
-      return {replies: [account(club, cmd.id, e.n - 1)]};
-    }
-    case 'take': {
-      const p = mine(club, by, cmd.id);
-      const e = backerTake(club, by, cmd.id, Number(cmd.amount), now, cmd.note);
-      logAction(club, by, `${a.name} took back ${chipText(-e.amount)} from ${p.name}`, now, -e.amount);
-      return {replies: [account(club, cmd.id, e.n - 1)]};
-    }
-    case 'deny': {
-      const p = mine(club, by, cmd.id);
-      if (!declineRequest(club, cmd.id, cmd.note, now, by)) throw new Error('There’s no request to decline.');
-      logAction(club, by, `${a.name} declined ${p.name}’s chip request`, now);
-      return {replies: [account(club, cmd.id, Infinity)]};
-    }
-    default:
-      throw new Error('Unknown command.');
-  }
+  const done = book(club, {op: 'runAgent', by, cmd: cmd ?? {}}, now);
+  const accounts = done.accounts.map(a => account(club, a.id, a.since ?? Infinity));
+  return {replies: [...done.replies, ...accounts], approved: done.approved};
 }

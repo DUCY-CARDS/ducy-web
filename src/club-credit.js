@@ -1,57 +1,35 @@
 // Credit players (#404): members who may sit down with chips borrowed from
-// the club, up to a credit limit. Pure functions over the club object; the
-// ledger side (buying in on credit, repaying on standing up) is in
-// club-chips.js, and club-server.js runs the host's commands. Paying the
-// club back is the host giving chips, with a note (#454).
+// the club, up to a credit limit. ducy-play's club book (club-book.js, #456)
+// sets and raises limits; the ledger side (buying in on credit, repaying on
+// standing up) is in club-chips.js, and club-server.js runs the host's
+// commands. Paying the club back is the host giving chips, with a note (#454).
 //
 // Member field: credit, the limit on their link (absent or 0: none,
 // club-money.js). The balance is the member's own chips off the table,
 // negative for what they owe. For now only the host sets limits; later a
 // player's agent will too.
 
-import { chipText } from './chip-format.js';
-import { answerRequest, available, creditOf, ensureChips, owedBy } from './club-chips.js';
-import { logAction } from './club-log.js';
-import { backerOf, move, ownEntries } from './club-money.js';
+import { available, creditOf, ensureChips, owedBy } from './club-chips.js';
+import { book } from './club-book.js';
+import { ownEntries } from './club-money.js';
 
-const whole = n => Number.isSafeInteger(n) && n >= 0 && n <= 1e12;
-
-function member(club, id) {
-  const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Not a member of this club.');
-  ensureChips(club);
-  return m;
-}
-
-// The limit on the link member `m` plays through (#454): club-money.js
-// keeps m.credit in step.
-function setLimit(club, m, limit, now) {
-  move(club, {op: 'setCredit', member: m.id, backer: backerOf(club, m), credit: limit}, now);
-}
+const num = a => (Number.isFinite(a) ? a : null);
 
 // The host sets member `id`'s credit limit (0: none). Lowering it below what
 // they owe is allowed: they just have nothing available until they pay.
 export function setCredit(club, id, limit, now = Date.now()) {
-  const m = member(club, id);
-  if (!whole(limit)) throw new Error('The credit limit is a whole number of chips (0 for none).');
-  if (limit === creditOf(m)) return m;
-  setLimit(club, m, limit, now);
-  logAction(club, club.hostId, `${m.name}’s credit limit is now ${chipText(limit)}`, now);
-  return m;
+  ensureChips(club);
+  book(club, {op: 'setCredit', id, amount: num(limit)}, now);
+  return club.members[id];
 }
 
 // The host answers a credit player's request at their limit by raising the
 // limit to `limit` (the only other answer is no: credit is never given past
 // the limit). The request counts as granted, the extra credit as given.
 export function raiseCredit(club, id, limit, now = Date.now()) {
-  const m = member(club, id);
-  if (!m.request) throw new Error('There’s no request to answer.');
-  const was = creditOf(m);
-  if (!whole(limit) || limit <= was) throw new Error(`Raise the limit above ${chipText(was)}.`);
-  setLimit(club, m, limit, now);
-  answerRequest(club, id, 'granted', {given: limit - was, limit, now});
-  logAction(club, club.hostId, `${m.name}’s credit limit raised to ${chipText(limit)}`, now, limit - was);
-  return m;
+  ensureChips(club);
+  book(club, {op: 'raiseCredit', id, amount: num(limit)}, now);
+  return club.members[id];
 }
 
 // A member's credit at a glance, for the host's Members list: balance
