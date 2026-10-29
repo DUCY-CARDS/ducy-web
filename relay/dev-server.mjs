@@ -11,13 +11,12 @@ import { adminApi, adminsFrom } from './src/admin.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
+import { initSync } from '../wasm/ducy_wasm.js';
 
-// The engine for always-on clubs (#93), loaded on first use from the site's
-// wasm build (../wasm, as the Worker bundles it).
-let engineP = null;
-const engine = () => (engineP ||= import('../wasm/ducy_wasm.js').then(m => {
-  m.initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
-}));
+// The engine (#93), from the site's wasm build (../wasm, as the Worker
+// bundles it): always-on clubs run on it, and making or reading one runs
+// its rules.
+initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
 
 // Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
 const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
@@ -103,7 +102,7 @@ async function clubOf(room, code) {
     room.rebuildChecked = true;
     if (!(await pullBackup(backups, storageOf(room), code).catch(e => { console.warn('club: not rebuilt:', e); return false; }))) return null;
   }
-  room.club ||= Promise.all([engine(), reg.status(code)]).then(([, {record}]) => openClub({
+  room.club ||= reg.status(code).then(({record}) => openClub({
     storage: storageOf(room),
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],

@@ -499,6 +499,8 @@ export class Room {
   }
 
   async fetch(req) {
+    // Making, importing or reading a club runs its rules (ducy-play's).
+    loadEngine();
     const url = new URL(req.url);
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
     // From the Worker's admin API only: the outside world reaches rooms by
