@@ -8,6 +8,7 @@ import {
   approve, clubName, decline, hostReceive, inviteLink, membersByStatus, nameKey, newClub, newMembership,
   parseInvite, playerReceive, removeMember, revokeInvite,
 } from '../src/club.js';
+import { managerNotices } from '../src/club-notices.js';
 
 async function setup() {
   const host = await createIdentity();
@@ -96,6 +97,12 @@ test('declined and removed players can ask again with a valid invite', async () 
   approve(club, ann.id);
   assert.equal(removeMember(club, ann.id)[0].body.status, 'removed');
   assert.equal(removeMember(club, ann.id), null);
+  // Asking again after being removed, the manager is told (#488).
+  const removedAt = club.members[ann.id].removedAt;
+  assert.ok(removedAt);
+  await hostReceive(club, verifier, await signMessage(ann, join(club)));
+  assert.equal(club.members[ann.id].status, 'pending');
+  assert.equal(managerNotices(club).find(n => n.kind === 'join').removedAt, removedAt);
 });
 
 test('asking with the club code alone needs the club to allow it (#393)', async () => {

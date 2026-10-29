@@ -24,7 +24,8 @@ export function managerNotices(club, {cleared = new Set(), seated = {}} = {}) {
   const out = [];
   const ms = Object.values(club.members || {});
   for (const m of ms) {
-    if (m.status === 'pending') out.push({key: `join:${m.id}:${m.requestedAt || 0}`, kind: 'join', member: m.id, name: m.name, via: m.agentOf ? club.members[m.agentOf]?.name || '' : '', at: m.requestedAt || 0});
+    // Removed before (#488): the manager is told.
+    if (m.status === 'pending') out.push({key: `join:${m.id}:${m.requestedAt || 0}`, kind: 'join', member: m.id, name: m.name, via: m.agentOf ? club.members[m.agentOf]?.name || '' : '', removedAt: m.removedAt || 0, at: m.requestedAt || 0});
     // An agent's player asks their agent (#75); one at their credit limit
     // is an at_limit notice below.
     const q = m.status === 'member' && !m.agentOf && m.request;

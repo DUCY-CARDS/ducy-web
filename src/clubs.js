@@ -1996,7 +1996,7 @@ function requestsPageHtml() {
     // Letting someone in only lets them in: chips are the host's choice,
     // with Give (#395).
     for (const m of pending) {
-      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>`;
+      h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>${removedHtml(m.removedAt)}`;
       h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></li>`;
     }
     for (const m of asking) h += askRowHtml(m);
@@ -2004,6 +2004,12 @@ function requestsPageHtml() {
   } else if (!openHelp(club).length) h += '<p class="pl-meta cl-empty">Nothing waiting.</p>';
   h += requestLogHtml();
   return h + inviteRowHtml();
+}
+
+// Someone asking to join who was removed before (#488): nobody comes back
+// without the manager knowing.
+function removedHtml(at) {
+  return at ? ` <span class="cl-flag">Removed ${esc(ago(at))}</span>` : '';
 }
 
 // A chip request on Requests: Give what was asked, another amount, or no.
@@ -2217,7 +2223,7 @@ function noteHtml(n) {
   let top = '', body = '', acts = '';
   const open = noteForm === n.key;
   if (n.kind === 'join') {
-    top = `${who} asks to join${n.via ? ` <span class="pl-meta">via ${esc(n.via)}</span>` : ''}`;
+    top = `${who} asks to join${n.via ? ` <span class="pl-meta">via ${esc(n.via)}</span>` : ''}${removedHtml(n.removedAt)}`;
     acts = btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('decline', 'No', ` data-id="${id}"`);
   } else if (n.kind === 'chips') {
     top = `${who} asks for <b>${chips(n.amount)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
