@@ -52,13 +52,12 @@
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
 
-import { checkSignature, isPlayerId } from './identity.js';
+import * as ducy from '../wasm/ducy_wasm.js';
+import { checkSignature } from './identity.js';
 import { normCode } from './play-net.js';
-import { accountBody, cancelRequest, checkOwnLedger, ensureChips, requestChips } from './club-chips.js';
+import { accountBody, cancelRequest, ensureChips, requestChips } from './club-chips.js';
 import { command } from './club-commands.js';
 import { nameKey, newRules, rules } from './club-rules.js';
-import { readLobby } from './club-lobby.js';
-import { readInfo } from './club-info.js';
 
 export const MAX_CLUB_NAME = 50;
 export const MAX_PLAYER_NAME = 20;
@@ -193,162 +192,18 @@ export function newMembership(inv) {
 
 // The player handles one envelope from the host. Returns true if it updated
 // the membership. Anything not signed by the club's host, or replayed, is
-// ignored.
+// ignored. ducy-play's club_member (#456) says whether it's worth checking
+// (from the host, newer, from the key the first message pinned) and takes
+// it in, checked and cut to size; the signature is checked here.
 export async function playerReceive(mem, env) {
-  if (!env || env.from !== mem.hostId || !(env.seq > mem.hostSeq)) return false;
-  // The first valid message pins the host's full key, so later ones can't
-  // come from another key that happens to share the 8-character ID.
-  if (mem.hostPub && env.pub !== mem.hostPub) return false;
+  if (!env || typeof env !== 'object') return false;
+  const pin = {hostId: mem.hostId, hostSeq: mem.hostSeq, hostPub: mem.hostPub ?? null};
+  if (!ducy.memberFromHost(JSON.stringify(pin), JSON.stringify(env))) return false;
   if (await checkSignature(env)) return false;
-  mem.hostPub = env.pub;
-  const b = env.body || {};
-  if (b.club !== mem.code) return false;
-  // The club moved to an always-on room on the relay (#98), signed by the
-  // host it had: from now on it signs as `hostId`.
-  if (b.type === 'host_moved') {
-    if (!isPlayerId(b.hostId) || b.hostId === mem.hostId) return false;
-    mem.hostId = b.hostId;
-    mem.hostPub = null;
-    mem.hostSeq = 0;
-    mem.hostKey = null;
-    return true;
-  }
-  if (b.type === 'status') {
-    mem.hostSeq = env.seq;
-    if (b.name) mem.name = String(b.name).slice(0, MAX_CLUB_NAME);
-    if (b.status !== 'unknown') mem.status = b.status;
-    // The name you asked for is someone else's here (#450).
-    if (b.nameTaken) mem.nameTaken = String(b.nameTaken).slice(0, MAX_PLAYER_NAME);
-    else delete mem.nameTaken;
-    return true;
-  }
-  if (b.type === 'tables') {
-    mem.hostSeq = env.seq;
-    mem.tables = Array.isArray(b.tables) ? b.tables : [];
-    mem.rathole = Number(b.rathole) || 0;
-    // No backup of the club proved yet (#395).
-    mem.temporary = b.temporary === true;
-    return true;
-  }
-  if (b.type === 'help') {
-    mem.hostSeq = env.seq;
-    mem.staff = Array.isArray(b.staff) ? b.staff : [];
-    mem.help = Array.isArray(b.mine) ? b.mine : [];
-    return true;
-  }
-  if (b.type === 'lobby') {
-    mem.hostSeq = env.seq;
-    mem.lobby = readLobby(b);
-    return true;
-  }
-  if (b.type === 'tourneys') {
-    mem.hostSeq = env.seq;
-    mem.tourneys = Array.isArray(b.tourneys) ? b.tourneys : [];
-    return true;
-  }
-  // High Hand promotions (#267, club-promos.js): what's running, and a
-  // moment worth telling the member about (a prize, a new leader).
-  if (b.type === 'promos') {
-    mem.hostSeq = env.seq;
-    mem.promos = {promos: Array.isArray(b.promos) ? b.promos : [], recent: Array.isArray(b.recent) ? b.recent : []};
-    return true;
-  }
-  // The owner's view of the whole club, and how their action went (#93).
-  if (b.type === 'owner_view') {
-    mem.hostSeq = env.seq;
-    if (!b.data || typeof b.data !== 'object') return false;
-    mem.mgr = {data: b.data, seated: b.seated || {}, running: b.running || [], online: b.online || [], tourneys: b.tourneys || {}, plan: b.plan || null, owner: b.owner === true, seen: b.seen || {}};
-    return true;
-  }
-  if (b.type === 'owner_result') {
-    mem.hostSeq = env.seq;
-    mem.mgrResult = {id: b.id, error: String(b.error || ''), value: b.value ?? null};
-    return true;
-  }
-  // Club info (#398, club-info.js).
-  if (b.type === 'info') {
-    mem.hostSeq = env.seq;
-    mem.info = readInfo(b.info);
-    return true;
-  }
-  if (b.type === 'promo_event') {
-    mem.hostSeq = env.seq;
-    mem.promoEvent = {kind: b.kind === 'award' ? 'award' : 'lead', text: String(b.text || '').slice(0, 200), at: env.seq};
-    return true;
-  }
-  // Grouped tables (#501): "We're starting a new table. Join?" (ask), the
-  // table it opened for you (open), or the question closed (closed, with
-  // why, when you'd said yes).
-  if (b.type === 'group') {
-    mem.hostSeq = env.seq;
-    const kind = ['ask', 'open', 'closed'].includes(b.kind) ? b.kind : 'closed';
-    mem.groupAsk = kind === 'ask' ? {group: String(b.group || ''), name: String(b.name || '').slice(0, 60), until: Number(b.until) || 0} : null;
-    mem.groupEvent = {kind, group: String(b.group || ''), table: String(b.table || ''), name: String(b.name || '').slice(0, 60), reason: String(b.reason || '').slice(0, 200)};
-    return true;
-  }
-  if (b.type === 'tourney_error') {
-    mem.hostSeq = env.seq;
-    mem.tourneyError = {tourney: b.tourney, reason: String(b.reason || '')};
-    return true;
-  }
-  // The host's key for this session's encrypted table updates (e2e.js),
-  // signed by the host like every other message here.
-  if (b.type === 'host_key') {
-    mem.hostSeq = env.seq;
-    mem.hostKey = typeof b.key === 'string' ? b.key : null;
-    return true;
-  }
-  // The host couldn't seat this player at a table (e.g. no encryption key).
-  if (b.type === 'table_error') {
-    mem.hostSeq = env.seq;
-    mem.tableError = {table: b.table, reason: String(b.reason || '')};
-    return true;
-  }
-  if (b.type === 'agent_role') {
-    mem.hostSeq = env.seq;
-    mem.agent = b.agent || null;
-    if (mem.agent !== 'yes') mem.agentView = null;
-    return true;
-  }
-  if (b.type === 'agent') {
-    mem.hostSeq = env.seq;
-    mem.agentView = {own: b.own, shares: b.shares, total: b.total, limit: b.limit, creditUsed: b.creditUsed, room: b.room, owed: b.owed ?? b.creditUsed, invite: b.invite, recruits: b.recruits || [], players: b.players || []};
-    return true;
-  }
-  if (b.type === 'admin_result') {
-    mem.hostSeq = env.seq;
-    mem.adminNote = b.error ? String(b.error) : '';
-    return true;
-  }
-  if (b.type === 'account') {
-    mem.hostSeq = env.seq;
-    mem.balance = Number(b.balance) || 0;
-    // A credit player's limit and what they may sit with (#404). From an
-    // older host without them: the balance.
-    mem.credit = Number(b.credit) || 0;
-    mem.available = b.available == null ? Math.max(0, mem.balance) : Number(b.available) || 0;
-    mem.request = b.request || null;
-    // A cancel sent while the host was away has reached them (#188).
-    delete mem.cancelQueued;
-    // How their last request was answered (#188).
-    if (b.answer !== undefined) mem.answer = b.answer || null;
-    // The club's moved to the money model's ledger (#454): the copy starts
-    // again from its entries, and the older one is kept with its receipts.
-    if (b.ledger === 'links' && mem.ledger !== 'links') {
-      if (mem.entries?.length) mem.before = {entries: mem.entries, receipts: mem.receipts || []};
-      mem.entries = [];
-      mem.receipts = [];
-      mem.ledger = 'links';
-    }
-    const have = new Set((mem.entries || []).map(e => e.n));
-    const fresh = (Array.isArray(b.entries) ? b.entries : []).filter(e => Number.isSafeInteger(e?.n) && !have.has(e.n));
-    mem.entries = [...(mem.entries || []), ...fresh].sort((x, y) => x.n - y.n);
-    // Keep the signed messages that brought entries: they prove the balance.
-    if (fresh.length) mem.receipts = [...(mem.receipts || []), env];
-    mem.ledgerOk = checkOwnLedger(mem.entries, mem.balance);
-    return true;
-  }
-  return false;
+  const r = ducy.memberTake(JSON.stringify(mem), JSON.stringify(env));
+  for (const k of Object.keys(mem)) if (!(k in r.mem)) delete mem[k];
+  Object.assign(mem, r.mem);
+  return r.changed;
 }
 
 // The last ledger entry this player has, for 'hello' (0: an older copy, or none).

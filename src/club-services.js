@@ -30,11 +30,11 @@
 // Club fields: club.services {id: service}, club.serviceRefused {count, at}
 // (requests from no service the club knows).
 
+import * as ducy from '../wasm/ducy_wasm.js';
 import { checkSignature, fromB64url, isPlayerId, parseShownId, playerIdFor, showId } from './identity.js';
-import { issue, reclaim, ensureChips } from './club-chips.js';
-import { logAction } from './club-log.js';
+import { ensureChips } from './club-chips.js';
+import { startMoney } from './club-money.js';
 import { rules } from './club-rules.js';
-import { CHIP_SCALE, chipText } from './chip-format.js';
 
 export const SKEW_MS = 5 * 60_000;
 const ALGS = ['ed25519', 'p256'];
@@ -58,27 +58,48 @@ export async function parseServiceLine(line) {
 
 export const serviceLine = ident => `ducy-service:1:${ident.alg}:${ident.pub}`;
 
+const plain = v => v && typeof v === 'object' && !Array.isArray(v);
+
+// `to` made like `from`, keeping `to`'s objects where both have one.
+function merge(to, from) {
+  for (const k of Object.keys(to)) if (!(k in from)) delete to[k];
+  for (const [k, v] of Object.entries(from)) to[k] = plain(to[k]) && plain(v) ? merge(to[k], v) : v;
+  return to;
+}
+
+// Runs one of ducy-play's service ops (club_service: 'add', 'update',
+// 'revoke', 'request'), all or nothing. Throws a ServiceError (the HTTP
+// status to answer with) if refused, and nothing changes.
+function service(club, op, args, now) {
+  ensureChips(club);
+  if (!club.money) startMoney(club, now);
+  const r = ducy.clubService(JSON.stringify(club), op, JSON.stringify(args), now);
+  if (!r.ok) throw new ServiceError(r.status, r.message);
+  merge(club.members, r.club.members);
+  club.money = r.club.money;
+  Object.assign(club.chips, r.club.chips);
+  club.log = r.club.log;
+  club.services = merge(club.services || {}, r.club.services || {});
+  return r.value;
+}
+
 // The owner adds a service: {line, name, perms, budget, perGive, perDay, expires}.
 export async function addService(club, o, now = Date.now()) {
   const {alg, pub, id} = await parseServiceLine(o.line);
   const {line, ...limits} = o;
-  const s = rules(club, {op: 'addService', id, alg, key: pub, o: limits}, now);
-  logAction(club, club.ownerId, `Added the service ${s.name}`, now);
+  service(club, 'add', {id, alg, key: pub, o: limits}, now);
   return club.services[id];
 }
 
 // The owner changes a service's limits; `addBudget` tops its budget up.
 export function updateService(club, id, o, now = Date.now()) {
-  const s = rules(club, {op: 'updateService', id, o: o || {}}, now);
-  const add = Number(o?.addBudget || 0);
-  logAction(club, club.ownerId, add ? `Added ${chipText(add)} to ${s.name}’s budget` : `Changed ${s.name}’s limits`, now);
+  service(club, 'update', {id, o: o || {}}, now);
   return club.services[id];
 }
 
 // Revoking: the key is forgotten at once. The record stays, for the history.
 export function revokeService(club, id, now = Date.now()) {
-  const s = rules(club, {op: 'revokeService', id}, now);
-  logAction(club, club.ownerId, `Revoked the service ${s.name}`, now);
+  service(club, 'revoke', {id}, now);
 }
 
 // What the owner's page shows of each service.
@@ -103,34 +124,14 @@ export async function checkRequest(club, env, now = Date.now()) {
 // A member by their stored ID or the shown one ("ABCDE-FGHJ").
 const memberId = (club, id) => (club.members[String(id)] ? String(id) : parseShownId(String(id ?? '')) || null);
 
-const inChips = n => n / CHIP_SCALE;
-
-// Runs a checked request from service `s`. Returns {value, member}: the
-// answer, and the member whose balance changed (if any), to tell them.
+// Runs a checked request from service `s` in one step (ducy-play's
+// club_service): its status, the members, or chips given or taken back,
+// logged, against its budget and once-only key. Returns {value, member}:
+// the answer, and the member whose balance changed (if any), to tell them.
+// Throws a ServiceError.
 export function runRequest(club, s, body, now = Date.now()) {
-  ensureChips(club);
-  const r = rules(club, {op: 'prepareService', id: s.id, body: body ?? null, member: memberId(club, body?.args?.member)}, now);
-  if (r.refused) throw refusal(r.refused);
-  if (r.value) return {value: r.value};
-  if (r === 'members') {
-    return {value: Object.values(club.members).filter(m => m.status === 'member').map(m => ({id: m.id, shownId: showId(m.id), name: m.name, balance: inChips(m.balance)}))};
-  }
-  const {op, member, amount, note, said, key} = r.move;
-  const m = club.members[member], name = club.services[s.id].name;
-  let entry;
-  if (op === 'give') {
-    entry = issue(club, member, amount, now, note);
-    logAction(club, s.id, `${name} (service) gave ${m.name} ${chipText(amount)}${said ? `: ${said}` : ''}`, now, amount);
-  } else {
-    try {
-      entry = reclaim(club, member, amount, now, note);
-    } catch (e) {
-      throw new ServiceError(409, e.message);
-    }
-    logAction(club, s.id, `${name} (service) took back ${chipText(amount)} from ${m.name}${said ? `: ${said}` : ''}`, now, amount);
-  }
-  const budget = op === 'give' ? club.services[s.id].budget - amount : club.services[s.id].budget;
-  const value = {op, member, amount: inChips(amount), balance: inChips(m.balance), entry: entry.n, budget: inChips(budget)};
-  rules(club, {op: 'serviceDone', id: s.id, do: op, amount, key: key ?? null, value}, now);
-  return {value, member};
+  const r = service(club, 'request', {id: s.id, body: body ?? null, member: memberId(club, body?.args?.member)}, now);
+  // The members, with the IDs people see.
+  if (r.members) return {value: r.members.map(m => ({id: m.id, shownId: showId(m.id), name: m.name, balance: m.balance}))};
+  return r.member ? {value: r.value, member: r.member} : {value: r.value};
 }
