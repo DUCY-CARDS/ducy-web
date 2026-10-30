@@ -45,6 +45,9 @@
 //   {type: 'lobby', club, online, chat}  who's online, and the lobby chat
 //                                        (club-lobby.js)
 //   {type: 'info', club, info}           the club info (club-info.js, #398)
+//   {type: 'group', club, group, kind, name, until?, table?, reason?}
+//                                        grouped tables (#501): kind 'ask' (a new
+//                                        table, Join?), 'open' or 'closed'
 // Join and hello carry the player's session key ({key}). Table updates go
 // to players encrypted, {type: 'table', table, enc: {iv, ct}} (e2e.js), so
 // the relay never sees hole cards and can't forge an update.
@@ -278,6 +281,16 @@ export async function playerReceive(mem, env) {
   if (b.type === 'promo_event') {
     mem.hostSeq = env.seq;
     mem.promoEvent = {kind: b.kind === 'award' ? 'award' : 'lead', text: String(b.text || '').slice(0, 200), at: env.seq};
+    return true;
+  }
+  // Grouped tables (#501): "We're starting a new table. Join?" (ask), the
+  // table it opened for you (open), or the question closed (closed, with
+  // why, when you'd said yes).
+  if (b.type === 'group') {
+    mem.hostSeq = env.seq;
+    const kind = ['ask', 'open', 'closed'].includes(b.kind) ? b.kind : 'closed';
+    mem.groupAsk = kind === 'ask' ? {group: String(b.group || ''), name: String(b.name || '').slice(0, 60), until: Number(b.until) || 0} : null;
+    mem.groupEvent = {kind, group: String(b.group || ''), table: String(b.table || ''), name: String(b.name || '').slice(0, 60), reason: String(b.reason || '').slice(0, 200)};
     return true;
   }
   if (b.type === 'tourney_error') {

@@ -36,6 +36,7 @@ import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
+import { DEFAULT_GROUP_MIN, groupOf, MAX_GROUP_TABLES, placeName } from './club-groups.js';
 import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
 import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
@@ -531,6 +532,33 @@ let activityBig = false;
 
 // Closing a table asks on its own row (#186): the table being asked about.
 let closingTable = null;
+// Grouped tables (#501): the table whose group minimum is being picked,
+// {table, group?} (no group: making one).
+let groupForm = null;
+
+// A table's ⋯ items for its group: making one, or for its main table,
+// starting a new table, the minimum, and ending it.
+function groupMenu(t) {
+  const g = groupOf(club, t.id);
+  if (!g) return [['group-make', 'Make must-move group']];
+  if (g.place) return [];
+  return [
+    ...(g.group.tables.length < MAX_GROUP_TABLES ? [['group-ask', 'Start a new table']] : []),
+    ['group-min', 'Players to start'],
+    ['group-end', 'End group'],
+  ];
+}
+
+function groupFormHtml(t) {
+  const g = groupForm.group ? (club.groups || []).find(x => x.id === groupForm.group) : null;
+  const now = g?.min ?? Math.min(DEFAULT_GROUP_MIN, t.seats);
+  let h = '<span class="cl-confirm">Players to start <select class="pl-text" name="gmin">';
+  for (let n = 2; n <= t.seats; n++) h += `<option value="${n}"${n === now ? ' selected' : ''}>${n}</option>`;
+  h += '</select>';
+  h += g ? `<button class="btn-small primary" data-cl="group-min-yes" data-group="${esc(g.id)}">Save</button>`
+    : `<button class="btn-small primary" data-cl="group-make-yes" data-table="${esc(t.id)}">Make group</button>`;
+  return h + '<button class="btn-small" data-cl="group-cancel">Cancel</button></span>';
+}
 
 // Cash games (#398): a card per table, with who's at it, Watch, and the
 // rest in its ⋯ menu.
@@ -543,15 +571,18 @@ function cashHtml() {
   h += '<ul class="cl-tables cl-tcards">';
   for (const t of tables) {
     const n = counts[t.id] || 0;
-    h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span>`;
+    const g = groupOf(club, t.id);
+    const place = g ? `${placeName(g.place)} · ` : '';
+    h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span>`;
     h += tableStatusHtml(t) + '</span>';
     if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
+    else if (groupForm?.table === t.id) h += groupFormHtml(t);
     else if (closingTable === t.id) {
       h += `<span class="cl-confirm">Close ${esc(t.name)}?`;
       h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close</button><button class="btn-small" data-cl="close-table-no">Keep open</button></span>`;
     } else {
       h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button>`;
-      h += menuHtml(`More for ${t.name}`, [['close-table', 'Close table']], '', '', ` data-table="${esc(t.id)}"`) + '</span>';
+      h += menuHtml(`More for ${t.name}`, [...groupMenu(t), ['close-table', 'Close table']], '', '', ` data-table="${esc(t.id)}"`) + '</span>';
     }
     // Who's at it, each with a ⋯ to remove them from the table (#414).
     const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
@@ -989,6 +1020,18 @@ function connectMembership(mem) {
         if (opened.length) notice(`${cname} opened ${opened.map(t => t.name).join(', ')}.`);
       }
       if (msg.body?.type === 'tables') checkSeatWatch(mem);
+      // Grouped tables (#501): asked about a new table, the table it opened
+      // for you (Sit down, there), or why it didn't open.
+      if (msg.body?.type === 'group' && mem.groupEvent) {
+        const ev = mem.groupEvent;
+        mem.groupEvent = null;
+        if (ev.kind === 'ask') notice(`${cname}: We’re starting a new table. Join?`, clubHash(mem.code));
+        else if (ev.kind === 'open' && ev.table) {
+          notice(`${cname}: ${ev.name} is open.`, clubHash(mem.code));
+          sitForm = `${mem.code}|${ev.table}`;
+          sitAmount = 0;
+        } else if (ev.reason) notice(`${cname}: ${ev.reason}`, clubHash(mem.code));
+      }
       // A promotion prize, or a new high hand (#267), wherever you are.
       // At the club's table, it's celebrated there instead (#278).
       if (msg.body?.type === 'promo_event' && mem.promoEvent) {
@@ -2650,10 +2693,22 @@ function sitFormHtml(m, t, r) {
   return h + '<button class="btn-small primary" type="submit">Sit down</button><button class="btn-small" type="button" data-cl="sit-cancel">Cancel</button></form>';
 }
 
+// Grouped tables (#501): "We're starting a new table. Join?" while it's
+// open, Yes or No; once answered, what they said.
+function groupAskHtml(m) {
+  const a = m.groupAsk;
+  if (!a || a.until <= Date.now()) return '';
+  const k = `data-code="${esc(m.code)}" data-group="${esc(a.group)}"`;
+  let h = `<div class="cl-confirm cl-groupask"><b>We’re starting a new table. Join?</b> <span class="pl-meta">${esc(a.name)}</span>`;
+  if (a.answer === 'yes') h += '<span class="pl-meta">Waiting for players</span>';
+  else h += `<button class="btn-small primary" data-cl="group-yes" ${k}>Yes</button><button class="btn-small" data-cl="group-no" ${k}>No</button>`;
+  return h + '</div>';
+}
+
 // A member's Tables tab: their last session while it's recent (#187), and
 // the open tables with Sit, or why not.
 function memberTablesHtml(m, hostHere) {
-  let h = '';
+  let h = groupAskHtml(m);
   const last = tableSessions(m.entries || []).find(s => !s.open);
   if (last && Date.now() - last.end < 24 * 3600e3) {
     const where = (m.tables || []).find(t => t.id === last.table)?.name || 'a table';
@@ -2673,9 +2728,11 @@ function memberTablesHtml(m, hostHere) {
     // At another of this club's cash tables: Move here instead (#425).
     const canMove = atOther && seatedAt.code === m.code && !seatedAt.table.startsWith('tourney:');
     const held = canMove && seatedAt.reserve?.table === t.id;
+    // Its place in a group of tables (#501).
+    const place = t.group ? `${placeName(t.group.place)} · ` : '';
     if (canMove && hostHere && (free > 0 || held)) {
       h += `<li class="cl-tcard cream"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
-      h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+      h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
       h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
       h += held ? '<span class="pl-meta cl-why">Seat held · after this hand</span>'
         : `<button class="btn-small primary" data-cl="move-here" data-code="${esc(m.code)}" data-table="${esc(t.id)}">Move here</button>`;
@@ -2684,7 +2741,7 @@ function memberTablesHtml(m, hostHere) {
     }
     const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : free <= 0 ? 'Full' : '';
     h += `<li class="cl-tcard${here || !why ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
-    h += `<span class="cl-tcard-meta">${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+    h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
     h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
     if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
     // The hit-and-run rule, before you sit.
@@ -2867,6 +2924,17 @@ async function onClickIn(e) {
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
   else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
   else if (act === 'sit-cancel') { sitForm = ''; sitAmount = 0; render(); }
+  // Grouped tables (#501): the answer to "We're starting a new table. Join?".
+  else if (act === 'group-yes' || act === 'group-no') {
+    const mem = memberships.find(m => m.code === b.dataset.code);
+    const yes = act === 'group-yes';
+    sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: `group:${b.dataset.group}`, cmd: {type: 'group_answer', group: b.dataset.group, yes}});
+    if (mem?.groupAsk) {
+      if (yes) mem.groupAsk.answer = 'yes';
+      else mem.groupAsk = null;
+    }
+    render();
+  }
   // Moving from your table to this one (#425): a seat is held here.
   else if (act === 'move-here') { b.disabled = true; sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: b.dataset.table, cmd: {type: 'reserve'}}); }
   else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
@@ -2970,6 +3038,21 @@ async function onClickIn(e) {
   else if (act === 'myname-cancel') { nameForm = ''; render(); }
   else if (act === 'help-done') answerHelpReq(b.dataset.id, b.closest('form')?.elements.reply?.value || '', true);
   else if (act === 'close-table') { closingTable = b.dataset.table; render(); }
+  // Grouped tables (#501): making one (its minimum first), its minimum,
+  // asking about a new table now, and ending it.
+  else if (act === 'group-make') { groupForm = {table: b.dataset.table}; render(); }
+  else if (act === 'group-min') { groupForm = {table: b.dataset.table, group: groupOf(club, b.dataset.table)?.group.id}; render(); }
+  else if (act === 'group-cancel') { groupForm = null; render(); }
+  else if (act === 'group-make-yes' || act === 'group-min-yes') {
+    const min = Number(root.querySelector('select[name="gmin"]')?.value) || DEFAULT_GROUP_MIN;
+    groupForm = null;
+    if (act === 'group-make-yes') hostAct('make_group', {table: b.dataset.table, min});
+    else hostAct('set_group_min', {id: b.dataset.group, min});
+  }
+  else if (act === 'group-ask' || act === 'group-end') {
+    const g = groupOf(club, b.dataset.table);
+    if (g) hostAct(act === 'group-ask' ? 'ask_group' : 'end_group', {id: g.group.id});
+  }
   else if (act === 'watch') watchTable(b.dataset.table);
   else if (act === 'seat-remove' || act === 'seat-keep') {
     b.closest('details')?.removeAttribute('open');
