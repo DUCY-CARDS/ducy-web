@@ -48,7 +48,7 @@ import { ensureChips } from './club-chips.js';
 import { ledgerOf, startMoney } from './club-money.js';
 import { cashOutEveryone, ensureTables, gameLabel, newTable, openTables, tableById, tablesBody } from './club-tables.js';
 import { createTableHost } from './club-host.js';
-import { cancelTourney, newTourney, register, tourneyById, tourneysBody, unregister } from './club-tourneys.js';
+import { tourneyById, tourneysBody } from './club-tourneys.js';
 import { createTourneyHost } from './club-tourney-host.js';
 import { dropManagers } from './club-log.js';
 import { agentBody, answerAgent, isAgent, runAgent } from './club-agents.js';
@@ -61,7 +61,7 @@ import { nextSettle, processHand, promosBody, settlePeriods } from './club-promo
 import { chipText } from './chip-format.js';
 import { infoBody } from './club-info.js';
 import { command, HOSTED } from './club-commands.js';
-import { answerGroup, askGroup, endAsk, endGroup, GROUP_BY, groupById, makeGroup, pruneGroups, setGroupMin } from './club-groups.js';
+import { answerGroup, askGroup, endAsk, GROUP_BY, groupById, pruneGroups } from './club-groups.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -237,9 +237,11 @@ export function createClubServer({
   // A member registering, unregistering, or entering late (#77, #80).
   async function handleTourney({id: tid, op, from}) {
     try {
-      if (op === 'register') register(club, tid, from);
-      else if (op === 'unregister') unregister(club, tid, from);
-      else if (op === 'enter') {
+      if (op === 'register' || op === 'unregister') {
+        await hosted(op, {tid, id: from});
+        return;
+      }
+      if (op === 'enter') {
         if (!tourneyHost) throw new Error('The club’s tables aren’t running.');
         await tourneyHost.enter(tid, from);
       }
@@ -560,24 +562,6 @@ export function createClubServer({
       watching.set(who, tableHost.watch(table, u => sendSealed(who, {table, update: u})));
     },
     unwatch: () => unwatch(actor()),
-    // Tournaments (#77, #79): a new one (it starts at its time), cancelling
-    // one (every buy-in refunded), and the host's payouts (null: defaults).
-    new_tourney: ({tourney}) => {
-      const t = newTourney(club, tourney, Date.now(), limits);
-      changed();
-      tourneyHost?.schedule(t);
-      broadcastTourneys();
-      return t.id;
-    },
-    cancel_tourney: ({id}) => {
-      const t = tourneyById(club, id);
-      if (!t) throw new Error('No such tournament.');
-      const who = [...new Set(t.entries.map(e => e.member))];
-      if (tourneyHost) tourneyHost.cancel(id);
-      else { cancelTourney(club, id, Date.now(), 'the manager cancelled it'); changed(); }
-      for (const m of who) accountTo(m);
-      broadcastTourneys();
-    },
     // Removing a player from a table without closing it (#414): after the
     // hand in play, never in the middle of it (#476); keep_player is Undo.
     remove_player: async ({table, id}) => {
@@ -596,17 +580,7 @@ export function createClubServer({
       await tableHost.movePlayer(table, String(id), String(to), {by: actor()});
       changed();
     },
-    // Grouped tables with must-move (#501): a group with `table` as its
-    // main table, its minimum to start a new table, ending it, and asking
-    // about a new table now.
-    make_group: ({table, min}) => {
-      const g = makeGroup(club, String(table), min == null ? null : Number(min));
-      changed();
-      broadcastTables();
-      return g.id;
-    },
-    set_group_min: ({id, min}) => { setGroupMin(club, String(id), Number(min)); changed(); },
-    end_group: ({id}) => { endGroup(club, String(id)); changed(); broadcastTables(); },
+    // Grouped tables with must-move (#501): asking about a new table now.
     ask_group: ({id}) => {
       if (!tableHost) throw new Error('The club’s tables aren’t running.');
       const g = groupById(club, String(id));
@@ -632,8 +606,15 @@ export function createClubServer({
   // A command the club host runs (club-commands.js, #456): it changes the
   // club, then what it means for everyone else is carried out here.
   async function hosted(op, args) {
-    const out = command(club, op, args);
+    // A new tournament counts against the plan's tournaments a day (#265).
+    const out = command(club, op, op === 'new_tourney' ? {...args, limits} : args);
     changed();
+    // Tournaments: new ones start at their time; cancelled ones stop.
+    for (const tid of out.stopTourneys) tourneyHost?.stop(tid);
+    for (const tid of out.schedule) {
+      const t = tourneyById(club, tid);
+      if (t) tourneyHost?.schedule(t);
+    }
     for (const r of out.replies) await sendToPlayer(r);
     for (const a of out.accounts) sendToPlayer(account(club, a.id, a.since ?? Infinity));
     // A new member gets the tables straight away.
