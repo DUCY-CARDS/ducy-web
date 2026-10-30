@@ -11,7 +11,7 @@
 
 import { available, creditOf, ensureChips, owedBy } from './club-chips.js';
 import { book } from './club-book.js';
-import { ownEntries } from './club-money.js';
+import { overview } from './club-overview.js';
 
 const num = a => (Number.isFinite(a) ? a : null);
 
@@ -42,18 +42,8 @@ export function creditRow(m) {
 // their limit asking for chips ('at_limit', while the request is open), and
 // a player who stood up owing ('left_owing', the last `keep` such cash-outs;
 // `owesNow` is what they still owe, 0 once settled).
+// ducy-play's club_overview builds them.
 export function creditNotices(club, keep = 50) {
   ensureChips(club);
-  const out = [];
-  for (const m of Object.values(club.members)) {
-    const q = m.request;
-    if (q?.atLimit) out.push({kind: 'at_limit', member: m.id, name: m.name, asked: q.amount, credit: creditOf(m), available: available(m), table: q.table || '', at: q.at});
-  }
-  // Cash-outs that left the player's own link below zero.
-  const left = ownEntries(club).filter(e => e.kind === 'cash_out' && e.balance < 0).slice(-keep);
-  for (const e of left) {
-    const m = club.members[e.member];
-    out.push({kind: 'left_owing', member: e.member, name: m?.name || e.member, owes: -e.balance, owesNow: owedBy(m), table: e.about, at: e.at, n: e.n});
-  }
-  return out.sort((a, b) => b.at - a.at);
+  return overview(club, 'creditNotices', {keep});
 }

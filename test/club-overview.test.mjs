@@ -63,7 +63,7 @@ test('Members by agent: the agents, an agent’s players, and those under none (
   c.members.cy.agentOf = 'ann';
   // Asking to join through Ann: not a member yet.
   c.members.eve.agentOf = 'ann';
-  const names = (f, agent) => memberFilter(c, f, NOW, undefined, agent).map(m => m.name).sort();
+  const names = (f, agent) => memberFilter(c, f, NOW, agent).map(m => m.name).sort();
   assert.deepEqual(names('agents'), ['Ann']);
   assert.deepEqual(names('agent', 'ann'), ['Ben', 'Cy']);
   assert.deepEqual(names('agent', 'dee'), []);
