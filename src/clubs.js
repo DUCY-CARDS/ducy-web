@@ -43,7 +43,7 @@ import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import { accountOf, playersOf } from './club-agents.js';
-import { entriesOf, entryView, ledgerOf, settleRows } from './club-money.js';
+import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
@@ -2404,7 +2404,7 @@ function accountingHtml() {
   const t = totals(club);
   const names = memberNames();
   const about = aboutNames(club);
-  const ledger = ledgerOf(club).map(e => entryView(club, e));
+  const ledger = ledgerView(club);
   const results = totalsByMember(tableSessions(ledger));
   const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
   let h = '<table class="cl-acct"><tbody>';
