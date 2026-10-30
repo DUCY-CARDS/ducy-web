@@ -15,7 +15,9 @@
 // with goes back to their balance (cash-out). Between hands the ledger
 // follows each seated member's stack, so the club's totals add up.
 
-import { buyIn, cashOut, ensureChips, setStack, topUp } from './club-chips.js';
+import * as ducy from '../wasm/ducy_wasm.js';
+import { chipsAtTable, ensureChips, leftWith, setStack } from './club-chips.js';
+import { book } from './club-book.js';
 import { ledgerOf } from './club-money.js';
 import { rules } from './club-rules.js';
 
@@ -83,12 +85,9 @@ export const tablesBody = (club, seatedCounts = {}) => rules(club, {op: 'tablesB
 // What a member may buy in for at table `t` (from tablesBody), by their own
 // ledger copy `entries` (#187): {min, max, rathole}, where `rathole` is the
 // stack they left the table with less than `ratholeHours` ago (the rule's
-// floor, club-chips.js ratholeMin), or 0.
-export function buyInRange(t, entries = [], ratholeHours = 0, now = Date.now()) {
-  const left = [...entries].reverse().find(e => e.kind === 'cash_out' && !e.player && e.about === t.id);
-  const rathole = left && ratholeHours && now - left.at < ratholeHours * 3600e3 ? left.amount : 0;
-  return {min: Math.min(t.max, Math.max(t.min, rathole)), max: t.max, rathole};
-}
+// floor, club-chips.js ratholeMin), or 0. ducy-play's club_book works it out.
+export const buyInRange = (t, entries = [], ratholeHours = 0, now = Date.now()) =>
+  ducy.buyInRange(JSON.stringify({id: t.id, min: t.min, max: t.max}), JSON.stringify(entries || []), Number(ratholeHours) || 0, now);
 
 // May member `id` join table `t`? '' if so, else why not. `atTable` is the
 // table they're at now (in the host's running session), if any.
@@ -97,22 +96,10 @@ export const canJoin = (club, id, t, atTable) => rules(club, {op: 'canJoin', id,
 // A member at table `t` asks for `amount` chips (the engine already checked
 // the table's limits for their stack). Moves the chips in the ledger and
 // returns the entry, or throws why not.
-export function chipsForTable(club, id, t, amount, now = Date.now()) {
-  const m = club.members[id];
-  if (!m || m.status !== 'member') throw new Error('Not a member of this club.');
-  if (m.seat && m.seat.table !== t.id) throw new Error('Already seated at another table.');
-  if (!m.seat) return buyIn(club, id, t.id, amount, limits(t), now);
-  // The engine capped the stack at the table maximum.
-  return topUp(club, id, amount, Number.MAX_SAFE_INTEGER, now);
-}
+export const chipsForTable = (club, id, t, amount, now = Date.now()) => chipsAtTable(club, id, t.id, amount, limits(t), now);
 
 // Someone left table `t` with `chips` (the engine's count): back to their balance.
-export function leftTable(club, id, chips, now = Date.now()) {
-  const m = club.members[id];
-  if (!m?.seat) return null;
-  setStack(club, id, chips);
-  return cashOut(club, id, now);
-}
+export const leftTable = (club, id, chips, now = Date.now()) => leftWith(club, id, chips, now);
 
 // Between hands: the ledger takes each seated member's stack from the
 // engine's count (`players`: [{client_id, chips}]). `handNumber`, the hand
@@ -139,18 +126,13 @@ export const stayText = n => `You’re up at this table, so you play ${n} more $
 // settled by cashOutTable if they can't.
 export function cashOutEveryone(club, now = Date.now(), keep = new Set()) {
   ensureTables(club);
-  const entries = [];
-  for (const m of Object.values(club.members)) {
-    if (m.seat && !keep.has(m.seat.table)) entries.push(cashOut(club, m.id, now));
-  }
+  const entries = book(club, {op: 'cashOutSeated', keep: [...keep]}, now);
   rules(club, {op: 'closeClosing', keep: [...keep]});
   return entries;
 }
 
 // Like cashOutEveryone, for the members seated at table `tid` only.
-export function cashOutTable(club, tid, now = Date.now()) {
-  return Object.values(club.members).filter(m => m.seat?.table === tid).map(m => cashOut(club, m.id, now));
-}
+export const cashOutTable = (club, tid, now = Date.now()) => book(club, {op: 'cashOutSeated', only: tid}, now);
 
 // ---- reserved seats (#425) ----
 //

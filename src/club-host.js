@@ -30,11 +30,10 @@
 
 import {
   canJoin, cashOutTable, dropReservation, handsToStay, heldSeats, HOLD_MS, limits, nextLapse,
-  pruneReservations, reservations, reserveSeat, stayText, tableById, tableLedgerN,
+  pruneReservations, reservations, tableById, tableLedgerN,
 } from './club-tables.js';
 import { newSeating, seats } from './club-seats.js';
 import { GROUP_BY, groupById, groupOf, leftGroup, movesUp, satInGroup } from './club-groups.js';
-import { logAction } from './club-log.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { dealClock, isDealing } from './club-overview.js';
 // Idle seats (#421): how long without a hand, and how long to answer "Still here?".
@@ -61,8 +60,6 @@ export function workerCall(op, ...args) {
     worker.postMessage({id, op, args});
   });
 }
-
-const num = v => Number(v);
 
 // The page's timers.
 export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => clearTimeout(h)};
@@ -486,43 +483,25 @@ export function createTableHost({
   // manager (`by`) does it for them. They leave their table after the hand
   // they're in (at once if they're not in one). Throws why not; their page
   // hears either way.
+  // ducy-play's club_seats decides (the hit-and-run rule, the buy-in there,
+  // the seat held, the move marked and logged); this carries it out.
   function reserve(tid, id, {by = null} = {}) {
-    const c = club(), t = tableById(c, tid), m = c.members[id];
+    const c = club(), m = c.members[id];
     const from = m?.seat?.table || at.get(id) || '';
     const rf = from ? running.get(from) : null;
-    const tell = update => { if (from) sendTable(id, {type: 'table', table: from, update: {type: 'reserve', table: tid, ...update}}); };
-    const fail = why => { tell({refused: why}); throw new Error(why); };
+    const fail = why => {
+      if (from) sendTable(id, {type: 'table', table: from, update: {type: 'reserve', table: tid, refused: why}});
+      throw new Error(why);
+    };
     if (!from || !rf) fail('You’re not at a table.');
     if (!running.has(tid)) fail('That table isn’t running.');
-    // The hit-and-run rule holds for a move as for leaving; a manager's
-    // move overrides it, as their removal does (#414).
-    const tf = tableById(c, from);
-    const owed = !by && tf?.stayHands ? handsToStay(c, id, tf, completedHands(rf)) : 0;
-    if (owed) fail(stayText(owed));
     const here = rf.seating.players.find(x => x.client_id === id);
-    // (In a hand, by their stack before it; it's checked again when it's over.)
-    const short = here ? tooShort(id, tid, inHand(rf, here) ? m.seat?.stack || 0 : num(here.chips)) : '';
-    if (short) fail(short);
-    let e;
-    try { e = reserveSeat(c, id, t, running.get(tid).seating.players.length, {from, by, holdMs}); } catch (err) { fail(err.message); }
-    if (m.seat) m.seat.moving = {to: tid, ...(by ? {by} : {})};
-    else rf.seating.moves[id] = tid;
-    if (by) {
-      // A group's move up (#501) is no one's to log.
-      if (by !== GROUP_BY) {
-        const who = by === c.hostId || by === c.ownerId ? 'The manager' : c.members[by]?.name || by;
-        logAction(c, by, `${who} moved ${m.name} from ${tf?.name || 'a table'} to ${t.name}`);
-      }
-      run(from, {type: 'mustPlay', id, on: false});
-    }
-    save();
-    armHolds();
-    tablesChanged();
-    tell({name: t.name, until: e.until});
-    const p = rf.seating.players.find(x => x.client_id === id);
-    if (p && !inHand(rf, p)) return leaveToMove(from, p);
-    // Watchers see "Moving to …".
-    return run(from, {type: 'state'});
+    const step = seats(c, rf.seating, from, 'reserve', {
+      id, to: tid, by, holdMs, seated: running.get(tid).seating.players.length, inHand: !!here && inHand(rf, here),
+    });
+    const last = carry(from, rf, step);
+    if (step.value?.refused) throw new Error(step.value.refused);
+    return last;
   }
 
   // A manager moves member `id` from table `tid` to table `to` (#425).
@@ -541,9 +520,6 @@ export function createTableHost({
     return carry(tid, r, seats(club(), r.seating, tid, 'leaveToMove', {id: p.client_id}));
   }
 
-  // Why member `id`, with `chips` at their table, couldn't buy in at table
-  // `to` once they'd left it, or '' (club-seats.js).
-  const tooShort = (id, to, chips) => seats(club(), newSeating(), to, 'tooShort', {id, to, chips}).value;
 
   // Seats held at table `tid` for people not at it yet.
   const held = tid => {

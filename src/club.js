@@ -54,8 +54,8 @@
 
 import { checkSignature, isPlayerId } from './identity.js';
 import { normCode } from './play-net.js';
-import { accountBody, backerTake, cancelRequest, checkOwnLedger, ensureChips, reclaim, requestChips } from './club-chips.js';
-import { backerOf, CLUB } from './club-money.js';
+import { accountBody, cancelRequest, checkOwnLedger, ensureChips, requestChips } from './club-chips.js';
+import { command } from './club-commands.js';
 import { nameKey, newRules, rules } from './club-rules.js';
 import { readLobby } from './club-lobby.js';
 import { readInfo } from './club-info.js';
@@ -170,19 +170,12 @@ export const decline = (club, id, now = Date.now()) => rules(club, {op: 'decline
 // Returns the replies to send (status, and the account showing the
 // reclaim), or null. A member seated at a table is cashed out by the table
 // first (#68).
+// ducy-play's club host does it (its 'remove' command).
 export function removeMember(club, id, now = Date.now()) {
   ensureChips(club);
-  if (!rules(club, {op: 'removable', id})) return null;
-  const m = club.members[id];
-  const hadChips = m.balance > 0;
-  if (hadChips) {
-    const backer = backerOf(club, m);
-    if (backer === CLUB) reclaim(club, id, m.balance, now, 'Removed from the club');
-    else backerTake(club, backer, id, m.balance, now, 'Removed from the club');
-  }
-  m.request = null;
-  const status = rules(club, {op: 'remove', id}, now);
-  return hadChips ? [status, account(club, id, 0)] : [status];
+  const out = command(club, 'remove', {id}, now);
+  if (!out.replies.length) return null;
+  return [...out.replies, ...out.accounts.map(a => account(club, a.id, a.since ?? Infinity))];
 }
 
 export function membersByStatus(club, status) {
