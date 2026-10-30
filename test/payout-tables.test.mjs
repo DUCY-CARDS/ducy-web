@@ -18,13 +18,13 @@ import {
   payoutRows, payoutShares, prizes, register, lateEntry, setPayout, setPayoutTable, startTourney, tourneysBody,
 } from '../src/club-tourneys.js';
 import { entriesOpen, hostTourneysHtml, memberTourneysHtml, payoutTablesHtml } from '../src/club-tourneys-ui.js';
-import { STARTER_ROWS, addPlace, addRow, cleanRows, draftOf, readRows, removeRow, rowsEditorHtml } from '../src/payout-table-ui.js';
+import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow, rowsEditorHtml, starterRows } from '../src/payout-table-ui.js';
 import { HOST_ID, joinPrivate, lobbyBody, newPrivateTourney, paidPlaces, privateClub, prizeTotals, setPrizes } from '../src/private-tourney.js';
 import { setupHtml } from '../src/private-tourney-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
 const LEVELS = [{sb: 10, bb: 20, ante: 0, minutes: 10}, {sb: 20, bb: 40, ante: 0, minutes: 10}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
-const ROWS = STARTER_ROWS; // 2: 100 · 6: 65/35 · 10: 50/30/20 · 20: 40/25/20/15 · 30 … 1000: the Default's
+const ROWS = starterRows(); // 2: 100 · 6: 65/35 · 10: 50/30/20 · 20: 40/25/20/15 · 30 … 1000: the Default's
 
 function clubWith(n, balance = 10000) {
   const club = newClub('Friday Game', 'ABCD-EFGH', 'HOSTHOST', 0);
@@ -46,10 +46,10 @@ test('the row in force: the last that starts at or below the entries, the first 
 });
 
 test('the table to start from goes up to the most entries a tournament takes, paying as the Default does from 30', () => {
-  assert.equal(STARTER_ROWS.at(-1).from, MAX_ENTRIES);
-  assert.ok(STARTER_ROWS.length <= MAX_PAYOUT_ROWS);
-  for (const r of STARTER_ROWS.filter(x => x.from >= 30)) assert.deepEqual(r.places, defaultPayout(r.from), `from ${r.from}`);
-  assert.equal(STARTER_ROWS.at(-1).places.length, 150, '1000 entries: the top 15% paid');
+  assert.equal(ROWS.at(-1).from, MAX_ENTRIES);
+  assert.ok(ROWS.length <= MAX_PAYOUT_ROWS);
+  for (const r of ROWS.filter(x => x.from >= 30)) assert.deepEqual(r.places, defaultPayout(r.from), `from ${r.from}`);
+  assert.equal(ROWS.at(-1).places.length, 150, '1000 entries: the top 15% paid');
 });
 
 test('a payout table: each row exactly 100%, no place above the one before, rows starting at more entries', () => {
