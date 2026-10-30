@@ -147,9 +147,8 @@ export function declineRequest(club, id, why = '', now = Date.now(), by = '') {
 // someone who left with S chips must come back with at least S until the
 // club's rathole window has passed. 0 when the rule doesn't apply.
 export function ratholeMin(club, id, table, now = Date.now()) {
-  const left = club.members[id]?.left?.[table];
-  if (!left) return 0;
-  return now - left.at < club.ratholeHours * 3600e3 ? left.stack : 0;
+  ensureChips(club);
+  return book(club, {op: 'ratholeMin', id, table}, now);
 }
 
 // A table move by the club's book, its entry as pages see it (or null).
@@ -182,6 +181,15 @@ export function topUp(club, id, amt, max, now = Date.now()) {
 export function refundTopUp(club, id, amt, now = Date.now()) {
   return moved(club, {op: 'refundTopUp', id, amount: num(amt)}, now);
 }
+
+// A member at `table` asks for `amt` chips (the engine has checked the
+// table's limits for their stack): a buy-in within `limits` ({min, max}),
+// or a top-up if they're seated there. Throws why not.
+export const chipsAtTable = (club, id, table, amt, limits, now = Date.now()) => moved(club, {op: 'chipsForTable', id, table, amount: num(amt), limits}, now);
+
+// Someone left their table with `chips` (the engine's count): back to their
+// balance. null if they weren't seated.
+export const leftWith = (club, id, chips, now = Date.now()) => moved(club, {op: 'leftTable', id, chips: Number(chips) || 0}, now);
 
 // The table reports a seated member's stack after a hand.
 export function setStack(club, id, stack) {
