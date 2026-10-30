@@ -27,6 +27,7 @@
 // balance, so what they owe is paid back first and anything still owed
 // stays negative.
 
+import * as ducy from '../wasm/ducy_wasm.js';
 import { chipInput } from './chip-format.js';
 import { CLUB, entriesOf, entryView } from './club-money.js';
 import { book } from './club-book.js';
@@ -259,14 +260,5 @@ export function ledgerCsv(entries, names = {}, aboutNames = {}, kindText = {}) {
 
 // A player's check of their own copy: on each of their links, each entry's
 // balance follows from the one before, and the links add up to the balance
-// the host reports.
-export function checkOwnLedger(entries, balance) {
-  const links = new Map();
-  for (const e of [...entries].sort((x, y) => x.n - y.n)) {
-    if (!Number.isSafeInteger(e.amount)) return false;
-    const b = (links.get(e.backer) || 0) + e.amount;
-    if (b !== e.balance) return false;
-    links.set(e.backer, b);
-  }
-  return [...links.values()].reduce((s, b) => s + b, 0) === balance;
-}
+// the host reports (ducy-play's club_member).
+export const checkOwnLedger = (entries, balance) => Number.isFinite(balance) && ducy.checkOwnLedger(JSON.stringify(entries || []), balance);

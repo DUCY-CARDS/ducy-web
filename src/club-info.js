@@ -21,7 +21,6 @@ export const SECTIONS = [
 ];
 export const sectionName = id => SECTIONS.find(([s]) => s === id)?.[1] || '';
 export const MAX_INFO_TEXT = 2000, MAX_EVENTS = 20, MAX_EVENT_TEXT = 80;
-const TEXTS = ['about', 'chips', 'rules'];
 
 const text = (s, max) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
 
@@ -30,20 +29,9 @@ const text = (s, max) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/[^\S\n
 // replaces).
 export const cleanInfo = cleanClubInfo;
 
-// Club info from the club's host (a member's copy), cut to size, without
-// changing when each section changed.
-export function readInfo(x) {
-  if (!x || typeof x !== 'object') return null;
-  const out = {about: '', chips: '', rules: '', events: [], at: {}};
-  for (const k of TEXTS) out[k] = text(x[k], MAX_INFO_TEXT);
-  out.events = (Array.isArray(x.events) ? x.events : [])
-    .map(e => ({at: Number(e?.at), text: text(e?.text, MAX_EVENT_TEXT).replace(/\n/g, ' ')}))
-    .filter(e => Number.isSafeInteger(e.at) && e.at > 0 && e.text)
-    .sort((a, b) => a.at - b.at)
-    .slice(0, MAX_EVENTS);
-  for (const [k] of SECTIONS) if (Number.isSafeInteger(x.at?.[k]) && x.at[k] > 0) out.at[k] = x.at[k];
-  return out;
-}
+// A member's copy of the club info is as ducy-play's club_member reads it
+// from the host (club.js playerReceive): cut to size, keeping when each
+// section changed.
 
 export const isEmpty = info => !info || (!info.about && !info.chips && !info.rules && !info.events?.length);
 
