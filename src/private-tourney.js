@@ -19,11 +19,12 @@
 // end. Points are only for settling up afterwards: the tables play with
 // tournament chips, and club chips never move.
 //
-// ducy-play's club_oneoff (oneOff, #457) has the names, points, what
-// players see, the results and standings; here the stand-in club is kept.
+// ducy-play's club_oneoff (oneOff, #457; privateTourney, #456) has the
+// names, points, making, joining and leaving the tournament, what players
+// see, the results and standings; here the stand-in club is kept.
 
+import { privateTourney } from '../wasm/ducy_wasm.js';
 import { newClub } from './club.js';
-import { MAX_ENTRIES, newTourney, register, setPayout, unregister } from './club-tourneys.js';
 import { ask, settleUp } from './oneoff-standings.js';
 
 export const MAX_POINTS = 1e9;
@@ -53,75 +54,55 @@ export function privateClub(code, hostName, now = Date.now()) {
 
 export const cleanName = s => ask({op: 'cleanName', name: String(s ?? '')});
 
+const plain = v => v && typeof v === 'object' && !Array.isArray(v);
+
+// `to` made like `from`, keeping `to`'s objects where both have one.
+function merge(to, from) {
+  for (const k of Object.keys(to)) if (!(k in from)) delete to[k];
+  for (const [k, v] of Object.entries(from)) to[k] = plain(to[k]) && plain(v) ? merge(to[k], v) : v;
+  return to;
+}
+
+// Runs one of ducy-play's one-off tournament ops ('new', 'join', 'leave',
+// 'prizes') on the stand-in club; the members and the tournament keep
+// their objects. Throws why not, and nothing changes.
+function run(club, op, args, now = Date.now()) {
+  const r = privateTourney(JSON.stringify(club), op, JSON.stringify(args), now);
+  if (!r.ok) throw new Error(r.message);
+  merge(club.members, r.club.members);
+  const was = club.tourneys?.[0];
+  const t = r.club.tourneys[0];
+  club.tourneys = t ? [was?.id === t.id ? merge(was, t) : t] : [];
+  return r.value;
+}
+
 // The tournament, from the setup form: {name, game, stack, tableSize,
 // structure, payout, rows, buyIn} (payout: one of PAYOUTS' ids; rows, for
 // 'table', the payout table's rows, #424; buyIn in points, #403). The host
-// runs it (their
-// tab runs every table) and plays only if they register in the lobby, as
-// anyone does: until then they have no seat and no place.
+// runs it (their tab runs every table) and plays only if they register in
+// the lobby, as anyone does: until then they have no seat and no place.
 // Throws why the settings won't do.
 export function newPrivateTourney(club, s, now = Date.now()) {
-  if (club.tourneys?.length) throw new Error('This game has a tournament already.');
-  const buyIn = ask({op: 'checkBuyIn', buyIn: s.buyIn ?? null});
-  const host = club.members[HOST_ID];
-  const t = newTourney(club, {
-    name: String(s.name ?? '').trim() || `${host.name}’s tournament`, game: s.game, buyIn: 0, added: 0,
-    stack: s.stack, structure: s.structure, tableSize: s.tableSize,
-    opensAt: now, startsAt: now, minPlayers: 2, maxPlayers: MAX_ENTRIES,
-  }, now);
   const p = PAYOUTS.find(x => x.id === s.payout);
-  try {
-    if (p?.places) setPayout(club, t.id, p.places);
-    else if (p?.id === 'table') setPayout(club, t.id, {rows: s.rows});
-  } catch (e) {
-    club.tourneys = [];
-    throw e;
-  }
-  t.points = {buyIn, prizes: null};
-  return t;
+  const payout = p?.places || (p?.id === 'table' ? {rows: s.rows} : null);
+  run(club, 'new', {setup: s, payout}, now);
+  return theTourney(club);
 }
 
 export const theTourney = club => club.tourneys?.[0] || null;
 
-// `name` as nobody else in the club has it: "Ann", then "Ann 2", and so on.
-function uniqueName(club, id, name) {
-  const taken = Object.values(club.members).filter(m => m.id !== id).map(m => m.name);
-  return ask({op: 'uniqueName', taken, name});
-}
-
-// Player `id` (their relay id) registers as `name`, before the start. Asking
-// again (a reconnect) keeps their entry and takes the new name. Returns the
-// member; throws why not.
+// Player `id` (their relay id) registers as `name`, before the start, the
+// name made unique. Asking again (a reconnect) keeps their entry and takes
+// the new name. Returns the member; throws why not.
 export function joinPrivate(club, id, name, now = Date.now()) {
-  const t = theTourney(club);
-  if (!t) throw new Error('No tournament here.');
-  const clean = cleanName(name);
-  if (!clean) throw new Error('Enter your name: it’s what the others see.');
-  const m = club.members[id];
-  if (m && t.entries.some(e => e.member === id)) {
-    if (t.status === 'scheduled') m.name = uniqueName(club, id, clean);
-    return m;
-  }
-  if (t.status !== 'scheduled') throw new Error('This tournament has started: registration is closed.');
-  club.members[id] = {id, name: uniqueName(club, id, clean), status: 'member', balance: 0};
-  try {
-    register(club, t.id, id, now);
-  } catch (e) {
-    delete club.members[id];
-    throw e;
-  }
+  run(club, 'join', {id, name: String(name ?? '')}, now);
   return club.members[id];
 }
 
 // Player `id` unregisters (or the host takes them off), before the start.
-// The host may too: they go on running it, and keep their name.
-export function leavePrivate(club, id, now = Date.now()) {
-  const t = theTourney(club);
-  if (!t || t.status !== 'scheduled' || !t.entries.some(e => e.member === id)) return false;
-  unregister(club, t.id, id, now);
-  if (id !== HOST_ID) delete club.members[id];
-  return true;
-}
+// The host may too: they go on running it, and keep their name. Returns
+// whether they were registered.
+export const leavePrivate = (club, id, now = Date.now()) => run(club, 'leave', {id}, now);
 
 // The paid places now: [{place, share}] (share in basis points); no more
 // places than entries.
@@ -144,12 +125,8 @@ export const prizeTotals = t => ask({op: 'prizeTotals', tourney: t});
 // in any order). null goes back to the split of the buy-ins. Until the end.
 // Throws why not.
 export function setPrizes(club, list) {
-  const t = theTourney(club);
-  if (!t) throw new Error('No tournament here.');
-  if (t.status === 'finished' || t.status === 'cancelled') throw new Error('It’s over already.');
-  t.points ??= {buyIn: 0, prizes: null};
-  t.points.prizes = list == null ? null : ask({op: 'checkPrizes', list});
-  return t;
+  run(club, 'prizes', {list: list ?? null});
+  return theTourney(club);
 }
 
 // What every player sees of the tournament (the lobby, how it's going, the
