@@ -20,10 +20,11 @@ export const HOSTED = new Set([
   'offer_agent', 'revoke_agent', 'assign_agent', 'help_answer', 'settings', 'set_info', 'set_payout',
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
+  'new_tourney', 'cancel_tourney', 'make_group', 'set_group_min', 'end_group',
 ]);
 
 // The club's fields a command may change.
-const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin'];
+const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 
@@ -60,7 +61,10 @@ function apply(club, out) {
 }
 
 // Runs command `op` with `args` on `club`. Returns what it did: {value,
-// replies, accounts, tell, tablesTo, helpTo, armPromos}. Throws why not.
+// replies, accounts, tell, tablesTo, helpTo, armPromos, schedule (new
+// tournaments to time), stopTourneys (cancelled ones to stop)}. Besides the
+// manager's commands, a member's own 'register' and 'unregister' {tid, id}
+// for a tournament run here too. Throws why not.
 export function command(club, op, args = {}, now = Date.now()) {
   if (!club.money) startMoney(club, now);
   const r = ducy.clubHost(JSON.stringify(club), op, JSON.stringify(args ?? {}), now);

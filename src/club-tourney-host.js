@@ -240,7 +240,8 @@ export function createTourneyHost({
   const tableView = (tid, table) => (running.has(tid) ? call('tourneyTable', tid, table) : Promise.resolve(null));
 
   return {
-    startAll, schedule, begin, handle, enter, disconnected, tableView,
+    // stop(tid): a tournament the club host cancelled stops running.
+    startAll, schedule, begin, handle, enter, disconnected, tableView, stop,
     cancel: (tid, why = 'the manager cancelled it') => abandon(tid, why),
     live: () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.live])),
     running: tid => running.has(tid),
