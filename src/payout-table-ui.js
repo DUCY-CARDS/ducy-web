@@ -15,8 +15,10 @@ const ordinal = n => `${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3 ^ 1) && n % 10] |
 export const pct = bp => String(+(bp / 100).toFixed(2));
 
 // A table to start from: round shares for small fields, then the Default's
-// (club-tourneys.js) up to the most entries a tournament takes.
-export const STARTER_ROWS = [
+// (club-tourneys.js) up to the most entries a tournament takes. A function,
+// not a constant: the Default comes from the engine, which isn't loaded yet
+// when this module is.
+export const starterRows = () => [
   {from: 2, places: [10000]},
   {from: 6, places: [6500, 3500]},
   {from: 10, places: [5000, 3000, 2000]},
@@ -24,7 +26,7 @@ export const STARTER_ROWS = [
   ...[30, 50, 75, 100, 150, 200, 300, 500, 750, 1000].map(from => ({from, places: defaultPayout(from)})),
 ];
 
-export const draftOf = (rows = STARTER_ROWS) => ({rows: rows.map(r => ({from: r.from, places: r.places.slice()})), cols: 0});
+export const draftOf = (rows = starterRows()) => ({rows: rows.map(r => ({from: r.from, places: r.places.slice()})), cols: 0});
 const colsOf = d => Math.max(1, d.cols || 0, ...d.rows.map(r => r.places.length));
 
 // The editor's table and its buttons; `act`: the attribute the caller's

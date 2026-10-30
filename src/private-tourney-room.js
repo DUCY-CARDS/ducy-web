@@ -51,14 +51,17 @@ function loadForm() {
   try { s = JSON.parse(localStorage.getItem(FORM_KEY) || 'null'); } catch {}
   const f = {name: '', game: 'nlhe', stack: 10000, tableSize: 9, payout: 'default', buyIn: 100, ...(s || {})};
   if (!PAYOUTS.some(p => p.id === f.payout)) f.payout = 'default';
-  // The payout table by entries (#424), as last typed.
+  // The payout table by entries (#424), as last typed; none yet: the
+  // starter's, made when first needed (tableDraft), as it's the engine's,
+  // not loaded yet when this runs.
   const rows = Array.isArray(f.table?.rows) && f.table.rows.length && f.table.rows.every(r => Array.isArray(r?.places)) ? f.table.rows : null;
-  f.table = rows ? {rows, cols: Number(f.table.cols) || 0} : draftOf();
+  f.table = rows ? {rows, cols: Number(f.table.cols) || 0} : null;
   if (!Number.isSafeInteger(f.buyIn) || f.buyIn < 0 || f.buyIn > MAX_POINTS) f.buyIn = 100;
   f.tableSize = Math.min(f.tableSize, maxSeats(f.game));
   return f;
 }
 const form = loadForm();
+const tableDraft = () => (form.table ||= draftOf());
 let editor = null;
 let formNote = '';
 // The blind levels stay open (or shut) as the form is redrawn. (toggle
@@ -81,7 +84,7 @@ function readForm(wrap) {
   const buyIn = v('[data-tzform] [name=buyin]');
   if (buyIn != null) form.buyIn = buyIn === '' ? 0 : Number(buyIn);
   const rows = wrap.querySelector('[data-tzform] [data-tzrows]');
-  if (rows) form.table = readRows(rows, form.table);
+  if (rows) form.table = readRows(rows, tableDraft());
 }
 
 // ---- where things are ----
@@ -182,7 +185,7 @@ async function openLobby(wrap) {
   if (formNote) { redraw(); return; }
   const c = privateClub(newCode(), tableName());
   try {
-    newPrivateTourney(c, {...form, structure: ed().steps(), rows: form.payout === 'table' ? cleanRows(form.table) : null});
+    newPrivateTourney(c, {...form, structure: ed().steps(), rows: form.payout === 'table' ? cleanRows(tableDraft()) : null});
   } catch (e) {
     formNote = e.message;
     redraw();
@@ -580,9 +583,9 @@ function click(e) {
     if (d.tzsize) form.tableSize = Math.min(+d.tzsize, maxSeats(form.game));
     if (d.tzpay) form.payout = d.tzpay;
     // The payout table by entries (#424): a row more or less, a place more.
-    if (d.tz === 'prow-add') addRow(form.table);
-    else if (d.tz === 'prow-remove') removeRow(form.table, Number(d.i));
-    else if (d.tz === 'pcol-add') addPlace(form.table);
+    if (d.tz === 'prow-add') addRow(tableDraft());
+    else if (d.tz === 'prow-remove') removeRow(tableDraft(), Number(d.i));
+    else if (d.tz === 'pcol-add') addPlace(tableDraft());
     if (d.tz === 'open') { openLobby(wrap); return true; }
     saveForm();
     redraw();
