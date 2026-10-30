@@ -52,12 +52,18 @@ export function pruneGroups(club) {
 // ids]}; `held`: {table: seats held there for people on their way}.
 export const movesUp = (club, id, seated, held) => rules(club, {op: 'movesUp', id, seated, held});
 
-// Asks members `online` (all but those at the group's tables); returns who
-// was asked, [] if too few to ask. Throws why not.
-export const askGroup = (club, id, online, now = Date.now()) => rules(club, {op: 'askGroup', id, online}, now);
+// The question, its answers and how it ends say what to tell members:
+// {sends: [{to, kind, …}] to send now (kind 'ask', 'closed' or 'open'),
+// opened (the new table to start), afterOpen (messages once it runs),
+// moves ([{id, from, to}], by GROUP_BY), until (when it closes: time it),
+// finish (enough said yes: close it now)}.
 
-// Member `who` answers; returns whether enough have said yes.
-export const answerGroup = (club, id, who, yes, now = Date.now()) => rules(club, {op: 'answerGroup', id, who, yes}, now);
+// Asks members `online` (all but those at the group's tables). Throws why
+// not, too few online included.
+export const askAbout = (club, id, online, now = Date.now()) => rules(club, {op: 'askAbout', id, online}, now);
 
-// Closes the question: {opened (the new table's id, or null), yes, moves}.
-export const endAsk = (club, id, most = null, now = Date.now()) => rules(club, {op: 'endAsk', id, most}, now);
+// Member `who` answers.
+export const groupAnswer = (club, id, who, yes, now = Date.now()) => rules(club, {op: 'groupAnswer', id, who, yes}, now);
+
+// Closes the question; `most`: the plan's tables open at once.
+export const finishAsk = (club, id, most = null, now = Date.now()) => rules(club, {op: 'finishAsk', id, most}, now);
