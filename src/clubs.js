@@ -2091,7 +2091,7 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
   const q = memberQuery.trim().toLowerCase();
   // Last heard from: an always-on club's room keeps it (#401).
   const active = lastActive(club, (isRemote() && own().view?.seen) || {});
-  const list = sortMembers(memberFilter(club, show, now, undefined, agent).filter(m => !q || m.name.toLowerCase().includes(q)), sort, active, club.members);
+  const list = sortMembers(memberFilter(club, show, now, agent).filter(m => !q || m.name.toLowerCase().includes(q)), sort, active, club.members);
   const pg = pageOf(list, n);
   const agents = memberFilter(club, 'agents', now).sort((a, b) => a.name.localeCompare(b.name));
   let h = '<div class="mg-tools-row">';

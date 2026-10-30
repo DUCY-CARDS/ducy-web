@@ -28,8 +28,9 @@
 // stays negative.
 
 import { chipInput } from './chip-format.js';
-import { CLUB, entriesOf, entryView } from './club-money.js';
+import { entriesOf, entryView } from './club-money.js';
 import { book } from './club-book.js';
+import { overview } from './club-overview.js';
 
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
@@ -206,21 +207,14 @@ export const payTo = (club, id, what, amt, about, now = Date.now()) => moved(clu
 // A promotion prize taken back, up the path it came down (club-promos.js).
 export const voidPrize = (club, id, amt, promo, now = Date.now()) => moved(club, {op: 'voidPrize', id, amount: num(amt), promo: String(promo ?? '')}, now);
 
-// The club's books. `owedToClub` adds up what its direct members owe it,
-// `owedToPlayers` what it owes them (#404). An agent's link is their
+// The club's books (ducy-play's club_overview): {issued, reclaimed,
+// balances, onTables, inTourneys (buy-ins held until they pay out or
+// refund), owedToClub (what its direct members owe it), owedToPlayers
+// (what it owes them, #404), conserved}. An agent's link is their
 // players' too.
 export function totals(club) {
   ensureChips(club);
-  const ms = Object.values(club.members);
-  const links = club.money ? club.money.links.filter(l => l.backer === CLUB).map(l => l.balance) : ms.map(m => m.balance);
-  const balances = links.reduce((s, b) => s + b, 0);
-  const onTables = ms.reduce((s, m) => s + (m.seat?.stack || 0), 0);
-  // Buy-ins held by tournaments until they pay out or refund (club-tourneys.js).
-  const inTourneys = (club.tourneys || []).reduce((s, t) => s + (t.held || 0), 0);
-  const owedToClub = links.reduce((s, b) => s + Math.max(0, -b), 0);
-  const owedToPlayers = links.reduce((s, b) => s + Math.max(0, b), 0);
-  return {issued: club.chips.issued, reclaimed: club.chips.reclaimed, balances, onTables, inTourneys, owedToClub, owedToPlayers,
-    conserved: club.chips.issued - club.chips.reclaimed === balances + onTables + inTourneys};
+  return overview(club, 'totals');
 }
 
 // What a member is told about their account: balance, open request, and
