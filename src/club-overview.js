@@ -1,6 +1,10 @@
 // The club manager's Overview (#398): summary numbers (never a list of
 // members), each table's dealing time, today's tournaments, and the member
-// filters the numbers open. Pure functions over the club object (club.js).
+// filters the numbers open. ducy-play's club_overview (clubOverview, from
+// ducy-wasm, #456) works out the numbers, filters, activity, table
+// summaries, notices (club-notices.js) and the club's totals
+// (club-chips.js); what's only for showing them (orders, pages, durations,
+// today on the viewer's calendar) is here.
 //
 // Dealing time: a table's clock runs only while hands are being dealt, and
 // stops when fewer than two players are in hands (everyone else sitting
@@ -9,27 +13,33 @@
 //                            started, null while stopped); stoppedAt, when
 //                            it last stopped
 // The same measure can bill by table-hours later (#268).
+//
+// Needs ducy's wasm loaded (the relay, the host's page, tests: ./wasm.mjs).
 
-import { owedBy, totals } from './club-chips.js';
-import { ownEntries } from './club-money.js';
-import { openTables } from './club-tables.js';
+import * as ducy from '../wasm/ducy_wasm.js';
+import { startMoney } from './club-money.js';
 
 export const DAY = 864e5;
 export const NEW_DAYS = 7, INACTIVE_DAYS = 30;
 
+// Runs Overview op `op` ('totals', 'numbers', 'filter', 'lastPlayed',
+// 'lastActive', 'tables', 'creditNotices', 'notices') over the club.
+export function overview(club, op, args = {}, now = Date.now()) {
+  if (!club.money) startMoney(club, now);
+  const r = ducy.clubOverview(JSON.stringify(club), op, JSON.stringify(args), now);
+  if (!r.ok) throw new Error(r.message);
+  return r.value;
+}
+
 // ---- dealing time ----
 
 // The clock after the table is (on) or isn't dealing at `now`.
-export function dealClock(clock, on, now = Date.now()) {
-  const c = {ms: clock?.ms || 0, since: clock?.since ?? null, ...(clock?.stoppedAt ? {stoppedAt: clock.stoppedAt} : {})};
-  if (on && c.since == null) return {...c, since: now};
-  if (!on && c.since != null) return {ms: c.ms + Math.max(0, now - c.since), since: null, stoppedAt: now};
-  return c;
-}
+export const dealClock = (clock, on, now = Date.now()) => ducy.dealClock(JSON.stringify(clock ?? null), on, now);
 
-// How long the table has dealt in all, up to `now`.
-export const dealingMs = (clock, now = Date.now()) => (clock?.ms || 0) + (clock?.since != null ? Math.max(0, now - clock.since) : 0);
+// Whether the clock is running, and how long it has dealt in all up to
+// `now`, for a page counting it up.
 export const isDealing = clock => clock?.since != null;
+export const dealingMs = (clock, now = Date.now()) => (clock?.ms || 0) + (clock?.since != null ? Math.max(0, now - clock.since) : 0);
 
 // "2 h 05 m", "47 m", "0 m".
 export function durationText(ms) {
@@ -41,12 +51,7 @@ export function durationText(ms) {
 
 // When each member last played (a table or tournament entry in the
 // ledger), by id.
-const PLAYED = new Set(['buy_in', 'top_up', 'cash_out', 'tourney_buy_in']);
-export function lastPlayed(club) {
-  const out = {};
-  for (const e of ownEntries(club)) if (PLAYED.has(e.kind) && e.at > (out[e.member] || 0)) out[e.member] = e.at;
-  return out;
-}
+export const lastPlayed = club => overview(club, 'lastPlayed');
 
 // The member filters (Overview's numbers open Members with one of them):
 //   all       every member
@@ -57,25 +62,14 @@ export function lastPlayed(club) {
 //   noagent   members who aren't under an agent
 //   agent     agent `agent`'s players (Members' By agent)
 export const FILTERS = ['all', 'new', 'inactive', 'owes', 'agents', 'noagent'];
-export function memberFilter(club, filter, now = Date.now(), played = lastPlayed(club), agent = '') {
-  const members = Object.values(club.members || {}).filter(m => m.status === 'member');
-  if (filter === 'new') return members.filter(m => now - (m.joinedAt || 0) < NEW_DAYS * DAY);
-  if (filter === 'inactive') return members.filter(m => !m.seat && now - Math.max(played[m.id] || 0, m.joinedAt || 0) >= INACTIVE_DAYS * DAY);
-  if (filter === 'owes') return members.filter(m => owedBy(m) > 0);
-  if (filter === 'agents') return members.filter(m => m.agent === 'yes');
-  if (filter === 'noagent') return members.filter(m => !m.agentOf || club.members[m.agentOf]?.agent !== 'yes');
-  if (filter === 'agent') return members.filter(m => m.agentOf && m.agentOf === agent);
-  return members;
+export function memberFilter(club, filter, now = Date.now(), agent = '') {
+  return overview(club, 'filter', {filter, agent}, now).map(id => club.members[id]);
 }
 
 // When each member was last active, by id: last heard from (`seen`, kept
 // by an always-on club's room, #401), last played, or joined, whichever is
 // latest; 0 when none of them is known.
-export function lastActive(club, seen = {}, played = lastPlayed(club)) {
-  const out = {};
-  for (const m of Object.values(club.members || {})) out[m.id] = Math.max(Number(seen[m.id]) || 0, played[m.id] || 0, m.joinedAt || 0);
-  return out;
-}
+export const lastActive = (club, seen = {}) => overview(club, 'lastActive', {seen});
 
 // The Members list's orders (#426): by name, balance (highest first, or
 // lowest: who owes the most), last active (most recent first), or agent
@@ -115,29 +109,10 @@ export function pageOf(list, page = 1, size = PAGE_SIZE) {
 // The numbers on top: tables active (dealing) of those open, chips out in
 // the club (given out less taken back), members, joined in the last 7
 // days, inactive 30+ days, and what's owed each way (#404).
-export function overviewNumbers(club, now = Date.now()) {
-  const tables = openTables(club);
-  const t = totals(club);
-  const played = lastPlayed(club);
-  return {
-    tablesActive: tables.filter(x => isDealing(x.dealing)).length,
-    tables: tables.length,
-    chipsOut: t.issued - t.reclaimed,
-    members: memberFilter(club, 'all', now, played).length,
-    joined: memberFilter(club, 'new', now, played).length,
-    inactive: memberFilter(club, 'inactive', now, played).length,
-    owedToClub: t.owedToClub,
-    owedToPlayers: t.owedToPlayers,
-  };
-}
+export const overviewNumbers = (club, now = Date.now()) => overview(club, 'numbers', {}, now);
 
 // Each open table for the overview: its game, status, dealing time and seats.
-export function tableSummaries(club, seated = {}, now = Date.now()) {
-  return openTables(club).map(t => ({
-    id: t.id, name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, taken: seated[t.id] || 0, status: t.status,
-    dealing: isDealing(t.dealing), ms: dealingMs(t.dealing, now), stoppedAt: isDealing(t.dealing) ? 0 : t.dealing?.stoppedAt || 0,
-  }));
-}
+export const tableSummaries = (club, seated = {}, now = Date.now()) => overview(club, 'tables', {seated}, now);
 
 // Today's tournaments (on the viewer's calendar): running ones, then those
 // still to start today, by start.
