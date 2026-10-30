@@ -35,6 +35,7 @@
 
 import * as ducy from '../wasm/ducy_wasm.js';
 import { payTo, tourneyBuyIn } from './club-chips.js';
+import { startMoney } from './club-money.js';
 
 export const MAX_TOURNEY_NAME = 40;
 export const MAX_ENTRIES = 1000;
@@ -233,3 +234,26 @@ export function finishTourney(club, tid, winner, now = Date.now()) {
 // What members see of the club's tournaments (the lobby), with how running
 // ones are going (`live`: {[tid]: {level, playersLeft, ...}} from the host).
 export const tourneysBody = (club, live = {}, now = Date.now()) => rules(club, {op: 'body', live}, now);
+
+// ---- running them (#456) ----
+
+// ducy-play's club_tourney_host (clubTourneyHost) says what tournament
+// `tid`'s start time and each result from its runner mean for the club:
+// starting or cancelling it, resuming it, who's knocked out, the prizes.
+// Ops: 'atStart' {seed}, 'abandon' {why, log}, 'resume' {saved, online},
+// 'result' {res, clock}, 'check' {id, running}, 'enter' {id, level},
+// 'playing' {id, running}. Returns the step for club-tourney-host.js to
+// carry out: {sends: [{to, update}], events (for the runner), chipsChanged,
+// changed, liveChanged, live, onPlay, over, counts, value}. Throws why
+// not, and nothing changes.
+export function tourneyHost(club, tid, op, args = {}, now = Date.now()) {
+  if (!club.money) startMoney(club, now);
+  const r = ducy.clubTourneyHost(JSON.stringify(club), tid, op, JSON.stringify(args), now);
+  if (!r.ok) throw new Error(r.message);
+  merge(club.members, r.club.members);
+  club.money = r.club.money;
+  Object.assign(club.chips ??= {}, r.club.chips);
+  club.log = r.club.log;
+  club.tourneys = byId(club.tourneys, r.club.tourneys);
+  return r.value;
+}
