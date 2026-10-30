@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { changedSince, cleanInfo, formatInfo, infoBody, isEmpty, MAX_EVENTS, MAX_INFO_TEXT, nextEvent, readInfo } from '../src/club-info.js';
+import { changedSince, cleanInfo, formatInfo, infoBody, isEmpty, MAX_EVENTS, MAX_INFO_TEXT, nextEvent } from '../src/club-info.js';
 import { codeInfo } from '../relay/src/club-room.js';
 
 const T = 1_800_000_000_000;
@@ -32,9 +32,6 @@ test('members see what changed since they last looked, and the next event', () =
   assert.deepEqual(changedSince(cleanInfo({...info, rules: ''}, info, T + 60), {about: T, events: T, chips: T}), []);
   assert.deepEqual(nextEvent(info, T), {at: T + 10, text: 'Turbo'});
   assert.equal(nextEvent(info, T + 11), null);
-  // A member's copy keeps the host's times, and nothing else.
-  assert.deepEqual(readInfo({...later, at: {...later.at, bogus: 1, about: 'x'}}).at, {events: T, chips: T, rules: T + 50});
-  assert.equal(readInfo('nope'), null);
 });
 
 test('formatting: paragraphs, lists, bold and links, and nothing else', () => {

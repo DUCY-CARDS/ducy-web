@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { createIdentity, signMessage, Verifier } from '../src/identity.js';
 import { approve, hostReceive, newClub, newMembership, playerReceive } from '../src/club.js';
-import { LOBBY_KEEP, LOBBY_MAX_AGE_MS, lobbyBody, onlineList, readLobby, sayInLobby } from '../src/club-lobby.js';
+import { LOBBY_KEEP, LOBBY_MAX_AGE_MS, lobbyBody, onlineList, sayInLobby } from '../src/club-lobby.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
 
 function clubWith(...ids) {
@@ -48,16 +48,13 @@ test('who’s online: the host first, then members by name, with their table', (
   assert.deepEqual(onlineList(club, new Set(['OWNEROWN', 'amy'])).map(x => [x.name, x.role]), [['Olive', 'host'], ['AMY', '']]);
 });
 
-test('a member reads the lobby, checked', () => {
+// A member's page checks what it keeps (ducy-play's club_member tests it).
+test('members don’t get each other’s IDs in the lobby chat', () => {
   const club = clubWith('p');
   sayInLobby(club, 'p', 'hi', Date.now());
   const body = lobbyBody(club, new Set(['p']));
-  assert.equal(body.chat[0].from, undefined, 'members don’t get each other’s IDs in the chat');
-  const got = readLobby({...body, online: [...body.online, {name: 'x'.repeat(40), role: 'boss'}, null], chat: [...body.chat, {text: ''}]});
-  assert.equal(got.online.length, 2);
-  assert.equal(got.online[1].name.length, 20);
-  assert.equal(got.online[1].role, '');
-  assert.deepEqual(got.chat.map(x => x.text), ['hi']);
+  assert.equal(body.chat[0].from, undefined);
+  assert.deepEqual(body.chat.map(x => x.text), ['hi']);
 });
 
 test('a signed lobby_say reaches the caller, members only; the lobby reaches the member', async () => {
