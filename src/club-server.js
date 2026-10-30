@@ -61,7 +61,7 @@ import { nextSettle, processHand, promosBody, settlePeriods } from './club-promo
 import { chipText } from './chip-format.js';
 import { infoBody } from './club-info.js';
 import { command, HOSTED } from './club-commands.js';
-import { answerGroup, askGroup, endAsk, GROUP_BY, groupById, pruneGroups } from './club-groups.js';
+import { askAbout, finishAsk, GROUP_BY, groupAnswer, groupById, pruneGroups } from './club-groups.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -357,7 +357,8 @@ export function createClubServer({
       tablesChanged: () => { if (pruneGroups(club)) persist(); broadcastTables(); onChange(); },
       online: id => online.has(id),
       onPlay,
-      groupFull: gid => askAboutTable(gid),
+      // Not asked when it can't be (asked already, too few online).
+      groupFull: gid => { try { askAboutTable(gid); } catch {} },
       onHand: (tid, view, players) => {
         const t = tableById(club, tid);
         const rec = handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'});
@@ -395,57 +396,51 @@ export function createClubServer({
   // Join?" for a minute. Once the group's minimum say yes, a table like the
   // main one opens at the end of the group: those seated elsewhere move to
   // it after their hand, the rest are told to sit down. Time running out
-  // first: no table, and those who said yes are told.
+  // first: no table, and those who said yes are told. ducy-play's
+  // club_groups says who hears what; here it's sent and timed.
   const askTimers = new Map(); // group id → timer
-  const groupMsg = (to, gid, kind, extra = {}) => sendToPlayer({to, body: {type: 'group', club: club.code, group: gid, kind, ...extra}});
+  const tell = (gid, sends) => {
+    for (const {to, ...m} of sends) sendToPlayer({to, body: {type: 'group', club: club.code, group: gid, ...m}});
+  };
 
+  // Asks about a new table for group `gid`; returns how many were asked.
+  // Throws why not.
   function askAboutTable(gid) {
-    const g = groupById(club, gid);
-    const main = tableById(club, g?.tables[0]);
-    if (!g || !main || (g.ask && g.ask.until > Date.now())) return [];
-    let asked;
-    try { asked = askGroup(club, gid, [...online]); } catch { return []; }
-    if (!asked.length) return [];
+    const news = askAbout(club, gid, [...online]);
     changed();
-    const until = groupById(club, gid).ask.until;
-    for (const id of asked) groupMsg(id, gid, 'ask', {name: main.name, until});
+    tell(gid, news.sends);
     armAsk(gid);
-    return asked;
+    return news.sends.length;
   }
 
   function armAsk(gid) {
     const g = groupById(club, gid);
     if (askTimers.has(gid)) promoTimers.clear(askTimers.get(gid));
     askTimers.delete(gid);
-    if (g?.ask) askTimers.set(gid, promoTimers.set(() => { askTimers.delete(gid); finishAsk(gid); }, Math.max(0, g.ask.until - Date.now())));
+    if (g?.ask) askTimers.set(gid, promoTimers.set(() => { askTimers.delete(gid); closeAsk(gid); }, Math.max(0, g.ask.until - Date.now())));
   }
 
   // Member `from` answered group `gid`'s question.
-  function groupAnswer(from, gid, yes) {
-    let enough;
-    try { enough = answerGroup(club, String(gid), from, yes); } catch (e) { groupMsg(from, gid, 'closed', {reason: e.message}); return; }
+  function answered(from, gid, yes) {
+    const news = groupAnswer(club, String(gid), from, yes);
     changed();
-    if (enough) finishAsk(gid);
+    tell(gid, news.sends);
+    if (news.finish) closeAsk(gid);
   }
 
-  async function finishAsk(gid) {
+  // Closes group `gid`'s question: everyone asked hears how it ended; a new
+  // table starts, those seated elsewhere move to it, and the rest who said
+  // yes are told to sit down there.
+  async function closeAsk(gid) {
     if (askTimers.has(gid)) promoTimers.clear(askTimers.get(gid));
     askTimers.delete(gid);
-    const asked = groupById(club, gid)?.ask?.asked || [];
-    let end;
-    try { end = endAsk(club, gid, limits?.tables ?? null); } catch (e) { console.warn('club: a group’s new table:', e.message); end = {opened: null, yes: [], moves: []}; }
+    const end = finishAsk(club, gid, limits?.tables ?? null);
     changed();
+    tell(gid, end.sends);
     const t = end.opened ? tableById(club, end.opened) : null;
-    // Everyone asked hears how it ended; those who said yes and aren't
-    // seated sit down there, and those seated elsewhere are moved there.
-    for (const id of asked) {
-      if (!t) groupMsg(id, gid, 'closed', end.yes.includes(id) ? {reason: 'Not enough players for a new table.'} : {});
-      else if (!end.yes.includes(id)) groupMsg(id, gid, 'closed');
-    }
     if (!t) return;
     if (tableHost) await started(tableHost.start(t));
-    const moving = new Set(end.moves.map(m => m.id));
-    for (const id of end.yes) if (!moving.has(id)) groupMsg(id, gid, 'open', {table: t.id, name: t.name});
+    tell(gid, end.afterOpen);
     for (const m of end.moves) {
       try { await tableHost?.reserve(m.to, m.id, {by: GROUP_BY}); } catch {}
     }
@@ -497,7 +492,7 @@ export function createClubServer({
     if (r.table && r.table.from === msg.from) {
       // An answer to "We're starting a new table. Join?" (#501), sent to
       // the group's main table.
-      if (r.table.cmd?.type === 'group_answer') groupAnswer(msg.from, String(r.table.cmd.group ?? ''), r.table.cmd.yes === true);
+      if (r.table.cmd?.type === 'group_answer') answered(msg.from, String(r.table.cmd.group ?? ''), r.table.cmd.yes === true);
       else if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
         sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the club. Reload and try again.'}});
       } else if (r.table.id.startsWith('tourney:')) tourneyHost?.handle(r.table.id.slice(8), r.table.from, r.table.cmd);
@@ -583,12 +578,7 @@ export function createClubServer({
     // Grouped tables with must-move (#501): asking about a new table now.
     ask_group: ({id}) => {
       if (!tableHost) throw new Error('The club’s tables aren’t running.');
-      const g = groupById(club, String(id));
-      if (!g) throw new Error('No such group.');
-      if (g.ask && g.ask.until > Date.now()) throw new Error('They’re being asked already.');
-      const asked = askAboutTable(g.id);
-      if (!asked.length) throw new Error(`Fewer than ${g.min} players are online to ask.`);
-      return asked.length;
+      return askAboutTable(String(id));
     },
     close_table: ({table}) => {
       const t = tableById(club, table);
