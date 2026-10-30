@@ -33,6 +33,7 @@ import {
   pruneReservations, reservations, reserveSeat, stayText, tableById, tableLedgerN,
 } from './club-tables.js';
 import { newSeating, seats } from './club-seats.js';
+import { GROUP_BY, groupById, groupOf, leftGroup, movesUp, satInGroup } from './club-groups.js';
 import { logAction } from './club-log.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 import { dealClock, isDealing } from './club-overview.js';
@@ -73,8 +74,10 @@ export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => c
 // asks; an always-on club's room backs it with its alarm (#135), so the
 // room can sleep between turns and a restart doesn't lose them. `idleMs`,
 // `askMs` and `nextHandMs` (ducy's 3 s if not given) are for tests.
+// `groupFull(gid)`: someone was turned away from a full table of group
+// `gid` whose tables are all full (#501; club-server.js asks about a new one).
 export function createTableHost({
-  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {},
+  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {}, groupFull = () => {},
   call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
   idleMs = IDLE_MS, askMs = ASK_MS, holdMs = HOLD_MS, nextHandMs,
 }) {
@@ -201,11 +204,24 @@ export function createTableHost({
     const r = running.get(tid);
     const t = tableById(club(), tid);
     if (!r || !t) return null;
+    const grouped = !!groupOf(club(), tid);
     for (const p of res.players || []) {
       // Someone new: the runner hears whether they're connected.
-      if (at.get(p.client_id) !== tid) { at.set(p.client_id, tid); run(tid, {type: 'presence', id: p.client_id, on: online(p.client_id)}); }
+      if (at.get(p.client_id) !== tid) {
+        at.set(p.client_id, tid);
+        run(tid, {type: 'presence', id: p.client_id, on: online(p.client_id)});
+        // In the table's group from now, unless they're in it already (#501).
+        if (grouped) satInGroup(club(), p.client_id, tid);
+      }
     }
-    for (const d of res.departed || []) if (at.get(d.client_id) === tid) at.delete(d.client_id);
+    for (const d of res.departed || []) {
+      if (at.get(d.client_id) === tid) at.delete(d.client_id);
+      // Out of the group, unless they're moving to another of its tables.
+      if (grouped) {
+        const s = club().members[d.client_id]?.seat;
+        leftGroup(club(), d.client_id, tid, (s?.table === tid && s.moving?.to) || r.seating.moves[d.client_id] || null);
+      }
+    }
     r.view = res.state;
     const {players, departed, refunds, playersIn, chipRequests} = res;
     const step = seats(club(), r.seating, tid, 'result', {
@@ -217,7 +233,39 @@ export function createTableHost({
     if (step.onHand) onHand?.(tid, res.state, r.seating.players);
     if (dealingNow(tid)) step.save = true;
     carry(tid, r, step);
+    // A seat free in the group: the player below moves up (#501).
+    const g = groupOf(club(), tid);
+    if (g) moveUp(g.group.id);
     return t;
+  }
+
+  // Grouped tables (#501): at each of group `gid`'s tables with a seat
+  // free, the player longest in the group at the table below moves up after
+  // their hand, as a manager moves them (by no one: not logged, and the
+  // hit-and-run rule doesn't hold them).
+  function moveUp(gid) {
+    const g = groupById(club(), gid);
+    if (!g) return;
+    const seated = {}, heldAt = {};
+    for (const tid of g.tables) {
+      const r = running.get(tid);
+      if (!r) continue;
+      seated[tid] = r.seating.players.map(p => p.client_id);
+      heldAt[tid] = held(tid);
+    }
+    for (const m of movesUp(club(), gid, seated, heldAt)) {
+      try { reserve(m.to, m.id, {by: GROUP_BY}); } catch {}
+    }
+  }
+
+  // Whether every table in group `gid` is running and full (seats held
+  // count as taken).
+  function groupIsFull(gid) {
+    const g = groupById(club(), gid);
+    return !!g && g.tables.every(tid => {
+      const r = running.get(tid), t = tableById(club(), tid);
+      return r && t && r.seating.players.length + held(tid) >= t.seats;
+    });
   }
 
   // Carries out a step from club-seats.js at table `tid`: messages, the
@@ -460,8 +508,11 @@ export function createTableHost({
     if (m.seat) m.seat.moving = {to: tid, ...(by ? {by} : {})};
     else rf.seating.moves[id] = tid;
     if (by) {
-      const who = by === c.hostId || by === c.ownerId ? 'The manager' : c.members[by]?.name || by;
-      logAction(c, by, `${who} moved ${m.name} from ${tf?.name || 'a table'} to ${t.name}`);
+      // A group's move up (#501) is no one's to log.
+      if (by !== GROUP_BY) {
+        const who = by === c.hostId || by === c.ownerId ? 'The manager' : c.members[by]?.name || by;
+        logAction(c, by, `${who} moved ${m.name} from ${tf?.name || 'a table'} to ${t.name}`);
+      }
       run(from, {type: 'mustPlay', id, on: false});
     }
     save();
@@ -537,6 +588,9 @@ export function createTableHost({
       if (r && !r.seating.players.some(p => p.client_id === id)) {
         if (r.seating.players.length + heldSeats(club(), tid, Date.now(), id) >= t.seats) {
           sendTable(id, {type: 'table', table: tid, update: {type: 'rejected', reason: 'That table is full.', fatal: true}});
+          // Every table in its group full: ask about a new one (#501).
+          const g = groupOf(club(), tid);
+          if (g && groupIsFull(g.group.id)) groupFull(g.group.id);
           return;
         }
         if (dropReservation(club(), tid, id)) { save(); armHolds(); }
@@ -571,5 +625,5 @@ export function createTableHost({
   // Seats taken: people at the table, and seats held for people coming (#425).
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.seating.players.length + held(tid)]));
 
-  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, removePlayer, keepPlayer, movePlayer, reserve, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
+  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, removePlayer, keepPlayer, movePlayer, reserve, moveUp, groupIsFull, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
 }
