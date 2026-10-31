@@ -54,10 +54,12 @@ jobs:
           install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
           wasm-pack --version
 
+      # The clubs-only build (#463): the relay never runs the bot tables or
+      # the GTO bots, so the Worker loads less and starts faster.
       - name: Build WASM
         run: |
           cd ducy
-          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript
+          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript --no-default-features
           cd ..
           mkdir -p wasm
           cp ducy/ducy-wasm/pkg/ducy_wasm.js ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/

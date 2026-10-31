@@ -5,7 +5,9 @@
 // the room restarts (e.g. after hibernating while no one plays).
 //
 // Shared by the Cloudflare Worker (worker.js, Durable Object storage) and
-// the local relay (dev-server.mjs, in memory).
+// the local relay (dev-server.mjs, in memory). What to make of requests,
+// what the super admin sees and the play clock are ducy-play's club_room
+// (clubRoom, #463); this keeps the storage and runs the club.
 //
 // storage: {get(key), put(key, value), delete(key)}, async, JSON-like values:
 //   club, verifier       the club (club.js) and its Verifier's senders
@@ -23,20 +25,23 @@ import { ensureTables } from '../../src/club-tables.js';
 import { createClubServer } from '../../src/club-server.js';
 import { clubEngine } from '../../src/club-engine.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
-import { FREE_LIMITS, removesAt } from './registry.js';
+import { clubRoom } from '../../wasm/ducy_wasm.js';
 
-// How old a create request may be (its seq is at least the time it was signed).
-const CREATE_WINDOW_MS = 5 * 60_000;
 // Hands kept for the owner's history (#125); about 1–2 KB each.
 const MAX_HANDS = 500;
 // How often a player's last-seen time is saved (#401).
 const SEEN_EVERY_MS = 60_000;
 // Finished hands the admin page shows (#401).
 const ADMIN_HANDS = 100;
-// Usage (#421): the longest pause in play that still counts, and the most
-// play time kept before it's reported.
+// Usage (#421): the longest pause in play that still counts.
 export const PLAY_GAP_MS = 60_000;
-const REPORT_MS = 5 * 60_000;
+
+// Runs room op `op` (ducy-play's club_room): its value, or throws why not.
+function room(op, now = Date.now()) {
+  const r = clubRoom(op, now);
+  if (!r.ok) throw new Error(r.message);
+  return r;
+}
 
 // A signed request to create an always-on club in room `code`:
 // {type: 'create_club', club: code, name}. Returns {hostId, invite}, or
@@ -46,12 +51,10 @@ const REPORT_MS = 5 * 60_000;
 export async function createClub(storage, env, code, claim = async () => {}) {
   if (await storage.get('club')) throw new Error('That club code is in use.');
   if (await checkSignature(env)) throw new Error('The request isn’t signed properly.');
-  const body = env.body || {};
-  if (body.type !== 'create_club' || body.club !== code) throw new Error('Not a request for this club.');
-  if (Math.abs(Date.now() - Number(env.seq)) > CREATE_WINDOW_MS) throw new Error('The request is too old; try again.');
-  await claim(env.from, code, String(body.name || '').slice(0, 50));
+  const name = room({op: 'checkCreate', env, code}).value;
+  await claim(env.from, code, name);
   const identity = await createIdentity();
-  const club = newClub(body.name, code, identity.id);
+  const club = newClub(env.body.name, code, identity.id);
   club.ownerId = env.from;
   club.alwaysOn = true;
   ensureTables(club);
@@ -74,16 +77,11 @@ export async function createClub(storage, env, code, claim = async () => {}) {
 export async function importClub(storage, env, code, claim = async () => {}) {
   if (await storage.get('club')) throw new Error('That club is already on the server.');
   if (await checkSignature(env)) throw new Error('The request isn’t signed properly.');
-  const body = env.body || {};
-  const data = body.data;
-  if (body.type !== 'import_club' || body.club !== code || data?.code !== code) throw new Error('Not a request for this club.');
-  if (Math.abs(Date.now() - Number(env.seq)) > CREATE_WINDOW_MS) throw new Error('The request is too old; try again.');
-  if (data.hostId !== env.from) throw new Error('Only the club’s host can move it.');
-  if (!data.members || typeof data.members !== 'object' || !data.chips) throw new Error('That isn’t a club.');
-  if (Object.values(data.members).some(m => m?.seat)) throw new Error('People are still at tables. Close the tables first.');
-  await claim(env.from, code, String(data.name || '').slice(0, 50));
+  const name = room({op: 'checkImport', env, code}).value;
+  await claim(env.from, code, name);
+  const body = env.body;
   const identity = await createIdentity();
-  const club = {...data, hostId: identity.id, ownerId: env.from, alwaysOn: true};
+  const club = {...body.data, hostId: identity.id, ownerId: env.from, alwaysOn: true};
   ensureTables(club);
   const hostKey = await newKeyPair({keep: true});
   await storage.put('identity', await exportIdentity(identity));
@@ -99,16 +97,7 @@ export async function importClub(storage, env, code, claim = async () => {}) {
 // its name and host ID, so they can. Nothing about its members or tables.
 // With an `invite` token that's the club's (or an agent's): its About the
 // club too (#398), for the invite screen.
-export function codeInfo(club, invite = '') {
-  const about = invite && club?.info?.about && (invite === club.invite || Object.values(club.members || {}).some(m => m.agent === 'yes' && m.agentInvite === invite))
-    ? {about: String(club.info.about).slice(0, 2000)} : {};
-  if (club?.codeJoin !== true) return {kind: 'club', ask: false, ...about};
-  return {kind: 'club', ask: true, name: String(club.name || ''), hostId: club.hostId, ...about};
-}
-
-// A finished hand without its cards (#401): no one's hole cards, board or
-// events (which name cards), unless the admin chose to see them.
-const handNoCards = h => ({...h, board: [], board2: undefined, events: [], seats: (h.seats || []).map(s => ({...s, cards: null})), hidden: true});
+export const codeInfo = (club, invite = '') => room({op: 'codeInfo', club: club || {}, invite: String(invite || '')}).value;
 
 // What the super admin sees of the club in `storage` (#401), read from
 // storage, so the club needn't be opened:
@@ -123,55 +112,21 @@ export async function adminView(storage, what, {reveal = false, id = ''} = {}) {
   const club = await storage.get('club');
   if (!club) return null;
   const seen = (await storage.get('seen')) || {};
-  const members = Object.values(club.members || {});
-  const nameOf = mid => club.members?.[mid]?.name || '';
-  if (what === 'people') {
-    const people = members.map(m => ({id: m.id, name: m.name, status: m.status, role: m.role || null, agent: m.agent || null, balance: m.balance ?? 0, lastSeen: seen[m.id] || null}));
-    if (club.ownerId && !club.members?.[club.ownerId]) people.push({id: club.ownerId, name: '', status: null, role: 'owner', balance: null, lastSeen: seen[club.ownerId] || null});
-    return {name: club.name, people};
-  }
-  if (what === 'person') {
-    const m = club.members?.[id] || null;
-    const log = club.log || [];
-    return {
-      member: m && {...m, lastSeen: seen[id] || null},
-      lastSeen: seen[id] || null,
-      // Their links up, and the ones their players have with them.
-      ledger: (club.money?.ledger || []).filter(e => e.member === id || e.backer === id),
-      requests: (club.requestLog || []).filter(r => r.member === id),
-      help: (club.help || []).filter(h => h.from === id),
-      log: log.filter(e => e.by === id || (m?.name && String(e.text || '').includes(m.name))),
-    };
-  }
+  if (what === 'people') return room({op: 'adminPeople', club, seen}).value;
+  if (what === 'person') return room({op: 'adminPerson', club, seen, id: String(id)}).value;
   const index = (await storage.get('hands')) || [];
   const hands = [];
   for (const h of index.slice(-ADMIN_HANDS).reverse()) {
     const rec = await storage.get(h.key);
-    if (rec) hands.push(reveal ? rec : handNoCards(rec));
+    if (rec) hands.push(rec);
   }
-  const {lobby, members: _, chips, money, promos, ...rest} = club;
-  return {
-    ...rest,
-    members: members.map(m => ({...m, lastSeen: seen[m.id] || null})),
-    ownerSeen: seen[club.ownerId] || null,
-    chips: {issued: chips?.issued || 0, reclaimed: chips?.reclaimed || 0},
-    links: money?.links || [],
-    ledger: (money?.ledger || []).map(e => ({...e, name: nameOf(e.member), backerName: e.backer === 'club' ? 'Club' : nameOf(e.backer)})),
-    promos: promos && {...promos, hands: reveal ? promos.hands : undefined},
-    hands,
-    revealed: reveal,
-    lobby: reveal ? lobby || [] : null,
-    lobbyCount: (lobby || []).length,
-  };
+  return room({op: 'adminFull', club, seen, reveal: !!reveal, hands}).value;
 }
 
 // The club server's plan and limits from its registry record (#265). An
 // older club with no record keeps the free limits. `temporary` (#395):
 // no backup of it proved yet.
-function planOf(record) {
-  const limits = record?.limits || FREE_LIMITS;
-  return {limits: {...limits}, plan: record ? {plan: record.plan, expires: record.expires ?? null, temporary: !!record.temporary, provedAt: record.provedAt ?? null, removesAt: removesAt(record)} : null};
-}
+const planOf = record => room({op: 'planOf', record: record || null}).value;
 
 // Is `env` the old host's signed handoff to this club's identity (#98)?
 async function isHandoff(club, env) {
@@ -180,34 +135,29 @@ async function isHandoff(club, env) {
     && env.from === club.ownerId && !(await checkSignature(env));
 }
 
-// A club's play time (#421): playing() each time a hand is in play; gaps up
-// to PLAY_GAP_MS count, longer ones end a stretch. onUsage(minutes, at) gets
-// it as it goes: at most REPORT_MS at a time, at the end of each stretch
-// (found by `timers`, if given, else at the next one), and at a new day.
-// report() sends what's counted so far.
+// A club's play time (#421, club_room's PlayClock): playing() each time a
+// hand is in play; gaps up to PLAY_GAP_MS count, longer ones end a stretch.
+// onUsage(minutes, at) gets it as it goes: at most every five minutes of
+// play, at the end of each stretch (found by `timers`, if given, else at the
+// next one), and at a new day. report() sends what's counted so far.
 export function playClock(onUsage, timers = null, now = () => Date.now()) {
-  let played = 0, lastPlay = 0, reportT = null;
-  const day = t => new Date(t).toISOString().slice(0, 10);
-  function report() {
-    if (!played) return;
-    const minutes = played / 60_000, at = lastPlay;
-    played = 0;
-    Promise.resolve(onUsage(minutes, at)).catch(e => console.warn('club: usage not reported:', e));
-  }
+  let clock = {played: 0, lastPlay: 0}, reportT = null;
+  const tell = u => { if (u) Promise.resolve(onUsage(u.minutes, u.at)).catch(e => console.warn('club: usage not reported:', e)); };
+  const step = (op, t = now()) => {
+    const r = room({op, clock}, t);
+    clock = r.clock;
+    tell(r.value);
+    return r.value;
+  };
   function check() {
     reportT = null;
-    if (now() - lastPlay > PLAY_GAP_MS) report();
-    else reportT = timers.set(check, PLAY_GAP_MS);
+    if (!step('check') && clock.played) reportT = timers.set(check, PLAY_GAP_MS);
   }
   function playing() {
-    const t = now();
-    if (t - lastPlay <= PLAY_GAP_MS && day(t) === day(lastPlay)) played += t - lastPlay;
-    else report();
-    lastPlay = t;
-    if (played >= REPORT_MS) report();
+    step('playing');
     if (timers && !reportT) reportT = timers.set(check, PLAY_GAP_MS + 1000);
   }
-  return {playing, report};
+  return {playing, report: () => step('report')};
 }
 
 // Opens the club in this room, if there is one: a running club server
