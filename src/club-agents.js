@@ -19,14 +19,12 @@
 // commands; what an agent sees is drawn here.
 
 import { account } from './club.js';
-import { available, creditOf, ensureChips } from './club-chips.js';
-import { entriesOf } from './club-money.js';
-import { tableSessions, totalsByMember } from './hand-replay.js';
+import { ensureChips } from './club-chips.js';
+import { view } from './club-money.js';
 import { book } from './club-book.js';
 
 export const isAgent = (club, id) => club.members[id]?.status === 'member' && club.members[id]?.agent === 'yes';
 export const playersOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'member');
-export const recruitsOf = (club, id) => Object.values(club.members).filter(m => m.agentOf === id && m.status === 'pending');
 
 // The host offers member `id` the agent role. Their credit limit is the one
 // they have as a member (#445). Returns the reply to send them.
@@ -51,43 +49,21 @@ export function assignToAgent(club, playerId, agentId, now = Date.now()) {
 // shares, what's their own, and how much credit it uses (#76, #454).
 export function accountOf(club, id) {
   ensureChips(club);
-  const a = club.members[id];
-  const players = playersOf(club, id);
-  const shares = players.reduce((s, p) => s + p.balance, 0);
-  const total = a.balance;
-  return {own: total - shares, shares, total, limit: creditOf(a), creditUsed: Math.max(0, -total), room: available(a), players};
+  const a = view(club, 'accountOf', {id});
+  return {...a, players: a.players.map(p => club.members[p])};
 }
 
 // A member's result at the tables (#190): what they won or lost over the
 // table sessions they've finished (buy-ins and top-ups out, cash-outs in;
 // a session still running isn't counted).
-export function tableResult(club, id) {
-  return totalsByMember(tableSessions(entriesOf(club, id)))[id] || 0;
-}
+export const tableResult = (club, id) => view(club, 'tableResult', {id});
 
-// Where a seated member is: their table's name (#428).
-function tableName(club, seat) {
-  if (seat.table.startsWith('tourney:')) return (club.tourneys || []).find(t => `tourney:${t.id}` === seat.table)?.name || 'A tournament';
-  return (club.tables || []).find(t => t.id === seat.table)?.name || 'A table';
-}
-
-// What an agent sees: their account, recruits waiting, and their players
-// (with their results at the tables, #190, and where they're playing, #428).
+// What an agent sees: their account, what they'd owe the club if their
+// players stood up now (#428), recruits waiting, and their players (with
+// their results at the tables, #190, and where they're playing, #428).
 export function agentBody(club, id) {
-  const a = accountOf(club, id);
-  return {
-    type: 'agent', club: club.code,
-    own: a.own, shares: a.shares, total: a.total, limit: a.limit, creditUsed: a.creditUsed, room: a.room,
-    // What the agent would owe the club if their players stood up now
-    // (#428): credit used, less their players' chips at the tables.
-    owed: Math.max(0, -(a.total + a.players.reduce((s, m) => s + (m.seat?.stack || 0), 0))),
-    invite: club.members[id].agentInvite,
-    recruits: recruitsOf(club, id).map(m => ({id: m.id, name: m.name, at: m.requestedAt})),
-    players: a.players.map(m => ({
-      id: m.id, name: m.name, balance: m.balance, request: m.request || null, seated: !!m.seat, result: tableResult(club, m.id),
-      ...(m.seat ? {table: tableName(club, m.seat), stack: m.seat.stack || 0} : {}),
-    })),
-  };
+  ensureChips(club);
+  return view(club, 'agentBody', {id});
 }
 
 // An agent's command (sent signed through the host): approving or
