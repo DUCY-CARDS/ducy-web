@@ -13,8 +13,8 @@
 import * as ducy from '../wasm/ducy_wasm.js';
 
 // The club's fields the rules read, and those they change.
-const READS = ['v', 'code', 'name', 'hostId', 'ownerId', 'invite', 'createdAt', 'codeJoin', 'members', 'help', 'lobby', 'info', 'tables', 'sitOutMins', 'stayHands', 'ratholeHours', 'waitlist', 'groups', 'lists', 'services', 'serviceRefused'];
-const WRITES = ['invite', 'members', 'help', 'lobby', 'info', 'tables', 'waitlist', 'groups', 'lists', 'services', 'serviceRefused'];
+const READS = ['v', 'code', 'name', 'hostId', 'ownerId', 'invite', 'createdAt', 'codeJoin', 'members', 'help', 'lobby', 'info', 'tables', 'sitOutMins', 'stayHands', 'ratholeHours', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'services', 'serviceRefused'];
+const WRITES = ['invite', 'members', 'help', 'lobby', 'info', 'tables', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'services', 'serviceRefused'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 
@@ -29,6 +29,9 @@ function apply(club, out) {
   // Table groups (#501) and waitlists (#518) are left out when there are none.
   if (!('groups' in out)) delete club.groups;
   if (!('lists' in out)) delete club.lists;
+  // So are the menu of offered games and their open questions.
+  if (!('menu' in out)) delete club.menu;
+  if (!('interest' in out)) delete club.interest;
   for (const k of WRITES) {
     if (!(k in out)) continue;
     if (k === 'members') merge(club.members ??= {}, out.members);

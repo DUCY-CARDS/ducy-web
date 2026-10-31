@@ -20,8 +20,30 @@ export const gameKey = t => `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
 export const listOf = (club, key) => club.lists?.[key] || [];
 
 // Member `id` joins game `key`'s list (back in line if passed over); their
-// place. Throws why not.
-export const joinList = (club, id, key, now = Date.now()) => rules(club, {op: 'joinList', id, key}, now);
+// place. Throws why not. For an offered game that isn't running (its
+// interest list), `min`: the fewest players they'd start a table with (null:
+// a full one).
+export const joinList = (club, id, key, now = Date.now(), min = null) => rules(club, {op: 'joinList', id, key, min}, now);
+
+// ---- interest lists: offered games that aren't running ----
+//
+// club.menu = [{key, name, game, sb, bb, minBB, maxBB, seats, …}]: the games
+// the club offers (club-commands.js offer_game, remove_offer). Once enough
+// are on an offered game's list, the first of them are asked "We're starting
+// a new table. Join?", then further down each ASK_MS; a no takes them off;
+// enough yes opens a table of it and seats them (club-server.js). The
+// question goes by group `interest:<key>` in messages to members.
+
+// Whether offered game `key` should ask about a table now.
+export const wantsInterest = (club, key) => rules(club, {op: 'wantsInterest', key});
+// Asks the first on its list. Throws why not. GroupNews (club-groups.js).
+export const askInterest = (club, key, now = Date.now()) => rules(club, {op: 'askInterest', key}, now);
+// A round ended: further down the list, or finish.
+export const extendInterest = (club, key, now = Date.now()) => rules(club, {op: 'extendInterest', key}, now);
+// Member `who` answers.
+export const interestAnswer = (club, key, who, yes, now = Date.now()) => rules(club, {op: 'interestAnswer', key, who, yes}, now);
+// Closes the question; `most`: the plan's tables open at once.
+export const finishInterest = (club, key, most = null, now = Date.now()) => rules(club, {op: 'finishInterest', key, most}, now);
 // Leaves it (or a manager takes them off); whether they were on it.
 export const leaveList = (club, id, key) => rules(club, {op: 'leaveList', id, key});
 // Back after a missed offer, within AWAY_MS; their place. Throws why not.
