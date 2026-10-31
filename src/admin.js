@@ -16,7 +16,11 @@ import { ago as agoText } from './time-ago.js';
 
 // ducy's engine first: signing (the JSON a request is signed over) and
 // player IDs use it (identity.js, #460).
-await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
+try {
+  await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
+} catch (e) {
+  console.error('WASM init failed:', e);
+}
 
 const DEFAULT_RELAY = 'https://ducy-relay.ducy.workers.dev';
 const $ = id => document.getElementById(id);
