@@ -38,6 +38,7 @@ import {
 import { createClubServer } from './club-server.js';
 import { feeds, isMain } from './club-groups.js';
 import { gameKey, listOf } from './club-lists.js';
+import { stakesBand } from '../wasm/ducy_wasm.js';
 import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
 import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
@@ -540,6 +541,25 @@ let closingTable = null;
 // the manager's: the list and must move do them (club-lists.js,
 // club-groups.js).
 let seatFilter = 0; // seats to show (2, 6, 9…), or 0 for every game
+let stakesFilter = ''; // stakes to show ('micro' … 'high'), or '' for all
+
+// Stakes bands, low to high (ducy-play's Stakes, by the big blind).
+const STAKES = ['micro', 'low', 'medium', 'high'];
+const STAKES_NAME = {micro: 'Micro', low: 'Low', medium: 'Medium', high: 'High'};
+
+// Filter chips for stakes `bands` (those any table has), with `on` picked;
+// none when there's only one band. `code`: a member's club (their Tables
+// tab), else the manager's board.
+function stakesFilterHtml(bands, on, code = '') {
+  if (bands.length < 2) return '';
+  const k = code ? ` data-code="${esc(code)}"` : '';
+  let h = '<div class="mg-filters" role="group" aria-label="Stakes">';
+  for (const s of ['', ...bands]) {
+    const pressed = on === s;
+    h += `<button class="cc-btn${pressed ? ' on' : ''}" data-cl="stakes-filter" data-s="${s}"${k} aria-pressed="${pressed}">${s ? STAKES_NAME[s] : 'All'}</button>`;
+  }
+  return h + '</div>';
+}
 let boardSort = ''; // 'game' or 'stakes'; '' puts games with a list first
 const openRows = new Set(); // games opened on the board, by key
 let openGame = ''; // the game opened, by key
@@ -596,15 +616,22 @@ function cashHtml() {
   // Filter by seats, when there's more than one size.
   const sizes = [...new Set(games.map(g => g.t.seats))].sort((a, b) => a - b);
   if (!sizes.includes(seatFilter)) seatFilter = 0;
+  let filters = '';
   if (sizes.length > 1) {
-    h += '<div class="mg-filters" role="group" aria-label="Seats">';
+    filters += '<div class="mg-filters" role="group" aria-label="Seats">';
     for (const n of [0, ...sizes]) {
       const on = seatFilter === n;
-      h += `<button class="cc-btn${on ? ' on' : ''}" data-cl="seat-filter" data-n="${n}" aria-pressed="${on}">${n ? seatsName(n) : 'All'}</button>`;
+      filters += `<button class="cc-btn${on ? ' on' : ''}" data-cl="seat-filter" data-n="${n}" aria-pressed="${on}">${n ? seatsName(n) : 'All'}</button>`;
     }
-    h += '</div>';
+    filters += '</div>';
   }
-  const shown = games.filter(g => !seatFilter || g.t.seats === seatFilter);
+  // And by stakes (micro, low, medium, high), when there's more than one;
+  // both on one line.
+  const bands = STAKES.filter(s => games.some(g => stakesBand(g.t.bb) === s));
+  if (!bands.includes(stakesFilter)) stakesFilter = '';
+  filters += stakesFilterHtml(bands, stakesFilter);
+  if (filters) h += `<div class="mg-filterbar">${filters}</div>`;
+  const shown = games.filter(g => (!seatFilter || g.t.seats === seatFilter) && (!stakesFilter || stakesBand(g.t.bb) === stakesFilter));
   const byGame = (a, b) => gameLabel(a.t.game).localeCompare(gameLabel(b.t.game)) || a.t.bb - b.t.bb || a.t.seats - b.t.seats;
   shown.sort(boardSort === 'stakes' ? (a, b) => a.t.bb - b.t.bb || byGame(a, b)
     : boardSort === 'game' ? byGame : (a, b) => (waiting(b) > 0) - (waiting(a) > 0) || byGame(a, b));
@@ -2899,6 +2926,9 @@ const ordinal = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st',
 
 // A member's Tables tab: their last session while it's recent (#187), and
 // the open tables with Sit, or why not.
+// A member's stakes filter on each club's Tables tab, by club code.
+const memberStakes = new Map();
+
 function memberTablesHtml(m, hostHere) {
   let h = offersHtml(m, hostHere) + groupAskHtml(m);
   const last = tableSessions(m.entries || []).find(s => !s.open);
@@ -2908,12 +2938,18 @@ function memberTablesHtml(m, hostHere) {
     h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
   }
   if (!m.tables?.length) return h + `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`;
+  // Filter by stakes, when the club deals more than one band.
+  const band = t => t.stakes || stakesBand(t.bb);
+  const bands = STAKES.filter(s => m.tables.some(t => band(t) === s));
+  let only = memberStakes.get(m.code) || '';
+  if (!bands.includes(only)) only = '';
+  h += stakesFilterHtml(bands, only, m.code);
   // A card per table (V3 Club home, #225): cream when there's a seat for you.
   // Grouped by game, each with its waitlist (#518).
   h += '<ul class="cl-tables cl-tcards">';
   const keyOf = t => t.key || `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
   const order = [...new Set(m.tables.map(keyOf))];
-  const tables = [...m.tables].sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
+  const tables = m.tables.filter(t => !only || band(t) === only).sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
   let lastKey = null;
   for (const t of tables) {
     if (keyOf(t) !== lastKey) {
@@ -3257,6 +3293,12 @@ async function onClickIn(e) {
   // The Tables page (#518): the board's filter, order and rows; a game
   // opened; another table like its first; its list; its Must move dialog.
   else if (act === 'seat-filter') { seatFilter = Number(b.dataset.n) || 0; render(); }
+  // Stakes: the manager's board, or a member's Tables tab (by club).
+  else if (act === 'stakes-filter') {
+    if (b.dataset.code) memberStakes.set(b.dataset.code, b.dataset.s || '');
+    else stakesFilter = b.dataset.s || '';
+    render();
+  }
   else if (act === 'board-sort') { boardSort = boardSort === b.dataset.k ? '' : b.dataset.k; render(); }
   else if (act === 'board-row') {
     if (openRows.has(b.dataset.key)) openRows.delete(b.dataset.key); else openRows.add(b.dataset.key);
