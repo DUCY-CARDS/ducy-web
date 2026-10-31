@@ -31,6 +31,8 @@
 // Pages only read the mirrors and club.money.
 
 
+import * as ducy from '../wasm/ducy_wasm.js';
+
 export const CLUB = 'club';
 
 // Moves the club onto links if it isn't yet, and links new members
@@ -40,44 +42,27 @@ export { startMoney } from './club-book.js';
 // The club's ledger, oldest first.
 export const ledgerOf = club => club.money?.ledger || [];
 
-const PATH_MOVES = new Set(['buy_in', 'top_up', 'refund', 'cash_out', 'tourney_buy_in', 'prize', 'void']);
+// Runs one of ducy-play's club views (club_views, #459) over the club:
+// 'entriesOf', 'ledger', 'entryViews', 'settleRows', 'accountOf',
+// 'tableResult', 'agentBody'. Throws why not.
+export function view(club, op, args = {}) {
+  const r = ducy.clubView(JSON.stringify(club), op, JSON.stringify(args));
+  if (!r.ok) throw new Error(r.message);
+  return r.value;
+}
 
-// An entry as pages and members' copies have it: `player` when it's on
+// Entries as pages and members' copies have them: `player` when it's on
 // someone else's link for a player's move along their path (an agent's, for
 // their player's buy-in), and for a promotion prize or its void, the award's
 // `hand` and a note naming it.
-export function entryView(club, e) {
-  const out = {...e};
-  if (!e.note) delete out.note;
-  if (!e.about) delete out.about;
-  const ledger = ledgerOf(club);
-  if (PATH_MOVES.has(e.kind) && ledger[e.n - 1]?.n === e.n) {
-    let i = e.n - 1;
-    while (i > 0 && ledger[i - 1].tx === e.tx) i--;
-    if (ledger[i].member !== e.member) out.player = ledger[i].member;
-  }
-  if (e.kind === 'prize' || e.kind === 'void') {
-    const a = (club.promos?.awards || []).find(x => x.entry === e.n || x.voidEntry === e.n);
-    if (a?.hand) out.hand = a.hand;
-    if (a) out.note = e.kind === 'void' ? `Voided: ${a.promoName}${a.voidWhy ? `, ${a.voidWhy}` : ''}` : `${a.promoName}: ${a.handName}`;
-  }
-  return out;
-}
-
-// The club's ledger without the entries on other links for a player's
-// move: each move's first entry, on the player's own link.
-export function ownEntries(club) {
-  const out = [];
-  let tx = null;
-  for (const e of ledgerOf(club)) {
-    if (e.tx !== tx) out.push(e);
-    tx = e.tx;
-  }
-  return out;
-}
+const entryViews = (club, entries) => (entries.length ? view(club, 'entryViews', {ns: entries.map(e => e.n)}) : []);
+export const entryView = (club, e) => entryViews(club, [e])[0] || {...e};
 
 // Member `id`'s own entries (on their links up) after entry `since`.
-export const entriesOf = (club, id, since = 0) => ledgerOf(club).filter(e => e.member === id && e.n > since).map(e => entryView(club, e));
+export const entriesOf = (club, id, since = 0) => view(club, 'entriesOf', {id, since});
+
+// The club's whole ledger as pages show it.
+export const ledgerView = club => view(club, 'ledger');
 
 // What an entry drew on credit (a buy-in, top-up or tournament buy-in that
 // took the link below zero), or paid back (a cash-out that brought it up
@@ -98,8 +83,4 @@ export const throughOf = (club, id) => club.money?.accounts?.[id]?.through ?? nu
 // of their links with a balance, largest first, as {member, balance};
 // below zero, the member owes the backer. An agent's link carries their
 // players' play too, so it's their whole tree's result.
-export function settleRows(club, backer = CLUB) {
-  return (club.money?.links || []).filter(l => l.backer === backer && l.balance)
-    .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance) || a.member.localeCompare(b.member))
-    .map(l => ({member: l.member, balance: l.balance}));
-}
+export const settleRows = (club, backer = CLUB) => view(club, 'settleRows', {backer});

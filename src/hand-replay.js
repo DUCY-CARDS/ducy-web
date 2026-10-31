@@ -8,6 +8,7 @@
 // and a player's shows their own. So a record never holds anyone's unshown
 // cards. Seat numbers are the viewer's (they're seat 0).
 
+import * as ducy from '../wasm/ducy_wasm.js';
 import { handRecord as ducyRecord, recordFrames } from '../wasm/ducy_wasm.js';
 import { chipText } from './chip-format.js';
 
@@ -76,27 +77,9 @@ export function streetStarts(frames) {
 // buy-in to the cash-out. Entries on someone else's link for a player's
 // move (`player`, an agent's) aren't a session of their own.
 // Returns [{member, table, start, end, put, took, net, open}], newest first.
-export function tableSessions(entries) {
-  const open = new Map(); // member → session
-  const out = [];
-  for (const e of [...entries].sort((a, b) => a.n - b.n)) {
-    if (e.player || !['buy_in', 'top_up', 'refund', 'cash_out'].includes(e.kind)) continue;
-    let s = open.get(e.member);
-    // A top-up handed back (ducy#118) wasn't put on the table after all; a
-    // refund about anything else is a tournament's.
-    if (e.kind === 'refund') { if (s && s.table === e.about) { s.put -= e.amount; s.net = s.took - s.put; } continue; }
-    if (e.kind === 'buy_in' || !s) {
-      s = {member: e.member, table: e.about, start: e.at, end: null, put: 0, took: 0, net: 0, open: true};
-      open.set(e.member, s);
-      out.push(s);
-    }
-    if (e.kind === 'cash_out') {
-      s.took = e.amount; s.end = e.at; s.open = false; open.delete(e.member);
-    } else s.put -= e.amount;
-    s.net = s.took - s.put;
-  }
-  return out.reverse();
-}
+// A top-up handed back (ducy#118) comes off what was put in; a refund about
+// anything else is a tournament's. ducy-play's club_views works them out.
+export const tableSessions = entries => ducy.tableSessions(JSON.stringify(entries || []));
 
 // Total net per member over closed sessions: {member: net}.
 export function totalsByMember(sessions) {
