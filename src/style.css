@@ -2305,7 +2305,7 @@ a.cl-menu-item { display: block; text-decoration: none; }
 .mg-avatar { width: 30px; height: 30px; border-radius: 50%; background: #f3e7c9; color: #1d3a2c; display: grid; place-items: center; font-weight: 700; }
 .mg-acct-id code { font-family: var(--font-data); color: var(--fg-muted); }
 body.mode-manage .mg-main .cl-wrap:has(.mg-shell) { max-width: none; padding: 0; }
-.mg-shell { display: grid; grid-template-columns: 210px minmax(0, 1fr) 330px; min-height: calc(100vh - 48px); align-items: stretch; }
+.mg-shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: calc(100vh - 48px); align-items: stretch; }
 .mg-side { border-right: 1px solid var(--border); background: #18331f; padding: 16px 10px; display: flex; flex-direction: column; gap: 14px; }
 .mg-group { display: flex; flex-direction: column; gap: 2px; }
 .mg-group-name { font: 600 11px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-muted); padding: 0 10px 4px; }
@@ -2318,10 +2318,13 @@ body.mode-manage .mg-main .cl-wrap:has(.mg-shell) { max-width: none; padding: 0;
 .mg-page h2 { margin: 8px 0 0; font: 400 22px var(--font-display); color: var(--fg-strong); }
 .mg-sec { display: flex; flex-direction: column; gap: 8px; }
 .mg-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.mg-notes { border-left: 1px solid var(--border); background: #18331f; padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* What needs the manager, behind the bell on every page (#516). */
+.mg-notes { display: none; position: fixed; top: var(--demo-h, 0px); right: 0; bottom: 0; width: min(380px, 100%); z-index: 1150; overflow-y: auto; background: #18331f; padding: 16px 14px; flex-direction: column; gap: 10px; min-width: 0; box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4); }
+.mg-shell.notes-open .mg-notes { display: flex; }
+.mg-shell:is(.notes-open, .nav-open) .mg-scrim { display: block; position: fixed; inset: 0; z-index: 1140; background: rgba(0, 0, 0, 0.45); }
 .mg-notes-head { display: flex; justify-content: space-between; align-items: center; }
 .mg-notes-head h2 { margin: 0; font: 400 20px var(--font-display); color: var(--fg-strong); }
-.mg-notes-x { display: none; font-size: 18px; }
+.mg-notes-x { font-size: 18px; }
 .mg-quiet { padding: 6px 2px; }
 .mg-note-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .mg-note { background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; box-shadow: 0 3px 0 #0f2219; }
@@ -2357,7 +2360,6 @@ button.mg-stat { font: inherit; text-align: left; border: 0; cursor: pointer; }
 .mg-stat.green .mg-stat-label { color: #a9b8a6; }
 button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c5a43; filter: none; }
 .mg-of { font: 400 15px var(--font-ui); color: #a9b8a6; }
-.mg-needs { display: none; }
 .mg-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
 .mg-table { width: 100%; border-collapse: collapse; min-width: 520px; font-size: 14px; }
 .mg-table th, .mg-table td { padding: 10px 14px; text-align: left; border-top: 1px solid var(--border); white-space: nowrap; }
@@ -2440,11 +2442,6 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .pl-addchips .tr-btn { align-self: flex-start; }
 @media (max-width: 1199px) {
   .mg-shell { grid-template-columns: 200px minmax(0, 1fr); }
-  .mg-notes { display: none; position: fixed; top: var(--demo-h, 0px); right: 0; bottom: 0; width: min(380px, 100%); z-index: 1150; overflow-y: auto; border-left: 0; box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4); }
-  .mg-shell.notes-open .mg-notes { display: flex; }
-  .mg-notes-x { display: inline; }
-  .mg-needs { display: flex; }
-  .mg-shell:is(.notes-open, .nav-open) .mg-scrim { display: block; position: fixed; inset: 0; z-index: 1140; background: rgba(0, 0, 0, 0.45); }
 }
 @media (max-width: 760px) {
   .mg-shell { grid-template-columns: minmax(0, 1fr); }

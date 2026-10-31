@@ -1979,38 +1979,24 @@ function pageHtml(at) {
   return overviewHtml();
 }
 
-// Overview, the manager's home (#398, club-overview.js): the numbers (the
-// member ones open Members, filtered), the tables with how long each has
-// been dealing, today's tournaments, and what's owed each way (#404).
+// Overview, the manager's home (#398, #516): what needs them (O1) and
+// whether the club is running (O2), today's tournaments (O5) and the lobby
+// (O6). The user stories are in the club management review; everything
+// here serves one of them.
 function overviewHtml() {
   const now = Date.now();
+  const list = notices();
   const n = overviewNumbers(club, now);
-  const stat = (label, value, f = '', cls = '') => (f
-    ? `<button type="button" class="mg-stat green" data-cl="mfilter" data-f="${f}"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls}">${value}</b></button>`
-    : `<div class="mg-stat green"><span class="mg-stat-label">${label}</span><b class="mg-stat-val${cls}">${value}</b></div>`);
+  const seated = Object.values(seatedCounts()).reduce((s, x) => s + x, 0);
   let h = pageHead('Overview') + '<div class="mg-stats">';
-  h += stat('Tables active', `${n.tablesActive} <span class="mg-of">of ${n.tables}</span>`);
-  h += stat('Chips outstanding', chips(n.chipsOut));
-  h += stat('Members', n.members, 'all');
-  h += stat('Joined, last 7 days', n.joined ? `+${n.joined}` : '0', 'new');
-  h += stat('Inactive, 30+ days', n.inactive, 'inactive');
-  if (n.owedToClub) h += stat('Owed to the club', chips(n.owedToClub), 'owes');
-  h += stat('Owed to players', chips(n.owedToPlayers));
-  const waiting = noteCount();
-  if (waiting) h += `<button type="button" class="mg-stat mg-needs" data-cl="mg-notes"><span class="mg-stat-label">Needs you</span><b class="mg-stat-val">${waiting} ›</b></button>`;
+  // O2: are games dealing, and how many are playing?
+  h += `<a class="mg-stat green" href="#${ph('cash')}"><span class="mg-stat-label">Running</span><b class="mg-stat-val">${n.tablesActive} <span class="mg-of">of ${n.tables} tables</span></b><span class="mg-stat-label">${seated} seated</span></a>`;
+  // O1: how much is waiting on the manager (the list follows).
+  h += `<div class="mg-stat ${list.length ? 'mg-needs' : 'green'}"><span class="mg-stat-label">Needs you</span><b class="mg-stat-val">${list.length}</b></div>`;
   h += '</div>';
-  const tables = tableSummaries(club, seatedCounts(), now);
-  h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Tables</h2><a href="#${ph('cash')}">Cash games ›</a></div>`;
-  if (!tables.length) h += `<p class="pl-meta cl-empty">No tables open. <a class="btn-small primary" href="#${ph('cash')}">New table</a></p>`;
-  else {
-    h += '<div class="mg-table-wrap"><table class="mg-table"><thead><tr><th>Table</th><th>Game</th><th>Status</th><th>Dealing for</th><th>Seats</th></tr></thead><tbody>';
-    for (const t of tables) {
-      const status = t.status === 'closing' ? '<span class="mg-pill idle">Closing</span>' : t.dealing ? '<span class="mg-pill on">Dealing</span>' : '<span class="mg-pill idle">Not dealing</span>';
-      const time = t.dealing ? durationText(t.ms) : `<span class="pl-meta">${t.ms ? durationText(t.ms) : '–'}${t.stoppedAt ? ` · stopped ${ago(t.stoppedAt)}` : ''}</span>`;
-      h += `<tr><th><a href="#${ph('cash')}">${esc(t.name)}</a></th><td>${esc(SHORT[t.game] || gameLabel(t.game))} ${chips(t.sb)}/${chips(t.bb)}</td><td>${status}</td><td class="mg-num">${time}</td><td class="mg-num">${t.taken} / ${t.seats}</td></tr>`;
-    }
-    h += '</tbody></table></div>';
-  }
+  // O1: each thing waiting, answered right here.
+  h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Needs you</h2>${clearableKeys(list).length ? '<button class="link-btn" data-cl="notes-clear">Clear</button>' : ''}</div>`;
+  h += list.length ? `<ul class="mg-note-list">${list.map(noteHtml).join('')}</ul>` : '<p class="pl-meta">Nothing needs you.</p>';
   h += '</section>';
   const tours = todaysTourneys(club, now);
   if (tours.length) {
@@ -2025,7 +2011,8 @@ function overviewHtml() {
     }
     h += '</div></section>';
   }
-  return h;
+  // O6: who's online, and a line to the room.
+  return h + hostLobbyHtml();
 }
 
 // Requests (#398): help, people asking to join, chip requests, then the
@@ -2240,8 +2227,8 @@ function historyHtml() {
 }
 
 // The notifications (#398, club-notices.js): what needs the manager, each
-// answered right there. Beside the page on a wide screen, behind the bell
-// on a phone. `noteForm`: the notice whose Other, Reply or limit form is
+// answered right there, behind the bell on every page (#516; Overview lists
+// them too). `noteForm`: the notice whose Other, Reply or limit form is
 // open; Clear puts away the ones that need no answer (kept per browser).
 let noteForm = '';
 const clearedNotes = () => new Set(hostNotes().cleared || []);
@@ -2250,11 +2237,11 @@ const noteCount = () => notices().length;
 
 function notesHtml() {
   const list = notices();
-  let h = '<aside class="mg-notes" aria-label="Notifications"><div class="mg-notes-head"><h2>Notifications</h2>';
+  let h = '<aside class="mg-notes" aria-label="Needs you"><div class="mg-notes-head"><h2>Needs you</h2>';
   if (clearableKeys(list).length) h += '<button class="link-btn" data-cl="notes-clear">Clear</button>';
   h += '<button class="link-btn mg-notes-x" data-cl="mg-close" aria-label="Close">✕</button></div>';
-  h += list.length ? `<ul class="mg-note-list">${list.map(noteHtml).join('')}</ul>` : '<p class="pl-meta mg-quiet">Nothing new.</p>';
-  return h + hostLobbyHtml() + '</aside>';
+  h += list.length ? `<ul class="mg-note-list">${list.map(noteHtml).join('')}</ul>` : '<p class="pl-meta mg-quiet">Nothing needs you.</p>';
+  return h + '</aside>';
 }
 
 function noteHtml(n) {
