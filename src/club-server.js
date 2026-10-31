@@ -61,7 +61,8 @@ import { nextSettle, processHand, promosBody, settlePeriods } from './club-promo
 import { chipText } from './chip-format.js';
 import { infoBody } from './club-info.js';
 import { command, HOSTED } from './club-commands.js';
-import { askAbout, finishAsk, GROUP_BY, groupAnswer, groupById, pruneGroups } from './club-groups.js';
+import { askAbout, extendAbout, finishAsk, GROUP_BY, groupAnswer, groupById, promote, pruneGroups, wantsTable } from './club-groups.js';
+import { backOnList, joinList, lapseLists, leaveList, listsFor, nextListDue, offerSeats } from './club-lists.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -337,7 +338,8 @@ export function createClubServer({
     for (const id of online) if (club.members[id]?.status === 'member') sendToPlayer({to: id, body});
   }
 
-  const started = p => p.then(() => { broadcastTables(); onChange(); });
+  // A table running: its seats go to the game's list (#518).
+  const started = p => p.then(() => { fillSeats(); broadcastTables(); onChange(); });
 
   // The club's tables (#68). Starting means any tables that were running
   // stopped. Open and closing tables saved with a hand in progress resume it
@@ -353,12 +355,11 @@ export function createClubServer({
       save: () => { persist(); scheduleAdmin(); onChange(); },
       sendTable: sendSealed,
       chipsChanged: accountTo,
-      // Closed tables leave their groups (#501).
-      tablesChanged: () => { if (pruneGroups(club)) persist(); broadcastTables(); onChange(); },
+      // Closed tables leave their groups (#501); seats freed go to the
+      // waitlists (#518).
+      tablesChanged: () => { if (pruneGroups(club)) persist(); fillSeats(); broadcastTables(); onChange(); },
       online: id => online.has(id),
       onPlay,
-      // Not asked when it can't be (asked already, too few online).
-      groupFull: gid => { try { askAboutTable(gid); } catch {} },
       onHand: (tid, view, players) => {
         const t = tableById(club, tid);
         const rec = handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'});
@@ -385,19 +386,80 @@ export function createClubServer({
       ...engine,
     });
     tourneyHost.startAll();
-    // A "Join?" question open when the club last stopped closes on time.
+    // A "Join?" question open when the club last stopped goes on, on time;
+    // so do seat offers and places kept on the waitlists.
     for (const g of club.groups || []) if (g.ask) armAsk(g.id);
+    armLists();
   }
 
-  // ---- grouped tables (#501, club-groups.js) ----
+  // ---- waitlists (#518, club-lists.js) ----
   //
-  // When a group's tables are full and someone is turned away, everyone
-  // online but those at its tables is asked "We're starting a new table.
-  // Join?" for a minute. Once the group's minimum say yes, a table like the
-  // main one opens at the end of the group: those seated elsewhere move to
-  // it after their hand, the rest are told to sit down. Time running out
-  // first: no table, and those who said yes are told. ducy-play's
-  // club_groups says who hears what; here it's sent and timed.
+  // Players join and leave a game's list from the lobby; each free seat at
+  // the game's tables is offered to the next waiting, for a minute, then the
+  // next. Seats are given whenever they free up (tablesChanged), and must-move
+  // players move up first (club-host.js), so the list fills the seat they
+  // leave. ducy-play's club_lists says who hears what; here it's sent and
+  // timed.
+  const sendLists = id => { if (online.has(id)) sendToPlayer({to: id, body: listsFor(club, id)}); };
+
+  // Free seats to the lists; must-move tables made main tables, and a new
+  // one asked about, as the game's settings say.
+  function fillSeats() {
+    if (!tableHost) return;
+    let did = false;
+    for (const g of club.groups || []) if (promote(club, g.id, seatedCounts())) did = true;
+    const offers = offerSeats(club, seatedCounts());
+    for (const o of offers) sendToPlayer(o);
+    if (did || offers.length) changed();
+    armLists();
+    for (const g of club.groups || []) {
+      if (wantsTable(club, g.id, seatedCounts())) { try { askAboutTable(g.id); } catch {} }
+    }
+  }
+
+  // Offers not taken in time, and places kept too long.
+  let listTimer = null;
+  function armLists() {
+    if (listTimer != null) promoTimers.clear(listTimer);
+    listTimer = null;
+    const due = nextListDue(club);
+    if (due != null) listTimer = promoTimers.set(lapseNow, Math.min(Math.max(0, due - Date.now()) + 50, 2 ** 31 - 1));
+  }
+  function lapseNow() {
+    listTimer = null;
+    const sends = lapseLists(club);
+    for (const s of sends) sendToPlayer(s);
+    if (sends.length) { changed(); fillSeats(); broadcastTables(); }
+    armLists();
+  }
+
+  // Member `from`'s command for game `key`'s list: join_list, leave_list or
+  // list_back (after a missed offer). They hear their lists either way.
+  function listCmd(from, key, type) {
+    try {
+      if (type === 'join_list') joinList(club, from, key);
+      else if (type === 'leave_list') leaveList(club, from, key);
+      else if (type === 'list_back') backOnList(club, from, key);
+      else return;
+      changed();
+      fillSeats();
+      broadcastTables();
+    } catch (e) {
+      sendToPlayer({to: from, body: {type: 'list', club: club.code, kind: 'refused', key, reason: e.message}});
+    }
+    sendLists(from);
+  }
+
+  // ---- must move (#501, #518, club-groups.js) ----
+  //
+  // A game set to open must-move tables by itself, once every table is full
+  // and enough wait on its list: the first of them (as many as it takes to
+  // start one) are asked "We're starting a new table. Join?", players at
+  // other tables too. Each minute without enough yes, it goes further down
+  // the list; a no takes them off it. Once enough say yes, a table like the
+  // main one opens at the end of the chain: those seated elsewhere move to it
+  // after their hand, the rest are told to sit down. No one left to ask: no
+  // table, and those who said yes are told.
   const askTimers = new Map(); // group id → timer
   const tell = (gid, sends) => {
     for (const {to, ...m} of sends) sendToPlayer({to, body: {type: 'group', club: club.code, group: gid, ...m}});
@@ -406,7 +468,7 @@ export function createClubServer({
   // Asks about a new table for group `gid`; returns how many were asked.
   // Throws why not.
   function askAboutTable(gid) {
-    const news = askAbout(club, gid, [...online]);
+    const news = askAbout(club, gid);
     changed();
     tell(gid, news.sends);
     armAsk(gid);
@@ -417,7 +479,16 @@ export function createClubServer({
     const g = groupById(club, gid);
     if (askTimers.has(gid)) promoTimers.clear(askTimers.get(gid));
     askTimers.delete(gid);
-    if (g?.ask) askTimers.set(gid, promoTimers.set(() => { askTimers.delete(gid); closeAsk(gid); }, Math.max(0, g.ask.until - Date.now())));
+    if (g?.ask) askTimers.set(gid, promoTimers.set(() => { askTimers.delete(gid); nextRound(gid); }, Math.max(0, g.ask.until - Date.now())));
+  }
+
+  // A round ended without enough yes: further down the list, or it closes.
+  function nextRound(gid) {
+    const news = extendAbout(club, gid);
+    changed();
+    if (news.finish) { closeAsk(gid); return; }
+    tell(gid, news.sends);
+    armAsk(gid);
   }
 
   // Member `from` answered group `gid`'s question.
@@ -425,6 +496,8 @@ export function createClubServer({
     const news = groupAnswer(club, String(gid), from, yes);
     changed();
     tell(gid, news.sends);
+    for (const id of news.listsTo) sendLists(id);
+    if (news.listsTo.length) broadcastTables();
     if (news.finish) closeAsk(gid);
   }
 
@@ -437,6 +510,8 @@ export function createClubServer({
     const end = finishAsk(club, gid, limits?.tables ?? null);
     changed();
     tell(gid, end.sends);
+    // Those who said yes are off the list: they sit at the new table.
+    for (const id of end.listsTo) sendLists(id);
     const t = end.opened ? tableById(club, end.opened) : null;
     if (!t) return;
     if (tableHost) await started(tableHost.start(t));
@@ -493,6 +568,8 @@ export function createClubServer({
       // An answer to "We're starting a new table. Join?" (#501), sent to
       // the group's main table.
       if (r.table.cmd?.type === 'group_answer') answered(msg.from, String(r.table.cmd.group ?? ''), r.table.cmd.yes === true);
+      // A game's waitlist (#518), sent as table `list:<key>`.
+      else if (r.table.id.startsWith('list:')) listCmd(msg.from, r.table.id.slice(5), String(r.table.cmd?.type ?? ''));
       else if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
         sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the club. Reload and try again.'}});
       } else if (r.table.id.startsWith('tourney:')) tourneyHost?.handle(r.table.id.slice(8), r.table.from, r.table.cmd);
@@ -515,6 +592,8 @@ export function createClubServer({
       // Members checking in get the tables, the host's key for encrypted
       // table updates, and an agent their view.
       if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});
+      // The waitlists they're on (#518).
+      if (tableHost) sendLists(msg.from);
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
       if (club.info) sendToPlayer({to: msg.from, body: infoBody(club)});
@@ -568,18 +647,8 @@ export function createClubServer({
       await tableHost?.keepPlayer(table, String(id));
       changed();
     },
-    // Moving a player to a seat held at table `to` (#425): they leave after
-    // the hand in play and sit down there.
-    move_player: async ({table, id, to}) => {
-      if (!tableHost?.running(table)) throw new Error('That table isn’t running.');
-      await tableHost.movePlayer(table, String(id), String(to), {by: actor()});
-      changed();
-    },
-    // Grouped tables with must-move (#501): asking about a new table now.
-    ask_group: ({id}) => {
-      if (!tableHost) throw new Error('The club’s tables aren’t running.');
-      return askAboutTable(String(id));
-    },
+    // Moving players is never the manager's (#518): the waitlists and must
+    // move seat and move them.
     close_table: ({table}) => {
       const t = tableById(club, table);
       if (!t || t.status !== 'open') return;
@@ -610,6 +679,13 @@ export function createClubServer({
     // A new member gets the tables straight away.
     if (tableHost) for (const id of out.tablesTo) sendToPlayer({to: id, body: tablesNow()});
     for (const id of out.helpTo) if (online.has(id)) sendHelp(id);
+    // Taken off a waitlist (#518).
+    for (const id of out.listsTo || []) sendLists(id);
+    // Must move set up: players move up, and seats go to the lists.
+    if (op === 'set_must_move' && tableHost) {
+      for (const g of club.groups || []) tableHost.moveUp(g.id);
+      fillSeats();
+    }
     if (op === 'approve_award') {
       const a = club.promos?.awards?.find(x => x.id === String(args.id));
       if (a) promoEvents([a]);

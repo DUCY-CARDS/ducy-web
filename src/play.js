@@ -2728,14 +2728,19 @@ let leaveHook = null;
 // `seatTools` (watching a club table, #414): {rows() → [{key, name, stack,
 // note, buttons, items: [[tool, label]]}], run(key, tool)}, the players and
 // what the watcher can do to each.
+// `mustMove()` (a club's must-move table, #518): {to (the tables it feeds,
+// "A or B"), order (names, in move order), mine (your place, from 1, or 0),
+// moving (the table you're moving to after this hand, or '')}, or null.
 // `credit`: a club's cash table (#404): {available() (chips the player may
 // add, their own and credit), asked() (an open request to the manager, or
 // 0), ask(amount) (asks the manager, from the table), cancel()}. Its chips
 // panel then adds straight from what's available, or asks the manager when
 // nothing is.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null, credit = null} = {}) {
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null, credit = null, mustMove = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
+  mustMoveHook = mustMove;
+  moveOrderOpen = false;
   clubTable = club;
   seatToolsHook = seatTools;
   seatToolsOpen = '';
@@ -2764,6 +2769,7 @@ let seatToolsHook = null; // joinTableVia's seatTools
 let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 let bannerHook = null; // joinTableVia's banner()
+let mustMoveHook = null; // joinTableVia's mustMove()
 let creditHook = null; // joinTableVia's credit
 let chipsOpen = false; // its Add chips panel, opened with enough to play
 
@@ -2786,18 +2792,35 @@ export function celebrateAtTable(text) {
 }
 const CELEBRATE_MS = 6000;
 
-// The banner, or a celebration in its place.
+// The banner, or a celebration in its place. At a must-move table (#518),
+// moving up always shows; the move order only when asked for, from the
+// table's Must move tag.
+let moveOrderOpen = false;
 function promoLineHtml() {
   if (celebration && Date.now() < celebration.until) return `<div class="pl-promo-line celebrate" role="status"><span aria-hidden="true">★</span> ${esc(celebration.text)}</div>`;
+  const mm = mustMoveHook?.();
+  if (mm?.moving) return `<div class="pl-promo-line warn" role="status">Moving to ${esc(mm.moving)} after this hand</div>`;
   const text = bannerHook?.() || '';
+  let h = '';
+  if (mm) {
+    h += `<div class="pl-promo-line mm-line"><button class="tr-btn mm-tag" data-act="move-order" aria-expanded="${moveOrderOpen}">Must move → ${esc(mm.to)}</button>${text ? `<span>${esc(text)}</span>` : ''}</div>`;
+    if (moveOrderOpen) {
+      h += '<div class="mm-order"><b>Move order</b>';
+      if (mm.mine) h += ` <span>${ordinalText(mm.mine)} to move</span>`;
+      h += `<ol>${mm.order.map((n, i) => `<li${i + 1 === mm.mine ? ' class="me"' : ''}>${esc(i + 1 === mm.mine ? 'You' : n)}</li>`).join('')}</ol></div>`;
+    }
+    return h;
+  }
   return text ? `<div class="pl-promo-line">${esc(text)}</div>` : '';
 }
+const ordinalText = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
 
 function startGuest(code) {
   mode = 'guest';
   guestStandings = null;
   finalStandings = null;
   bannerHook = null;
+  mustMoveHook = null;
   celebration = null;
   resetChat();
   wholeChips = false;
@@ -3006,6 +3029,7 @@ function leaveTable(note = '') {
   ladderLeave();
   wholeChips = false;
   bannerHook = null;
+  mustMoveHook = null;
   celebration = null;
   lastSummary = null;
   clearTimeout(timer);
@@ -4309,6 +4333,7 @@ function onClick(e) {
   else if (el.dataset.act === 'rebuy') rebuy();
   else if (el.dataset.act === 'quest-topup') { questTopUpOpen = !questTopUpOpen; render(); }
   else if (el.dataset.act === 'quest-room') { questRoomOpen = !questRoomOpen; render(); }
+  else if (el.dataset.act === 'move-order') { moveOrderOpen = !moveOrderOpen; render(); }
   else if (el.dataset.act === 'quest-topup-to') questTopUpPick(Number(el.dataset.to));
   else if (el.dataset.act === 'quest-topup-cancel') { questTopUpNext = 0; render(); }
   else if (el.dataset.act === 'qchange') { tableMenuOpen = false; questChangeTable(); }
