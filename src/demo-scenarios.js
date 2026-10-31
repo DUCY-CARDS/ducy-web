@@ -87,7 +87,7 @@ export const SCENARIOS = [
         ...(i < 6 ? {table: 0} : i < 10 ? {table: 1} : i < 13 ? {table: 2} : {}),
         ...(i >= 39 ? {status: 'pending'} : {}),
         ...(i === 13 || i === 14 ? {ask: 10_000} : {}),
-        ...(i === 15 ? {help: 'Can I move to the Omaha table?'} : {}),
+        ...(i === 15 ? {help: 'Can you open a PLO table?'} : {}),
         ...(i >= 16 && i < 28 ? {register: true, balance: balance(i) + 5_000} : {}),
       })),
       tourney: {
