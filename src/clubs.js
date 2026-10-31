@@ -460,12 +460,12 @@ function memberHelpHtml(m, hostHere) {
 // Who's online and the lobby chat: `online` [{name, role, table}], `chat`
 // [{name, text, at, host}]. `form` is the club code for a member's page,
 // or 'host' for the club you run; `canSend` whether the club is reachable.
-// `who` false: the chat and how many are online, without the list (the
-// manager's notifications panel, #398).
+// `who` false: the last few lines and how many are online, without the
+// list (the manager's Overview, #516).
 function lobbyHtml(online, chat, form, canSend, who = true) {
   if (!who) {
-    let h = `<div class="mg-lobby"><h2>Lobby <span class="pl-meta">${online.length} online</span></h2><div class="cl-side-card cl-lobby">`;
-    if (chat.length) h += `<ul class="cl-lobby-log">${chat.map(x => `<li><span class="pl-meta">${clock(x.at)}</span> <b${x.host ? ' class="cl-lobby-host"' : ''}>${esc(x.name)}</b> ${esc(x.text)}</li>`).join('')}</ul>`;
+    let h = `<div class="mg-lobby"><div class="mg-sec-head"><h2>Lobby</h2><span class="pl-meta">${online.length} online</span></div><div class="cl-side-card cl-lobby">`;
+    if (chat.length) h += `<ul class="cl-lobby-log">${chat.slice(-3).map(x => `<li><span class="pl-meta">${clock(x.at)}</span> <b${x.host ? ' class="cl-lobby-host"' : ''}>${esc(x.name)}</b> ${esc(x.text)}</li>`).join('')}</ul>`;
     h += `<form class="cl-lobby-form" data-lobbyform="${esc(form)}"><input class="pl-text" name="text" maxlength="${CHAT_MAX}" autocomplete="off" placeholder="Say something" aria-label="Lobby chat"${canSend ? '' : ' disabled'}>`;
     return h + `<button class="btn-small primary" type="submit"${canSend ? '' : ' disabled'}>Send</button></form></div></div>`;
   }
@@ -1992,27 +1992,31 @@ function overviewHtml() {
   // O2: are games dealing, and how many are playing?
   h += `<a class="mg-stat green" href="#${ph('cash')}"><span class="mg-stat-label">Running</span><b class="mg-stat-val">${n.tablesActive} <span class="mg-of">of ${n.tables} tables</span></b><span class="mg-stat-label">${seated} seated</span></a>`;
   // O1: how much is waiting on the manager (the list follows).
-  h += `<div class="mg-stat ${list.length ? 'mg-needs' : 'green'}"><span class="mg-stat-label">Needs you</span><b class="mg-stat-val">${list.length}</b></div>`;
+  const oldest = Math.min(...list.map(x => x.at || now));
+  h += `<div class="mg-stat ${list.length ? 'mg-needs' : 'green'}"><span class="mg-stat-label">Needs you</span><b class="mg-stat-val">${list.length}</b>${now - oldest >= 60_000 ? `<span class="mg-stat-label">oldest ${durationText(now - oldest)}</span>` : ''}</div>`;
   h += '</div>';
   // O1: each thing waiting, answered right here.
   h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Needs you</h2>${clearableKeys(list).length ? '<button class="link-btn" data-cl="notes-clear">Clear</button>' : ''}</div>`;
   h += list.length ? `<ul class="mg-note-list">${list.map(noteHtml).join('')}</ul>` : '<p class="pl-meta">Nothing needs you.</p>';
   h += '</section>';
+  h += '<div class="mg-split">';
+  // O5: today's tournaments, a row each.
   const tours = todaysTourneys(club, now);
   if (tours.length) {
     const live = tourneyLive();
-    h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Tournaments today</h2><a href="#${ph('tourneys')}">Tournaments ›</a></div><div class="mg-stats">`;
+    h += `<section class="mg-sec"><div class="mg-sec-head"><h2>Tournaments today</h2><a href="#${ph('tourneys')}">Tournaments</a></div>`;
     for (const t of tours) {
       const l = live[t.id];
       const line = t.status === 'running'
-        ? `Running${l ? ` · level ${l.level + 1} · ${l.playersLeft} left` : ''}`
+        ? (l ? `Level ${l.level + 1} · ${l.playersLeft} left` : '')
         : `${new Date(t.startsAt).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})} · ${new Set(t.entries.map(e => e.member)).size} registered`;
-      h += `<a class="mg-stat green" href="#${ph('tourneys')}"><b>${esc(t.name)}</b><span class="mg-stat-label">${line}</span></a>`;
+      const end = t.status === 'running' ? '<span class="mg-pill on">Running</span>' : `<span class="mg-num pl-meta">${t.startsAt > now ? `in ${durationText(t.startsAt - now)}` : ''}</span>`;
+      h += `<a class="mg-trow" href="#${ph('tourneys')}"><span><b>${esc(t.name)}</b><span class="pl-meta">${line}</span></span>${end}</a>`;
     }
-    h += '</div></section>';
+    h += '</section>';
   }
-  // O6: who's online, and a line to the room.
-  return h + hostLobbyHtml();
+  // O6: who's online, the last few lines, and a line to the room.
+  return h + `<section class="mg-sec">${hostLobbyHtml()}</section></div>`;
 }
 
 // Requests (#398): help, people asking to join, chip requests, then the
@@ -2266,10 +2270,10 @@ function noteHtml(n) {
     body = `<span class="pl-meta">At their credit limit (${chips(n.credit)})</span>`;
     acts = `<form class="mg-note-acts" data-noteform="raise" data-id="${id}"><label class="pl-meta">New limit ${amount(raiseTo(n), 'New credit limit')}</label><button class="btn-small primary" type="submit">Raise limit</button>${btn('deny-now', 'No', ` type="button" data-id="${id}"`)}</form>`;
   } else if (n.kind === 'help') {
-    top = `<b>Help</b>${n.table ? ` · ${esc(n.table)}` : ''} · ${esc(n.name)}`;
+    top = `${who}${n.table ? ` <span class="pl-meta">${esc(n.table)}</span>` : ''}`;
     body = `<span>“${esc(n.text)}”</span>`;
     acts = open ? form('reply', `<input class="pl-text mg-note-wide" name="reply" maxlength="${MAX_HELP_REPLY}" required aria-label="Reply">`, 'Send')
-      : btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`) + btn('watch', 'Watch', ` data-table="${esc(n.watch)}"${n.watch && tableRunning(n.watch) ? '' : ' disabled'}`);
+      : btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`, true) + btn('watch', 'Watch', ` data-table="${esc(n.watch)}"${n.watch && tableRunning(n.watch) ? '' : ' disabled'}`) + btn('help-done', 'Done', ` data-id="${esc(n.id)}"`);
   } else if (n.kind === 'prize') {
     top = `<b>${esc(n.promo)}</b> · ${esc(n.name)} · ${chips(n.amount)}`;
     if (n.handName) body = `<span class="pl-meta">${esc(n.handName)}</span>`;
@@ -2281,9 +2285,12 @@ function noteHtml(n) {
     const t = tableById(club, n.table)?.name || 'a table';
     top = `<a href="#${ph('member', n.member)}">${who}</a> left ${esc(t)} owing <b>${chips(n.owesNow)}</b>`;
   }
-  const quiet = ['help', 'prize', 'stopped', 'left_owing'].includes(n.kind);
-  return `<li class="mg-note${quiet ? ' quiet' : ''}"><span class="mg-note-top"><span>${top}</span>${when(n.at)}</span>${body}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : ''}</li>`;
+  // One row each (#516): what kind, who and what, how long ago, the answers.
+  const tag = NOTE_TAGS[n.kind] || '';
+  return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
+
+const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes'};
 
 // Rules (#398): how the club's tables and members work.
 function rulesHtml() {
