@@ -36,7 +36,8 @@ import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { createClubServer } from './club-server.js';
-import { DEFAULT_GROUP_MIN, groupOf, MAX_GROUP_TABLES, placeName } from './club-groups.js';
+import { feeds, isMain } from './club-groups.js';
+import { gameKey, listOf } from './club-lists.js';
 import { MAX_HELP_REPLY, MAX_HELP_TEXT, openHelp } from './club-help.js';
 import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
@@ -384,7 +385,7 @@ function watchTable(id) {
   const t = tableById(club, id);
   if (!t || !tableRunning(id)) return;
   showTable?.();
-  // Back to Cash games afterwards.
+  // Back to Tables afterwards.
   const back = ph('cash');
   const ctl = own();
   const act = hostAct;
@@ -396,18 +397,16 @@ function watchTable(id) {
     handlers.onMessage(u);
   };
   const members = club.members;
-  // Other open tables with room, to move a player to (#425).
-  const moveTo = () => openTables(club).filter(x => x.status === 'open' && x.id !== id && tableRunning(x.id) && (seatedCounts()[x.id] || 0) < x.seats);
+  // Seating and moves are the waitlist's and must move's, never the
+  // manager's (#518): a player can be removed, no more.
   const seatTools = {
     rows: () => seats.players.map(p => ({
       key: p.id, name: members[p.id]?.name || '', stack: seats.view?.seats?.[p.seat]?.stack ?? 0,
       note: p.removing ? 'Leaving after this hand' : p.moving ? `Moving to ${tableById(club, p.moving)?.name || 'another table'}` : '',
       buttons: p.removing ? [['keep', 'Undo']] : [],
-      items: p.removing ? [] : p.moving ? [['after', 'Remove from table']]
-        : [['after', 'Remove from table'], ...moveTo().map(x => [`move:${x.id}`, `Move to ${x.name}`])],
+      items: p.removing ? [] : [['after', 'Remove from table']],
     })),
-    run: (pid, tool) => (tool.startsWith('move:') ? act('move_player', {table: id, id: pid, to: tool.slice(5)})
-      : act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid})),
+    run: (pid, tool) => act(tool === 'keep' ? 'keep_player' : 'remove_player', {table: id, id: pid}),
   };
   joinTableVia(handlers => {
     // An always-on club's table runs in its room: its view comes encrypted
@@ -532,65 +531,181 @@ let activityBig = false;
 
 // Closing a table asks on its own row (#186): the table being asked about.
 let closingTable = null;
-// Grouped tables (#501): the table whose group minimum is being picked,
-// {table, group?} (no group: making one).
-let groupForm = null;
+// ---- the Tables page (#518) ----
+//
+// The board: a row per game (type, stakes and seats) with its tables, who's
+// seated and how many wait on its list; each row opens to show its tables.
+// A game opened: its must-move chain, its list in order (Remove for a
+// no-show), and a card per table. Seating, moves and balancing are never
+// the manager's: the list and must move do them (club-lists.js,
+// club-groups.js).
+let seatFilter = 0; // seats to show (2, 6, 9…), or 0 for every game
+let boardSort = ''; // 'game' or 'stakes'; '' puts games with a list first
+const openRows = new Set(); // games opened on the board, by key
+let openGame = ''; // the game opened, by key
+let mustMoveForm = ''; // the game whose Must move dialog is open
 
-// A table's ⋯ items for its group: making one, or for its main table,
-// starting a new table, the minimum, and ending it.
-function groupMenu(t) {
-  const g = groupOf(club, t.id);
-  if (!g) return [['group-make', 'Make must-move group']];
-  if (g.place) return [];
-  return [
-    ...(g.group.tables.length < MAX_GROUP_TABLES ? [['group-ask', 'Start a new table']] : []),
-    ['group-min', 'Players to start'],
-    ['group-end', 'End group'],
-  ];
+// The club's games: [{key, t (its first table), tables, group}], tables in
+// their must-move order, else as they were made.
+function gamesOf(tables) {
+  const by = new Map();
+  for (const t of tables) {
+    const k = gameKey(t);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(t);
+  }
+  return [...by].map(([key, ts]) => {
+    const g = (club.groups || []).find(x => ts.some(t => x.tables.includes(t.id))) || null;
+    const place = t => (g ? (g.tables.indexOf(t.id) + 1 || 99) : 0);
+    ts.sort((a, b) => place(a) - place(b) || (a.createdAt || 0) - (b.createdAt || 0));
+    return {key, t: ts[0], tables: ts, group: g};
+  });
 }
 
-function groupFormHtml(t) {
-  const g = groupForm.group ? (club.groups || []).find(x => x.id === groupForm.group) : null;
-  const now = g?.min ?? Math.min(DEFAULT_GROUP_MIN, t.seats);
-  let h = '<span class="cl-confirm">Players to start <select class="pl-text" name="gmin">';
-  for (let n = 2; n <= t.seats; n++) h += `<option value="${n}"${n === now ? ' selected' : ''}>${n}</option>`;
-  h += '</select>';
-  h += g ? `<button class="btn-small primary" data-cl="group-min-yes" data-group="${esc(g.id)}">Save</button>`
-    : `<button class="btn-small primary" data-cl="group-make-yes" data-table="${esc(t.id)}">Make group</button>`;
-  return h + '<button class="btn-small" data-cl="group-cancel">Cancel</button></span>';
+// A game's must-move chain by table name: "C → B → A", "C → A or B".
+function chainText(g) {
+  const name = id => tableById(club, id)?.name || '';
+  const m = Math.min(g.mains ?? 1, g.tables.length);
+  const mains = g.tables.slice(0, m).map(name).join(' or ');
+  return [...g.tables.slice(m).map(name).reverse(), mains].join(' → ');
 }
 
-// Cash games (#398): a card per table, with who's at it, Watch, and the
-// rest in its ⋯ menu.
+// A table's tag in its game: Main, or Must move → the tables it feeds.
+function tableTag(g, tid) {
+  if (!g) return '';
+  const i = g.tables.indexOf(tid);
+  if (i < 0) return '';
+  if (isMain(g, i)) return '<span class="mg-tag main">Main</span>';
+  return `<span class="mg-tag mm">Must move → ${esc(feeds(g, i).map(x => tableById(club, x)?.name || '').join(' or '))}</span>`;
+}
+
+const gameTitle = t => `${gameLabel(t.game)} ${chips(t.sb)}/${chips(t.bb)}`;
+
 function cashHtml() {
   const tables = openTables(club);
   const counts = seatedCounts();
+  const games = gamesOf(tables);
+  if (openGame) {
+    const g = games.find(x => x.key === openGame);
+    if (g) return gameHtml(g, counts);
+    openGame = '';
+  }
   let h = tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
   if (!tables.length) return h + (tableForm === true ? '' : '<p class="pl-meta cl-empty">No tables open.</p>');
-  // Cream while anyone's playing at it (#225).
-  h += '<ul class="cl-tables cl-tcards">';
-  for (const t of tables) {
-    const n = counts[t.id] || 0;
-    const g = groupOf(club, t.id);
-    const place = g ? `${placeName(g.place)} · ` : '';
-    h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b><span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${n} of ${t.seats} seats</span>`;
-    h += tableStatusHtml(t) + '</span>';
-    if (t.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
-    else if (groupForm?.table === t.id) h += groupFormHtml(t);
-    else if (closingTable === t.id) {
-      h += `<span class="cl-confirm">Close ${esc(t.name)}?`;
-      h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(t.id)}">Close</button><button class="btn-small" data-cl="close-table-no">Keep open</button></span>`;
-    } else {
-      h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button>`;
-      h += menuHtml(`More for ${t.name}`, [...groupMenu(t), ['close-table', 'Close table']], '', '', ` data-table="${esc(t.id)}"`) + '</span>';
+  const waiting = g => listOf(club, g.key).length;
+  // Filter by seats, when there's more than one size.
+  const sizes = [...new Set(games.map(g => g.t.seats))].sort((a, b) => a - b);
+  if (!sizes.includes(seatFilter)) seatFilter = 0;
+  if (sizes.length > 1) {
+    h += '<div class="mg-filters" role="group" aria-label="Seats">';
+    for (const n of [0, ...sizes]) {
+      const on = seatFilter === n;
+      h += `<button class="cc-btn${on ? ' on' : ''}" data-cl="seat-filter" data-n="${n}" aria-pressed="${on}">${n ? seatsName(n) : 'All'}</button>`;
     }
-    // Who's at it, each with a ⋯ to remove them from the table (#414).
-    const seated = Object.values(club.members).filter(m => m.seat?.table === t.id);
-    const others = tables.filter(x => x.status === 'open' && x.id !== t.id).map(x => ({id: x.id, name: x.name, room: tableRunning(x.id) && (counts[x.id] || 0) < x.seats}));
-    h += seatedHtml(t.id, seated.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, moving: m.seat.moving?.to || ''})), '', others);
+    h += '</div>';
+  }
+  const shown = games.filter(g => !seatFilter || g.t.seats === seatFilter);
+  const byGame = (a, b) => gameLabel(a.t.game).localeCompare(gameLabel(b.t.game)) || a.t.bb - b.t.bb || a.t.seats - b.t.seats;
+  shown.sort(boardSort === 'stakes' ? (a, b) => a.t.bb - b.t.bb || byGame(a, b)
+    : boardSort === 'game' ? byGame : (a, b) => (waiting(b) > 0) - (waiting(a) > 0) || byGame(a, b));
+  const sortBtn = (k, label) => `<button class="mg-sort${boardSort === k ? ' on' : ''}" data-cl="board-sort" data-k="${k}" aria-pressed="${boardSort === k}">${label}</button>`;
+  h += '<div class="mg-board" role="table" aria-label="Games">';
+  h += `<div class="mg-brow mg-bhead" role="row"><span role="columnheader">${sortBtn('game', 'Game')}</span><span role="columnheader">${sortBtn('stakes', 'Stakes')}</span><span role="columnheader">Seats</span><span role="columnheader">Tables</span><span role="columnheader">Seated</span><span role="columnheader">Waitlist</span><span role="columnheader"><span class="v3-sr">Actions</span></span></div>`;
+  for (const g of shown) {
+    const open = openRows.has(g.key);
+    const seated = g.tables.reduce((n, t) => n + (counts[t.id] || 0), 0);
+    const seats = g.tables.reduce((n, t) => n + t.seats, 0);
+    const w = waiting(g);
+    h += `<div class="mg-brow${w ? ' waiting' : ''}" role="row">`;
+    h += `<span role="cell" class="mg-bgame"><button class="mg-toggle" data-cl="board-row" data-key="${esc(g.key)}" aria-expanded="${open}"><span class="mg-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(gameLabel(g.t.game))}</button>`;
+    if (g.group) h += `<span class="mg-chain">Must move ${esc(chainText(g.group))}</span>`;
+    h += '</span>';
+    h += `<span role="cell" class="mg-num">${chips(g.t.sb)}/${chips(g.t.bb)}</span><span role="cell">${seatsName(g.t.seats)}</span>`;
+    h += `<span role="cell" class="mg-num" data-label="Tables">${g.tables.length}</span><span role="cell" class="mg-num" data-label="Seated">${seated} / ${seats}</span>`;
+    h += `<span role="cell" class="mg-num mg-wait" data-label="Waitlist">${w}</span>`;
+    h += `<span role="cell" class="mg-bacts">${w ? `<button class="btn-small" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>` : ''}<button class="btn-small" data-cl="game-open" data-key="${esc(g.key)}">View</button></span></div>`;
+    if (!open) continue;
+    for (const t of g.tables) {
+      const n = counts[t.id] || 0;
+      h += `<div class="mg-brow mg-bsub" role="row"><span role="cell" class="mg-bgame"><b>${esc(t.name)}</b> ${tableTag(g.group, t.id)}${t.status === 'closing' ? ' <span class="pl-meta">Closing</span>' : ''}</span>`;
+      h += `<span role="cell" class="pl-meta">${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}</span><span role="cell"></span><span role="cell"></span>`;
+      h += `<span role="cell" class="mg-num" data-label="Seated">${n} of ${t.seats}</span><span role="cell"></span>`;
+      h += `<span role="cell" class="mg-bacts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button></span></div>`;
+    }
+  }
+  return h + '</div>';
+}
+
+// A game opened (#518): its must-move chain with Edit (the dialog), its list
+// in order with Remove, and a card per table: Main or Must move, its players
+// (a must-move table's in move order), Watch, and Close in its ⋯.
+function gameHtml(g, counts) {
+  const {t, group} = g;
+  const list = listOf(club, g.key);
+  const seated = g.tables.reduce((n, x) => n + (counts[x.id] || 0), 0);
+  const seats = g.tables.reduce((n, x) => n + x.seats, 0);
+  let h = '<button class="link-btn mg-back" data-cl="game-close">‹ Tables</button>';
+  h += `<div class="mg-head mg-ghead"><h1 class="mg-h">${esc(gameTitle(t))} · ${seatsName(t.seats)}</h1><span class="pl-meta">${seated} / ${seats} seated · ${list.length} waiting</span>`;
+  h += `<button class="btn-small primary" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button></div>`;
+  if (mustMoveForm === g.key) h += mustMoveFormHtml(g);
+  else {
+    h += '<div class="mg-chainrow">';
+    h += group ? `<span class="pl-meta">Must move</span> <b class="mg-chain">${esc(chainText(group))}</b>` : '<span class="pl-meta">Must move off</span>';
+    h += `<button class="btn-small" data-cl="mm-edit" data-key="${esc(g.key)}">Edit</button></div>`;
+  }
+  h += '<div class="mg-game">';
+  h += '<section class="mg-wl"><h3>Waitlist</h3>';
+  if (!list.length) h += '<p class="pl-meta">No one waiting.</p>';
+  else {
+    h += '<ol class="mg-wlist">';
+    for (const e of list) {
+      const name = club.members[e.member]?.name || 'Someone';
+      const state = e.offer ? `Seat at ${esc(tableById(club, e.offer.table)?.name || 'a table')}` : e.missed ? 'Missed their seat' : clock(e.at);
+      h += `<li class="${e.missed ? 'missed' : ''}"><span><b>${esc(name)}</b> <span class="pl-meta">${state}</span></span><button class="btn-small" data-cl="list-remove" data-key="${esc(g.key)}" data-id="${esc(e.member)}" aria-label="Remove ${esc(name)}">Remove</button></li>`;
+    }
+    h += '</ol>';
+  }
+  h += '</section><ul class="cl-tables cl-tcards mg-gtables">';
+  for (const x of g.tables) {
+    const n = counts[x.id] || 0;
+    const i = group ? group.tables.indexOf(x.id) : -1;
+    const mm = group && i >= 0 && !isMain(group, i);
+    h += `<li class="cl-tcard${n ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(x.name)}</b> ${tableTag(group, x.id)}<span class="cl-tcard-meta">${n} of ${x.seats}${mm ? ' · in move order' : ''}</span>`;
+    h += tableStatusHtml(x) + '</span>';
+    if (x.status === 'closing') h += '<span class="cl-acts pl-meta">Closing after this hand…</span>';
+    else if (closingTable === x.id) {
+      h += `<span class="cl-confirm">Close ${esc(x.name)}?`;
+      h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(x.id)}">Close</button><button class="btn-small" data-cl="close-table-no">Keep open</button></span>`;
+    } else {
+      h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(x.id)}"${tableRunning(x.id) ? '' : ' disabled'}>Watch</button>`;
+      h += menuHtml(`More for ${x.name}`, [['close-table', 'Close table']], '', '', ` data-table="${esc(x.id)}"`) + '</span>';
+    }
+    // Who's at it: a must-move table's in move order, the rest by seat.
+    let at = Object.values(club.members).filter(m => m.seat?.table === x.id);
+    if (mm) at.sort((a, b) => (a.seat.satAt ?? Infinity) - (b.seat.satAt ?? Infinity) || (a.id < b.id ? -1 : 1));
+    h += seatedHtml(x.id, at.map(m => ({id: m.id, name: m.name, stack: m.seat.stack, removing: !!m.seat.removing, moving: m.seat.moving?.to || ''})), '', g.tables, mm);
     h += '</li>';
   }
-  return h + '</ul>';
+  return h + '</ul></div>';
+}
+
+// A game's Must move dialog (#518): on or off; how many main tables (only
+// more: a main table never goes back to must move); and whether must-move
+// tables open, and become main tables, by themselves.
+function mustMoveFormHtml(g) {
+  const gr = g.group;
+  const on = !!gr;
+  const mains = gr?.mains ?? 1;
+  const k = `data-key="${esc(g.key)}"`;
+  let h = `<form class="cl-mmform" data-mmform="1" ${k}><h3>Must move</h3>`;
+  h += `<label class="cl-check"><input type="checkbox" name="on"${on ? ' checked' : ''}> On</label>`;
+  h += '<div class="cl-mm-more">';
+  h += `<label>Main tables<select class="pl-text" name="mains">${g.tables.map((_, i) => i + 1).filter(n => n >= (on ? mains : 1)).map(n => `<option value="${n}"${n === mains ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
+  h += `<label class="cl-check"><input type="checkbox" name="autoOpen"${gr?.autoOpen ? ' checked' : ''}> Open must-move tables automatically</label>`;
+  h += `<label>Players to start<select class="pl-text" name="min">${Array.from({length: g.t.seats - 1}, (_, i) => i + 2).map(n => `<option value="${n}"${n === (gr?.min || g.t.seats) ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
+  h += `<label class="cl-check"><input type="checkbox" name="autoMain"${gr?.autoMain ? ' checked' : ''}> Make them main tables automatically</label>`;
+  h += '</div>';
+  return h + `<div class="cl-formacts"><button class="btn-small primary" type="submit">Save</button><button class="btn-small" type="button" data-cl="mm-cancel">Cancel</button></div></form>`;
 }
 
 // A table's line under its name: its buy-in, and whether it's dealing and
@@ -601,33 +716,30 @@ function tableStatusHtml(t) {
   return `<span class="cl-tcard-meta">Buy-in ${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)} · ${deal}</span>`;
 }
 
-// Who's at table `tid` ([{id, name, stack, removing, moving}]), each with a
-// ⋯ to remove them (#414) after this hand: "Leaving after this hand" with
-// Undo meanwhile. Or to move them (#425) to one of `others`
-// ([{id, name, room}], the club's other open tables) with room.
-let moveMenu = ''; // `${table}|${player}`: Move to… open
-function seatedHtml(tid, players, dis = '', others = []) {
+// Who's at table `tid` ([{id, name, stack, removing, moving}]), a must-move
+// table's numbered in move order (`ordered`). Tapping a name opens Remove
+// (#414: after this hand, "Leaving after this hand" with Undo meanwhile) and
+// View member. Moving players is never the manager's (#518): someone on
+// their way shows where to. `tables`: the game's tables, for their names.
+function seatedHtml(tid, players, dis = '', tables = [], ordered = false) {
   if (!players.length) return '';
   const at = ` data-table="${esc(tid)}"`;
-  const room = others.filter(x => x.room);
-  let h = '<ul class="cl-at-table">';
+  let h = `<${ordered ? 'ol' : 'ul'} class="cl-at-table${ordered ? ' ordered' : ''}">`;
   for (const p of players) {
-    h += `<li><span>${esc(p.name)} ${chips(p.stack)}</span>`;
+    h += '<li>';
+    if (dis || p.removing || p.moving) h += `<span>${esc(p.name)} ${chips(p.stack)}</span>`;
+    else {
+      h += `<details class="cl-menu cl-namemenu"><summary>${esc(p.name)} <span class="cl-stack">${chips(p.stack)}</span></summary><div class="cl-menu-items">`;
+      h += `<button class="cl-menu-item" data-cl="seat-remove" data-id="${esc(p.id)}"${at}>Remove</button>`;
+      h += `<a class="cl-menu-item" href="#${ph('member', p.id)}">View member</a></div></details>`;
+    }
     if (p.removing) {
       h += '<span class="pl-meta">Leaving after this hand</span>';
       h += `<button class="link-btn" data-cl="seat-keep" data-id="${esc(p.id)}"${at}${dis}>Undo</button>`;
-    } else if (p.moving) h += `<span class="pl-meta">Moving to ${esc(others.find(x => x.id === p.moving)?.name || 'another table')}</span>`;
-    else if (!dis && moveMenu === `${tid}|${p.id}`) {
-      h += '<span class="cl-move-to"><span class="pl-meta">Move to</span>';
-      for (const x of room) h += `<button class="btn-small" data-cl="seat-move-to" data-id="${esc(p.id)}" data-to="${esc(x.id)}"${at}>${esc(x.name)}</button>`;
-      h += '<button class="link-btn" data-cl="seat-move-cancel">Cancel</button></span>';
-    } else if (!dis) {
-      const items = [['seat-remove', 'Remove from table'], ...(room.length ? [['seat-move', 'Move to…']] : [])];
-      h += menuHtml(`More for ${p.name}`, items, p.id, '', at);
-    }
+    } else if (p.moving) h += `<span class="pl-meta">Moving to ${esc(tables.find(x => x.id === p.moving)?.name || 'another table')}</span>`;
     h += '</li>';
   }
-  return h + '</ul>';
+  return h + `</${ordered ? 'ol' : 'ul'}>`;
 }
 
 // The invite link with Copy and Share, on the Tables and Players tabs.
@@ -810,6 +922,15 @@ function onSubmitIn(e) {
   if (hr) { e.preventDefault(); answerHelpReq(hr.dataset.helpreply, hr.elements.reply.value, false); return; }
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  // A game's Must move (#518).
+  const mf = e.target.closest('form[data-mmform]');
+  if (mf) {
+    e.preventDefault();
+    const el = mf.elements;
+    hostAct('set_must_move', {key: mf.dataset.key, on: el.on.checked, mains: Number(el.mains.value), autoOpen: el.autoOpen.checked, autoMain: el.autoMain.checked, min: Number(el.min.value)})
+      .then(ok => { if (ok) { mustMoveForm = ''; render(); } });
+    return;
+  }
   // A new tournament (#77), or a club payout table (#424).
   const tof = e.target.closest('form[data-tourneyform]');
   if (tof) {
@@ -1031,6 +1152,15 @@ function connectMembership(mem) {
           sitForm = `${mem.code}|${ev.table}`;
           sitAmount = 0;
         } else if (ev.reason) notice(`${cname}: ${ev.reason}`, clubHash(mem.code));
+      }
+      // A waitlist (#518): a seat offered you, an offer missed, off a list,
+      // or why not; wherever you are.
+      if (msg.body?.type === 'list' && mem.listEvent) {
+        const ev = mem.listEvent;
+        mem.listEvent = null;
+        if (ev.kind === 'offer') notice(`${cname}: a seat at ${ev.name} is yours for a minute.`, clubHash(mem.code));
+        else if (ev.kind === 'missed') notice(`${cname}: you missed your seat. You keep your place for 10 minutes.`, clubHash(mem.code));
+        else if (ev.kind === 'refused' && ev.reason) notice(`${cname}: ${ev.reason}`, clubHash(mem.code));
       }
       // A promotion prize, or a new high hand (#267), wherever you are.
       // At the club's table, it's celebrated there instead (#278).
@@ -1352,6 +1482,14 @@ function sitAt(code, table, amount = 0) {
     // The club's promotions for this table (#278), kept current as they change.
     // Or, moving to another table (#425), where.
     banner: () => (seatedAt?.reserve ? `Moving to ${seatedAt.reserve.name} after this hand` : tableBannerText(mem.promos, {table, game: t.game, tourney: !!tourney})),
+    // A must-move table (#518): the tables it feeds, its move order (on
+    // request), and moving up.
+    mustMove: () => {
+      const g = mem.tables?.find(x => x.id === table)?.group;
+      if (!g || g.main) return null;
+      const order = g.order || [];
+      return {to: (g.to || []).join(' or '), order: order.map(p => p.name), mine: order.findIndex(p => p.id === me.id) + 1, moving: seatedAt?.reserve?.name || ''};
+    },
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
     // Each hand you played goes in your hand history (#71), as you saw it,
     // kept here a moment for checking its deal (#136).
@@ -1964,7 +2102,7 @@ const pageHead = (title, extra = '') => `<div class="mg-head"><h1 class="mg-h">$
 
 function pageHtml(at) {
   const {page, member} = at;
-  if (page === 'cash') return pageHead('Cash games') + cashHtml();
+  if (page === 'cash') return (openGame ? '' : pageHead('Tables')) + cashHtml();
   if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payTable, heading: false});
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
@@ -2687,11 +2825,12 @@ function sitFormHtml(m, t, r) {
   return h + '<button class="btn-small primary" type="submit">Sit down</button><button class="btn-small" type="button" data-cl="sit-cancel">Cancel</button></form>';
 }
 
-// Grouped tables (#501): "We're starting a new table. Join?" while it's
-// open, Yes or No; once answered, what they said.
+// Must move (#501, #518): "We're starting a new table. Join?" until it
+// closes, Yes or No (a no takes you off the list); once answered, what they
+// said.
 function groupAskHtml(m) {
   const a = m.groupAsk;
-  if (!a || a.until <= Date.now()) return '';
+  if (!a) return '';
   const k = `data-code="${esc(m.code)}" data-group="${esc(a.group)}"`;
   let h = `<div class="cl-confirm cl-groupask"><b>We’re starting a new table. Join?</b> <span class="pl-meta">${esc(a.name)}</span>`;
   if (a.answer === 'yes') h += '<span class="pl-meta">Waiting for players</span>';
@@ -2699,10 +2838,69 @@ function groupAskHtml(m) {
   return h + '</div>';
 }
 
+// A table's must-move tag (#518) from its group label ({main, to}), with
+// " · " after it: "Main · ", "Must move → A or B · ", or ''.
+const mustMoveTag = g => (!g ? '' : g.main ? 'Main · ' : `Must move → ${(g.to || []).join(' or ')} · `);
+
+// A game's seats in words (#518): "Heads up", "6-max", "9-handed".
+const seatsName = n => (n === 2 ? 'Heads up' : n === 6 ? '6-max' : `${n}-handed`);
+// A game as players pick one: "Hold'em 1/2 · 9-handed".
+const gameName = t => `${gameLabel(t.game)} ${chips(t.sb)}/${chips(t.bb)} · ${seatsName(t.seats)}`;
+
+// Seconds left until `at`, as m:ss.
+const countdown = at => {
+  const s = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+// A seat offered from a waitlist (#518): the game, the time left, and Sit.
+// Ticks while it's open.
+let offerTick = null;
+function offersHtml(m, hostHere) {
+  const offers = (m.lists || []).filter(l => l.offer && l.offer.until > Date.now());
+  if (offers.length && !offerTick) offerTick = setTimeout(() => { offerTick = null; render(); }, 1000);
+  let h = '';
+  for (const l of offers) {
+    const t = (m.tables || []).find(x => x.id === l.offer.table);
+    if (!t) continue;
+    h += `<div class="cl-offer" role="status"><span><b>${esc(gameName(t))}</b><span class="pl-meta">Seat open · ${esc(t.name)}</span></span>`;
+    h += `<span class="cl-offer-time">${countdown(l.offer.until)}</span>`;
+    h += `<button class="btn-small primary" data-cl="offer-sit" data-code="${esc(m.code)}" data-table="${esc(t.id)}"${hostHere ? '' : ' disabled'}>Sit</button></div>`;
+  }
+  return h;
+}
+
+// A game's row on a member's Tables tab (#518): its name, who's waiting,
+// and the list: Join list, your place with Leave list, or I'm back after a
+// missed offer.
+function gameRowHtml(m, t, hostHere, open) {
+  const key = t.key || `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
+  const mine = (m.lists || []).find(l => l.key === key);
+  const count = m.listCounts?.[key] || 0;
+  const k = `data-code="${esc(m.code)}" data-key="${esc(key)}"${hostHere ? '' : ' disabled'}`;
+  let meta, act = '';
+  if (mine?.missed) {
+    meta = 'You missed your seat';
+    act = mine.missed > Date.now() ? `<button class="btn-small primary" data-cl="list-back" ${k}>I’m back</button>` : '';
+  } else if (mine?.offer) {
+    meta = 'Seat open for you';
+  } else if (mine) {
+    meta = `You’re ${ordinal(mine.place)} of ${mine.count}`;
+    act = `<button class="btn-small" data-cl="list-leave" ${k}>Leave list</button>`;
+  } else {
+    meta = count ? `${count} waiting` : open ? `${open} open` : 'Full';
+    // A seat open and no one waiting: sit at a table below.
+    if (!open || count) act = `<button class="btn-small primary" data-cl="list-join" ${k}>Join list</button>`;
+  }
+  return `<li class="cl-game-head"><span><b>${esc(gameName(t))}</b><span class="pl-meta${mine ? ' cl-mine' : ''}">${esc(meta)}</span></span>${act}</li>`;
+}
+
+const ordinal = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+
 // A member's Tables tab: their last session while it's recent (#187), and
 // the open tables with Sit, or why not.
 function memberTablesHtml(m, hostHere) {
-  let h = groupAskHtml(m);
+  let h = offersHtml(m, hostHere) + groupAskHtml(m);
   const last = tableSessions(m.entries || []).find(s => !s.open);
   if (last && Date.now() - last.end < 24 * 3600e3) {
     const where = (m.tables || []).find(t => t.id === last.table)?.name || 'a table';
@@ -2711,8 +2909,18 @@ function memberTablesHtml(m, hostHere) {
   }
   if (!m.tables?.length) return h + `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`;
   // A card per table (V3 Club home, #225): cream when there's a seat for you.
+  // Grouped by game, each with its waitlist (#518).
   h += '<ul class="cl-tables cl-tcards">';
-  for (const t of m.tables) {
+  const keyOf = t => t.key || `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
+  const order = [...new Set(m.tables.map(keyOf))];
+  const tables = [...m.tables].sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
+  let lastKey = null;
+  for (const t of tables) {
+    if (keyOf(t) !== lastKey) {
+      lastKey = keyOf(t);
+      const open = tables.filter(x => keyOf(x) === lastKey).reduce((n, x) => n + Math.max(0, x.seats - x.taken), 0);
+      h += gameRowHtml(m, t, hostHere, open);
+    }
     const here = seatedAt?.code === m.code && seatedAt.table === t.id;
     // The buy-in you'd need here, the rathole rule included (#187).
     const r = buyInRange(t, m.entries || [], m.rathole || 0);
@@ -2722,8 +2930,8 @@ function memberTablesHtml(m, hostHere) {
     // At another of this club's cash tables: Move here instead (#425).
     const canMove = atOther && seatedAt.code === m.code && !seatedAt.table.startsWith('tourney:');
     const held = canMove && seatedAt.reserve?.table === t.id;
-    // Its place in a group of tables (#501).
-    const place = t.group ? `${placeName(t.group.place)} · ` : '';
+    // Must move (#501, #518): a main table, or the tables it feeds.
+    const place = mustMoveTag(t.group);
     if (canMove && hostHere && (free > 0 || held)) {
       h += `<li class="cl-tcard cream"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
       h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
@@ -2931,6 +3139,20 @@ async function onClickIn(e) {
   }
   // Moving from your table to this one (#425): a seat is held here.
   else if (act === 'move-here') { b.disabled = true; sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: b.dataset.table, cmd: {type: 'reserve'}}); }
+  // A game's waitlist (#518): joining, leaving, back after a missed seat.
+  else if (act === 'list-join' || act === 'list-leave' || act === 'list-back') {
+    b.disabled = true;
+    const type = {'list-join': 'join_list', 'list-leave': 'leave_list', 'list-back': 'list_back'}[act];
+    sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: `list:${b.dataset.key}`, cmd: {type}});
+  }
+  // The seat offered: at another of the club's tables, move to it; else sit.
+  else if (act === 'offer-sit') {
+    const {code, table} = b.dataset;
+    if (seatedAt?.code === code && !seatedAt.table.startsWith('tourney:')) {
+      b.disabled = true;
+      sendToHost(code, {type: 'table', club: code, table, cmd: {type: 'reserve'}});
+    } else { sitForm = `${code}|${table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
+  }
   else if (act === 'deny-now') hostAct('deny', {id: b.dataset.id});
   else if (act === 'notes-clear') { setHostNote('cleared', [...clearedNotes(), ...clearableKeys(notices())].slice(-300)); render(); }
   // Overview's numbers open Members, filtered.
@@ -3032,30 +3254,26 @@ async function onClickIn(e) {
   else if (act === 'myname-cancel') { nameForm = ''; render(); }
   else if (act === 'help-done') answerHelpReq(b.dataset.id, b.closest('form')?.elements.reply?.value || '', true);
   else if (act === 'close-table') { closingTable = b.dataset.table; render(); }
-  // Grouped tables (#501): making one (its minimum first), its minimum,
-  // asking about a new table now, and ending it.
-  else if (act === 'group-make') { groupForm = {table: b.dataset.table}; render(); }
-  else if (act === 'group-min') { groupForm = {table: b.dataset.table, group: groupOf(club, b.dataset.table)?.group.id}; render(); }
-  else if (act === 'group-cancel') { groupForm = null; render(); }
-  else if (act === 'group-make-yes' || act === 'group-min-yes') {
-    const min = Number(root.querySelector('select[name="gmin"]')?.value) || DEFAULT_GROUP_MIN;
-    groupForm = null;
-    if (act === 'group-make-yes') hostAct('make_group', {table: b.dataset.table, min});
-    else hostAct('set_group_min', {id: b.dataset.group, min});
-  }
-  else if (act === 'group-ask' || act === 'group-end') {
-    const g = groupOf(club, b.dataset.table);
-    if (g) hostAct(act === 'group-ask' ? 'ask_group' : 'end_group', {id: g.group.id});
-  }
+  // The Tables page (#518): the board's filter, order and rows; a game
+  // opened; another table like its first; its list; its Must move dialog.
+  else if (act === 'seat-filter') { seatFilter = Number(b.dataset.n) || 0; render(); }
+  else if (act === 'board-sort') { boardSort = boardSort === b.dataset.k ? '' : b.dataset.k; render(); }
+  else if (act === 'board-row') {
+    if (openRows.has(b.dataset.key)) openRows.delete(b.dataset.key); else openRows.add(b.dataset.key);
+    render();
+  } else if (act === 'game-open') { openGame = b.dataset.key; mustMoveForm = ''; render(); window.scrollTo(0, 0); }
+  else if (act === 'game-close') { openGame = ''; mustMoveForm = ''; render(); }
+  else if (act === 'game-open-table') {
+    const t = openTables(club).find(x => gameKey(x) === b.dataset.key);
+    if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands}});
+  } else if (act === 'list-remove') hostAct('list_remove', {key: b.dataset.key, id: b.dataset.id});
+  else if (act === 'mm-edit') { mustMoveForm = b.dataset.key; render(); }
+  else if (act === 'mm-cancel') { mustMoveForm = ''; render(); }
   else if (act === 'watch') watchTable(b.dataset.table);
   else if (act === 'seat-remove' || act === 'seat-keep') {
     b.closest('details')?.removeAttribute('open');
     hostAct(act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id});
   }
-  // Moving a player to another table (#425).
-  else if (act === 'seat-move') { b.closest('details')?.removeAttribute('open'); moveMenu = `${b.dataset.table}|${b.dataset.id}`; render(); }
-  else if (act === 'seat-move-cancel') { moveMenu = ''; render(); }
-  else if (act === 'seat-move-to') { moveMenu = ''; hostAct('move_player', {table: b.dataset.table, id: b.dataset.id, to: b.dataset.to}); }
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
   else if (act === 'replay') openReplay(b.dataset.id);

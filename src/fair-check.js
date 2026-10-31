@@ -2,14 +2,13 @@
 // host's). Before a hand, the page makes a secret value, sends its
 // commitment, and once it has the list of everyone's commitments (the
 // host's included) sends the value itself. After the hand the host
-// publishes every value used; this page checks that:
-//   - each value opens its commitment in that list, and its own is there;
-//   - the seed is ducy's fairSeed of those values, in list order;
-//   - its own hole cards and the board are what fairDeal gives for that seed.
-// The result goes to the table and the hand history: "Fair deal ✓", or what
-// didn't check out.
+// publishes every value used, and the page checks the deal (ducy-play's
+// fair_deal, #460): each value opens its commitment, its own was used, the
+// seed is made from them in list order, and its hole cards and the board
+// are what the seed deals. The result goes to the table and the hand
+// history: "Fair deal ✓", or what didn't check out.
 
-import { fairCommitment, fairDeal, fairSecret, fairSeed } from '../wasm/ducy_wasm.js';
+import { fairCheck, fairMayReveal, fairSecret } from '../wasm/ducy_wasm.js';
 
 // A player's fair-deal side, for one page (or, in tests, one simulated
 // player). `message(m, send, mine)` answers a fair-deal message from the host
@@ -34,8 +33,7 @@ export function fairPlayer() {
         // Reveal only to a list that has this player's commitment and the
         // host's, each once.
         if (!r || !Array.isArray(m.list) || r.list) return null;
-        const ids = m.list.map(e => e?.id);
-        if (!m.list.some(e => e?.c === r.secret.commitment) || !ids.includes('host') || new Set(ids).size !== ids.length) return null;
+        if (!fairMayReveal(JSON.stringify(m.list), r.secret.commitment)) return null;
         r.list = m.list;
         send({type: 'fair_reveal', round: m.round, value: r.secret.value, nonce: r.secret.nonce});
         return null;
@@ -55,29 +53,10 @@ export function fairPlayer() {
 }
 
 // Checks a finished hand's published deal (`m`) against what this player
-// saw (`cards`, `board`); `secret`: their own, if they took part in the round.
-export function checkDeal(m, {cards, board} = {}, secret = null) {
-  try {
-    const list = new Map((m.list || []).map(e => [e.id, e.c]));
-    if (!list.has('host')) return bad('the host’s commitment is missing');
-    const ours = secret && {secret};
-    for (const u of m.reveals || []) {
-      if (fairCommitment(u.value, u.nonce) !== list.get(u.id)) return bad(`${u.id === 'host' ? 'the host’s' : 'a player’s'} value doesn’t match its commitment`);
-    }
-    if (ours && !(m.reveals || []).some(u => u.value === ours.secret.value)) return bad('your value wasn’t used');
-    // The values in list order, as the seed was made.
-    const order = (m.list || []).map(e => e.id);
-    const used = [...(m.reveals || [])].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-    if (fairSeed(used.map(u => u.value)) !== m.seed) return bad('the seed isn’t made from the values');
-    const deal = fairDeal(m.game, Number(m.dealt), m.seed);
-    if (cards?.length && !sameCards(deal.hole_cards[Number(m.index)] || [], cards)) return bad('your cards aren’t the ones the seed deals');
-    if (board?.length && deal.board.slice(0, board.length).join(' ') !== board.join(' ')) return bad('the board isn’t the one the seed deals');
-    return {ok: true, why: '', ours: !!ours};
-  } catch (e) {
-    return bad(`it couldn’t be checked (${e.message || e})`);
-  }
+// saw (`cards`, `board`); `secret`: their own, if they took part in the
+// round. {ok, why, ours}.
+export function checkDeal(m, {cards = [], board = []} = {}, secret = null) {
+  return fairCheck(JSON.stringify(m ?? null), JSON.stringify({cards, board}), JSON.stringify(secret ? {value: secret.value, nonce: secret.nonce} : null));
 }
 
-const bad = why => ({ok: false, why});
 const sameList = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const sameCards = (a, b) => [...a].sort().join(' ') === [...b].sort().join(' ');
