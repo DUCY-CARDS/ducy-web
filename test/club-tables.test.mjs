@@ -34,7 +34,8 @@ test('tables: defaults, validation and what members are told', () => {
   newTable(club, {name: 'High stakes', sb: 5, bb: 10});
   const body = tablesBody(club, {[t.id]: 2});
   assert.equal(body.tables.length, 2);
-  assert.deepEqual(body.tables[0], {id: t.id, name: 'PLO - 0.01/0.02', game: 'plo4', sb: 1, bb: 2, min: 100, max: 200, seats: 6, taken: 2});
+  // Its game, for the waitlists (#518).
+  assert.deepEqual(body.tables[0], {id: t.id, name: 'PLO - 0.01/0.02', game: 'plo4', sb: 1, bb: 2, min: 100, max: 200, seats: 6, taken: 2, key: 'plo4:1/2:6'});
 });
 
 test('default names: game and blinds, numbered when an open table has the name', () => {

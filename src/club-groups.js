@@ -1,19 +1,19 @@
-// Grouped tables with must-move (#501): ducy-play's club_groups, through
-// club-rules.js. A group is tables of one type in order, the main table
-// first, then must-move 1, 2, 3; club.groups = [{id, tables, min, joined,
-// ask?}].
+// Must move (#501, #518): ducy-play's club_groups, through club-rules.js.
+// The tables of one game (type, stakes and seats), set up by the manager as
+// main tables and must-move tables feeding them; club.groups = [{id,
+// tables, mains, min, autoOpen, autoMain, ask?}], the main tables first.
 //
-// - Moving up: at each table with a seat free, the player longest in the
-//   group at the table below moves up after their hand (club-host.js does
-//   it as a manager's move, by GROUP_BY).
-// - A new table: when the group's tables are full, everyone online but
-//   those at them is asked "We're starting a new table. Join?" for ASK_MS
-//   (club-server.js); it opens once the group's minimum say yes.
+// - Moving up: when a seat opens at a table, the player who sat earliest at
+//   the table feeding it moves up after their hand (club-host.js does it as
+//   a manager's move, by GROUP_BY).
+// - A new must-move table (autoOpen): once every table of the game is full
+//   and enough wait on its list, the first of them are asked "We're
+//   starting a new table. Join?", then the next each ASK_MS (club-server.js);
+//   it opens once enough say yes.
 
 import { rules } from './club-rules.js';
 
 export const MAX_GROUP_TABLES = 4;
-export const DEFAULT_GROUP_MIN = 4;
 export const ASK_MS = 60_000;
 // Who a move up is by: no one, so it isn't logged, and the hit-and-run rule
 // doesn't hold it.
@@ -21,7 +21,7 @@ export const GROUP_BY = 'group';
 
 export const groupById = (club, id) => (club.groups || []).find(g => g.id === id) || null;
 
-// The group table `tid` is in, and its place (0: the main table), or null.
+// The group table `tid` is in, and its place (main tables first), or null.
 export function groupOf(club, tid) {
   for (const g of club.groups || []) {
     const place = g.tables.indexOf(tid);
@@ -30,17 +30,19 @@ export function groupOf(club, tid) {
   return null;
 }
 
-// "Main" or "Must-move 2", for a table's place in its group.
-export const placeName = place => (place ? `Must-move ${place}` : 'Main');
+// Whether a group's table at `place` is a main table.
+export const isMain = (g, place) => place < (g.mains ?? 1);
 
-export const makeGroup = (club, table, min = null, now = Date.now()) => rules(club, {op: 'makeGroup', table, min}, now);
-export const setGroupMin = (club, id, min) => rules(club, {op: 'setGroupMin', id, min});
-export const endGroup = (club, id) => rules(club, {op: 'endGroup', id});
-export const satInGroup = (club, id, table, now = Date.now()) => rules(club, {op: 'satInGroup', id, table}, now);
-export const leftGroup = (club, id, table, to = null) => rules(club, {op: 'leftGroup', id, table, to});
+// The tables a group's table at `place` feeds: none for a main table, every
+// main table for the first must-move table, else the one before it.
+export function feeds(g, place) {
+  const m = Math.min(g.mains ?? 1, g.tables.length);
+  if (place < m) return [];
+  return place === m ? g.tables.slice(0, m) : [g.tables[place - 1]];
+}
 
-// Drops closed tables from their groups (and groups whose main table
-// closed). Returns whether anything changed.
+// Drops closed tables from their groups (and groups with no main table
+// left). Returns whether anything changed.
 export function pruneGroups(club) {
   if (!club.groups?.length) return false;
   const before = JSON.stringify(club.groups);
@@ -52,15 +54,24 @@ export function pruneGroups(club) {
 // ids]}; `held`: {table: seats held there for people on their way}.
 export const movesUp = (club, id, seated, held) => rules(club, {op: 'movesUp', id, seated, held});
 
+// "Make them main tables automatically": whether a must-move table became
+// one (`taken`: {table: seats taken}).
+export const promote = (club, id, taken) => rules(club, {op: 'promote', id, taken});
+
+// Whether group `id` should ask about a new must-move table now.
+export const wantsTable = (club, id, taken) => rules(club, {op: 'wantsTable', id, taken});
+
 // The question, its answers and how it ends say what to tell members:
 // {sends: [{to, kind, …}] to send now (kind 'ask', 'closed' or 'open'),
 // opened (the new table to start), afterOpen (messages once it runs),
-// moves ([{id, from, to}], by GROUP_BY), until (when it closes: time it),
-// finish (enough said yes: close it now)}.
+// moves ([{id, from, to}], by GROUP_BY), until (when this round ends: time
+// it), finish (close it now), listsTo (members whose lists changed)}.
 
-// Asks members `online` (all but those at the group's tables). Throws why
-// not, too few online included.
-export const askAbout = (club, id, online, now = Date.now()) => rules(club, {op: 'askAbout', id, online}, now);
+// Asks the first on the game's list. Throws why not.
+export const askAbout = (club, id, now = Date.now()) => rules(club, {op: 'askAbout', id}, now);
+
+// A round ended: further down the list, or finish.
+export const extendAbout = (club, id, now = Date.now()) => rules(club, {op: 'extendAbout', id}, now);
 
 // Member `who` answers.
 export const groupAnswer = (club, id, who, yes, now = Date.now()) => rules(club, {op: 'groupAnswer', id, who, yes}, now);
