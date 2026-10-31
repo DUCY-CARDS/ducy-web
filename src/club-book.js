@@ -11,7 +11,6 @@
 // Needs ducy's wasm loaded (the relay, the host's page, tests: ./wasm.mjs).
 
 import * as ducy from '../wasm/ducy_wasm.js';
-import { startMoney } from './club-money.js';
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 
@@ -26,8 +25,20 @@ function merge(to, from) {
 // `short` set when it's for want of chips (a table then offers to ask the
 // manager for more, #404).
 export function book(club, op, now = Date.now()) {
-  // A club not on links yet moves onto them first (club-money.js).
+  // A club not on links yet moves onto them first.
   if (!club.money) startMoney(club, now);
+  return run(club, op, now);
+}
+
+// Starts the club's money (ducy-play's start_money): a club saved before
+// links is moved onto them, balances and seats carried over; members
+// without a link get one; each member's balance, credit and room follow.
+// The host runs it as the club starts.
+export function startMoney(club, now = Date.now()) {
+  run(club, {op: 'startMoney'}, now);
+}
+
+function run(club, op, now) {
   const part = {
     code: club.code, hostId: club.hostId, ownerId: club.ownerId, ratholeHours: club.ratholeHours, members: club.members, money: club.money,
     chips: club.chips, requestLog: club.requestLog || [], log: club.log || [],
