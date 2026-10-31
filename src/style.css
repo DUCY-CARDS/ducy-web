@@ -2634,3 +2634,77 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .qr-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .qr-tags .cc-btn { font-family: var(--font-ui); font-size: 12px; padding: 5px 10px; }
 .qr-tags .cc-btn.on { outline: 2px solid var(--amber); }
+
+/* The Tables page (#518): a row per game, opening to its tables. */
+.mg-board { display: flex; flex-direction: column; background: #f3e7c9; color: #1d3a2c; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 0 #0f2219; }
+.mg-brow { display: grid; grid-template-columns: minmax(150px, 2fr) 70px 80px 60px 80px 70px minmax(150px, auto); align-items: center; gap: 8px; padding: 8px 14px; font-size: 14px; }
+.mg-brow + .mg-brow { border-top: 1px solid #dccca3; }
+.mg-bhead { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #4f5c48; }
+.mg-bsub { background: #ebdcb8; }
+.mg-bsub .mg-bgame { padding-left: 26px; }
+.mg-bgame { display: flex; flex-direction: column; min-width: 0; }
+.mg-bsub .mg-bgame { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mg-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; border: 0; background: none; padding: 0; font: 700 15px var(--font-ui); color: inherit; cursor: pointer; text-align: left; }
+.mg-chev { width: 12px; font-size: 12px; color: #4f5c48; }
+.mg-chain { font-family: var(--font-data); font-size: 12px; color: #4f5c48; }
+.mg-num { font-family: var(--font-data); }
+.mg-brow.waiting .mg-wait { color: #a33a22; font-weight: 700; }
+.mg-bacts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.mg-board .btn-small:not(.primary) { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.mg-board .pl-meta { color: #5d6b55; }
+.mg-sort { border: 0; background: none; padding: 0; min-height: 32px; font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.mg-sort.on::after { content: ' ▾'; }
+.mg-tag { border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.mg-tag.main { background: #f3e7c9; color: #1d3a2c; border: 1px solid #c9b98f; }
+.mg-tag.mm { background: #24472f; color: #f3c9a0; }
+@media (max-width: 760px) {
+  .mg-bhead { display: none; }
+  .mg-brow { grid-template-columns: 1fr auto; }
+  .mg-brow > :nth-child(n+2):not(.mg-bacts) { grid-column: auto; }
+  .mg-brow > [data-label]::before { content: attr(data-label) ' '; font-family: var(--font-ui); color: #5d6b55; font-size: 12px; }
+  .mg-bacts { grid-column: 1 / -1; justify-content: flex-start; }
+  .mg-brow > span:empty { display: none; }
+}
+/* A game opened: its chain, its list and its tables. */
+.mg-back { align-self: flex-start; min-height: 32px; }
+.mg-chainrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mg-chainrow .mg-chain { font-size: 14px; color: var(--fg-strong); }
+.mg-game { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 760px) { .mg-game { grid-template-columns: minmax(0, 1fr); } }
+.mg-wl h3 { margin: 0 0 8px; font: 400 20px var(--font-display); color: var(--fg-strong); }
+.mg-wlist { list-style: decimal inside; margin: 0; padding: 0; background: #f3e7c9; color: #1d3a2c; border-radius: 14px; overflow: hidden; }
+.mg-wlist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 14px; }
+.mg-wlist li + li { border-top: 1px solid #dccca3; }
+.mg-wlist li.missed { opacity: .6; }
+.mg-wlist .pl-meta { color: #5d6b55; font-size: 12px; }
+.mg-wlist .btn-small { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.mg-gtables { margin: 0; }
+.cl-at-table.ordered { list-style: decimal inside; }
+.cl-namemenu > summary { padding: 2px 6px; border-radius: 6px; }
+.cl-namemenu > summary:hover, .cl-namemenu[open] > summary { background: rgba(0, 0, 0, 0.08); }
+.cl-stack { font-family: var(--font-data); }
+/* A game's Must move. */
+.cl-mmform { display: flex; flex-direction: column; gap: 10px; background: #f3e7c9; color: #1d3a2c; border-radius: 14px; padding: 16px; max-width: 460px; }
+.cl-mmform h3 { margin: 0; font: 400 20px var(--font-display); }
+.cl-mmform label { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.cl-mmform .pl-text { width: auto; background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.cl-mmform input[type=checkbox] { width: 18px; height: 18px; accent-color: #b23d26; }
+.cl-mm-more { display: flex; flex-direction: column; gap: 4px; }
+.cl-mmform .btn-small:not(.primary) { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.cl-mmform:has([name=on]:not(:checked)) .cl-mm-more { display: none; }
+/* A member's games and the seat offered them (#518). */
+.cl-game-head { flex-basis: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 2px 2px; list-style: none; }
+.cl-game-head > span { display: flex; flex-direction: column; }
+.cl-game-head .cl-mine { color: var(--amber); font-weight: 600; }
+.cl-offer { display: flex; align-items: center; gap: 12px; background: #b23d26; color: #fff4e8; border-radius: 14px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 4px 0 #5e1d10; }
+.cl-offer > span:first-child { flex: 1; display: flex; flex-direction: column; }
+.cl-offer .pl-meta { color: #fff4e8; }
+.cl-offer-time { font: 600 18px var(--font-data); }
+.cl-offer .btn-small.primary { background: #fff4e8; color: #8f2e1b; border-color: #fff4e8; }
+/* At a must-move table: its tag opens the move order; moving up warns. */
+.pl-promo-line.warn { background: #b23d26; color: #fff4e8; font-weight: 700; }
+.pl-promo-line.mm-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mm-tag { color: #f3c9a0; }
+.mm-order { margin: 4px auto 0; max-width: 520px; background: #f3e7c9; color: #1d3a2c; border-radius: 12px; padding: 10px 14px; font-size: 13px; }
+.mm-order ol { margin: 6px 0 0; padding: 0 0 0 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 2px 12px; }
+.mm-order li.me { font-weight: 700; color: #8f2e1b; }
