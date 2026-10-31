@@ -1,14 +1,14 @@
 // Safari 15.4 as the oldest browser the site runs on (#442): the update
 // screen for older ones (src/browser-check.js), checking other players'
-// Ed25519 signatures where WebCrypto can't (src/ed25519.js), and guards
-// against code or WebAssembly features newer than Safari 15.4.
+// Ed25519 signatures where WebCrypto can't (ducy-identity, in the wasm,
+// #460), and guards against code or WebAssembly features newer than
+// Safari 15.4.
 // Run with: node --test test/browser-support.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { webcrypto } from 'node:crypto';
-import { ed25519Verify } from '../src/ed25519.js';
+import './wasm.mjs';
 import { checkSignature, createIdentity, signMessage } from '../src/identity.js';
 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
@@ -102,47 +102,9 @@ test('style.css and admin.css style the update screen', () => {
   }
 });
 
-// ---- Ed25519 in JavaScript ----
+// ---- Ed25519 everywhere ----
 
-const hex = s => Uint8Array.from(s.match(/../g) || [], b => parseInt(b, 16));
-
-test('ed25519Verify: RFC 8032 test vectors', async () => {
-  // Tests 1-3 of RFC 8032 section 7.1.
-  const vectors = [
-    ['d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a', '',
-      'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b'],
-    ['3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c', '72',
-      '92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00'],
-    ['fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025', 'af82',
-      '6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a'],
-  ];
-  for (const [pub, msg, sig] of vectors) {
-    assert.equal(await ed25519Verify(hex(pub), hex(sig), hex(msg)), true);
-    const bad = hex(sig); bad[5] ^= 1;
-    assert.equal(await ed25519Verify(hex(pub), bad, hex(msg)), false, 'a changed signature');
-    assert.equal(await ed25519Verify(hex(pub), hex(sig), new Uint8Array([...hex(msg), 0])), false, 'a changed message');
-  }
-});
-
-test('ed25519Verify agrees with WebCrypto', async () => {
-  const subtle = webcrypto.subtle;
-  for (let i = 0; i < 12; i++) {
-    const keys = await subtle.generateKey({name: 'Ed25519'}, true, ['sign', 'verify']);
-    const pub = new Uint8Array(await subtle.exportKey('raw', keys.publicKey));
-    const msg = webcrypto.getRandomValues(new Uint8Array(i * 37));
-    const sig = new Uint8Array(await subtle.sign({name: 'Ed25519'}, keys.privateKey, msg));
-    assert.equal(await ed25519Verify(pub, sig, msg), true);
-    const other = new Uint8Array(sig); other[40] ^= 0x80;
-    assert.equal(await ed25519Verify(pub, other, msg), false);
-    const notKey = new Uint8Array(pub); notKey[3] ^= 4;
-    assert.equal(await ed25519Verify(notKey, sig, msg), false);
-  }
-  assert.equal(await ed25519Verify(new Uint8Array(31), new Uint8Array(64), new Uint8Array(0)), false, 'wrong length');
-  const tooBigS = new Uint8Array(64).fill(0xff);
-  assert.equal(await ed25519Verify(hex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'), tooBigS, new Uint8Array(0)), false, 'S out of range');
-});
-
-test('checkSignature checks Ed25519 in JS where WebCrypto has none (Safari before 17)', async () => {
+test('checkSignature checks Ed25519 where WebCrypto has none (Safari before 17)', async () => {
   const ident = await createIdentity();
   assert.equal(ident.alg, 'ed25519', 'Node makes Ed25519 keys');
   const env = await signMessage(ident, {hello: 'there'});
@@ -153,6 +115,7 @@ test('checkSignature checks Ed25519 in JS where WebCrypto has none (Safari befor
     return importKey.call(this, format, data, alg, ...rest);
   };
   try {
+    // ducy-identity checks it, with no WebCrypto Ed25519 at all.
     assert.equal(await checkSignature(env), '');
     assert.equal(await checkSignature({...env, body: {hello: 'you'}}), 'bad signature');
     assert.equal(await checkSignature({...env, pub: env.pub.slice(0, 20)}), 'malformed');

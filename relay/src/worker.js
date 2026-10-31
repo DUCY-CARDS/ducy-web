@@ -55,7 +55,8 @@ import { serviceHttp, serviceInRoom } from './service-http.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
-// The engine, for always-on clubs: set up once per Worker instance.
+// The engine, for always-on clubs and every signature check (ducy-identity,
+// #460): set up once per Worker instance.
 let engineReady = false;
 function loadEngine() {
   if (!engineReady) { initSync({module: wasmModule}); engineReady = true; }
@@ -147,6 +148,8 @@ export default {
 };
 
 async function route(req, env) {
+  // The admin API checks signatures here, before any room has started.
+  loadEngine();
   const url = new URL(req.url);
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   if (url.pathname.startsWith('/admin/')) {

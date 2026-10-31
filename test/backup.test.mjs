@@ -3,6 +3,7 @@
 // protocol), and a club rebuilt from one with balances intact.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { createServer } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';

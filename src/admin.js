@@ -9,9 +9,14 @@
 // A club's lobby chat and finished hands' cards stay hidden until "Show
 // chats and cards"; each use goes in the admin log.
 
+import init from '../wasm/ducy_wasm.js';
 import { loadIdentity, showId, signMessage } from './identity.js';
 import { chipText } from './chip-format.js';
 import { ago as agoText } from './time-ago.js';
+
+// ducy's engine first: signing (the JSON a request is signed over) and
+// player IDs use it (identity.js, #460).
+await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
 
 const DEFAULT_RELAY = 'https://ducy-relay.ducy.workers.dev';
 const $ = id => document.getElementById(id);

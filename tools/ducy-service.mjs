@@ -19,9 +19,14 @@
 // by pasting the service line init prints, and checks the ID matches.
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { initSync } from '../wasm/ducy_wasm.js';
 import { newService, openService, serviceClient, DEFAULT_SERVICE_RELAY } from '../src/service-client.js';
 import { serviceLine } from '../src/club-services.js';
 import { showId } from '../src/identity.js';
+
+// ducy's engine (the site's wasm build, ../wasm) makes the JSON every
+// request is signed over (identity.js, #460).
+initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
 
 const argv = process.argv.slice(2);
 const flags = {};

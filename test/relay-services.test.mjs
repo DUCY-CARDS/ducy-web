@@ -5,6 +5,7 @@
 // Run with: node --test test/relay-services.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
