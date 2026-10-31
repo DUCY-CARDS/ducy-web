@@ -100,39 +100,10 @@ export const MIN_PASSWORD = 8;
 export const MIN_NEW_PASSWORD = 12;
 const PBKDF2_ITERATIONS = 600_000;
 
-// Passwords too common to lock a backup with, as core() makes them: digits
-// and symbols on the end, or in place of letters, don't help them.
-const COMMON_PASSWORDS = new Set([
-  'password', 'passwort', 'motdepasse', 'contraseña', 'secret', 'letmein', 'welcome', 'iloveyou',
-  'admin', 'administrator', 'login', 'qwerty', 'qwertz', 'azerty', 'asdf', 'zxcv', 'abc', 'abcd', 'monkey', 'dragon',
-  'football', 'baseball', 'basketball', 'soccer', 'hockey', 'sunshine', 'princess', 'trustno', 'starwars', 'whatever',
-  'superman', 'batman', 'master', 'shadow', 'freedom', 'changeme', 'default', 'computer', 'internet', 'hello', 'hellohello',
-  'loveyou', 'iloveyouiloveyou', 'mypassword', 'yourpassword', 'thepassword', 'newpassword', 'backup', 'mybackup',
-  'correcthorsebatterystaple', 'poker', 'pokerface', 'pokerclub', 'mypokerclub', 'holdem', 'texasholdem', 'allin',
-  'acesfull', 'royalflush', 'ducy', 'ducycards', 'ducypoker', 'ducyclub',
-]);
-// Lower case, letters and digits only.
-const plain = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-// As plain, without what's after the last letter, and with look-alikes
-// (P@ssw0rd) as the letters they stand for.
-const LOOKALIKE = {'@': 'a', 4: 'a', 0: 'o', 1: 'i', '!': 'i', 3: 'e', 5: 's', $: 's', 7: 't'};
-const core = s => plain(String(s ?? '').toLowerCase().replace(/[^\p{L}]+$/u, '').replace(/[@4013!5$7]/g, c => LOOKALIKE[c]));
-// Runs along the digits, the alphabet and the keyboard's rows.
-const RUNS = ['01234567890123456789', '98765432109876543210', 'abcdefghijklmnopqrstuvwxyz', 'zyxwvutsrqponmlkjihgfedcba', 'qwertyuiopasdfghjklzxcvbnm', '1qaz2wsx3edc4rfv5tgb6yhn7ujm'];
-
 // Why `password` won't do for a new backup, in one line, or '' if it will:
-// too short, very common, just the club's `name`, or a pattern.
-export function passwordProblem(password, {name = ''} = {}) {
-  const pw = String(password ?? '');
-  if ([...pw].length < MIN_NEW_PASSWORD) return `Use a password of at least ${MIN_NEW_PASSWORD} characters.`;
-  const p = plain(pw), k = core(pw);
-  const club = plain(name);
-  if (club && (p === club || k === core(name) || p.replace(/\d+$/, '') === club || p === club + club)) return 'Don’t use the club’s name as its password.';
-  if (COMMON_PASSWORDS.has(p) || COMMON_PASSWORDS.has(k)) return 'That password is too common.';
-  if (/^(.{1,4})\1+.{0,3}$/su.test(pw.toLowerCase()) || new Set(pw.toLowerCase()).size <= 2) return 'That password is just repeated characters.';
-  if (p.length >= 4 && RUNS.some(r => r.includes(p))) return 'That password is just a run of keys.';
-  return '';
-}
+// too short, very common, just the club's `name`, or a pattern
+// (ducy-identity's backup rules, #460).
+export const passwordProblem = (password, {name = ''} = {}) => ducy.passwordProblem(String(password ?? ''), String(name ?? ''));
 const enc = new TextEncoder(), dec = new TextDecoder();
 
 async function passwordKey(password, salt, iterations) {
@@ -166,39 +137,37 @@ export async function exportLockedIdentity(ident, password, {name = ''} = {}) {
 
 // Whether a backup file's text needs a password to open (a version 2 file).
 export function backupNeedsPassword(text) {
-  try { const f = JSON.parse(text); return f?.type === 'ducy-identity' && f.v === 2; } catch { return false; }
+  const r = ducy.readBackup(String(text ?? ''));
+  return r.ok && r.value.v === 2;
 }
 
 // Opens a backup: a password-locked one (version 2) with `password`, or an
-// older unlocked one (version 1), which needs none.
+// older unlocked one (version 1), which needs none. ducy-identity reads and
+// checks the file; the key is unlocked and imported here, in WebCrypto.
 export async function importIdentity(text, password = '') {
-  let f;
-  try { f = JSON.parse(text); } catch { throw new Error('That isn’t a ducy identity file.'); }
-  if (f?.type === 'ducy-identity' && f.v === 2) f = await unlock(f, password);
-  if (!f || f.type !== 'ducy-identity' || f.v !== 1 || !KEY_ALGS[f.alg] || !f.key) throw new Error('That isn’t a ducy identity file.');
+  const r = ducy.readBackup(String(text ?? ''));
+  if (!r.ok) throw new Error(r.message);
+  const f = r.value;
+  const jwk = f.v === 2 ? await unlock(f, password) : f.key;
   const gen = KEY_ALGS[f.alg].gen;
-  const privateKey = await subtle().importKey('jwk', f.key, gen, true, ['sign']);
-  const {d, key_ops, ...pubJwk} = f.key;
+  const privateKey = await subtle().importKey('jwk', jwk, gen, true, ['sign']);
+  const {d, key_ops, ...pubJwk} = jwk;
   const publicKey = await subtle().importKey('jwk', {...pubJwk, key_ops: ['verify']}, gen, true, ['verify']);
   const ident = await fromKeys(f.alg, privateKey, publicKey, Number(f.seq) || 0);
   if (f.id && f.id !== ident.id) throw new Error('The identity file is damaged.');
   return ident;
 }
 
-// A locked (version 2) backup's contents as a version 1 one, or throws.
+// A locked (version 2) backup's key (a JWK), or throws.
 async function unlock(f, password) {
   const l = f.lock;
-  if (!l || l.kdf !== 'PBKDF2-SHA256' || !Number.isSafeInteger(l.iterations) || l.iterations < 1 || l.iterations > 10_000_000) throw new Error('That isn’t a ducy identity file.');
   if (!password) throw new Error('This backup is locked with a password. Enter it to restore.');
-  const head = {type: 'ducy-identity', v: 2, id: f.id, alg: f.alg, seq: f.seq};
-  let jwk;
   try {
     const key = await passwordKey(password, fromB64url(l.salt), l.iterations);
-    jwk = JSON.parse(dec.decode(await subtle().decrypt({name: 'AES-GCM', iv: fromB64url(l.iv), additionalData: enc.encode(canonical(head))}, key, fromB64url(l.ct))));
+    return JSON.parse(dec.decode(await subtle().decrypt({name: 'AES-GCM', iv: fromB64url(l.iv), additionalData: enc.encode(f.head)}, key, fromB64url(l.ct))));
   } catch {
     throw new Error('Wrong password, or the backup is damaged.');
   }
-  return {type: 'ducy-identity', v: 1, id: f.id, alg: f.alg, seq: f.seq, key: jwk};
 }
 
 // ---- messages ----
