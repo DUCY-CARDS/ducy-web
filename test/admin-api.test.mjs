@@ -4,6 +4,7 @@
 // Run with: node --test test/admin-api.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { readFileSync } from 'node:fs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { adminApi, adminsFrom, checkAdmin, mergePeople, WINDOW_MS } from '../relay/src/admin.js';

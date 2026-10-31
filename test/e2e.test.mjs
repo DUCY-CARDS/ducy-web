@@ -2,6 +2,7 @@
 // Run with: node --test test/e2e.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { isPublicKey, newKeyPair, open, seal, sharedKey } from '../src/e2e.js';
 
 const ctx = (host, player) => ({context: 'club:ABCD-EFGH', hostId: 'HOSTHOST', playerId: 'PLAYERID', hostPub: host.pub, playerPub: player.pub});

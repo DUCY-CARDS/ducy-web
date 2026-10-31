@@ -15,6 +15,13 @@
 // A host keeps a Verifier, which rejects bad signatures, an ID that doesn't
 // match its key, a known ID with a different key, and replays (seq not above
 // the last one seen from that sender).
+//
+// ducy-identity (from ducy-wasm, #460) checks envelopes, makes the canonical
+// JSON they're signed over, and the player IDs; the keys stay in WebCrypto,
+// which signs. Needs ducy's wasm loaded (the pages, the relay, tests:
+// ./wasm.mjs).
+
+import * as ducy from '../wasm/ducy_wasm.js';
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 export const ID_LENGTH = 8;
@@ -39,16 +46,6 @@ export function fromB64url(s) {
   return Uint8Array.from(t, c => c.charCodeAt(0));
 }
 
-// ID_LENGTH Base58 digits from a hash, all about equally likely: the hash as
-// a number mod 58^8, written with exactly 8 digits ('1' is zero).
-function base58Id(hash) {
-  let n = 0n;
-  for (const b of new Uint8Array(hash)) n = (n << 8n) | BigInt(b);
-  let s = '';
-  for (let i = 0; i < ID_LENGTH; i++) { s = B58[Number(n % 58n)] + s; n /= 58n; }
-  return s;
-}
-
 export function isPlayerId(s) {
   return typeof s === 'string' && s.length === ID_LENGTH && [...s].every(c => B58.includes(c));
 }
@@ -57,49 +54,21 @@ export function isPlayerId(s) {
 // no I, L, O, 0 or 1, as 10 characters in two groups ("7KQ2M-XR4TA"), so it
 // reads aloud and compares the same whatever case it's written in. The ID
 // itself (8 Base58 characters) stays what's stored, signed and sent.
-const SHOWN = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const SHOWN_BASE = BigInt(SHOWN.length);
-const SHOWN_LENGTH = 10;
-const ID_RANGE = 58n ** BigInt(ID_LENGTH);
-
-const fromB58 = id => [...id].reduce((n, c) => n * 58n + BigInt(B58.indexOf(c)), 0n);
-
-export function showId(id) {
-  if (!isPlayerId(id)) return String(id ?? '');
-  let n = fromB58(id), s = '';
-  for (let i = 0; i < SHOWN_LENGTH; i++) { s = SHOWN[Number(n % SHOWN_BASE)] + s; n /= SHOWN_BASE; }
-  return s.slice(0, 5) + '-' + s.slice(5);
-}
+export const showId = id => (isPlayerId(id) ? ducy.showId(id) : String(id ?? ''));
 
 // A player ID from what someone wrote: the shown form in any case, with or
 // without the dash or spaces, or the stored 8-character form. null otherwise.
-export function parseShownId(text) {
-  const raw = String(text ?? '').trim();
-  if (isPlayerId(raw)) return raw;
-  const s = raw.toUpperCase().replace(/[\s-]/g, '');
-  if (s.length !== SHOWN_LENGTH || ![...s].every(c => SHOWN.includes(c))) return null;
-  let n = [...s].reduce((v, c) => v * SHOWN_BASE + BigInt(SHOWN.indexOf(c)), 0n);
-  if (n >= ID_RANGE) return null;
-  let id = '';
-  for (let i = 0; i < ID_LENGTH; i++) { id = B58[Number(n % 58n)] + id; n /= 58n; }
-  return id;
-}
+export const parseShownId = text => ducy.parseShownId(String(text ?? '')) ?? null;
 
 // JSON with object keys sorted at every level, so the signer and the verifier
 // sign the same bytes whatever order the fields were built in.
-export function canonical(v) {
-  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
-  if (v && typeof v === 'object') {
-    return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort()
-      .map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
-  }
-  return JSON.stringify(v);
-}
+export const canonical = v => ducy.canonicalJson(JSON.stringify(v ?? null));
 
 // ---- keys ----
 
+// The player ID for a raw public key: 8 Base58 digits from its SHA-256.
 export async function playerIdFor(rawPublicKey) {
-  return base58Id(await subtle().digest('SHA-256', rawPublicKey));
+  return ducy.playerIdFor(new Uint8Array(rawPublicKey));
 }
 
 async function fromKeys(alg, privateKey, publicKey, seq = 0) {
@@ -249,28 +218,11 @@ export async function signMessage(ident, body) {
 
 // Checks an envelope's signature and that its ID matches its key. Doesn't
 // know about other senders or replays; use a Verifier for that.
+// '' when it checks out, else why: 'malformed', 'id does not match key' or
+// 'bad signature'. ducy-identity checks it, Ed25519 in every browser.
 export async function checkSignature(env) {
-  if (!env || env.v !== 1 || !KEY_ALGS[env.alg] || !isPlayerId(env.from) || typeof env.pub !== 'string'
-      || !Number.isSafeInteger(env.seq) || typeof env.sig !== 'string') return 'malformed';
-  let raw, key, sig;
-  try {
-    raw = fromB64url(env.pub);
-    sig = fromB64url(env.sig);
-  } catch {
-    return 'malformed';
-  }
-  try {
-    key = await subtle().importKey('raw', raw, KEY_ALGS[env.alg].gen, false, ['verify']);
-  } catch {
-    // No Ed25519 in this browser's WebCrypto (Safari before 17): checked in JS.
-    if (env.alg !== 'ed25519' || raw.length !== 32) return 'malformed';
-  }
-  if (await playerIdFor(raw) !== env.from) return 'id does not match key';
-  const {sig: _, ...signed} = env;
-  const data = new TextEncoder().encode(canonical(signed));
-  const ok = key ? await subtle().verify(KEY_ALGS[env.alg].sign, key, sig, data)
-    : await (await import('./ed25519.js')).ed25519Verify(raw, sig, data);
-  return ok ? '' : 'bad signature';
+  if (!env || typeof env !== 'object') return 'malformed';
+  return ducy.checkSignature(JSON.stringify(env));
 }
 
 // A host's record of who it has heard from: each player ID's key and the last
@@ -284,13 +236,13 @@ export class Verifier {
   // Senders are remembered on their first valid message; a different key for
   // a known ID is refused ('id in use'), which also covers two players whose
   // IDs collide.
+  // ducy-identity decides; the senders are kept here.
   async verify(env) {
-    const reason = await checkSignature(env);
-    if (reason) return {ok: false, reason};
-    const known = this.senders.get(env.from);
-    if (known && (known.pub !== env.pub || known.alg !== env.alg)) return {ok: false, reason: 'id in use'};
-    if (known && env.seq <= known.seq) return {ok: false, reason: 'replayed'};
-    this.senders.set(env.from, {pub: env.pub, alg: env.alg, seq: env.seq});
+    if (!env || typeof env !== 'object') return {ok: false, reason: 'malformed'};
+    const known = typeof env.from === 'string' ? this.senders.get(env.from) : null;
+    const r = ducy.verifyEnvelope(JSON.stringify(known ?? null), JSON.stringify(env));
+    if (r.reason) return {ok: false, reason: r.reason};
+    this.senders.set(env.from, r.sender);
     return {ok: true, from: env.from, body: env.body};
   }
 

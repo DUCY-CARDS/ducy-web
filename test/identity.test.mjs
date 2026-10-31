@@ -2,6 +2,7 @@
 // Run with: node --test test/identity.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import {
   ID_LENGTH, Verifier, backupNeedsPassword, canonical, checkSignature, createIdentity, exportIdentity, exportLockedIdentity,
   importIdentity, isPlayerId, MIN_NEW_PASSWORD, MIN_PASSWORD, parseShownId, passwordProblem, playerIdFor, fromB64url, showId, signMessage,

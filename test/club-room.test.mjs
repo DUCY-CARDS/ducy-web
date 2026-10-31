@@ -3,6 +3,7 @@
 // and picked up again from storage as after the room restarts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { createIdentity, signMessage, checkSignature } from '../src/identity.js';
 import { createClub, importClub, openClub } from '../relay/src/club-room.js';

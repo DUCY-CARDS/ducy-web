@@ -13,8 +13,17 @@
 
 // First, so a demo club's storage (#406) is in place before anything reads storage.
 import './demo.js';
+import init from '../wasm/ducy_wasm.js';
 import { closeClubs, openClubs, setClubsMode, setShowTable } from './clubs.js';
 import { closePlay, openPlay, tableGroup } from './play.js';
+
+// ducy's engine before anything is shown: player IDs, signatures (#460) and
+// the club's views all use it.
+try {
+  await init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
+} catch (e) {
+  console.error('WASM init failed:', e);
+}
 
 setClubsMode('manage');
 const root = document.getElementById('clubs');
