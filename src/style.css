@@ -2393,6 +2393,8 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .mg-tools-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .mg-search { flex: 1 1 200px; width: auto; font-size: 15px; padding: 8px 10px; }
 .mg-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+/* The Tables board's filters, seats and stakes, side by side. */
+.mg-filterbar { display: flex; flex-wrap: wrap; gap: 8px 24px; }
 /* Members (#426): sorted by its column headings (a select on a phone), last
    active and balance at the row's end, and pages. */
 .mg-members .mg-row-end { display: flex; align-items: baseline; gap: 16px; }
@@ -2696,6 +2698,10 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .cl-game-head { flex-basis: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 2px 2px; list-style: none; }
 .cl-game-head > span { display: flex; flex-direction: column; }
 .cl-game-head .cl-mine { color: var(--amber); font-weight: 600; }
+/* Games the club offers that aren't running: Join list, starting with how many. */
+.cl-menu-head { margin: 18px 0 6px; font: 400 18px var(--font-display); color: var(--fg-strong); }
+.cl-join-min { display: inline-flex; gap: 6px; align-items: center; }
+.cl-join-min .pl-text { width: auto; }
 .cl-offer { display: flex; align-items: center; gap: 12px; background: #b23d26; color: #fff4e8; border-radius: 14px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 4px 0 #5e1d10; }
 .cl-offer > span:first-child { flex: 1; display: flex; flex-direction: column; }
 .cl-offer .pl-meta { color: #fff4e8; }

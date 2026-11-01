@@ -20,11 +20,11 @@ export const HOSTED = new Set([
   'offer_agent', 'revoke_agent', 'assign_agent', 'help_answer', 'settings', 'set_info', 'set_payout',
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
-  'new_tourney', 'cancel_tourney', 'set_must_move', 'list_remove',
+  'new_tourney', 'cancel_tourney', 'set_must_move', 'list_remove', 'offer_game', 'remove_offer',
 ]);
 
 // The club's fields a command may change.
-const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist'];
+const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 

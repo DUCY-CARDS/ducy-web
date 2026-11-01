@@ -1,8 +1,9 @@
 // The relay's registry of always-on clubs (#98, #265): permission, trial
 // clubs, limits, pausing, temporary clubs (#395), and usage against
-// Cloudflare's free plan.
+// Cloudflare's free plan. The rules are ducy-play's club_registry (#463).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { blockedReason, cleanLimits, FREE_GBS_PER_DAY, FREE_LIMITS, GBS_PER_CLUB_MINUTE, limitsFrom, registry, removesAt, TEMP_DAYS, TRIAL_DAYS } from '../relay/src/registry.js';
 
 function memoryStorage() {
