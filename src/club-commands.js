@@ -24,7 +24,7 @@ export const HOSTED = new Set([
 ]);
 
 // The club's fields a command may change.
-const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest'];
+const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 
