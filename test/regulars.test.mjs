@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { BANKROLL_BUY_INS, LEAVE_CHANCE, betweenHands, pickRegulars, startBank } from '../src/regulars.js';
 
 const ALL = ['doug_poker', 'milk_king', 'jen_silly', 'phil_bigmouth', 'nik_airbag', 'tom_collins', 'rampart'];

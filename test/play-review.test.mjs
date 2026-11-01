@@ -3,6 +3,7 @@
 // Run with: node --test test/play-review.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { readFileSync } from 'node:fs';
 import {
   emptyTotals, addReview, addTotals, per100, bbText, mixText, mixCost, mixRows, isYourPlay, worstIndex, isVariant, FLAGGED, GRADE_LABEL,

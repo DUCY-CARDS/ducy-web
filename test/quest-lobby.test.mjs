@@ -2,6 +2,7 @@
 // runs ending, and the page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { START_BANKROLL, newQuest, newRun, sitDown, leave, travel, arrive, gameMinutes } from '../src/quest.js';
 import { REGIONS, ROOMS, STAKES, TRAVEL, lobby, roomById, travelMinutes } from '../src/quest-rooms.js';
 import { LINEUP_SEATS, POOLS, WHALES, buyInFor, lineupFor, lineupStacks, poolFor, replacementPool, seatedHours, stacksAt } from '../src/quest-lineup.js';

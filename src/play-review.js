@@ -10,6 +10,12 @@
 //               cost isn't valued
 //   unknown     the hand left the bot's betting tree, nothing to compare
 // and bb_lost, the big blinds it's charged (0 for the bot's own plays).
+//
+// Adding up a review and what a mixed play gave up are ducy-bot-games'
+// (#465). The totals' own sums stay here: the page reads its saved totals
+// before the engine has loaded.
+
+import { botGames } from '../wasm/ducy_wasm.js';
 
 // Every counter a set of totals has, all zero.
 export function emptyTotals() {
@@ -34,20 +40,7 @@ export function emptyTotals() {
 // and not charged that's worth less than the best, with `close` when the
 // difference is within the estimate's error (2 standard errors); otherwise
 // null.
-export function mixCost(d) {
-  const loss = Number(d.ev_loss);
-  if (d.grade !== 'fine' || Number(d.bb_lost) > 0 || !(loss > 0) || !d.best || d.best === d.action) return null;
-  return {loss, best: d.best, close: loss <= 2 * (Number(d.stderr) || 0)};
-}
-
-const GRADE_KEYS = {
-  fine: 'fine',
-  inaccuracy: 'inaccuracies',
-  mistake: 'mistakes',
-  blunder: 'blunders',
-  deviation: 'deviations',
-  unknown: 'unknown',
-};
+export const mixCost = d => botGames({op: 'mixCost', d}) ?? null;
 
 // Grades worth pointing out, worst first.
 export const FLAGGED = ['blunder', 'mistake', 'inaccuracy', 'deviation'];
@@ -62,21 +55,11 @@ export const GRADE_LABEL = {
 };
 
 // Whether a fine decision took the less common side of the bot's mix.
-export const isVariant = d => d.grade === 'fine' && typeof d.note === 'string' && d.note.startsWith('a less common');
+export const isVariant = d => botGames({op: 'isVariant', d});
 
 // Adds one hand's review into `totals` and returns it.
 export function addReview(totals, review) {
-  totals.hands += 1;
-  for (const d of review.decisions || []) {
-    totals.decisions += 1;
-    totals.bbLost += Number(d.bb_lost) || 0;
-    const key = GRADE_KEYS[d.grade];
-    if (key) totals[key] += 1;
-    if (isVariant(d)) totals.variants += 1;
-    const c = mixCost(d);
-    if (c && !c.close) totals.mixLoss += c.loss;
-  }
-  return totals;
+  return Object.assign(totals, botGames({op: 'addReview', totals: addTotals(emptyTotals(), totals), review}));
 }
 
 // Adds `b` into `a` (both totals) and returns `a`.
@@ -126,10 +109,4 @@ export function isYourPlay(row, action) {
 }
 
 // The decision that cost the most in a review, as its index, or -1.
-export function worstIndex(review) {
-  let best = -1;
-  (review.decisions || []).forEach((d, i) => {
-    if (d.bb_lost > 0 && (best < 0 || d.bb_lost > review.decisions[best].bb_lost)) best = i;
-  });
-  return best;
-}
+export const worstIndex = review => botGames({op: 'worstIndex', review});

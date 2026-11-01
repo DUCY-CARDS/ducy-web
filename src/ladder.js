@@ -11,9 +11,13 @@
 // Progress (your rung, your chips, the series under way, the game under way
 // with both stacks and its blinds, your best, your record against each bot)
 // is kept on this device, so a game left in the middle picks up where it was.
-// This file is the rules and the record; play.js plays the games.
+// The rules are ducy-bot-games' ladder (#465); this file keeps the record,
+// which the page reads before the engine has loaded. play.js plays the games.
+
+import { botGames } from '../wasm/ducy_wasm.js';
 
 export const LADDER_KEY = 'ducyLadder';
+// The ladder's terms, as ducy-bot-games has them (a test checks they agree).
 export const START_BB = 200;
 export const WINS_TO_TAKE = 2; // of 3
 // The first rung's blinds, in chips (hundredths: 100/200 shows as 1/2). Each
@@ -28,23 +32,9 @@ export const buyInAt = level => START_BB * blindsAt(level)[1];
 // The chips you start the ladder with, and start over with: two first-rung buy-ins.
 export const START_CHIPS = 2 * buyInAt(0);
 
-// The bots, easiest to hardest: by how much the GTO bot wins from each,
-// heads-up No-limit Hold'em at 200 BB, the ladder's depth, 40,000 duplicate
-// hands each (ducy-gto's gto_match --stack 200 against the gto-hunl-300m
-// model, which plays the deeper stacks off its 100 BB tree). The GTO bot is
-// the champion. Measured after the bots learned to play every stack depth
-// (ducy #255). Its win rate in bb/100 (± 95%) against each, from the bottom:
-//   rampart 58 ± 24, nik_airbag 36 ± 24, milk_king 36 ± 21,
-//   bungleman 28 ± 19, jonny_slow 24 ± 9, bart_handsome 20 ± 19 (added
-//   later, same measurement), chris_moneybags 18 ± 16,
-//   jen_silly 17 ± 14, brad_owned 15 ± 8, mister_cheating 14 ± 24,
-//   phil_bigmouth 6 ± 13, tom_collins 5 ± 17, danny_smallball 3 ± 11,
-//   andrew_favorable 2 ± 14, robin_jane_lewd 2 ± 17, michael_miserable 2 ± 15,
-//   the_mathematician 2 ± 13, tommy_sweeden -2 ± 15, gus_bluffsen -3 ± 18,
-//   doug_poker 6 ± 14.
-// From Jonny Slow up most are inside the others' intervals; they're in
-// measured order, except Doug Poker stays at the top, where he was chosen
-// to be.
+// The bots, easiest to hardest, by how much the GTO bot wins from each
+// (ducy-bot-games' ORDER has how they were measured). The GTO bot is the
+// champion.
 export const ORDER = [
   'rampart', 'nik_airbag', 'milk_king', 'bungleman', 'jonny_slow', 'bart_handsome', 'chris_moneybags', 'jen_silly',
   'brad_owned', 'mister_cheating', 'phil_bigmouth', 'tom_collins', 'danny_smallball', 'andrew_favorable',
@@ -55,13 +45,7 @@ export const CHAMPION = 'gto';
 // The rungs, bottom to top: the ranked bots this engine has, then any it has
 // that aren't ranked yet (at the top of the bots), then the GTO bot when it's
 // there.
-export function rungsFor(ids, gto) {
-  const have = new Set(ids);
-  const rungs = ORDER.filter(id => have.has(id));
-  for (const id of ids) if (!rungs.includes(id) && id !== CHAMPION) rungs.push(id);
-  if (gto) rungs.push(CHAMPION);
-  return rungs;
-}
+export const rungsFor = (ids, gto) => botGames({op: 'rungsFor', ids: [...ids], gto: !!gto});
 
 // `chips` are yours away from the table: a game under way has a buy-in of them
 // at the table. `game` is the game under way, kept so it can be left and
@@ -112,113 +96,44 @@ export const levelOf = (p, rungs) => Math.max(0, Math.min(rungs.length - 1, p.le
 export const opponentOf = (p, rungs) => rungs[levelOf(p, rungs)];
 
 // Whether rung i's bot shows on the ladder. It goes by the rung, not the
-// bot, so when the bots are re-ranked a bot you've played that moves up into
-// a rung you haven't reached is hidden again, and whoever moves into a rung
-// you have reached shows:
-//   - rungs below yours, and up to your best (you've been there);
-//   - your own rung once you've been above it, its series is under way, or
-//     you've played its bot before.
-export function rungShown(p, rungs, i) {
-  const level = levelOf(p, rungs);
-  if (i === level) return i < p.best || !!p.record[rungs[i]] || p.wins + p.losses > 0 || !!pausedGame(p);
-  return i < level || i <= p.best;
-}
+// bot: rungs below yours and up to your best show, and your own once you've
+// been above it, its series is under way, or you've played its bot before.
+export const rungShown = (p, rungs, i) => botGames({op: 'rungShown', p, rungs, i});
 
 // A game is starting, or resuming where it was left: a fresh one at your
 // rung's stakes, each player buying in.
-export function startGame(p, rungs) {
-  const level = levelOf(p, rungs);
-  const fresh = {stacks: [buyInAt(level), buyInAt(level)], hands: 0, blinds: blindsAt(level), offerAt: STAKES_EVERY};
-  return {...p, level, playing: true, game: p.game ? {blinds: blindsAt(level), offerAt: STAKES_EVERY, ...p.game} : fresh};
-}
+export const startGame = (p, rungs) => botGames({op: 'startGame', p, rungs});
 
 // The game so far, after each action: your chips behind, and theirs (all the
 // rest). Leaving in the middle of a hand folds it: what you'd put in the pot
 // is theirs. The game's blinds, next offer and review stay as they are.
-export function keepGame(p, mine, hands) {
-  const all = p.game ? p.game.stacks[0] + p.game.stacks[1] : tableChipsAt(p.level);
-  const m = Math.max(0, Math.min(all, Math.round(mine)));
-  return {...p, game: {...p.game, stacks: [m, all - m], hands}};
-}
+export const keepGame = (p, mine, hands) => botGames({op: 'keepGame', p, mine: Number(mine) || 0, hands});
 
 // The game's blinds now.
 export const gameBlinds = p => p.game?.blinds || blindsAt(p.level);
 
 // The bot's offer to raise the stakes, once the game has reached its next
-// offer: the doubled blinds, or null. Both players need more than the new big
-// blind behind, or there's nothing to raise.
-export function stakesOffer(p) {
-  const g = p.game;
-  if (!p.playing || !g || g.hands < (g.offerAt ?? STAKES_EVERY)) return null;
-  const [sb, bb] = gameBlinds(p);
-  const next = [sb * 2, bb * 2];
-  return Math.min(...g.stacks) > next[1] ? next : null;
-}
+// offer: the doubled blinds, or null.
+export const stakesOffer = p => botGames({op: 'stakesOffer', p}) ?? null;
 
 // Your answer to the offer: accepted, the blinds double from the next hand.
 // Either way the next offer is STAKES_EVERY hands on.
-export function answerStakes(p, yes) {
-  const offer = stakesOffer(p);
-  const g = {...p.game, offerAt: p.game.hands + STAKES_EVERY};
-  if (yes && offer) g.blinds = offer;
-  return {...p, game: g};
-}
+export const answerStakes = (p, yes) => botGames({op: 'answerStakes', p, yes: !!yes});
 
 // A game was left (or the page closed) and is waiting to be resumed.
 export const pausedGame = p => (p.playing && p.game ? p.game : null);
 
 // Your chips as they stand: with a game under way, the buy-in is what you have
 // at the table.
-export const chipsNow = p => (p.game ? p.chips - (p.game.stacks[0] + p.game.stacks[1]) / 2 + p.game.stacks[0] : p.chips);
+export const chipsNow = p => botGames({op: 'chipsNow', p});
 
 // The rung you drop to with these chips after losing at `level`: the highest
 // one below whose buy-in you can pay, or -1 when you can't pay any.
-export function dropTo(level, chips) {
-  for (let j = level - 1; j >= 0; j--) if (buyInAt(j) <= chips) return j;
-  return -1;
-}
+export const dropTo = (level, chips) => botGames({op: 'dropTo', level, chips});
 
-// A game is over: `won` is whether you took all the chips, and with them a
-// buy-in from the bot (lost, your buy-in is gone). Returns the new progress
-// and what happened: 'game' (the series goes on), 'up' (series won, on to the
-// next rung), 'champion' (series won at the top), 'down' (series lost, or no
-// chips left for the next game: down to the rung you can pay for), 'stay'
-// (series lost on the bottom rung, with a buy-in left) or 'bust' (no buy-in
-// left for any rung: start over at the bottom with START_CHIPS).
-export function finishGame(p, rungs, won) {
-  const level = levelOf(p, rungs);
-  const opp = rungs[level];
-  const stake = p.game ? (p.game.stacks[0] + p.game.stacks[1]) / 2 : buyInAt(level);
-  const q = {
-    ...p, level, playing: false, game: null, chips: p.chips + (won ? stake : -stake),
-    wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), record: {...p.record},
-  };
-  const broke = q.chips < buyInAt(level);
-  if (q.wins < WINS_TO_TAKE && q.losses < WINS_TO_TAKE && !broke) return {progress: q, outcome: 'game'};
-  const r = {won: 0, lost: 0, ...q.record[opp]};
-  const took = q.wins >= WINS_TO_TAKE;
-  if (took) r.won++; else r.lost++;
-  q.record[opp] = r;
-  q.wins = 0;
-  q.losses = 0;
-  if (took) {
-    if (level === rungs.length - 1) {
-      q.titles++;
-      return {progress: q, outcome: 'champion'};
-    }
-    q.level = level + 1;
-    q.best = Math.max(q.best, q.level);
-    return {progress: q, outcome: 'up'};
-  }
-  if (level === 0 && !broke) return {progress: q, outcome: 'stay'};
-  // `short`: the series ended because you couldn't buy in for the next game.
-  const short = p.losses + 1 < WINS_TO_TAKE;
-  const to = dropTo(level, q.chips);
-  if (to < 0) {
-    q.level = 0;
-    q.chips = START_CHIPS;
-    return {progress: q, outcome: 'bust', short};
-  }
-  q.level = to;
-  return {progress: q, outcome: 'down', short};
-}
+// A game is over: `won` is whether you took all the chips. Returns
+// {progress, outcome, short}: outcome 'game' (the series goes on), 'up',
+// 'champion', 'down', 'stay' (series lost on the bottom rung, with a buy-in
+// left) or 'bust' (start over at the bottom with START_CHIPS); `short`, for a
+// drop, when it was for want of chips for the next game.
+export const finishGame = (p, rungs, won) => botGames({op: 'finishGame', p, rungs, won: !!won});
