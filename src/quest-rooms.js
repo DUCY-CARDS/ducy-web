@@ -2,7 +2,11 @@
 // three regions (Texas, Los Angeles, Florida), defined as data, whose games
 // come and go with the hour and the day. The
 // world is built from the quest's seed, so it's the same on every reload and
-// different from someone else's. Times are game minutes (quest.js).
+// different from someone else's. Times are game minutes (quest.js). Which
+// games run when comes from ducy-quest (Rust, #466); the rooms are kept here
+// as data for the page (a test checks they're ducy-quest's).
+
+import { quest as op } from '../wasm/ducy_wasm.js';
 
 // Stakes, in hundredths: [small blind, big blind].
 export const STAKES = {
@@ -20,9 +24,6 @@ export const GAMES = {
   plo4: {name: 'Pot-limit Omaha', short: 'PLO'},
 };
 export const gameOf = g => g.game || 'nlhe';
-// A game's key for its dice and table ids: Hold'em's is its stakes, so worlds
-// from before Omaha keep their Hold'em tables.
-const gameKey = g => (gameOf(g) === 'nlhe' ? g.stakes : `${gameOf(g)} ${g.stakes}`);
 
 // Where the rooms are: regions you can put down roots in, each with a small
 // town (where a run starts, with a few small games) and bigger cities.
@@ -224,24 +225,13 @@ export const homeRoomOf = q => {
 };
 /** Whether quest `q` knows of room `room`: every room but other cities' local clubs. */
 export const knownRoom = (q, room) => !room.local || room.city === homeCityOf(q);
-// Big games run in blocks of this many game hours once they start.
-const BLOCK_HOURS = 4;
+// ---- The schedules (ducy-quest, #466) ----
 
-// How busy the rooms are, 0 to 1, by hour (0 midnight): quiet mornings,
-// busier afternoons, busy evenings (0.8 on a weekday); Friday and Saturday
-// nights busiest, and late on into the night.
-const HOURLY = [0.36, 0.28, 0.2, 0.12, 0.08, 0.08, 0.08, 0.12, 0.16, 0.2, 0.28, 0.36,
-  0.4, 0.44, 0.48, 0.48, 0.52, 0.56, 0.64, 0.72, 0.8, 0.8, 0.72, 0.56];
-export function activity(day, hour) {
-  const weekendNight = (day === 4 || day === 5) && (hour >= 18 || hour < 1);
-  const lateWeekend = (day === 5 || day === 6) && hour >= 0 && hour < 4;
-  let a = HOURLY[hour];
-  if (weekendNight) a *= 1.25;
-  if (lateWeekend) a = Math.max(a, 0.55);
-  return Math.min(1, a);
-}
+/** How busy the rooms are, 0 to 1, on `day` (0 Monday) at `hour`: Friday and Saturday nights busiest. */
+export const activity = (day, hour) => op({op: 'activity', day, hour});
 
-// A number in [0, 1) from the seed and some keys: the world's dice.
+// A number in [0, 1) from the seed and some keys: the world's dice (the
+// same as ducy-quest's; kept here for the faces and the backer's test).
 export function roll(seed, ...keys) {
   let h = (seed ^ 0x9e3779b9) >>> 0;
   for (const k of keys.join('|')) {
@@ -252,50 +242,17 @@ export function roll(seed, ...keys) {
   return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
 }
 
-const inWindow = (when, day, hour) => {
-  if (when === 'evenings') return hour >= 19 || hour < 2;
-  if (when === 'weekend-nights') return (day === 4 || day === 5) && (hour >= 20 || hour < 3);
-  return true;
-};
+/** How many tables of room `room`'s game `game` (one of its games) run at game time `minutes`. */
+export const tablesRunning = (seed, room, game, minutes) => op({op: 'tablesRunning', seed, room: room.id, stakes: game.stakes, game: gameOf(game), minutes});
 
-// How many tables of a room's game run at game time `minutes`.
-export function tablesRunning(seed, room, game, minutes) {
-  const m = Math.floor(minutes);
-  const day = Math.floor(m / 1440) % 7;
-  const hour = Math.floor((m % 1440) / 60);
-  const a = activity(day, hour);
-  if (game.when || game.chance != null) {
-    if (!inWindow(game.when, day, hour)) return 0;
-    // A big game runs for a block of hours once it starts: one roll a block.
-    const block = Math.floor(m / (60 * BLOCK_HOURS));
-    const chance = (game.chance ?? 1) * (game.when ? 1 : a);
-    if (roll(seed, room.id, gameKey(game), 'block', block) >= chance) return 0;
-    return Math.max(1, Math.round(game.tables * a));
-  }
-  // A little noise an hour, so two Fridays aren't identical.
-  const hourIndex = Math.floor(m / 60);
-  const noise = 0.85 + 0.3 * roll(seed, room.id, gameKey(game), 'hour', hourIndex);
-  return Math.max(a >= 0.2 ? 1 : 0, Math.round(game.tables * a * noise));
-}
+/**
+ * Every room's games right now: [{room, games: [{stakes, game, blinds,
+ * tables, ids}]}], the rooms' tables numbered (`ids`, stable while a table
+ * runs).
+ */
+export const lobby = (seed, minutes) => op({op: 'lobby', seed, minutes}).map(r => ({room: roomById(r.room), games: r.games}));
 
-// Every room's games right now: [{room, stakes, game, blinds, tables}], with the
-// rooms' tables numbered (`ids`, stable while a table runs).
-export function lobby(seed, minutes) {
-  return ROOMS.map(room => ({
-    room,
-    games: room.games
-      .map(game => {
-        const tables = tablesRunning(seed, room, game, minutes);
-        const key = gameKey(game).replace(' ', '-');
-        return {stakes: game.stakes, game: gameOf(game), blinds: STAKES[game.stakes], tables, ids: Array.from({length: tables}, (_, i) => `${room.id}-${key}-${i + 1}`)};
-      })
-      .filter(g => g.tables > 0),
-  }));
-}
-
-// The smallest minimum buy-in anywhere: below it, a quest is broke.
-export function cheapestBuyIn(minBb = 40) {
-  return Math.min(...ROOMS.flatMap(r => r.games.map(g => (r.minBuyIn ?? minBb) * STAKES[g.stakes][1])));
-}
+/** The smallest minimum buy-in anywhere: below it, a quest is broke. */
+export const cheapestBuyIn = (minBb = 40) => op({op: 'cheapestBuyIn', minBb});
 
 export const roomById = id => ROOMS.find(r => r.id === id) || null;

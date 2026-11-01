@@ -1,63 +1,22 @@
 // The Bankroll Challenge's stats (#304): the bankroll over the run, win rate
 // and hands by stakes, the biggest pots, results with each named Regular,
-// and the hall of records. Pure: built from the quest's session history
-// (quest.js `leave`) and past runs.
+// and the hall of records, built from the quest's session history
+// (quest.js `leave`) and past runs. The numbers come from ducy-quest (Rust,
+// #466); the chart is drawn here.
 
-import { START_BANKROLL } from './quest.js';
-import { STAKES } from './quest-rooms.js';
+import { quest as op } from '../wasm/ducy_wasm.js';
 
 /** Hands, net and bb/100 at each stakes, in stakes order: [{stakes, sessions, hands, net, bb100}]. */
-export function byStakes(history) {
-  const out = [];
-  for (const stakes of Object.keys(STAKES)) {
-    const ss = history.filter(s => sameStakes(s.stakes, stakes));
-    if (!ss.length) continue;
-    const hands = ss.reduce((a, s) => a + (s.hands || 0), 0);
-    const net = ss.reduce((a, s) => a + s.net, 0);
-    const bb = STAKES[stakes][1];
-    out.push({stakes, sessions: ss.length, hands, net, bb100: hands ? (net / bb / hands) * 100 : null});
-  }
-  return out;
-}
-
-// A session's stakes are kept as blinds ([sb, bb]); match them to a name.
-const sameStakes = (blinds, name) => Array.isArray(blinds) && blinds[0] === STAKES[name][0] && blinds[1] === STAKES[name][1];
+export const byStakes = history => op({op: 'byStakes', history});
 
 /** The biggest single pots won and lost across the run: {won, lost} in chips (lost is negative). */
-export function biggestPots(history) {
-  return {
-    won: Math.max(0, ...history.map(s => s.bigWin || 0)),
-    lost: Math.min(0, ...history.map(s => s.bigLoss || 0)),
-  };
-}
+export const biggestPots = history => op({op: 'biggestPots', history});
 
-/**
- * Your results in sessions with each named Regular at the table:
- * [{id, sessions, net}], most played first.
- */
-export function withRegulars(history) {
-  const m = new Map();
-  for (const s of history) {
-    for (const id of s.with || []) {
-      const r = m.get(id) || {id, sessions: 0, net: 0};
-      r.sessions += 1;
-      r.net += s.net;
-      m.set(id, r);
-    }
-  }
-  return [...m.values()].sort((a, b) => b.sessions - a.sessions || b.net - a.net);
-}
+/** Your results in sessions with each named Regular at the table: [{id, sessions, net}], most played first. */
+export const withRegulars = history => op({op: 'withRegulars', history});
 
 /** The bankroll after each session, from the start: [{session, bankroll}]. */
-export function bankrollSeries(history) {
-  const out = [{session: 0, bankroll: START_BANKROLL}];
-  let b = START_BANKROLL;
-  history.forEach((s, i) => {
-    b = s.bankroll ?? b + s.net;
-    out.push({session: i + 1, bankroll: b});
-  });
-  return out;
-}
+export const bankrollSeries = history => op({op: 'bankrollSeries', history});
 
 /**
  * The bankroll line as an SVG (a log scale, since the road runs from
@@ -97,17 +56,7 @@ export function bankrollChart(series, w = 560, h = 160, money = n => String(n)) 
 }
 
 /** Past runs for the hall of records: wins first (fastest first), then the best peaks. */
-export function hallOfRecords(runs) {
-  const wins = runs.filter(r => r.result === 'won').sort((a, b) => a.minutes - b.minutes);
-  const rest = runs.filter(r => r.result !== 'won').sort((a, b) => b.peak - a.peak);
-  return [...wins, ...rest].slice(0, 10);
-}
+export const hallOfRecords = runs => op({op: 'hallOrder', runs}).map(i => runs[i]);
 
 /** Game minutes as "3 days 4 hours" or "5 hours". */
-export function durationText(minutes) {
-  const h = Math.max(0, Math.round(minutes / 60));
-  const d = Math.floor(h / 24), r = h % 24;
-  const part = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  if (!d) return part(r, 'hour');
-  return r ? `${part(d, 'day')} ${part(r, 'hour')}` : part(d, 'day');
-}
+export const durationText = minutes => op({op: 'durationText', minutes});

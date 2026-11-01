@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import {
   AWAY_CAP_DAYS, GOAL, QUEST_SPEED, START_BANKROLL, buyInRange, canSit, clockText, dayHour, gameMinutes,
   leave, loadQuest, newQuest, saveQuest, setStack, sitDown, spendMinutes, status, syncClock, topUp, topUpChoices,

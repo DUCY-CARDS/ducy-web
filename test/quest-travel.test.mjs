@@ -2,6 +2,7 @@
 // waitlists you wait in, and study while you travel or wait.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { CALL_MINUTES, arrive, dropMissed, gameMinutes, joinList, leaveList, listStatus, newQuest, newRun, recordStudy, resume, seeCalls, sitDown, startIn, travel, unseenCalls } from '../src/quest.js';
 import { REGIONS, ROOMS, STAKES, TRAVEL, cityOf, regionOf, roomById, startRoom, travelMinutes } from '../src/quest-rooms.js';
 import { listKey, listsNow, seatGap, waitingAt } from '../src/quest-waitlist.js';
