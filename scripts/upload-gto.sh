@@ -12,11 +12,12 @@
 # good, keyed by that folder.
 #
 # Each game has its own manifest: current.json for heads-up No-limit Hold'em,
-# plo-current.json for heads-up PLO4 and plo6-current.json for heads-up PLO6
-# (their cards.bin is the four- or six-card PLO abstraction).
+# plo-current.json for heads-up PLO4, plo5-current.json for heads-up PLO5 and
+# plo6-current.json for heads-up PLO6 (their cards.bin is the four-, five- or
+# six-card PLO abstraction).
 #
-# The deploy workflow runs this for the newest gto-hunl-<name>,
-# gto-plo-<name> and gto-plo6-<name> release of the ducy repo, so publishing
+# The deploy workflow runs this for the newest gto-hunl-<name>, gto-plo-<name>,
+# gto-plo5-<name> and gto-plo6-<name> release of the ducy repo, so publishing
 # a model is: create that release with the two files attached, then deploy.
 set -euo pipefail
 

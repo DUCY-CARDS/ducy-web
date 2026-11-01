@@ -99,6 +99,7 @@ export function hubData(storage = globalThis.localStorage) {
 export const GTO_GAMES = [
   {hash: 'codedoug', name: 'Hold’em', game: 'nlhe', bot: 'gto'},
   {hash: 'gto-plo4', name: 'Omaha 4', game: 'plo4', bot: 'gto-plo'},
+  {hash: 'gto-plo5', name: 'Omaha 5', game: 'plo5', bot: 'gto-plo5'},
   {hash: 'gto-plo6', name: 'Omaha 6', game: 'plo6', bot: 'gto-plo6'},
 ];
 function gtoRecords(storage) {

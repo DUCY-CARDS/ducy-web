@@ -51,7 +51,7 @@ test('each hub links where it should', () => {
   const links = name => [...hubHtml(name, d).matchAll(/href="(#[a-z0-9-]*)"/g)].map(m => m[1]);
   // After the spade home and any way back: Study, Play or Quest.
   assert.deepEqual(links('study'), ['#', '#study', '#lobby', '#quest', '#equity', '#trainer', '#challenge', '#charts']);
-  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#quest', '#codedoug', '#gto-plo4', '#gto-plo6']);
+  assert.deepEqual(links('challenge'), ['#', '#study', '#study', '#lobby', '#quest', '#codedoug', '#gto-plo4', '#gto-plo5', '#gto-plo6']);
   assert.deepEqual(links('lobby'), ['#', '#study', '#lobby', '#quest', '#host', '#clubs', '#practice', '#ladder', '#quest']);
   assert.equal(HUBS.length, 4);
 });
@@ -60,11 +60,14 @@ test('your record against the GTO bot is what it lost, per 100 hands', () => {
   const d = hubData(store({ducyPlayStats: JSON.stringify({v: 1, games: {
     nlhe: {gto: {hands: 200, netBB: -8.2}, you: {hands: 900, netBB: 40}},
     plo4: {'gto-plo': {hands: 50, netBB: 6}},
+    plo5: {'gto-plo5': {hands: 100, netBB: 3}},
   }})}));
-  const [holdem, plo4, plo6] = d.gto;
+  const [holdem, plo4, plo5, plo6] = d.gto;
   assert.equal(holdem.hands, 200);
   assert.ok(Math.abs(holdem.bb100 - 4.1) < 1e-9);
   assert.ok(Math.abs(plo4.bb100 + 12) < 1e-9);
+  assert.equal(plo5.name, 'Omaha 5');
+  assert.ok(Math.abs(plo5.bb100 + 3) < 1e-9);
   assert.equal(plo6.hands, 0);
   assert.equal(plo6.bb100, null);
   const h = hubHtml('challenge', d);

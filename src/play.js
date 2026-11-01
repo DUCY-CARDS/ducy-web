@@ -12,8 +12,8 @@
 // host on request within the table's buy-in limits.
 // Heads-up against the GTO bot is training: both players start every hand
 // with 100 BB, and in Hold'em each finished hand's decisions are reviewed
-// against the bot's strategy (play-review.js) in the background. PLO4 and
-// PLO6 have their own GTO bots, without the review.
+// against the bot's strategy (play-review.js) in the background. PLO4, PLO5
+// and PLO6 have their own GTO bots, without the review.
 // The Ladder tab (#212) plays heads-up freezeouts against one bot at a time,
 // easiest first, with the GTO bot at the top (ladder.js has the rules).
 
@@ -169,7 +169,7 @@ const BOT_NAME = 'Ducybot';
 const GTO = {id: 'gto', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
 let gtoAvailable = false;
 let gtoReady = false;
-// The PLO GTO bots, for heads-up PLO4 and PLO6 the same way, keyed by game:
+// The PLO GTO bots, for heads-up PLO4, PLO5 and PLO6 the same way, keyed by game:
 // each hosted at gto/ with its own manifest, loaded by its own worker op, and
 // offered when it's there and the engine can play it.
 const GTO_PLOS = {
@@ -177,6 +177,11 @@ const GTO_PLOS = {
     bot: {id: 'gto-plo', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
     supported: 'gtoPloSupported', load: 'loadGtoPlo', available: false, ready: false,
+  },
+  plo5: {
+    bot: {id: 'gto-plo5', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up five-card pot-limit Omaha at 100 big blinds.'},
+    label: 'Omaha 5', manifest: new URL('gto/plo5-current.json', document.baseURI).href,
+    supported: 'gtoPlo5Supported', load: 'loadGtoPlo5', available: false, ready: false,
   },
   plo6: {
     bot: {id: 'gto-plo6', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
@@ -418,7 +423,7 @@ const nameOf = seat => (state?.seats[seat]?.name ?? '');
 
 // ---- setup ----
 
-// The GTO bots: heads-up ones for No-limit Hold'em, PLO4 and PLO6, and a
+// The GTO bots: heads-up ones for No-limit Hold'em, PLO4, PLO5 and PLO6, and a
 // six-handed one for No-limit Hold'em. The one for the game and table size
 // picked, or null.
 function gtoBot() {
@@ -4509,7 +4514,7 @@ const clickBet = () => root.querySelector('[data-act="raise"],[data-act="bet"]')
 // Draws tab `v` of the Play section (see `view`) into `el`. `shortcut` sits
 // straight down heads-up against the GTO bot with a 100 big blind buy-in,
 // unless a table is already in play: 'gto' for No-limit Hold'em (from
-// #codedoug), 'gto-plo4' and 'gto-plo6' for Omaha (#225).
+// #codedoug), 'gto-plo4', 'gto-plo5' and 'gto-plo6' for Omaha (#225).
 export async function openPlay(el, shortcut, v = 'play') {
   if (!root) {
     root = el;

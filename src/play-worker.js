@@ -6,6 +6,7 @@
 //        state | setStack(seat, chips) | setBot(seat, id, chips, seed) |
 //        setTopUp(on) | setRules(game, sb, bb) |
 //        loadGto(manifestUrl) | gtoPloSupported | loadGtoPlo(manifestUrl, bb) |
+//        gtoPlo5Supported | loadGtoPlo5(manifestUrl, bb) |
 //        gtoPlo6Supported | loadGtoPlo6(manifestUrl, bb) |
 //        gto6Supported | loadGto6(manifestUrl) | review |
 //        reviewDecision | setReviewAll(on) | reviewNew
@@ -46,10 +47,12 @@ const snapshot = state => ({state, botToAct: table.botToAct()});
 
 // The GTO bot's files are big (a few MB), so they're kept in Cache Storage:
 // downloaded once, then read from disk on later visits. Each model lives in
-// its own folder, so a cached file never goes stale. Hold'em's, PLO4's and
-// PLO6's models each have their own cache, so loading one doesn't drop another.
+// its own folder, so a cached file never goes stale. Hold'em's, PLO4's,
+// PLO5's and PLO6's models each have their own cache, so loading one doesn't
+// drop another.
 const GTO_CACHE = 'ducy-gto';
 const GTO_PLO_CACHE = 'ducy-gto-plo';
+const GTO_PLO5_CACHE = 'ducy-gto-plo5';
 const GTO_PLO6_CACHE = 'ducy-gto-plo6';
 // Hold'em blueprints trained at other depths (#251) have their own too.
 const GTO_DEPTHS_CACHE = 'ducy-gto-depths';
@@ -194,6 +197,10 @@ const ops = {
   // takes its six-card model only in a ducy-wasm that has gtoPlo6Loaded.
   gtoPlo6Supported: () => typeof wasm.gtoPlo6Loaded === 'function',
   loadGtoPlo6: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO6_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
+  // And PLO5's ("gto-plo5" at a plo5 table, ducy#331): its five-card model
+  // only in a ducy-wasm that has gtoPlo5Loaded.
+  gtoPlo5Supported: () => typeof wasm.gtoPlo5Loaded === 'function',
+  loadGtoPlo5: (manifestUrl, bb) => loadGtoModel(manifestUrl, GTO_PLO5_CACHE, (cards, blueprint) => wasm.loadGtoPlo(cards, blueprint, BigInt(bb))),
   // The six-handed GTO bot ("gto6", ducy #245): a preflop strategy, from a
   // manifest {dir, strategy}. An older ducy-wasm doesn't have it.
   gto6Supported: () => typeof wasm.loadGto6 === 'function',
