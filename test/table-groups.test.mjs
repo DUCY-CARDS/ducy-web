@@ -221,3 +221,55 @@ test('a new must-move table: the first on the list are asked, then the next, and
   await server.run('set_must_move', {key, on: false});
   assert.equal(club.groups, undefined);
 });
+
+test('an offered game opens once those interested say yes; no answer keeps your place', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {club, server, ids, say, fire, groupMsgs, listsOf} = await serverFor();
+  // On the menu, not running: PLO 1/2 for three.
+  const offered = await server.run('offer_game', {table: {game: 'plo4', sb: 1, bb: 2, seats: 3, minBB: 40, maxBB: 100, turnSecs: 0}});
+  assert.equal(offered, 'plo4:1/2:3');
+  assert.equal(club.tables.filter(t => t.game === 'plo4').length, 0);
+  const join = (n, min) => say(n, {type: 'table', table: `list:${offered}`, cmd: {type: 'join_list', ...(min ? {min} : {})}});
+  const gid = `interest:${offered}`;
+  const answer = (n, yes) => say(n, {type: 'table', table: `group:${gid}`, cmd: {type: 'group_answer', group: gid, yes}});
+  const asks = n => groupMsgs(n).filter(b => b.kind === 'ask').length;
+  // Ann would start with 2: one isn't enough.
+  await join('ann', 2);
+  await until('ann’s lists', () => listsOf('ann').at(-1)?.lists.length);
+  assert.equal(listsOf('ann').at(-1).lists[0].min, 2);
+  assert.equal(asks('ann'), 0);
+  // Bob too: two who'd start with 2 are asked.
+  await join('bob', 2);
+  await until('asked', () => asks('bob') === 1);
+  assert.equal(groupMsgs('ann')[0].group, gid);
+  // Cy wants a full table: not asked about two.
+  await join('cy');
+  await answer('ann', true);
+  // Bob doesn't answer. A minute on, no one else would start with 2: it
+  // doesn't open, and Ann hears why. Everyone keeps their place.
+  await fire('nextRound');
+  await until('not enough', () => groupMsgs('ann').some(b => b.reason === 'Not enough players for a new table.'));
+  assert.equal(listOf(club, offered).length, 3);
+  // Dee would start with 2: four interested, three willing to start with 3
+  // or fewer, so a table of three. The first three are asked.
+  await join('dee', 2);
+  await until('asked again', () => asks('cy') === 1);
+  assert.equal(asks('dee'), 0);
+  await answer('ann', true);
+  await answer('bob', true);
+  // Cy doesn't answer: a minute on, the next one down is asked.
+  await fire('nextRound');
+  await until('dee asked', () => asks('dee') === 1);
+  await answer('dee', true);
+  // Enough: a table of the game opens, and they're told to sit there.
+  await until('the table', () => club.tables.some(t => t.game === 'plo4'));
+  const t = club.tables.find(x => x.game === 'plo4');
+  await until('it runs', () => server.running(t.id));
+  await until('told', () => groupMsgs('dee').some(b => b.kind === 'open'));
+  assert.equal(groupMsgs('ann').find(b => b.kind === 'open').table, t.id);
+  // Cy, who didn't answer, is still on the list; the others are off it.
+  assert.deepEqual(listOf(club, offered).map(e => e.member), [ids.cy.id]);
+  assert.ok(groupMsgs('cy').some(b => b.kind === 'closed'));
+  // No longer offered.
+  await server.run('remove_offer', {key: offered});
+  assert.equal(club.menu, undefined);
+});

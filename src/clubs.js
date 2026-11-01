@@ -302,7 +302,9 @@ function seatsHtml(game, wanted) {
 
 const tfRadio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${value}"${on ? ' checked' : ''}>${label}</label>`;
 
-function tableFormHtml({wizard = false} = {}) {
+// `offer`: the same settings for a game to offer (the club's menu), not a
+// table to open now.
+function tableFormHtml({wizard = false, offer = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
   const all = [...BLINDS, ...MORE_BLINDS];
@@ -311,7 +313,7 @@ function tableFormHtml({wizard = false} = {}) {
   // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
   // for this game; never more than the game can deal to (PLO6: 6).
   const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), maxSeats(game));
-  let h = `<form class="cl-tableform tf" data-tableform="1"${wizard ? ' data-wizard="1"' : ''}>`;
+  let h = `<form class="cl-tableform tf" data-tableform="1"${wizard ? ' data-wizard="1"' : ''}${offer ? ' data-offer="1"' : ''}>`;
   h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => tfRadio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(x => tfRadio('blinds', x.join('/'), blindsText(x), blinds === x.join('/'))).join('')}${tfRadio('blinds', 'other', 'Other', blinds === 'other')}`;
   h += `<select class="pl-text tf-other tf-other-blinds" name="blindsOther" aria-label="Blinds">${MORE_BLINDS.map(x => `<option value="${x.join('/')}"${x === lastBlinds ? ' selected' : ''}>${blindsText(x)}</option>`).join('')}</select></div></div>`;
@@ -328,7 +330,7 @@ function tableFormHtml({wizard = false} = {}) {
   const call = nearest(CALL_TIMES, club?.stayHands ?? 0);
   h += `<label>Call time<select class="pl-text" name="stayHands">${options(CALL_TIMES, call, n => (n ? `${n} hands` : 'Off'))}</select></label>`;
   h += '</div></details>';
-  h += '<div class="cl-formacts"><button class="btn-small primary" type="submit">Open table</button>';
+  h += `<div class="cl-formacts"><button class="btn-small primary" type="submit">${offer ? 'Offer' : 'Open table'}</button>`;
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-invite">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
   return h + '</div></form>';
 }
@@ -367,7 +369,8 @@ function submitTable(f) {
   }
   save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
   // The form stays open if the table can't be opened, so nothing is lost.
-  hostAct('new_table', {table: settings}).then(ok => {
+  // Offered, it goes on the club's menu instead.
+  hostAct(f.dataset.offer ? 'offer_game' : 'new_table', {table: settings}).then(ok => {
     if (!ok) return;
     tableForm = false;
     if (f.dataset.wizard) setWizard('invite');
@@ -574,12 +577,16 @@ function gamesOf(tables) {
     if (!by.has(k)) by.set(k, []);
     by.get(k).push(t);
   }
-  return [...by].map(([key, ts]) => {
+  const offered = key => (club.menu || []).some(x => x.key === key);
+  const games = [...by].map(([key, ts]) => {
     const g = (club.groups || []).find(x => ts.some(t => x.tables.includes(t.id))) || null;
     const place = t => (g ? (g.tables.indexOf(t.id) + 1 || 99) : 0);
     ts.sort((a, b) => place(a) - place(b) || (a.createdAt || 0) - (b.createdAt || 0));
-    return {key, t: ts[0], tables: ts, group: g};
+    return {key, t: ts[0], tables: ts, group: g, offered: offered(key)};
   });
+  // Games on the club's menu that aren't running: players sign up for them.
+  for (const m of club.menu || []) if (!by.has(m.key)) games.push({key: m.key, t: m, tables: [], group: null, offered: true});
+  return games;
 }
 
 // A game's must-move chain by table name: "C → B → A", "C → A or B".
@@ -610,8 +617,11 @@ function cashHtml() {
     if (g) return gameHtml(g, counts);
     openGame = '';
   }
-  let h = tableForm === true ? tableFormHtml() : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button></div>';
-  if (!tables.length) return h + (tableForm === true ? '' : '<p class="pl-meta cl-empty">No tables open.</p>');
+  // New table, or Offer a game: on the club's menu, so players can sign up
+  // for it before any table of it runs.
+  let h = tableForm ? tableFormHtml({offer: tableForm === 'offer'})
+    : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button><button class="btn-small" data-cl="offer-game">Offer a game</button></div>';
+  if (!games.length) return h + (tableForm ? '' : '<p class="pl-meta cl-empty">No tables open.</p>');
   const waiting = g => listOf(club, g.key).length;
   // Filter by seats, when there's more than one size.
   const sizes = [...new Set(games.map(g => g.t.seats))].sort((a, b) => a - b);
@@ -646,11 +656,15 @@ function cashHtml() {
     h += `<div class="mg-brow${w ? ' waiting' : ''}" role="row">`;
     h += `<span role="cell" class="mg-bgame"><button class="mg-toggle" data-cl="board-row" data-key="${esc(g.key)}" aria-expanded="${open}"><span class="mg-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(gameLabel(g.t.game))}</button>`;
     if (g.group) h += `<span class="mg-chain">Must move ${esc(chainText(g.group))}</span>`;
+    // On the menu, no table running: its list is who's interested.
+    if (!g.tables.length) h += '<span class="mg-chain">Offered · not running</span>';
     h += '</span>';
     h += `<span role="cell" class="mg-num">${chips(g.t.sb)}/${chips(g.t.bb)}</span><span role="cell">${seatsName(g.t.seats)}</span>`;
     h += `<span role="cell" class="mg-num" data-label="Tables">${g.tables.length}</span><span role="cell" class="mg-num" data-label="Seated">${seated} / ${seats}</span>`;
     h += `<span role="cell" class="mg-num mg-wait" data-label="Waitlist">${w}</span>`;
-    h += `<span role="cell" class="mg-bacts">${w ? `<button class="btn-small" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>` : ''}<button class="btn-small" data-cl="game-open" data-key="${esc(g.key)}">View</button></span></div>`;
+    h += `<span role="cell" class="mg-bacts">${w ? `<button class="btn-small" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>` : ''}<button class="btn-small" data-cl="game-open" data-key="${esc(g.key)}">View</button>`;
+    if (g.offered) h += `<button class="btn-small" data-cl="offer-remove" data-key="${esc(g.key)}">Stop offering</button>`;
+    h += '</span></div>';
     if (!open) continue;
     for (const t of g.tables) {
       const n = counts[t.id] || 0;
@@ -2924,6 +2938,32 @@ function gameRowHtml(m, t, hostHere, open) {
 
 const ordinal = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
 
+// The club's offered games that aren't running (its menu): a row each, with
+// how many are interested and Join list, saying the fewest you'd start a
+// table with; once on it, Leave list. A table opens when enough say yes.
+function menuGamesHtml(m, hostHere) {
+  const games = (m.menu || []).filter(g => !(m.tables || []).some(t => (t.key || '') === g.key));
+  if (!games.length) return '';
+  let h = '<h3 class="cl-menu-head">More games</h3><ul class="cl-tables cl-tcards">';
+  for (const g of games) {
+    const mine = (m.lists || []).find(l => l.key === g.key);
+    const count = m.listCounts?.[g.key] || 0;
+    const k = `data-code="${esc(m.code)}" data-key="${esc(g.key)}"${hostHere ? '' : ' disabled'}`;
+    let meta = count ? `${count} interested` : 'No one yet', act;
+    if (mine) {
+      meta = `You’re in · ${count} interested${mine.min ? ` · start with ${mine.min}+` : ''}`;
+      act = `<button class="btn-small" data-cl="list-leave" ${k}>Leave list</button>`;
+    } else {
+      const opts = [`<option value="">Full table</option>`];
+      for (let n = g.seats - 1; n >= 2; n--) opts.push(`<option value="${n}">${n}+</option>`);
+      act = `<span class="cl-join-min"><label><span class="v3-sr">Start with</span><select class="pl-text" data-minfor="${esc(g.key)}" aria-label="Start with">${opts.join('')}</select></label>`;
+      act += `<button class="btn-small primary" data-cl="list-join" ${k}>Join list</button></span>`;
+    }
+    h += `<li class="cl-game-head"><span><b>${esc(gameName(g))}</b><span class="pl-meta${mine ? ' cl-mine' : ''}">${esc(meta)}</span></span>${act}</li>`;
+  }
+  return h + '</ul>';
+}
+
 // A member's Tables tab: their last session while it's recent (#187), and
 // the open tables with Sit, or why not.
 // A member's stakes filter on each club's Tables tab, by club code.
@@ -2937,7 +2977,9 @@ function memberTablesHtml(m, hostHere) {
     const net = last.net > 0 ? `+${chips(last.net)}` : signed(last.net);
     h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
   }
-  if (!m.tables?.length) return h + `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`;
+  // Games the club offers that aren't running: sign up for them.
+  const menu = menuGamesHtml(m, hostHere);
+  if (!m.tables?.length) return h + (menu || `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`);
   // Filter by stakes, when the club deals more than one band.
   const band = t => t.stakes || stakesBand(t.bb);
   const bands = STAKES.filter(s => m.tables.some(t => band(t) === s));
@@ -2999,7 +3041,7 @@ function memberTablesHtml(m, hostHere) {
     }
     h += '</li>';
   }
-  return h + '</ul>';
+  return h + '</ul>' + menu;
 }
 
 // ---- an agent's tools (#74, #75, #76) ----
@@ -3179,7 +3221,9 @@ async function onClickIn(e) {
   else if (act === 'list-join' || act === 'list-leave' || act === 'list-back') {
     b.disabled = true;
     const type = {'list-join': 'join_list', 'list-leave': 'leave_list', 'list-back': 'list_back'}[act];
-    sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: `list:${b.dataset.key}`, cmd: {type}});
+    // An offered game that isn't running: the fewest you'd start with.
+    const min = Number(b.closest('li')?.querySelector('select[data-minfor]')?.value) || null;
+    sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: `list:${b.dataset.key}`, cmd: {type, ...(min ? {min} : {})}});
   }
   // The seat offered: at another of the club's tables, move to it; else sit.
   else if (act === 'offer-sit') {
@@ -3265,6 +3309,9 @@ async function onClickIn(e) {
   else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
+  // The club's menu: offering a game, and no longer offering one.
+  else if (act === 'offer-game') { tableForm = 'offer'; render(); }
+  else if (act === 'offer-remove') hostAct('remove_offer', {key: b.dataset.key});
   // The host: agents.
   else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
   else if (act === 'revoke-agent') hostAct('revoke_agent', {id: b.dataset.id});
@@ -3306,7 +3353,8 @@ async function onClickIn(e) {
   } else if (act === 'game-open') { openGame = b.dataset.key; mustMoveForm = ''; render(); window.scrollTo(0, 0); }
   else if (act === 'game-close') { openGame = ''; mustMoveForm = ''; render(); }
   else if (act === 'game-open-table') {
-    const t = openTables(club).find(x => gameKey(x) === b.dataset.key);
+    // Like its first table, or, not running, as the club offers it.
+    const t = openTables(club).find(x => gameKey(x) === b.dataset.key) || (club.menu || []).find(x => x.key === b.dataset.key);
     if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands}});
   } else if (act === 'list-remove') hostAct('list_remove', {key: b.dataset.key, id: b.dataset.id});
   else if (act === 'mm-edit') { mustMoveForm = b.dataset.key; render(); }
