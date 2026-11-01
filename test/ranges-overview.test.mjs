@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { OVERVIEW_GAMES, TOP_TARGETS, gameSkills, nextSkill, overviewHtml } from '../src/ranges-overview.js';
 
 const progress = {

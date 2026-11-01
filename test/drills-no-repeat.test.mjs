@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { dealNotAgain, handKind } from '../src/trainer.js';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_BB, chartFile, pickCell } from '../src/chart-skills.js';

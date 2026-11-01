@@ -2,6 +2,7 @@
 // answers, how hands are picked, and the chart files the track relies on.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { readFileSync } from 'node:fs';
 import { cellHand } from '../src/charts.js';
 import {

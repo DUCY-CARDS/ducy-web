@@ -78,7 +78,10 @@ const SKILL_TARGETS = [10, 15, 20, 25, 30, 40, 50];
 export function hubData(storage = globalThis.localStorage) {
   let progress = {};
   try { progress = JSON.parse(storage.getItem('ducyTrainerProgress') || '{}') || {}; } catch {}
-  const skills = skillTable(progress, SKILL_GAMES, SKILL_TARGETS);
+  // The skills are ducy's (trainer-skills.js); with no engine (it didn't
+  // load), the hubs still show, with nothing mastered.
+  let skills = {mastered: 0, total: SKILL_GAMES.length * SKILL_TARGETS.length};
+  try { skills = skillTable(progress, SKILL_GAMES, SKILL_TARGETS); } catch {}
   const ladder = loadLadder(storage);
   const rungs = ORDER.length + 1; // the Regulars, then the GTO bot
   return {

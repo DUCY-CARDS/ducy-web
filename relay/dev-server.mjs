@@ -133,6 +133,8 @@ async function expireClubs() {
   const now = Date.now() + CLEANUP_AHEAD_MS;
   for (const code of await reg.expired(now)) {
     const room = rooms.get(code);
+    // Claimed but not stored yet (being created as we look): once, next time.
+    if (room && !room.store.has('club') && !room.expireWaited) { room.expireWaited = true; continue; }
     const club = room ? await clubOf(room, code) : null;
     // Deleting tells its members, and releases it from the registry.
     if (club) await inRoom(room, () => club.run('delete_club'));
