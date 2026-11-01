@@ -2,6 +2,7 @@
 // Run with: node --test test/ladder-review.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { LESSONS_KEPT, addHand, lessonsByHand, lessonsShare, newGameReview } from '../src/ladder-review.js';
 import { STAKES_EVERY, answerStakes, blindsAt, buyInAt, finishGame, keepGame, loadProgress, newProgress, saveProgress, startGame, tableChipsAt } from '../src/ladder.js';
 

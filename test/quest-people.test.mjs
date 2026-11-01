@@ -2,6 +2,7 @@
 // stats (#304).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import {
   FAMILIES, botIdOf, familyFor, isGeneric, isReg, lookFor, nameFor, parseBotId, personOf, roster, tourist, touristShare,
 } from '../src/quest-people.js';

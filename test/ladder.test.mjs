@@ -2,13 +2,25 @@
 // Run with: node --test test/ladder.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import {
   BLINDS, CHAMPION, ORDER, STAKES_EVERY, START_BB, START_CHIPS, answerStakes, blindsAt, buyInAt,
   chipsNow, dropTo, finishGame, gameBlinds, keepGame, loadProgress, newProgress, opponentOf,
   pausedGame, rungShown, rungsFor, saveProgress, stakesOffer, startGame, tableChipsAt,
 } from '../src/ladder.js';
 
+import { botGames } from '../wasm/ducy_wasm.js';
+import { BANKROLL_BUY_INS, LEAVE_CHANCE, REGULARS_SEATS } from '../src/regulars.js';
+import { LESSONS_KEPT } from '../src/ladder-review.js';
+
 const RUNGS = ['a', 'b', 'c', 'd'];
+
+test('the terms kept here are ducy-bot-games’', () => {
+  assert.deepEqual(botGames({op: 'ladderRules'}), {
+    order: ORDER, champion: CHAMPION, startBb: START_BB, winsToTake: 2, blinds: BLINDS, stakesEvery: STAKES_EVERY,
+    bankrollBuyIns: BANKROLL_BUY_INS, leaveChance: LEAVE_CHANCE, regularsSeats: REGULARS_SEATS, lessonsKept: LESSONS_KEPT,
+  });
+});
 // Chips in hundredths: 400 shows as 40000.
 const K = 100;
 
