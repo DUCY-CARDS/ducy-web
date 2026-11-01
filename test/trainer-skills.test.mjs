@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { MASTERY, gainFor, answersToMaster, nextSkillAfter, skillKey, parseSkillKey, skillState, skillTable } from '../src/trainer-skills.js';
 
 test('after mastering a skill, the next one is the next target of the game, then the other games', () => {

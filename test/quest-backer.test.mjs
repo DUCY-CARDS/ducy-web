@@ -1,6 +1,7 @@
 // Getting staked (#356): a backer's offer, the ranges test, the stake and settling it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { readFileSync } from 'node:fs';
 import { newQuest } from '../src/quest.js';
 import { DEFAULT_BB, handMix, fixedAnswers, trainingActions } from '../src/chart-skills.js';

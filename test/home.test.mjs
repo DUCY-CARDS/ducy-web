@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { HUBS, crumbFor, hubData, hubHtml, sideOf, sideSwitch } from '../src/home.js';
 import { ORDER } from '../src/ladder.js';
 
