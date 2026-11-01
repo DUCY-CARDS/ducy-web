@@ -44,6 +44,7 @@ test('some Regulars are nice and some trash talk', () => {
   assert.equal(personaOf('jen_silly').tone, 'friendly');
   assert.equal(personaOf('milk_king').tone, 'friendly');
   // Every GTO bot is the robot; an unknown bot talks like a friendly one.
+  assert.equal(personaOf('gto-plo5').tone, 'robot');
   assert.equal(personaOf('gto-plo6').tone, 'robot');
   assert.equal(personaOf('someone_new').tone, 'friendly');
   // The Bankroll Challenge's generic players talk by family.

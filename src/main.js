@@ -1864,9 +1864,9 @@ function setMode(mode, shortcut) {
 }
 
 // Straight to heads-up against the GTO bot at 100 big blinds: #codedoug for
-// No-limit Hold'em, #gto-plo4 and #gto-plo6 for Omaha. The address becomes
-// #play, so leaving the table or reloading lands on the usual setup.
-const SHORTCUTS = {codedoug: 'gto', 'gto-plo4': 'gto-plo4', 'gto-plo6': 'gto-plo6'};
+// No-limit Hold'em, #gto-plo4, #gto-plo5 and #gto-plo6 for Omaha. The address
+// becomes #play, so leaving the table or reloading lands on the usual setup.
+const SHORTCUTS = {codedoug: 'gto', 'gto-plo4': 'gto-plo4', 'gto-plo5': 'gto-plo5', 'gto-plo6': 'gto-plo6'};
 function openShortcut(name) {
   history.replaceState(null, '', '#play');
   setMode('play', SHORTCUTS[name]);

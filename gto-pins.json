@@ -1,6 +1,7 @@
 {
   "gto-hunl-": "gto-hunl-300m",
   "gto-plo-": "gto-plo-nut-200m",
+  "gto-plo5-": "gto-plo5-nut-200m",
   "gto-plo6-": "gto-plo6-nut-200m",
   "gto-sixmax-": "gto-sixmax-100bb-rz-cv"
 }
