@@ -2,6 +2,7 @@
 // hotels cost, twelve hours at the tables at most, and sleep.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import {
   MAX_TABLE_MINUTES, SLEEP_MINUTES, START_BANKROLL, arrive, exhausted, gameMinutes, joinList, leave, moveHome, newQuest, resume, sitDown, sleep, startIn, syncClock,
   tableMinutes, travel, wake,

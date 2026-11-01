@@ -4,6 +4,7 @@
 // are game time, ticking as fast as its clock.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { QUEST_SPEED, arrive, newQuest, startIn, travel } from '../src/quest.js';
 import { REGIONS, ROOMS, homeRoomOf, knownRoom, roomById, startRoom, travelMinutes } from '../src/quest-rooms.js';
 import { gameClock, questLobbyHtml } from '../src/quest-ui.js';

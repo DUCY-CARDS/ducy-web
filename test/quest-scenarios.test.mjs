@@ -1,6 +1,7 @@
 // Bankroll Challenge scenarios (#355): the inbox, the ledger, and staking players.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { newQuest } from '../src/quest.js';
 import { botIdOf } from '../src/quest-people.js';
 import {

@@ -2,6 +2,7 @@
 // run you leave is saved to your records with where it ended.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { START_BANKROLL, newQuest, newRun, startIn } from '../src/quest.js';
 import { questLobbyHtml } from '../src/quest-ui.js';
 

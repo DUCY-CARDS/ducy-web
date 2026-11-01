@@ -1,6 +1,7 @@
 // The Bankroll Challenge's generic players' faces and names (#305).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { BASES, GEARS, NAMES, faceUrl, lookFor, nameFor } from '../src/quest-faces.js';
 import { FAMILIES, botIdOf, personOf } from '../src/quest-people.js';
 
