@@ -14,11 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Checkout ducy
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: allenpiscitello/ducy
-          path: ducy
+      # The revision of ducy's generic crates rust/Cargo.toml pins.
+      - name: Pinned ducy
+        id: ducy
+        run: echo "rev=$(scripts/ducy-rev.sh)" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
@@ -40,20 +39,19 @@ jobs:
 
       - name: Build WASM
         run: |
-          cd ducy
-          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript
+          cd rust/ducy-wasm
+          wasm-pack build --target web --out-dir pkg --no-typescript
 
       - name: Copy WASM to site
         run: |
           mkdir -p wasm
-          cp ducy/ducy-wasm/pkg/ducy_wasm.js wasm/
-          cp ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+          cp rust/ducy-wasm/pkg/ducy_wasm.js wasm/
+          cp rust/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
 
-      # Each release goes under v/<site commit>-<ducy commit>/, so a ducy-only
-      # redeploy (workflow_dispatch) also gets a fresh folder.
+      # Each release goes under v/<site commit>-<pinned ducy commit>/.
       - name: Build site
         run: |
-          DUCY_SHA="$(git -C ducy rev-parse --short=8 HEAD)"
+          DUCY_SHA="$(echo "${{ steps.ducy.outputs.rev }}" | cut -c1-8)"
           scripts/build-site.sh "${GITHUB_SHA::8}-${DUCY_SHA}" _site
 
       - name: Set up SSH

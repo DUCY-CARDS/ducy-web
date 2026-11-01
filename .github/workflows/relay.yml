@@ -5,16 +5,15 @@ name: Deploy relay
 # repository secrets: CLOUDFLARE_API_TOKEN (a token from the "Edit Cloudflare
 # Workers" template) and CLOUDFLARE_ACCOUNT_ID.
 #
-# Always-on clubs (#93) run the site's club code (src/) and ducy's engine
-# (built here from allenpiscitello/ducy, as for the site) in the Worker, so
-# changes to src/ redeploy it too. After an engine-only change, run this by
-# hand (workflow_dispatch) to pick it up. admins.json (who may use the admin
+# Always-on clubs (#93) run the site's club code (src/) and its Rust
+# (rust/, built here as for the site) in the Worker, so changes to src/ or
+# rust/ redeploy it too. admins.json (who may use the admin
 # page, #401) is bundled in, so a change to it redeploys too.
 
 on:
   push:
     branches: [master]
-    paths: ['relay/**', 'src/**', 'admins.json', '.github/workflows/relay.yml']
+    paths: ['relay/**', 'src/**', 'rust/**', 'admins.json', '.github/workflows/relay.yml']
   workflow_dispatch:
 
 concurrency:
@@ -29,12 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Checkout ducy
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: allenpiscitello/ducy
-          path: ducy
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
@@ -58,11 +51,11 @@ jobs:
       # the GTO bots, so the Worker loads less and starts faster.
       - name: Build WASM
         run: |
-          cd ducy
-          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript --no-default-features
-          cd ..
+          cd rust/ducy-wasm
+          wasm-pack build --target web --out-dir pkg --no-typescript --no-default-features
+          cd ../..
           mkdir -p wasm
-          cp ducy/ducy-wasm/pkg/ducy_wasm.js ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+          cp rust/ducy-wasm/pkg/ducy_wasm.js rust/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

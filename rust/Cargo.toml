@@ -1,0 +1,25 @@
+# ducy.cards' own Rust: the clubs, the study tools, the games against the
+# bots, Bankroll Quest, and the site's wasm bindings (ducy-wasm). They're
+# built on ducy's generic poker crates, pinned to one revision of
+# allenpiscitello/ducy: bump `rev` (and run `cargo update`) to take a newer one.
+[workspace]
+resolver = "3"
+members = ["ducy-wasm", "ducy-club", "ducy-training", "ducy-bot-games", "ducy-quest"]
+
+[workspace.dependencies]
+ducy = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
+ducy-play = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
+ducy-host = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
+ducy-gto = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
+ducy-shuffle = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655" }
+ducy-identity = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655" }
+
+# The curve arithmetic in ducy-shuffle is ~50x slower unoptimized; keep
+# debug builds and tests quick by optimizing just that dependency.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+# Tests run optimized, with overflow checks and debug assertions still on.
+[profile.test]
+opt-level = 2
+debug = "line-tables-only"
