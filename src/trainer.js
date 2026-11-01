@@ -4,11 +4,12 @@
 // and wrongly excluded (folded but in the range).
 
 import { RANGE_PRESETS } from './presets.js';
-import { RK, COMBOS, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
-import { omahaPercentile, omahaTags, omahaLabels, omahaModelVersion } from './omaha-hand.js';
+import { training } from '../wasm/ducy_wasm.js';
+import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
+import { omahaPercentile, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
-import { holdemTags, HOLDEM_TAG_LABELS } from './holdem-tags.js';
-import { MASTERY, gainFor, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
+import { HOLDEM_TAG_LABELS } from './holdem-tags.js';
+import { MASTERY, nextSkillAfter, skillKey, skillState, skillTable } from './trainer-skills.js';
 import { overviewHtml } from './ranges-overview.js';
 import { cs, chartTrackHtml, chartTrackSummary, chartOptionsHtml, chartPracticeHtml, chartSummaryHtml, chartClick, chartInput, chartKey, chartTick, setChartRender } from './chart-trainer.js';
 
@@ -18,7 +19,8 @@ const SUITS = [
   {c: 'd', ch: '♦', red: true},
   {c: 'c', ch: '♣', red: false},
 ];
-const DECK = SUITS.flatMap(s => RK.map(r => r + s.c));
+const RANK_ORDER = 'AKQJT98765432';
+const SUIT_ORDER = 'shdc';
 const HAND_COUNTS = [25, 50, 100];
 const SAVED_RANGES_KEY = 'ducyRanges';
 
@@ -98,53 +100,23 @@ function inTarget(t, cls) {
   return t.value.has(cls) ? 'value' : t.bluff.has(cls) ? 'bluff' : null;
 }
 
-function dealHand() {
-  const i = Math.floor(Math.random() * 52);
-  let j = Math.floor(Math.random() * 51);
-  if (j >= i) j++;
-  // Higher rank first, the way players read a hand.
-  return RK.indexOf(DECK[i][0]) <= RK.indexOf(DECK[j][0]) ? [DECK[i], DECK[j]] : [DECK[j], DECK[i]];
-}
-
-const RANK_ORDER = 'AKQJT98765432';
-const SUIT_ORDER = 'shdc';
-
-/** Deals an Omaha hand, sorted high to low (then by suit) for reading. */
-function dealOmaha(n) {
-  const d = DECK.slice();
-  for (let i = 0; i < n; i++) {
-    const j = i + Math.floor(Math.random() * (52 - i));
-    [d[i], d[j]] = [d[j], d[i]];
-  }
-  return d.slice(0, n).sort((a, b) => RANK_ORDER.indexOf(a[0]) - RANK_ORDER.indexOf(b[0]) || SUIT_ORDER.indexOf(a[1]) - SUIT_ORDER.indexOf(b[1]));
-}
+// The dealing, scoring and diagnosis of practice live in ducy-training
+// (Rust, #464): `training` ops, with a fresh seed for each deal's dice.
+const seed = () => Math.floor(Math.random() * 2 ** 32);
 
 /**
  * A hand whatever its suits: its ranks, and how many cards share each suit
  * (AKs and AKo differ; A♠K♠ and A♥K♥ don't).
  */
-export function handKind(cards) {
-  const ranks = cards.map(c => c[0]).sort((a, b) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b)).join('');
-  const suits = {};
-  for (const c of cards) suits[c[1]] = (suits[c[1]] || 0) + 1;
-  return `${ranks}:${Object.values(suits).sort((a, b) => b - a).join('')}`;
-}
-
-/** Deals with `deal` (returning {cards} or the cards) until the hand isn't the same as `prev`'s, suits aside; tries a few dozen times. */
-export function dealNotAgain(deal, prev) {
-  const kind = prev && handKind(prev);
-  let h = deal();
-  for (let i = 0; kind && i < 50 && handKind(h.cards || h) === kind; i++) h = deal();
-  return h;
-}
+export const handKind = cards => training({op: 'handKind', cards: cards.map(String)});
 
 // Top-% games share one flow; these pick Hold'em or Omaha by hole-card count.
 // V3's names (#225): the same as the Pre-flop ranges overview.
 const gameName = n => (n === 2 ? 'Hold’em' : `Omaha ${n}`);
 const handsName = n => (n === 2 ? 'Hold’em hands' : `${n}-card hands`);
-const dealTop = n => (n === 2 ? dealHand() : dealOmaha(n));
-const topPercentile = h => (h.length === 2 ? HOLDEM_PERCENTILE[handClass(h[0], h[1])] : omahaPercentile(h));
-const topTags = h => (h.length === 2 ? holdemTags(h) : omahaTags(h));
+/** A hand of `n` hole cards, not the same as `prev` (suits aside). */
+const dealTop = (n, prev = null) => training({op: 'dealTop', cards: n, seed: seed(), prev});
+const topPercentile = h => training({op: 'topPercentile', cards: h});
 const labelsFor = n => (n === 2 ? HOLDEM_TAG_LABELS : omahaLabels());
 
 /** The top X% of Hold'em hands as a target, for drawing the 13x13 grid. */
@@ -173,13 +145,8 @@ const exampleCache = new Map();
 function omahaExamples(cards, pct) {
   const key = `${cards}:${pct}`;
   if (exampleCache.has(key)) return exampleCache.get(key);
-  const inside = [], outside = [];
-  for (let i = 0; i < 20000 && (inside.length < 3 || outside.length < 3); i++) {
-    const h = dealTop(cards), p = topPercentile(h);
-    if (p < pct && p >= pct - 3 && inside.length < 3) inside.push({h, p});
-    else if (p >= pct && p < pct + 3 && outside.length < 3) outside.push({h, p});
-  }
-  const ex = {inside, outside};
+  const {inside, outside} = training({op: 'topExamples', cards, pct, seed: seed()});
+  const ex = {inside: inside.map(x => ({h: x.cards, p: x.pct})), outside: outside.map(x => ({h: x.cards, p: x.pct}))};
   exampleCache.set(key, ex);
   return ex;
 }
@@ -289,8 +256,6 @@ function renderOmahaSetup() {
 
 // A drill needs some hands on each side of the cutoff; it deals plays and folds
 // 50/50 either way, so a kind that's mostly folds (weak suited) still drills well.
-const DRILL_MIN_SHARE = 0.04;
-const WEAK_MIN_SEEN = 8;     // hands of a kind needed before calling it weak
 const SESSIONS_KEPT = 30;
 const RECENT_KEPT = 30;      // weakness is judged on each kind's latest hands, so improvement shows
 
@@ -304,33 +269,12 @@ const shortLabel = (n, tag) => {
 const drillCache = new Map();
 function drillTags(cards, pct) {
   const key = `${cards}:${pct}`;
-  if (drillCache.has(key)) return drillCache.get(key);
-  const count = {};
-  const add = (tags, inside, w) => { for (const t of tags) { const c = count[t] ||= {in: 0, out: 0}; c[inside ? 'in' : 'out'] += w; } };
-  if (cards === 2) {
-    for (const [cls, p] of Object.entries(HOLDEM_PERCENTILE)) {
-      const h = cls.length === 2 ? [cls[0] + 's', cls[1] + 'h'] : cls[2] === 's' ? [cls[0] + 's', cls[1] + 's'] : [cls[0] + 's', cls[1] + 'h'];
-      add(holdemTags(h), p < pct, COMBOS[cls]);
-    }
-  } else {
-    for (let i = 0; i < 6000; i++) { const h = dealOmaha(cards); add(omahaTags(h), omahaPercentile(h) < pct, 1); }
-  }
-  const tags = Object.keys(labelsFor(cards)).filter(t => {
-    const c = count[t];
-    return c && Math.min(c.in, c.out) / (c.in + c.out) >= DRILL_MIN_SHARE;
-  });
-  drillCache.set(key, tags);
-  return tags;
+  if (!drillCache.has(key)) drillCache.set(key, training({op: 'drillTags', cards, pct, seed: seed()}));
+  return drillCache.get(key);
 }
 
 /** Recent accuracy per kind for a target (its last RECENT_KEPT hands), weakest first. */
-function weakestKinds(rec, tags) {
-  const kinds = (rec && rec.kinds) || {};
-  return tags.map(t => ({tag: t, recent: (kinds[t] && kinds[t].recent) || ''}))
-    .filter(k => k.recent.length >= WEAK_MIN_SEEN)
-    .map(k => ({tag: k.tag, seen: k.recent.length, acc: k.recent.split('').filter(c => c === '1').length / k.recent.length}))
-    .sort((a, b) => a.acc - b.acc);
-}
+const weakestKinds = (rec, tags) => training({op: 'weakestKinds', rec: rec && typeof rec === 'object' ? rec : null, tags});
 
 function levelChip(rec) {
   const score = rec ? rec.score : 0;
@@ -419,54 +363,22 @@ function recordLifetime(pr, tags, correct) {
   } catch {}
 }
 
-// A drill hand: the drilled kind, on either side of the cutoff, preferring the
-// level's band and non-obvious hands but falling back rather than giving up.
-function dealDrill(cards, cut, band, tag) {
-  const sides = Math.random() < 0.5 ? [true, false] : [false, true];
-  for (const b of [band, [0, 1]]) for (const inside of sides) {
-    const r = findInBand(cards, cut, b, tag, inside);
-    if (r) return r;
-  }
-  for (let i = 0; i < 20000; i++) {
-    const h = dealTop(cards);
-    if (topTags(h).includes(tag)) return {cards: h, pct: topPercentile(h)};
-  }
-  const h = dealTop(cards);
-  return {cards: h, pct: topPercentile(h)};
-}
-
-// ---- adaptive practice (Omaha) ----
+// ---- adaptive practice ----
 // An IXL-style skill score from 0 to 100 per game and target. The score picks
 // how close to the cutoff hands are dealt; correct answers raise it (less as
 // it climbs), and wrong answers lower it more the more obvious the hand was.
-//
-// Closeness is relative to each side of the cutoff: for a hand inside the
-// range, how far in as a share of the cutoff; outside, how far out as a share
-// of the rest. Obvious hands (deep inside, or far outside) aren't dealt except
-// as occasional probes for major mistakes, and practice leans toward the
-// kinds of hands (omaha-hand.js, holdem-tags.js) the player keeps getting wrong.
+// Practice leans toward the kinds of hands the player keeps getting wrong.
+// ducy-training's practice module deals and scores (#464).
 
 const PROGRESS_KEY = 'ducyTrainerProgress';
-// band: relative distance from the cutoff, [min, max).
-const LEVELS = [
+// ducy-training's levels (a test checks the page's copy): band is the
+// relative distance from the cutoff, [min, max).
+export const LEVELS = [
   {name: 'Easy', from: 0, band: [0.4, 1]},
   {name: 'Medium', from: 50, band: [0.15, 0.4]},
   {name: 'Hard', from: 80, band: [0.05, 0.2]},
   {name: 'Challenge', from: 90, band: [0, 0.08]},
 ];
-const OBVIOUS_INSIDE = 0.75; // deeper than this into the range is an obvious play
-const OBVIOUS_OUTSIDE = 0.5; // further than this out of the range is an obvious fold
-const PROBE_RATE = 0.1;
-const FOCUS_RATE = 0.4;
-
-/** Relative distance from the cutoff: 0 at the edge, 1 at the far end of its side. */
-function closeness(p, cut) {
-  return p < cut ? (cut - p) / cut : (p - cut) / (100 - cut);
-}
-
-function isObvious(p, cut) {
-  return p < cut ? closeness(p, cut) > OBVIOUS_INSIDE : closeness(p, cut) > OBVIOUS_OUTSIDE;
-}
 
 const levelFor = score => [...LEVELS].reverse().find(l => score >= l.from);
 
@@ -535,155 +447,13 @@ function resetProgress(key) {
 
 const practiceKey = skillKey;
 
-// How bad a wrong answer is, from 0 (right at the cutoff) to 1. It scales
-// with how far the hand is from the target, measured against the target
-// itself, so at top 15% playing a 25th-percentile hand (10 points out) costs
-// far more than a 16th, and folding a top-5% hand far more than a 14th. The
-// same scale applies on both sides: a hand a full target-width away (30th at
-// top 15%, or the very best hands) is as bad as it gets.
-// When rough EVs per hand exist, the EV given up would be the better measure;
-// until then, percentile distance stands in for it.
-function severityFor(pct, cut) {
-  return Math.min(1, Math.abs(pct - cut) / cut);
-}
-
-// From 1 point for a hair-thin miss up to 16; missed probes (obvious hands)
-// cost 20. Near misses cost about what one correct answer earns in the
-// Challenge zone, so a single close call doesn't wipe out a run.
-function penaltyFor(severity, probe) {
-  if (probe) return 20;
-  return Math.max(1, Math.round(16 * severity));
-}
-
-// A miss this close to the cutoff is called a close call rather than a mistake.
-const CLOSE_CALL = 0.2;
-
-// Deals a non-obvious hand on one side of the cutoff (chosen 50/50 so plays
-// and folds stay balanced, unless `side` is 'in' or 'out') within the band,
-// optionally with a given tag.
-function dealInBand(cards, cut, [lo, hi], tag, side) {
-  const inside = side ? side === 'in' : Math.random() < 0.5;
-  const found = findInBand(cards, cut, [lo, hi], tag, inside);
-  if (found) return found;
-  // Nothing found (a rare tag, or a very narrow band): relax the tag, then the band.
-  if (tag) return dealInBand(cards, cut, [lo, hi], null, side);
-  if (lo > 0 || hi < 1) return dealInBand(cards, cut, [0, 1], null, side);
-  const h = dealTop(cards);
-  return {cards: h, pct: topPercentile(h)};
-}
-
-/** A non-obvious hand on the given side within the band (and with the tag), or null. */
-function findInBand(cards, cut, [lo, hi], tag, inside) {
-  for (let i = 0; i < 8000; i++) {
-    const h = dealTop(cards), p = topPercentile(h);
-    if ((p < cut) !== inside || isObvious(p, cut)) continue;
-    const r = closeness(p, cut);
-    if (r < lo || r >= hi) continue;
-    if (tag && !topTags(h).includes(tag)) continue;
-    return {cards: h, pct: p};
-  }
-  return null;
-}
-
-function dealProbe(cards, cut) {
-  const inside = Math.random() < 0.5;
-  for (let i = 0; i < 8000; i++) {
-    const h = dealTop(cards), p = topPercentile(h);
-    if ((p < cut) === inside && isObvious(p, cut)) return {cards: h, pct: p, probe: true};
-  }
-  const h = dealTop(cards);
-  return {cards: h, pct: topPercentile(h)};
-}
-
-// Mistake patterns. Trends are only called out once there's a long record:
-// at least DIAG_MIN_HANDS hands and DIAG_MIN_ERRORS mistakes. Players then
-// fall into one of three buckets:
-//   loose - mostly playing hands outside the range: which kinds are they?
-//   tight - mostly folding hands inside the range: which kinds are missed?
-//   mixed - both, so good and bad hands are being confused: which kinds go
-//           each way (a kind appearing on both sides isn't being sorted at all)?
+// Patterns are only called out with a long record behind them: at least
+// DIAG_MIN_HANDS hands and DIAG_MIN_ERRORS mistakes (ducy-training's).
 const DIAG_MIN_HANDS = 20;
 const DIAG_MIN_ERRORS = 6;
-const TAG_MIN_ERRORS = 3;
-const TAG_MIN_RATE = 0.5;
-const TREND_NOTE_GAP = 8; // hands between in-play trend notes
 
-// Hand kinds behind one direction of mistake ('over' = played but outside the
-// range, 'under' = folded but inside), most frequent first.
-function tagsFor(pr, kind) {
-  return Object.entries(pr.tagStats)
-    .map(([tag, s]) => {
-      const n = kind === 'over' ? s.over : s.under, of = kind === 'over' ? s.seenOut : s.seenIn;
-      return {tag, n, of};
-    })
-    .filter(x => x.n >= TAG_MIN_ERRORS && x.n / x.of >= TAG_MIN_RATE)
-    .sort((a, b) => b.n - a.n || b.n / b.of - a.n / a.of)
-    .slice(0, 3);
-}
-
-function diagnose(pr) {
-  if (pr.answered < DIAG_MIN_HANDS || pr.history.filter(x => !x.correct).length < DIAG_MIN_ERRORS) return null;
-  // Which way mistakes lean is judged from regular deals only: hands dealt to
-  // focus on a weak spot are a biased sample and would feed back into it.
-  const regular = pr.history.filter(x => !x.focus);
-  const misses = regular.filter(x => !x.correct);
-  const over = misses.filter(x => x.answer).length, under = misses.length - over;
-  const seenOut = regular.filter(x => x.pct >= pr.pct).length;
-  const seenIn = regular.length - seenOut;
-  // Compare mistake rates, not counts: folding a third of the hands you should
-  // play is a problem of its own even next to a lot of overplaying.
-  const overRate = seenOut ? over / seenOut : 0, underRate = seenIn ? under / seenIn : 0;
-  const lo = Math.min(overRate, underRate), hi = Math.max(overRate, underRate);
-  let kind;
-  if (over >= 3 && under >= 3 && lo >= 0.2 && lo >= hi / 3) kind = 'mixed';
-  // A couple of stray mistakes the other way don't hide a clear lean.
-  else if (over >= 4 && (overRate >= 2 * underRate || under < 3)) kind = 'loose';
-  else if (under >= 4 && (underRate >= 2 * overRate || over < 3)) kind = 'tight';
-  else if (over >= 3 && under >= 3) kind = 'mixed';
-  else return null;
-  return {kind, over, under, seenOut, seenIn, overTags: tagsFor(pr, 'over'), underTags: tagsFor(pr, 'under'), labels: labelsFor(pr.cards)};
-}
-
-const tagList = (xs, labels) => xs.map(x => `${labels[x.tag]} (${x.n} of ${x.of})`).join('; ');
-
-/** {headline, details[]} for a diagnosis. */
-function diagnosisText(d, cut) {
-  if (d.kind === 'loose') {
-    return {
-      headline: `You’re playing too many hands: you played ${d.over} of ${d.seenOut} hands outside your top ${cut}%.`,
-      details: [d.overTags.length ? `Most of the extra hands: ${tagList(d.overTags, d.labels)}.` : 'The extra hands are spread across all kinds rather than one type, so tighten up overall.'],
-    };
-  }
-  if (d.kind === 'tight') {
-    return {
-      headline: `You’re folding hands you should play: you folded ${d.under} of ${d.seenIn} hands inside your top ${cut}%.`,
-      details: [d.underTags.length ? `Most often missed: ${tagList(d.underTags, d.labels)}.` : 'The missed hands are spread across all kinds, so loosen up overall.'],
-    };
-  }
-  const both = d.overTags.filter(o => d.underTags.some(u => u.tag === o.tag)).map(o => d.labels[o.tag]);
-  const details = [];
-  if (d.overTags.length) details.push(`Played when they’re outside the range: ${tagList(d.overTags, d.labels)}.`);
-  if (d.underTags.length) details.push(`Folded when they’re inside the range: ${tagList(d.underTags, d.labels)}.`);
-  if (both.length) details.push(`With ${both.join(' and ')}, you’re going both ways, so look at what separates the good ones from the bad ones.`);
-  if (!details.length) details.push('The mix-ups aren’t concentrated in one kind of hand yet.');
-  return {
-    headline: `You’re mixing up good and bad hands: you played ${d.over} hands outside your top ${cut}% and folded ${d.under} inside it.`,
-    details,
-  };
-}
-
-// The kind of hand to deal more of while practising, if the record shows one,
-// and the side of the cutoff its mistakes are on: overplayed kinds are tested
-// with hands outside the range, overfolded kinds with hands inside it.
-function focusFor(pr) {
-  const d = diagnose(pr);
-  if (!d) return null;
-  const over = d.overTags.map(x => ({...x, side: 'out'})), under = d.underTags.map(x => ({...x, side: 'in'}));
-  // A mixed player gets both sides in turn, so neither crowds out the other.
-  const pool = d.kind === 'loose' ? over : d.kind === 'tight' ? under
-    : [over[0], under[0]].filter(Boolean).sort(() => Math.random() - 0.5);
-  return pool.length ? {tag: pool[0].tag, side: pool[0].side} : null;
-}
+/** Which way the session's mistakes lean, and the text for it: {kind, d, text: {headline, details}}, or null. */
+const diagnosis = pr => training({op: 'diagnosis', pr}) ?? null;
 
 function startPractice() {
   const {cards, pct} = st.omaha;
@@ -698,65 +468,31 @@ function startPractice() {
   nextPractice();
 }
 
+// The next hand: never the same hand twice in a row, even in other suits; a
+// drill's kind, now and then a probe for a major mistake, and often a hand
+// of a kind the record shows is a weak spot.
 function nextPractice() {
   const pr = st.practice;
   pr.feedback = null;
-  const band = levelFor(pr.score).band;
-  // Never the same hand twice in a row, even in other suits.
-  const prev = pr.current?.cards;
-  if (pr.drill) { pr.current = dealNotAgain(() => dealDrill(pr.cards, pr.pct, band, pr.drill), prev); render(); return; }
-  const focus = focusFor(pr);
-  if (pr.answered >= 4 && Math.random() < PROBE_RATE) pr.current = dealNotAgain(() => dealProbe(pr.cards, pr.pct), prev);
-  else if (focus && Math.random() < FOCUS_RATE) pr.current = {...dealNotAgain(() => dealInBand(pr.cards, pr.pct, band, focus.tag, focus.side), prev), focus: focus.tag};
-  else pr.current = dealNotAgain(() => dealInBand(pr.cards, pr.pct, band), prev);
+  pr.current = training({op: 'practiceNext', pr, seed: seed()});
   render();
 }
 
 function answerPractice(yes) {
   const pr = st.practice;
-  if (!pr || pr.feedback || pr.mastered) return;
-  const {cards, pct, probe} = pr.current;
-  const inRange = pct < pr.pct;
-  const correct = yes === inRange;
-  const rel = closeness(pct, pr.pct), severity = severityFor(pct, pr.pct);
-  const before = pr.score;
-  pr.score = correct ? Math.min(100, pr.score + gainFor(pr.score)) : Math.max(0, pr.score - penaltyFor(severity, probe));
-  pr.delta = pr.score - before;
-  pr.answered++;
-  pr.total++;
-  pr.best = Math.max(pr.best, pr.score);
-  if (correct) { pr.correct++; pr.streak++; } else pr.streak = 0;
-  const tags = topTags(cards);
-  for (const t of tags) {
-    const s = pr.tagStats[t] ||= {seenIn: 0, seenOut: 0, over: 0, under: 0};
-    if (inRange) s.seenIn++; else s.seenOut++;
-    if (!correct) { if (yes) s.over++; else s.under++; }
-  }
-  pr.history.push({cards, pct, answer: yes, correct, rel, severity, distance: Math.abs(pct - pr.pct), major: !correct && !!probe, focus: !!pr.current.focus, tags, level: levelFor(before).name});
+  if (!pr) return;
+  const next = training({op: 'practiceAnswer', pr, yes: !!yes});
+  if (!next) return;
+  st.practice = next;
+  const {tags, correct} = next.history.at(-1);
   // The record at the drill's key keeps its score; lifetime kinds and sessions live on the base record.
-  const prev = loadProgress()[pr.key] || {};
-  saveProgress(pr.key, {...prev, score: pr.score, best: pr.best, answered: pr.total});
-  recordLifetime(pr, tags, correct);
-  // Mastery is announced when the score reaches MASTERY (90). After that,
-  // practice carries on up to 100, and mistakes still cost points, so it's
-  // announced again only after dropping below 90 and climbing back.
-  if (pr.score >= MASTERY && before < MASTERY) { pr.mastered = true; render(); return; }
-  if (correct) nextPractice();
-  else {
-    // Mention the trend only with a long record behind it, when this mistake
-    // fits it, and not more often than every TREND_NOTE_GAP hands.
-    const d = diagnose(pr);
-    const fits = d && (d.kind === 'mixed' || (d.kind === 'loose') === yes);
-    const due = pr.lastTrendAt == null || pr.answered - pr.lastTrendAt >= TREND_NOTE_GAP;
-    let pattern = null;
-    if (fits && due) {
-      const t = diagnosisText(d, pr.pct);
-      pattern = [t.headline, ...t.details].join(' ');
-      pr.lastTrendAt = pr.answered;
-    }
-    pr.feedback = {cards, pct, yes, major: !!probe, close: !probe && severity < CLOSE_CALL, pattern};
-    render();
-  }
+  const prev = loadProgress()[next.key] || {};
+  saveProgress(next.key, {...prev, score: next.score, best: next.best, answered: next.total});
+  recordLifetime(next, tags, correct);
+  // Mastery is announced when the score reaches MASTERY (90); a miss shows
+  // its feedback; a right answer deals the next hand.
+  if (next.mastered || !correct) render();
+  else nextPractice();
 }
 
 // The skill to move on to after mastering one (trainer-skills.js).
@@ -832,7 +568,7 @@ function renderPracticeSummary() {
   const pr = st.practice;
   const misses = pr.history.filter(x => !x.correct).sort((a, b) => b.major - a.major || b.severity - a.severity);
   const major = misses.filter(x => x.major).length;
-  const diag = diagnose(pr);
+  const diag = diagnosis(pr);
   let h = '<div class="tr-wrap">';
   h += `<div class="tr-head"><h1>Score ${pr.startScore} → ${pr.score}</h1>`;
   h += `<p>${gameName(pr.cards)} · top ${pr.pct}%${pr.drill ? ` · ${esc(shortLabel(pr.cards, pr.drill))} only` : ''} · ${pr.correct} of ${pr.answered} correct this session · now at ${levelFor(pr.score).name}</p></div>`;
@@ -845,7 +581,7 @@ function renderPracticeSummary() {
   h += '</div>';
   h += '<div class="tr-mistakes"><div class="tr-group">Patterns</div>';
   if (diag) {
-    const t = diagnosisText(diag, pr.pct);
+    const t = diag.text;
     h += `<div class="tr-pattern tr-diag-${diag.kind}"><strong>${esc(t.headline)}</strong>${t.details.map(x => `<div>${esc(x)}</div>`).join('')}</div>`;
   } else if (pr.answered < DIAG_MIN_HANDS || misses.length < DIAG_MIN_ERRORS) {
     h += `<span class="tr-none">Not enough evidence for a pattern yet (${pr.answered} hands, ${misses.length} mistakes; patterns need ${DIAG_MIN_HANDS}+ hands and ${DIAG_MIN_ERRORS}+ mistakes).</span>`;
@@ -1199,10 +935,10 @@ function next() {
   if (st.hands.length >= st.total) { st.screen = 'summary'; render(); return; }
   const prev = st.current?.cards;
   if (st.target.omaha) {
-    const cards = dealNotAgain(() => dealTop(st.target.cards), prev);
+    const cards = dealTop(st.target.cards, prev);
     st.current = {cards, pct: topPercentile(cards)};
   } else {
-    const cards = dealNotAgain(dealHand, prev);
+    const cards = dealTop(2, prev);
     st.current = {cards, cls: handClass(cards[0], cards[1])};
   }
   render();
