@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { dealNotAgain, handKind } from '../src/trainer.js';
+import { handKind } from '../src/trainer.js';
+import { training } from '../wasm/ducy_wasm.js';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_BB, chartFile, pickCell } from '../src/chart-skills.js';
 
@@ -13,14 +14,22 @@ test('the same hand in other suits is the same hand; suited and offsuit differ',
 });
 
 test('a drill never deals the hand just played again, even in other suits', () => {
-  // A deal that would repeat AK suited twice, then give something else.
-  const queue = [['Ah', 'Kh'], ['Ad', 'Kd'], ['Qs', 'Js']];
-  assert.deepEqual(dealNotAgain(() => queue.shift(), ['As', 'Ks']), ['Qs', 'Js']);
-  // {cards} results too.
-  const q2 = [{cards: ['7c', '7d']}, {cards: ['8c', '8d']}];
-  assert.deepEqual(dealNotAgain(() => q2.shift(), ['7h', '7s']).cards, ['8c', '8d']);
-  // Nothing to avoid: the first deal.
-  assert.deepEqual(dealNotAgain(() => ['2c', '3d'], null), ['2c', '3d']);
+  for (const cards of [2, 4]) {
+    for (let seed = 0; seed < 100; seed++) {
+      // The same dice would deal the same hand first: it's dealt again.
+      const prev = training({op: 'dealTop', cards, seed});
+      assert.notEqual(handKind(training({op: 'dealTop', cards, seed, prev})), handKind(prev));
+      // Nothing to avoid: the first deal.
+      assert.deepEqual(training({op: 'dealTop', cards, seed, prev: null}), prev);
+    }
+  }
+  // A practice deal too.
+  let pr = {cards: 2, pct: 20, score: 0, history: [], tagStats: {}, current: null};
+  for (let seed = 0; seed < 50; seed++) {
+    const next = training({op: 'practiceNext', pr, seed});
+    if (pr.current) assert.notEqual(handKind(next.cards), handKind(pr.current.cards));
+    pr = {...pr, current: next};
+  }
 });
 
 test('chart drills never pick the hand just played', () => {
