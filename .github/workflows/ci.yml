@@ -17,12 +17,6 @@ jobs:
       - name: Relay dependencies
         run: npm ci --prefix relay
 
-      - name: Checkout ducy
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: allenpiscitello/ducy
-          path: ducy
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
         with:
@@ -43,15 +37,62 @@ jobs:
 
       - name: Build WASM
         run: |
-          cd ducy
-          wasm-pack build ducy-wasm --target web --out-dir pkg --no-typescript
+          cd rust/ducy-wasm
+          wasm-pack build --target web --out-dir pkg --no-typescript
 
       - name: Build site
         run: |
           mkdir -p wasm
-          cp ducy/ducy-wasm/pkg/ducy_wasm.js ducy/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+          cp rust/ducy-wasm/pkg/ducy_wasm.js rust/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
           scripts/build-site.sh "${GITHUB_SHA::8}" _site
 
       # After the wasm build: some modules call ducy's bindings (test/wasm.mjs).
       - name: Unit tests
         run: node --test test/play-stats.test.mjs test/ranges.test.mjs test/trainer-skills.test.mjs test/omaha-hand.test.mjs test/fair-deal.test.mjs test/club-tourneys.test.mjs test/club-tourneys-ui.test.mjs test/club-promos.test.mjs test/club-promos-server.test.mjs test/tourney-run.test.mjs test/private-tourney.test.mjs test/payout-tables.test.mjs test/oneoff-standings.test.mjs test/club-alarms.test.mjs test/chip-format.test.mjs test/hand-words.test.mjs test/play-net.test.mjs test/play-review.test.mjs test/identity.test.mjs test/club.test.mjs test/club-chips.test.mjs test/club-tables.test.mjs test/hit-and-run.test.mjs test/idle-seats.test.mjs test/move-table.test.mjs test/table-groups.test.mjs test/tourney-commands.test.mjs test/club-log.test.mjs test/club-agents.test.mjs test/club-credit.test.mjs test/club-credit-server.test.mjs test/hand-replay.test.mjs test/e2e.test.mjs test/relay-queue.test.mjs test/heartbeat.test.mjs test/tourney-structure.test.mjs test/club-room.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/admin-api.test.mjs test/relay-services.test.mjs test/registry.test.mjs test/relay-temporary.test.mjs test/demo-club.test.mjs test/club-backup.test.mjs test/backup.test.mjs test/club-help.test.mjs test/club-lobby.test.mjs test/club-services.test.mjs test/time-ago.test.mjs test/ladder.test.mjs test/quest.test.mjs test/quest-lobby.test.mjs test/quest-people.test.mjs test/quest-faces.test.mjs test/quest-travel.test.mjs test/quest-life.test.mjs test/quest-scenarios.test.mjs test/quest-backer.test.mjs test/chips.test.mjs test/ladder-review.test.mjs test/table-chat.test.mjs test/home.test.mjs test/regulars.test.mjs test/ranges-overview.test.mjs test/bot-chat.test.mjs test/charts.test.mjs test/chart-skills.test.mjs test/leave-bb.test.mjs test/quest-newrun.test.mjs test/quest-home.test.mjs test/quest-rules.test.mjs test/pots.test.mjs test/drills-no-repeat.test.mjs test/trainer-practice.test.mjs test/club-nav.test.mjs test/club-overview.test.mjs test/csp.test.mjs test/browser-support.test.mjs test/boot-order.test.mjs
+
+  # ducy.cards' Rust (rust/): lints, tests, the site's and the relay's wasm
+  # builds, and ducy-wasm's Node tests (scripts/rust-checks.sh).
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The revision of ducy's generic crates rust/Cargo.toml pins.
+      - name: Pinned ducy
+        id: ducy
+        run: echo "rev=$(scripts/ducy-rev.sh)" >> "$GITHUB_OUTPUT"
+
+      # Its fixtures, and its tiny GTO model for ducy-wasm's tests.
+      - name: Checkout ducy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: allenpiscitello/ducy
+          ref: ${{ steps.ducy.outputs.rev }}
+          path: ducy
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      # wasm-pack at a pinned version, checked against its release's SHA-256.
+      - name: Install wasm-pack
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          DIR="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$DIR.tar.gz"
+          echo "$WASM_PACK_SHA256  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP"
+          install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
+          wasm-pack --version
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Rust checks
+        run: scripts/rust-checks.sh

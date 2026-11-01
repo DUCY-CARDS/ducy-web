@@ -3,3 +3,6 @@ dist
 wasm/
 _site
 gto/
+rust/target/
+rust/ducy-wasm/pkg*/
+/ducy/
