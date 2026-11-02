@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const w = require(path.join(__dirname, '..', 'pkg-node', 'ducy_wasm.js'));
 
-// A weight file (ducy_play::net::Mlp): the magic, the layer sizes, then each
+// A weight file (ducy_bots::net::Mlp): the magic, the layer sizes, then each
 // layer's weights and biases. All zeros: every possible action equally likely.
 function netFile(sizes) {
   const params = sizes.slice(1).reduce((n, out, i) => n + sizes[i] * out + out, 0);

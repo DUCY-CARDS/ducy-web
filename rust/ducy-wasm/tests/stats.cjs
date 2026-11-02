@@ -1,5 +1,5 @@
 // Player stats through the ducy-wasm JavaScript API (handCounts, botReads):
-// the same counting rules the bots use (ducy_play::stats), for the page's
+// the same counting rules the bots use (ducy_bots::stats), for the page's
 // player stats (#152).
 //
 //   cd ducy-wasm && wasm-pack build --target nodejs --out-dir pkg-node && cd ..

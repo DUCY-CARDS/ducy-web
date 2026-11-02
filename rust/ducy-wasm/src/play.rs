@@ -10,12 +10,13 @@
 //! [`MultiTable`] hosts the same kind of table for people on other devices:
 //! the page passes it each player's messages and sends back what it returns.
 
-use ducy_play::{
-    Action, Personality, Table, TableRules, TableSeat,
+use ducy_bots::{
+    Personality,
     features::NUM_FEATURES,
     generic,
     net::{Mlp, NUM_CLASSES, NetBot},
 };
+use ducy_play::{Action, Table, TableRules, TableSeat};
 
 use ducy_host::{ChipRequest, Command, Departure, Outgoing, Refund, SeatedPlayer, TableHost};
 use std::{
@@ -68,7 +69,7 @@ pub fn bot_personalities() -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&list).map_err(err)
 }
 
-/// The generic players' families (ducy_play::generic, #256), as [{id,
+/// The generic players' families (ducy_bots::generic, #256), as [{id,
 /// name}]: a player of family `id` seats as `g-<id>-<seed>`.
 #[wasm_bindgen(js_name = genericFamilies)]
 pub fn generic_families() -> Result<JsValue, JsError> {
@@ -88,7 +89,7 @@ pub fn generic_families() -> Result<JsValue, JsError> {
 }
 
 /// What each of `seats` seats did in one finished hand, counted by the same
-/// rules the bots use (ducy_play::stats::hand_counts): the page adds these
+/// rules the bots use (ducy_bots::stats::hand_counts): the page adds these
 /// up for its player stats. `events` is the hand's event list as table
 /// views give it. Returns one object per seat: {vpip, pfr, three_bet_chance,
 /// three_bet, aggressive, calls, folds, faced_bets, folds_to_bets, saw_flop,
@@ -96,7 +97,7 @@ pub fn generic_families() -> Result<JsValue, JsError> {
 #[wasm_bindgen(js_name = handCounts)]
 pub fn hand_counts(events: JsValue, seats: usize) -> Result<JsValue, JsError> {
     let events: Vec<ducy_play::Event> = serde_wasm_bindgen::from_value(events).map_err(err)?;
-    to_js(&ducy_play::stats::hand_counts(&events, seats))
+    to_js(&ducy_bots::stats::hand_counts(&events, seats))
 }
 
 #[derive(Serialize)]
@@ -109,7 +110,7 @@ struct BotReads {
 
 /// How the bots read a player from summed counts: the same rates as the
 /// page's, smoothed toward typical values so a few hands don't swing them
-/// (ducy_play::stats::SeatStats). Returns {vpip, pfr, fold_to_bet, aggression}.
+/// (ducy_bots::stats::SeatStats). Returns {vpip, pfr, fold_to_bet, aggression}.
 #[wasm_bindgen(js_name = botReads)]
 #[allow(clippy::too_many_arguments)]
 pub fn bot_reads(
@@ -121,7 +122,7 @@ pub fn bot_reads(
     aggressive: u32,
     calls: u32,
 ) -> Result<JsValue, JsError> {
-    let s = ducy_play::stats::SeatStats {
+    let s = ducy_bots::stats::SeatStats {
         hands,
         vpip_hands,
         pfr_hands,
@@ -460,7 +461,7 @@ thread_local! {
 /// "net:doug_poker": that personality, played from the loaded network.
 const NET_PREFIX: &str = "net:";
 
-/// Loads a network weight file (`ducy_play::net::Mlp`) for the "net:" bots.
+/// Loads a network weight file (`ducy_bots::net::Mlp`) for the "net:" bots.
 /// It must take the decision features and give an output per action class.
 #[wasm_bindgen(js_name = loadNet)]
 pub fn load_net(bytes: &[u8]) -> Result<(), JsError> {
@@ -669,15 +670,12 @@ fn seats_for(bots: &[String], seed: u64) -> Result<Vec<TableSeat>, JsError> {
             continue;
         }
         if let Some(bot) = generic::bot_by_id(id, Some(seed.wrapping_add(i as u64 + 1))) {
-            seats.push(TableSeat::bot(id, bot));
+            seats.push(bot.seat(id));
             continue;
         }
         let p =
             Personality::from_name(id).ok_or_else(|| JsError::new(&format!("unknown bot {id}")))?;
-        seats.push(TableSeat::bot(
-            p.id(),
-            p.bot(Some(seed.wrapping_add(i as u64 + 1))),
-        ));
+        seats.push(p.bot(Some(seed.wrapping_add(i as u64 + 1))).seat(p.id()));
     }
     Ok(seats)
 }
@@ -949,11 +947,11 @@ impl BotTable {
             return Err(JsError::new("the current hand isn't over"));
         }
         *self.table.seat_mut(seat) = match generic::bot_by_id(id, Some(seed)) {
-            Some(bot) => TableSeat::bot(id, bot),
+            Some(bot) => bot.seat(id),
             None => {
                 let p = Personality::from_name(id)
                     .ok_or_else(|| JsError::new(&format!("unknown bot {id}")))?;
-                TableSeat::bot(p.id(), p.bot(Some(seed)))
+                p.bot(Some(seed)).seat(p.id())
             }
         };
         self.table.set_stack(seat, chips).map_err(err)
