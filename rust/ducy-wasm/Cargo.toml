@@ -19,6 +19,7 @@ site = ["dep:ducy-gto", "dep:ducy-training", "dep:ducy-bot-games", "dep:ducy-que
 [dependencies]
 ducy = { workspace = true }
 ducy-play = { workspace = true, features = ["serde"] }
+ducy-bots = { workspace = true, features = ["serde"] }
 ducy-host = { workspace = true, features = ["serde"] }
 ducy-club = { path = "../ducy-club" }
 ducy-gto = { workspace = true, optional = true, features = ["serde"] }

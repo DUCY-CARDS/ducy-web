@@ -7,12 +7,13 @@ resolver = "3"
 members = ["ducy-wasm", "ducy-club", "ducy-training", "ducy-bot-games", "ducy-quest"]
 
 [workspace.dependencies]
-ducy = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
-ducy-play = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
-ducy-host = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
-ducy-gto = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655", default-features = false }
-ducy-shuffle = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655" }
-ducy-identity = { git = "https://github.com/allenpiscitello/ducy", rev = "6fedb5270fcd458bdc26b5bdbb71a968822aa655" }
+ducy = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1", default-features = false }
+ducy-play = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1", default-features = false }
+ducy-bots = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1", default-features = false }
+ducy-host = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1", default-features = false }
+ducy-gto = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1", default-features = false }
+ducy-shuffle = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1" }
+ducy-identity = { git = "https://github.com/allenpiscitello/ducy", rev = "316dcfc910a8f9b8c6e7d5fe9c0a1e6d808458e1" }
 
 # The curve arithmetic in ducy-shuffle is ~50x slower unoptimized; keep
 # debug builds and tests quick by optimizing just that dependency.
