@@ -402,13 +402,13 @@ impl Table {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Stakes {
-    /// A big blind under 1.
+    /// A big blind under 0.50.
     Micro,
-    /// 1 to 3 (1/2, 1/3).
+    /// 0.50 to 1 (0.25/0.50, 0.50/1).
     Low,
-    /// Over 3, up to 10 (2/5, 5/10).
+    /// Over 1, up to 5 (1/2, 1/3, 2/5).
     Medium,
-    /// Over 10.
+    /// Over 5.
     High,
 }
 
@@ -416,9 +416,9 @@ impl Stakes {
     /// The band of big blind `bb` (in hundredths).
     pub fn of(bb: u64) -> Self {
         match bb {
-            0..100 => Stakes::Micro,
-            100..=300 => Stakes::Low,
-            301..=1000 => Stakes::Medium,
+            0..50 => Stakes::Micro,
+            50..=100 => Stakes::Low,
+            101..=500 => Stakes::Medium,
             _ => Stakes::High,
         }
     }
@@ -2892,12 +2892,12 @@ mod tests {
     fn stakes_bands_by_the_big_blind() {
         let band = |bb| Stakes::of(bb).name();
         assert_eq!(
-            [band(50), band(99), band(100), band(200), band(300)],
-            ["Micro", "Micro", "Low", "Low", "Low"]
+            [band(2), band(49), band(50), band(100)],
+            ["Micro", "Micro", "Low", "Low"]
         );
         assert_eq!(
-            [band(500), band(1000), band(1001), band(2500)],
-            ["Medium", "Medium", "High", "High"]
+            [band(101), band(200), band(500), band(501), band(1000)],
+            ["Medium", "Medium", "Medium", "High", "High"]
         );
     }
 

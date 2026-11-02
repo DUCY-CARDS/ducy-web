@@ -546,7 +546,7 @@ let closingTable = null;
 let seatFilter = 0; // seats to show (2, 6, 9…), or 0 for every game
 let stakesFilter = ''; // stakes to show ('micro' … 'high'), or '' for all
 
-// Stakes bands, low to high (ducy-play's Stakes, by the big blind).
+// Stakes bands, low to high (ducy-club's Stakes, by the big blind).
 const STAKES = ['micro', 'low', 'medium', 'high'];
 const STAKES_NAME = {micro: 'Micro', low: 'Low', medium: 'Medium', high: 'High'};
 
