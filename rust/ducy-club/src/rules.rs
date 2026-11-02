@@ -406,9 +406,9 @@ pub enum Stakes {
     Micro,
     /// 0.50 to 1 (0.25/0.50, 0.50/1).
     Low,
-    /// Over 1, up to 5 (1/2, 1/3, 2/5).
+    /// Over 1, under 5 (1/2, 1/3).
     Medium,
-    /// Over 5.
+    /// 5 and up (2/5).
     High,
 }
 
@@ -418,7 +418,7 @@ impl Stakes {
         match bb {
             0..50 => Stakes::Micro,
             50..=100 => Stakes::Low,
-            101..=500 => Stakes::Medium,
+            101..500 => Stakes::Medium,
             _ => Stakes::High,
         }
     }
@@ -2896,7 +2896,7 @@ mod tests {
             ["Micro", "Micro", "Low", "Low"]
         );
         assert_eq!(
-            [band(101), band(200), band(500), band(501), band(1000)],
+            [band(101), band(200), band(499), band(500), band(1000)],
             ["Medium", "Medium", "Medium", "High", "High"]
         );
     }
