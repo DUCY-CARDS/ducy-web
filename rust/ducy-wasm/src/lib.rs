@@ -7,6 +7,9 @@ mod book;
 #[cfg(feature = "site")]
 mod bot_games;
 mod club;
+// The equity calculator's sampling: the study pages'.
+#[cfg(feature = "site")]
+mod equity_job;
 mod fair;
 mod hands;
 mod host;

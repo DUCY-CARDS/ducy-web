@@ -1,10 +1,12 @@
-// Runs Monte Carlo jobs off the main thread. Protocol:
+// Runs Monte Carlo jobs off the main thread: ducy-wasm's EquityJob
+// (equity_job.rs) samples; this keeps the clock. Protocol:
 //   in:  {type: 'run', id, job, budgetMs, maxSamples}   {type: 'stop', id}
 //   out: {type: 'ready'}   {type: 'done', id, state}   {type: 'error', id, message}
-import init from '../wasm/ducy_wasm.js';
-import { newState, runChunk } from './mc.js';
+import init, { EquityJob } from '../wasm/ducy_wasm.js';
 
 const CHUNK_MS = 50;
+// Samples per EquityJob.run call.
+const PER_RUN = 1000;
 let current = null;
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)})
@@ -22,16 +24,20 @@ self.onmessage = async e => {
   const run = {id: msg.id, stopped: false};
   current = run;
   const deadline = performance.now() + msg.budgetMs;
-  const state = newState(msg.job);
+  let job = null;
   try {
-    while (!run.stopped && performance.now() < deadline && state.done < msg.maxSamples) {
-      runChunk(msg.job, state, Math.min(deadline, performance.now() + CHUNK_MS), msg.maxSamples);
+    job = new EquityJob(msg.job);
+    while (!run.stopped && performance.now() < deadline && job.done() < msg.maxSamples) {
+      const until = Math.min(deadline, performance.now() + CHUNK_MS);
+      while (performance.now() < until && job.done() < msg.maxSamples) job.run(PER_RUN);
       // Yield so a 'stop' (or a newer 'run') can be received between chunks.
       await new Promise(r => setTimeout(r, 0));
       if (current !== run) return;
     }
-    if (!run.stopped) postMessage({type: 'done', id: run.id, state});
+    if (!run.stopped) postMessage({type: 'done', id: run.id, state: job.totals()});
   } catch (err) {
     postMessage({type: 'error', id: run.id, message: String(err && err.message || err)});
+  } finally {
+    job?.free();
   }
 };

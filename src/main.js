@@ -3,7 +3,7 @@ import { profile } from './profile.js';
 // And a demo club's (#406), for the person you are in it.
 import './demo.js';
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
-import { newState, mergeState, runChunk, rangeExactCost } from './mc.js';
+import { EquityJob, emptyEquityTotals, mergeEquityTotals, rangeExactCost, bombPotDealTotals } from '../wasm/ducy_wasm.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';
 import { RK, COMBOS, parseRange, comboCount, topRange } from './ranges.js';
 import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
@@ -159,6 +159,8 @@ function addDeadCards(game) {
 let MC_TIME_BUDGET = 2000;
 const MC_BATCH_MS = 50;
 let MC_MAX_SAMPLES = 100000;
+// Samples per EquityJob.run call.
+const MC_PER_RUN = 1000;
 
 // Monte Carlo runs in a pool of workers, one per spare core, each taking an
 // equal share of the sample cap. If workers are unavailable, it falls back to
@@ -190,13 +192,14 @@ function onWorkerPoolError(err) {
   if (calculating) runEquityCalc();
 }
 
-// Runs `job` (see mc.js) and calls onDone(state, ms, failed), where failed is
-// false or an error message. Exact jobs are one calculation, so they run on a
-// single worker. Aborting via mcAbort drops the run without calling onDone.
+// Runs `job` (ducy-wasm's EquityJob: equity_job.rs) and calls onDone(state,
+// ms, failed), where state is its totals and failed is false or an error
+// message. Exact jobs are one calculation, so they run on a single worker.
+// Aborting via mcAbort drops the run without calling onDone.
 function runSampling(job, onDone) {
   const id = ++mcRunId;
   const t0 = performance.now();
-  const merged = newState(job);
+  let merged = emptyEquityTotals(job);
   // An exact job finishes after one result instead of running out the budget.
   const sampleCap = job.exact ? 1 : MC_MAX_SAMPLES;
   let active = true;
@@ -219,7 +222,7 @@ function runSampling(job, onDone) {
       const m = e.data;
       if (m.id !== id || !active) return;
       if (m.type === 'done') {
-        mergeState(merged, m.state);
+        merged = mergeEquityTotals(merged, m.state);
         if (--pending === 0) { stop(); finish(false); }
       } else if (m.type === 'error') {
         stop();
@@ -241,16 +244,27 @@ function runSampling(job, onDone) {
 
   mcAbort = () => { active = false; };
   const deadline = t0 + MC_TIME_BUDGET;
+  let eq = null;
+  const done = failed => {
+    if (eq) {
+      if (!failed) merged = eq.totals();
+      eq.free();
+      eq = null;
+    }
+    if (failed) fail(failed); else finish(false);
+  };
   function batch() {
-    if (!active) return;
+    if (!active) { eq?.free(); eq = null; return; }
     try {
-      runChunk(job, merged, Math.min(deadline, performance.now() + MC_BATCH_MS), sampleCap);
+      eq ||= new EquityJob(job);
+      const until = Math.min(deadline, performance.now() + MC_BATCH_MS);
+      while (performance.now() < until && eq.done() < sampleCap) eq.run(MC_PER_RUN);
     } catch (err) {
-      fail(String(err && err.message || err));
+      done(String(err && err.message || err));
       return;
     }
-    if (performance.now() < deadline && merged.done < sampleCap) setTimeout(batch, 0);
-    else finish(false);
+    if (performance.now() < deadline && eq.done() < sampleCap) setTimeout(batch, 0);
+    else done(false);
   }
   setTimeout(batch, 0);
 }
@@ -350,7 +364,8 @@ function runBombPotEquity(filled) {
         eqs = new Array(10).fill(null);
         filled.forEach((si, j) => { eqs[si] = equity[j]; });
 
-        bpStats = buildBpStatsFromWinners(winners, filled, 1);
+        const seatsWon = winners.map(ws => ws.map(w => w.player_index));
+        bpStats = bombPotStats(bombPotDealTotals(seatsWon, filled.length), filled);
 
         calced = true;
         calculating = false;
@@ -395,14 +410,7 @@ function runBombPotEquity(filled) {
     bpStats = null;
     if (!failed && done > 0) {
       filled.forEach((si, j) => { eqs[si] = st.totals[j] / done; });
-      bpStats = {};
-      for (let fi = 0; fi < filled.length; fi++) {
-        bpStats[filled[fi]] = {
-          boardWin: st.boardWins.map(bw => bw[fi] / done),
-          scoop: st.scoops[fi] / done,
-          scooped: st.scooped[fi] / done,
-        };
-      }
+      bpStats = bombPotStats(st, filled);
       calced = true;
     }
     calculating = false;
@@ -413,51 +421,17 @@ function runBombPotEquity(filled) {
   });
 }
 
-function tallyScoopStats(winners, filled, numBoards, boardWins, scoops, scooped) {
-  const perBoard = [];
-  for (let bi = 0; bi < numBoards; bi++) {
-    const winnerSet = new Set();
-    for (const w of winners[bi]) winnerSet.add(w.player_index);
-    perBoard.push(winnerSet);
-    for (const fi of winnerSet) {
-      if (fi < filled.length) boardWins[bi][fi]++;
-    }
-  }
-
-  for (let fi = 0; fi < filled.length; fi++) {
-    const wonAll = perBoard.every(ws => ws.size === 1 && ws.has(fi));
-    if (wonAll) scoops[fi]++;
-
-    const opponents = new Set();
-    for (let oi = 0; oi < filled.length; oi++) {
-      if (oi !== fi) opponents.add(oi);
-    }
-    for (const oi of opponents) {
-      const oppScooped = perBoard.every(ws => ws.size === 1 && ws.has(oi));
-      if (oppScooped) { scooped[fi]++; break; }
-    }
-  }
-}
-
-function buildBpStatsFromWinners(winners, filled, samples) {
-  const numBoards = winners.length;
-  const boardWins = [];
-  for (let bi = 0; bi < numBoards; bi++) boardWins.push(new Array(filled.length).fill(0));
-  const scoopsArr = new Array(filled.length).fill(0);
-  const scoopedArr = new Array(filled.length).fill(0);
-  tallyScoopStats(winners, filled, numBoards, boardWins, scoopsArr, scoopedArr);
-
+// Each seat's bomb pot shares from totals (ducy-wasm's): boards won, scoops
+// and being scooped, per deal.
+function bombPotStats(st, filled) {
   const stats = {};
-  for (let fi = 0; fi < filled.length; fi++) {
-    const si = filled[fi];
-    const perBoard = [];
-    for (let bi = 0; bi < numBoards; bi++) perBoard.push(boardWins[bi][fi] / samples);
+  filled.forEach((si, fi) => {
     stats[si] = {
-      boardWin: perBoard,
-      scoop: scoopsArr[fi] / samples,
-      scooped: scoopedArr[fi] / samples,
+      boardWin: st.boardWins.map(bw => bw[fi] / st.done),
+      scoop: st.scoops[fi] / st.done,
+      scooped: st.scooped[fi] / st.done,
     };
-  }
+  });
   return stats;
 }
 
