@@ -8,9 +8,9 @@
 // config = {seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs,
 // sitOutMs}, and the runner's own options (open, link, active, idleMs, askMs).
 //
-// The page's friends table keeps its clock here, under the key 'host':
-// real time, minus the time it was stopped (clockPause(key, on)) because
-// the host couldn't reach anyone.
+// The page's friends table (play.js, #462) runs the same way, its host in
+// seat 0: runnerFriends(id, config) | runnerRestoreFriends(id, json,
+// config), config as above plus {hostName, hostChips, bombEvery, autoDeal}.
 //
 // Tournaments (#81, club-tourney-host.js): each run by ducy's tournament
 // runner (ClubTourney, #458): tourneyCreate(id, config, players, turnMs,
@@ -29,13 +29,7 @@ const wrapTourney = t => ({event: (ev, at) => t.event(ev, at), save: at => t.sav
 // `ClubTable`: ducy's, or one the demo's relay makes {create, restore}.
 export function clubEngine(ClubTable = ducy.ClubTable) {
   const runners = new Map();
-  const clocks = new Map();
   const tourneys = new Map();
-
-  function now(key) {
-    const c = clocks.get(key);
-    return c ? (c.at ?? Date.now()) - c.lost : Date.now();
-  }
 
   function keep(id, r) {
     runners.get(id)?.free();
@@ -59,6 +53,17 @@ export function clubEngine(ClubTable = ducy.ClubTable) {
       const t = ClubTable.restore(id, json, c, Date.now());
       if (!t) return false;
       keep(id, wrapTable(t));
+      return true;
+    },
+    // A friends table: the host plays seat 0 (ClubTable.friends).
+    runnerFriends: (id, c) => {
+      keep(id, wrapTable(ClubTable.friends(id, c)));
+      return true;
+    },
+    // A friends table saved with runnerSave, waiting for its people (throws
+    // if it can't be loaded).
+    runnerRestoreFriends: (id, json, c) => {
+      keep(id, wrapTable(ClubTable.restoreFriends(id, json, c, Date.now())));
       return true;
     },
     runnerEvent: (id, ev) => {
@@ -94,16 +99,6 @@ export function clubEngine(ClubTable = ducy.ClubTable) {
       keepTourney(id, wrapTourney(ducy.ClubTourney.restore(id, json, runner, Date.now())));
       return true;
     },
-    // Stops (on) or restarts the friends table's clock: while stopped no
-    // time passes for it, so no turn runs out and no sit-out expires; it
-    // resumes with the time that was left.
-    clockPause: (key, on) => {
-      const c = clocks.get(key) || {at: null, lost: 0};
-      if (on && c.at == null) c.at = Date.now();
-      if (!on && c.at != null) { c.lost += Date.now() - c.at; c.at = null; }
-      clocks.set(key, c);
-      return true;
-    },
   };
-  return {ops, now, clocks};
+  return {ops};
 }

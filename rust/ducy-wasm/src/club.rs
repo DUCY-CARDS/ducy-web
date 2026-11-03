@@ -1,10 +1,11 @@
 //! A club table and its runner (ducy-play's `runner`, ducy-web #452), for
 //! ducy-web's club-engine.js, with events and steps as plain JS objects.
+//! A friends table, whose host plays seat 0, runs the same way (#462).
 //! Bytes cross as lowercase hex.
 
 use ducy_host::runner::{
-    ASK_MS, Action, Event, FairResult, IDLE_MS, NEXT_HAND_MS, PlayerCommand, RunnerConfig,
-    RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
+    ASK_MS, Action, Event, FairResult, HostCommand, IDLE_MS, NEXT_HAND_MS, PlayerCommand,
+    RunnerConfig, RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
 };
 use ducy_host::{Command, HostSnapshot, TableHost};
 use ducy_play::fair_deal::{Bytes32, Reveal};
@@ -13,7 +14,7 @@ use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
 use crate::fair::{bytes32, hex};
-use crate::util::{club_host, err, to_js};
+use crate::util::{bomb_pots, club_host, err, friends_host, to_js};
 
 /// The table and runner options from club-host.js.
 #[derive(Deserialize)]
@@ -49,6 +50,15 @@ struct Config {
     ask_ms: Option<u64>,
     #[serde(default)]
     next_hand_ms: Option<u64>,
+    // A friends table's.
+    #[serde(default)]
+    host_name: String,
+    #[serde(default)]
+    host_chips: u64,
+    #[serde(default)]
+    bomb_every: u64,
+    #[serde(default)]
+    auto_deal: bool,
 }
 
 fn yes() -> bool {
@@ -71,6 +81,17 @@ impl Config {
             idle_ms: self.idle_ms.unwrap_or(IDLE_MS),
             ask_ms: self.ask_ms.unwrap_or(ASK_MS),
             next_hand_ms: self.next_hand_ms.unwrap_or(NEXT_HAND_MS),
+            auto_deal: true,
+        }
+    }
+
+    /// A friends table's: dealt by the host until `autoDeal`, and no one
+    /// stood up for being idle.
+    fn friends_runner(&self, id: String, paused: bool) -> RunnerConfig {
+        RunnerConfig {
+            idle_ms: self.idle_ms.unwrap_or(0),
+            auto_deal: self.auto_deal,
+            ..self.runner(id, paused)
         }
     }
 }
@@ -128,12 +149,59 @@ impl ClubTable {
         }))
     }
 
+    /// A friends table `id`: the host in seat 0 with `hostChips`, and
+    /// `seats - 1` empty seats people take as they join; `config` as for
+    /// `create` plus {hostName, hostChips, bombEvery (a bomb pot on two
+    /// boards every so many hands, the ante a big blind), autoDeal}. No one
+    /// is stood up for being idle or sitting out.
+    pub fn friends(id: String, config: JsValue) -> Result<ClubTable, JsError> {
+        let c: Config = serde_wasm_bindgen::from_value(config).map_err(err)?;
+        let mut host = friends_host(
+            c.seats,
+            &c.host_name,
+            c.host_chips,
+            c.min_buy_in,
+            c.max_buy_in,
+            c.sb,
+            c.bb,
+            c.seed,
+            c.game.as_deref(),
+            c.turn_ms,
+        )?;
+        host.set_bomb_pots(bomb_pots(c.bomb_every, c.bb, true), 0)
+            .map_err(err)?;
+        Ok(ClubTable {
+            runner: TableRunner::new(host, c.friends_runner(id, false)),
+        })
+    }
+
+    /// A friends table saved with `save`, waiting for its people; `config`
+    /// as for `friends` (its table options aren't used). Throws if it can't
+    /// be loaded.
+    #[wasm_bindgen(js_name = restoreFriends)]
+    pub fn restore_friends(
+        id: String,
+        json: &str,
+        config: JsValue,
+        now: f64,
+    ) -> Result<ClubTable, JsError> {
+        let c: Config = serde_wasm_bindgen::from_value(config).map_err(err)?;
+        let s: HostSnapshot = serde_json::from_str(json).map_err(err)?;
+        let host = TableHost::restore(&s, now as u64, |_| None).map_err(err)?;
+        if !host.has_host() {
+            return Err(JsError::new("not a friends table"));
+        }
+        Ok(ClubTable {
+            runner: TableRunner::new(host, c.friends_runner(id, true)),
+        })
+    }
+
     /// Takes in an event ({type, …}, the runner's `Event`) and returns the step:
-    /// {actions, wake, stopped, paused}.
+    /// {actions, wake, stopped, paused, dealAt}.
     pub fn event(&mut self, ev: JsValue, now: f64) -> Result<JsValue, JsError> {
         let v: Value = serde_wasm_bindgen::from_value(ev).map_err(err)?;
         let step = self.runner.event(event(&v)?, now as u64);
-        to_js(&step_json(&step)?)
+        to_js(&step_json(&step, self.runner.host())?)
     }
 
     /// The table as JSON, to `restore` after a restart.
@@ -178,8 +246,11 @@ fn b(v: &Value, k: &str) -> bool {
 }
 
 fn n(v: &Value, k: &str) -> Result<usize, JsError> {
+    u(v, k).map(|x| x as usize)
+}
+
+fn u(v: &Value, k: &str) -> Result<u64, JsError> {
     v[k].as_u64()
-        .map(|x| x as usize)
         .ok_or_else(|| JsError::new(&format!("event: no {k}")))
 }
 
@@ -225,9 +296,33 @@ fn event(v: &Value) -> Result<Event, JsError> {
             on: b(v, "on"),
         },
         "open" => Event::Open { on: b(v, "on") },
+        "host" => Event::Host {
+            cmd: host_command(&v["cmd"])?,
+        },
+        "deal" => Event::Deal,
+        "autoDeal" => Event::AutoDeal {
+            on: b(v, "on"),
+            after_ms: u(v, "afterMs")?,
+        },
         "state" => Event::State,
         "wake" => Event::Wake,
         other => return Err(JsError::new(&format!("no event {other}"))),
+    })
+}
+
+/// The host's own move: {type: 'act', kind, amount} | {type: 'run_twice',
+/// yes} | {type: 'chips', amount}.
+fn host_command(c: &Value) -> Result<HostCommand, JsError> {
+    Ok(match c["type"].as_str().unwrap_or("") {
+        "act" => HostCommand::Act {
+            kind: s(c, "kind")?,
+            amount: c["amount"].as_u64().unwrap_or(0),
+        },
+        "run_twice" => HostCommand::RunTwice { yes: b(c, "yes") },
+        "chips" => HostCommand::Chips {
+            amount: u(c, "amount")?,
+        },
+        other => return Err(JsError::new(&format!("no host command {other}"))),
     })
 }
 
@@ -256,31 +351,36 @@ fn player_command(c: &Value) -> PlayerCommand {
     }
 }
 
-fn step_json(step: &Step) -> Result<Value, JsError> {
+fn step_json(step: &Step, host: &TableHost) -> Result<Value, JsError> {
     let actions = step
         .actions
         .iter()
         .map(|a| {
             Ok(match a {
-                Action::Engine(res) => json!({"type": "engine", "res": result_json(res)?}),
+                Action::Engine(res) => json!({"type": "engine", "res": result_json(res, host)?}),
                 Action::Send { to, update } => {
                     json!({"type": "send", "to": to, "update": update_json(update)})
                 }
                 Action::Active { id, at } => json!({"type": "active", "id": id, "at": at}),
                 Action::Idle { id } => json!({"type": "idle", "id": id}),
+                Action::Refused { reason } => json!({"type": "refused", "reason": reason}),
             })
         })
         .collect::<Result<Vec<_>, JsError>>()?;
-    Ok(
-        json!({"actions": actions, "wake": step.wake, "stopped": step.stopped, "paused": step.paused}),
-    )
+    Ok(json!({
+        "actions": actions, "wake": step.wake, "stopped": step.stopped, "paused": step.paused,
+        "dealAt": step.deal_at,
+    }))
 }
 
 fn to(x: &impl serde::Serialize) -> Result<Value, JsError> {
     serde_json::to_value(x).map_err(err)
 }
 
-fn result_json(r: &TableResult) -> Result<Value, JsError> {
+/// An engine result, with what a friends table's host shows: open seats,
+/// the buy-in limits and the host's own chips waiting for the next hand
+/// (as the table is after the step).
+fn result_json(r: &TableResult, host: &TableHost) -> Result<Value, JsError> {
     let out: Vec<Value> = r
         .out
         .iter()
@@ -297,6 +397,9 @@ fn result_json(r: &TableResult) -> Result<Value, JsError> {
         "departed": to(&r.departed)?,
         "refunds": to(&r.refunds)?,
         "out": out,
+        "openSeats": host.open_seats(),
+        "buyIn": host.buy_in_limits().map(|(min, max)| json!({"min": min, "max": max})),
+        "hostPendingChips": host.host_pending_chips(),
     });
     // Only from a new hand: the seed it was dealt from, or null.
     if let Some(seed) = r.seed {

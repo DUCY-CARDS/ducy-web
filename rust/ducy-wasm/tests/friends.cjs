@@ -1,5 +1,7 @@
-// Smoke test for friends tables (MultiTable.friends) in the ducy-wasm
-// JavaScript API: empty seats, chip requests the host approves, leaving.
+// Smoke test for friends tables (ClubTable.friends: the table runner with
+// the host in seat 0, ducy-web #462) in the ducy-wasm JavaScript API: empty
+// seats, chip requests the host approves, the host dealing and playing,
+// fair deals, auto-deal, saving and resuming, leaving.
 //
 //   cd ducy-wasm && wasm-pack build --target nodejs --out-dir pkg-node && cd ..
 //   node ducy-wasm/tests/friends.cjs
@@ -12,47 +14,95 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const pkgDir = process.env.DUCY_WASM_PKG || path.join(__dirname, "..", "pkg-node");
-const { MultiTable } = require(path.join(pkgDir, "ducy_wasm.js"));
+const { ClubTable, MultiTable } = require(path.join(pkgDir, "ducy_wasm.js"));
 
 let now = 1000;
 const t = () => (now += 10);
+const results = step => step.actions.filter(a => a.type === "engine").map(a => a.res);
+const sends = step => step.actions.filter(a => a.type === "send");
+const toAnnOf = step => results(step).flatMap(r => r.out).filter(m => m.to === "ann").map(m => m.data);
+// Wakes the table whenever it asks, until `done(step)` or it stops asking.
+function runUntil(table, step, done) {
+  for (let i = 0; i < 100 && step.wake != null; i++) {
+    now = Math.max(now, step.wake);
+    step = table.event({ type: "wake" }, now);
+    if (done(step)) return step;
+  }
+  return null;
+}
+const dealt = step => results(step).some(r => !r.state.complete);
+
 // 6 seats, the host with 200 chips, buy-ins from 40 to 200, blinds 1/2.
-const host = MultiTable.friends(6, "Host", 200n, 40n, 200n, 1n, 2n, 3n, undefined, 0n);
-let r = host.state(t());
+const host = ClubTable.friends("f", { seats: 6, hostName: "Host", hostChips: 200, minBuyIn: 40, maxBuyIn: 200, sb: 1, bb: 2, seed: 3, turnMs: 0 });
+let step = host.event({ type: "state" }, t());
+let r = results(step).pop();
 assert.equal(r.state.seats.length, 6);
 assert.ok(r.state.seats.slice(1).every(s => s.empty), "empty seats");
 assert.equal(r.playersIn, 1);
 assert.deepEqual(r.buyIn, { min: 40, max: 200 });
-assert.throws(() => host.newHand(t()), "no one to play");
+assert.equal(results(host.event({ type: "deal" }, t())).length, 0, "no one to deal to");
 
 // Ann joins with no chips and asks for some.
-r = host.handle("ann", { type: "join", name: "Ann" }, t());
-const toAnn = r.out.filter(m => m.to === "ann").map(m => m.data);
-assert.ok(toAnn.some(d => d.type === "welcome" && d.seat === 1));
-r = host.handle("ann", { type: "request_chips", amount: 500 }, t());
-assert.ok(r.out.some(m => m.to === "ann" && m.data.type === "rejected"), "too many chips");
-r = host.handle("ann", { type: "request_chips", amount: 120 }, t());
+const ann = (cmd, online) => host.event({ type: "cmd", id: "ann", cmd, online }, t());
+step = ann({ type: "join", name: "Ann" }, true);
+assert.ok(toAnnOf(step).some(d => d.type === "welcome" && d.seat === 1));
+step = ann({ type: "request_chips", amount: 500 });
+assert.ok(toAnnOf(step).some(d => d.type === "rejected"), "too many chips");
+step = ann({ type: "request_chips", amount: 120 });
+r = results(step).pop();
 assert.deepEqual(r.chipRequests.map(q => [q.seat, q.name, q.amount]), [[1, "Ann", 120]]);
-const annState = r.out.filter(m => m.to === "ann" && m.data.type === "state").pop().data;
-assert.deepEqual(annState.chips, { min: 40, max: 200, requested: 120, approved: 0 });
-r = host.approveChips(1, t());
+assert.deepEqual(toAnnOf(step).filter(d => d.type === "state").pop().chips, { min: 40, max: 200, requested: 120, approved: 0 });
+r = results(host.event({ type: "chips", seat: 1, ok: true }, t())).pop();
 assert.equal(r.chipRequests.length, 0);
 assert.equal(r.playersIn, 2);
 
-// Now they can play; the rest stay empty.
-r = host.newHand(t());
+// The host deals: Ann is asked into the fair-deal round first. She doesn't
+// answer, so once its time is up the hand is dealt from the host's value.
+step = host.event({ type: "deal" }, t());
+assert.ok(sends(step).some(a => a.to === "ann" && a.update.step === "commit"));
+step = runUntil(host, step, dealt);
+assert.ok(step, "dealt");
+r = results(step).find(x => !x.state.complete);
+assert.match(r.seed, /^[0-9a-f]{64}$/);
 assert.equal(r.state.seats[1].stack + r.state.seats[1].street_bet, 120);
 assert.ok(r.state.seats.slice(2).every(s => s.empty));
 
-// Ann leaves: she folds out, and her seat is empty again next hand.
-r = host.handle("ann", { type: "leave" }, t());
+// The host's own move that doesn't count says so.
+step = host.event({ type: "host", cmd: { type: "chips", amount: 1000 } }, t());
+assert.ok(step.actions.some(a => a.type === "refused"));
+
+// They play it out; Ann gets the deal to check, her cards second (the
+// host's seat was dealt first).
+let annView = toAnnOf(step).filter(d => d.type === "state").pop()?.view;
 while (!r.state.complete) {
-  if (r.botToAct) r = host.advance(t());
-  else r = host.act(r.state.legal.can_check ? "check" : "call", 0n, t());
+  if (r.state.legal) {
+    step = host.event({ type: "host", cmd: { type: "act", kind: r.state.legal.can_check ? "check" : "call" } }, t());
+  } else {
+    step = ann({ type: "act", seq: r.seq, kind: annView.legal.can_check ? "check" : "call", amount: 0 });
+  }
+  r = results(step).pop();
+  annView = toAnnOf(step).filter(d => d.type === "state").pop()?.view || annView;
 }
+const result = sends(step).find(a => a.to === "ann" && a.update.step === "result");
+assert.deepEqual([result.update.index, result.update.dealt], [1, 2]);
+
+// Auto-deal: the next hand a second after this one.
+step = host.event({ type: "autoDeal", on: true, afterMs: 1000 }, t());
+assert.equal(step.dealAt, now + 1000);
+
+// Saved, and restored after a restart: it waits for Ann, then goes on.
+const friendsSaved = host.save(t());
+const resumed = ClubTable.restoreFriends("f", friendsSaved, {}, t());
+assert.ok(resumed.event({ type: "state" }, t()).paused);
+assert.ok(!resumed.event({ type: "presence", id: "ann", on: true }, t()).paused);
+resumed.free();
+
+// Ann leaves: her seat is empty again, and only the host is left.
+step = ann({ type: "leave" });
+r = results(step).pop();
 assert.equal(r.playersIn, 1);
-assert.throws(() => host.newHand(t()), "only the host is left");
-assert.ok(host.state(t()).state.seats[1].empty);
+assert.ok(r.state.seats[1].empty);
+host.free();
 
 // Saved mid-hand and restored, as after the host's browser restarts: the
 // same hand, paused until people are back.

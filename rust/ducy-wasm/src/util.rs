@@ -62,6 +62,60 @@ fn rules_for_game(
     })
 }
 
+/// Bomb pots every `every` hands, or none for 0.
+pub(crate) fn bomb_pots(every: u64, ante: u64, double_board: bool) -> Option<ducy_play::BombPots> {
+    (every > 0).then_some(ducy_play::BombPots {
+        every,
+        ante,
+        double_board,
+    })
+}
+
+/// A friends table's host: the host in seat 0 and `seats - 1` empty seats
+/// (2 to 10 in all) that people take as they join. Chips are real: the host
+/// starts with `host_chips`, everyone else asks the host for chips, and a
+/// stack after a request must be `min_buy_in` to `max_buy_in` chips.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn friends_host(
+    seats: usize,
+    host_name: &str,
+    host_chips: u64,
+    min_buy_in: u64,
+    max_buy_in: u64,
+    small_blind: u64,
+    big_blind: u64,
+    seed: u64,
+    game: Option<&str>,
+    turn_ms: u64,
+) -> Result<TableHost, JsError> {
+    let rules = rules_for(game, small_blind, big_blind)?;
+    if small_blind == 0 || big_blind < small_blind || min_buy_in < big_blind {
+        return Err(JsError::new("invalid blinds or buy-in"));
+    }
+    if !(2..=ducy_play::MAX_PLAYERS).contains(&seats) {
+        return Err(JsError::new("a table seats 2 to 10"));
+    }
+    if host_chips < min_buy_in || host_chips > max_buy_in {
+        return Err(JsError::new(
+            "the host's chips must be within the buy-in limits",
+        ));
+    }
+    let name: String = host_name.trim().chars().take(ducy_host::MAX_NAME).collect();
+    let mut all = vec![TableSeat::human(
+        if name.is_empty() { "Host" } else { &name },
+        "you",
+    )];
+    all.extend((1..seats).map(|_| TableSeat::empty()));
+    let mut table = Table::new(rules, all, host_chips, seed)
+        .map_err(err)?
+        .with_secure_deals();
+    table.set_run_it_twice(true);
+    let open = (0..seats).map(|s| s > 0).collect();
+    TableHost::new(table, open, turn_ms)
+        .and_then(|h| h.with_bank(min_buy_in, max_buy_in))
+        .map_err(err)
+}
+
 /// A club table's host: `seats` empty seats and no seat for the host.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn club_host(

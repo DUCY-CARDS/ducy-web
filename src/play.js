@@ -5,8 +5,9 @@
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
 // thinks. Each finished hand also feeds the stats tracker (play-stats.js).
-// With friends (play-net.js), the host's tab runs the table (MultiTable) and
-// relays each player their own view; a guest's tab only draws the views it
+// With friends (play-net.js), the host's tab runs the table (ducy's table
+// runner, as a club's tables run, #462) and relays each player their own
+// view; a guest's tab only draws the views it
 // receives and sends its actions to the host. A friends table has no bots:
 // seats stay empty until people join, and chips are real, handed out by the
 // host on request within the table's buy-in limits.
@@ -31,6 +32,7 @@ import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
+import { fairPlayer } from './fair-check.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
@@ -280,8 +282,6 @@ let stayLeft = 0;
 // A club table asks whether you're still here after 10 minutes idle (#421).
 let idleAsk = false;
 let shownSeq = -1; // state number on screen, so late results are dropped
-let hostChain = Promise.resolve(); // host calls to the worker, in order
-let hostTimer = null; // turn clock for the host
 let clockTimer = null;
 let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
 // Sounds at the table (sounds.js): the turn the chime was
@@ -292,7 +292,8 @@ let soundTurn = '';
 let hurried = 0;
 // A hosted table's clock stops while the host can't reach the relay or none
 // of the people seated is connected, so an outage doesn't fold everyone:
-// no turn runs out and no hand is dealt until someone is back.
+// no turn runs out and no hand is dealt until someone is back (the table
+// runner's, #462).
 let linkOk = false;
 const guestsOnline = new Set();
 let guestsSeated = [];
@@ -315,11 +316,11 @@ let errView = null; // the tab netNote is about, after leaving a table
 let me = null;
 // Chat at a friends table (table-chat.js): the messages on screen, how many
 // came in while the chat was hidden, and flood control (the host's for
-// everyone, and your own).
+// everyone, and your own; made at a table, once the wasm is loaded).
 let chat = [];
 let chatUnread = 0;
-let chatLimit = chatLimiter();
-let myChatLimit = chatLimiter();
+let chatLimit = null;
+let myChatLimit = null;
 let chatNote = '';
 
 function defaultSetup() {
@@ -877,7 +878,7 @@ async function request(op, ...args) {
   busy = true;
   const mine = session;
   try {
-    const snap = await (mode === 'host' ? hostCall('host' + op[0].toUpperCase() + op.slice(1), ...args) : call(op, ...args));
+    const snap = await (mode === 'host' ? hostRequest(op, ...args) : call(op, ...args));
     return mine === session ? snap : null;
   } catch (e) {
     console.warn(e);
@@ -1915,7 +1916,16 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
 
 async function nextHand() {
   if (mode === 'guest') return; // the host deals
-  if (mode === 'host' && hostInfo.playersIn < 2) return; // no one to deal to
+  // A friends table: its runner deals, from the next fair-deal round.
+  if (mode === 'host') {
+    if (hostInfo.playersIn < 2) return; // no one to deal to
+    cancelDeal();
+    raiseTo = 0;
+    foldQueued = false;
+    holds.delete('user');
+    hostRun({type: 'deal'});
+    return;
+  }
   // A ladder game that's over deals no more (ladder-next goes on), and one
   // waits for your answer to raising the stakes.
   if (ladder?.over || ladder?.offer) return;
@@ -1958,6 +1968,7 @@ function cancelDeal() {
 // auto-deal is on, and nothing is pausing it; otherwise cancels it.
 function armDeal() {
   cancelDeal();
+  if (mode === 'host') { hostCountdown(); return; }
   // A hosted table waits for the host's first deal; guests never deal.
   if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number) || ladder?.over || ladder?.offer) { syncDeal(); return; }
   dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
@@ -1982,6 +1993,7 @@ function hold(why, on) {
 }
 
 function nextLabel() {
+  if (state && !num(state.hand_number)) return 'Deal';
   if (!autoDealOn()) return 'Next hand';
   if (holds.size || !dealTimer) return 'Next hand (paused)';
   return `Next hand in ${Math.max(1, Math.ceil((dealAt - performance.now()) / 1000))}…`;
@@ -2014,13 +2026,14 @@ const PACE_SLOW_MS = 20000;
 let paceAt = 0;
 const PACE_WATCH_MS = 5000;
 setInterval(() => {
-  if (!open || !seated || !botToAct || busy || peeling || stuckNote || mode === 'guest') return;
+  if (!open || !seated || !botToAct || busy || peeling || stuckNote || mode !== 'solo') return;
   if (performance.now() - paceAt > PACE_WATCH_MS) pace();
 }, 1000);
 async function pace() {
   clearTimeout(timer);
   paceAt = performance.now();
-  if (!open || !seated || !botToAct) return;
+  // A friends table's runner moves for anyone away.
+  if (!open || !seated || !botToAct || mode === 'host') return;
   if (busy) { timer = setTimeout(pace, 150); return; }
   const started = performance.now();
   const mine = session;
@@ -2103,7 +2116,7 @@ function hostIncoming(client, data) {
     if (data?.type === 'chat') { await hostChat(client, g, data); return; }
     // The name a guest joined with is the one on their chat lines.
     if (data?.type === 'join') g.name = chatName(data.name);
-    hostEvent('hostHandle', client, data);
+    hostRun({type: 'cmd', id: client, cmd: data, online: guestsOnline.has(client)});
   }).catch(e => console.warn(e));
 }
 
@@ -2115,7 +2128,7 @@ async function hostChat(client, g, data) {
   let body;
   try { body = await openBox(g.key, data.enc); } catch { return; }
   const text = cleanChat(body?.text);
-  if (!text || !chatLimit.allow(client)) return;
+  if (!text || !chatLimit?.allow(client)) return;
   postChat({from: g.name, text, at: Date.now()});
 }
 
@@ -2136,7 +2149,7 @@ async function sendChat() {
   const box = chatEl?.querySelector('input');
   const text = cleanChat(box?.value);
   if (!text) return;
-  if (!myChatLimit.allow('me')) { chatNote = 'Slow down a little: a few messages at a time.'; syncChat(); return; }
+  if (!myChatLimit?.allow('me')) { chatNote = 'Slow down a little: a few messages at a time.'; syncChat(); return; }
   chatNote = '';
   if (mode === 'host') {
     box.value = '';
@@ -2240,6 +2253,8 @@ function resetChat() {
   chat = [];
   chatUnread = 0;
   chatNote = '';
+  chatLimit?.free();
+  myChatLimit?.free();
   chatLimit = chatLimiter();
   myChatLimit = chatLimiter();
   const box = chatEl?.querySelector('input');
@@ -2341,28 +2356,143 @@ function guestIncoming(m) {
   }).catch(e => console.warn(e));
 }
 
-// Calls the host's MultiTable in order, and relays the messages it returns.
-function hostCall(op, ...args) {
-  const p = hostChain.then(() => call(op, ...args)).then(async r => {
-    // Saved before anyone is told, so a resumed table is never behind what
-    // players were shown (#117).
-    keepLedger(r, op, args);
-    await saveHostTable(r);
-    for (const m of r.out) sendToGuest(m.to, m.data);
-    guestsSeated = r.players || [];
-    sendStandings();
-    syncHostClock();
-    openSeats = r.openSeats;
-    hostInfo = {
-      playersIn: r.playersIn ?? 0,
-      chipRequests: r.chipRequests || [],
-      buyIn: r.buyIn ? {min: num(r.buyIn.min), max: num(r.buyIn.max)} : null,
-      hostPendingChips: num(r.hostPendingChips || 0),
-    };
-    return r;
+// ---- the friends table's host (#462) ----
+//
+// The host's table runs on ducy's table runner (ClubTable.friends, in the
+// worker's club-engine.js), as a club's tables do: it deals each hand from a
+// fair-deal round, moves for anyone away, runs the turn clock, stops it while
+// no one can be reached, and waits for everyone after a restart. This tab
+// feeds it events (players' messages, who's connected, the host's own moves)
+// and carries out each step: the save, the messages, and waking it when it
+// asks. The host deals the first hand; after that, auto-deal deals the rest.
+
+const HOST_TABLE = 'friends'; // the table's id in the worker
+let hostChain = Promise.resolve(); // runner events, one at a time
+let hostWake = null; // the timer that wakes the runner
+let hostDealAt = 0; // when the runner deals next (Date.now() ms), or 0
+let hostAuto = null; // the auto-deal it was last told: {on, afterMs}
+let hostPaused = false; // a resumed table waiting for its people
+
+// Sends the runner an event, after any before it, and carries out its step.
+// Resolves to the last engine result, or null if the host's own move didn't
+// count. `draw`: show the result (not for the host's own moves, which
+// their caller shows). `gift`: chips the ledger counts as given once taken
+// ({id, name, amount}).
+function hostRun(ev, {draw = true, gift = null} = {}) {
+  const mine = session;
+  const p = hostChain.then(async () => {
+    if (mine !== session || mode !== 'host') return null;
+    const step = await call('runnerEvent', HOST_TABLE, ev);
+    return mine === session ? hostStep(step, {draw, gift}) : null;
   });
-  hostChain = p.catch(() => {});
+  hostChain = p.catch(e => console.warn('table:', e));
   return p;
+}
+
+async function hostStep(step, {draw, gift}) {
+  let last = null, refused = false;
+  for (const a of step.actions) {
+    if (a.type === 'engine') {
+      const r = a.res;
+      // Saved before anyone is told, so a resumed table is never behind what
+      // players were shown (#117).
+      keepLedger(r);
+      await saveHostTable(r, step.paused);
+      for (const m of r.out) sendToGuest(m.to, m.data);
+      guestsSeated = r.players || [];
+      openSeats = r.openSeats;
+      hostInfo = {
+        playersIn: r.playersIn ?? 0,
+        chipRequests: r.chipRequests || [],
+        buyIn: r.buyIn ? {min: num(r.buyIn.min), max: num(r.buyIn.max)} : null,
+        hostPendingChips: num(r.hostPendingChips || 0),
+      };
+      last = r;
+    } else if (a.type === 'send') sendToGuest(a.to, a.update);
+    else if (a.type === 'refused') refused = true;
+  }
+  if (gift && !refused && ledger) give(ledger, gift.id, gift.name, num(gift.amount));
+  sendStandings();
+  const changed = hostTimers(step);
+  if (draw && last && last.seq !== shownSeq) show(last);
+  else if (changed) render();
+  return refused ? null : last;
+}
+
+// The runner's timers: its next wake-up, the next deal, and the clock on
+// screen, which stands still while the runner's does. Returns whether the
+// clock stopped or started, or a resumed table went on.
+function hostTimers(step) {
+  clearTimeout(hostWake);
+  hostWake = step.wake != null ? setTimeout(() => { hostWake = null; hostRun({type: 'wake'}); }, Math.max(0, step.wake - Date.now())) : null;
+  hostDealAt = step.dealAt ?? 0;
+  let changed = false;
+  if (hostPaused !== step.paused) {
+    if (!step.paused) netNote = '';
+    hostPaused = step.paused;
+    changed = true;
+  }
+  if (step.stopped !== !!clockStopped) {
+    if (step.stopped) clockStopped = Date.now();
+    else { if (turnEnds) turnEnds += Date.now() - clockStopped; clockStopped = 0; }
+    changed = true;
+  }
+  armDeal();
+  return changed;
+}
+
+// The host's own request (request()): act or answer running it twice. Away
+// players' moves are the runner's.
+function hostRequest(op, ...args) {
+  if (op === 'act') return hostRun({type: 'host', cmd: {type: 'act', kind: args[0], amount: num(args[1])}}, {draw: false});
+  if (op === 'runTwice') return hostRun({type: 'host', cmd: {type: 'run_twice', yes: !!args[0]}}, {draw: false});
+  return Promise.resolve(null);
+}
+
+// Auto-deal as the host has it now: on unless it's off, paused, or the
+// first hand is still to deal; the runner restarts its wait when it changes.
+// Between hands, the countdown on the Next hand button follows the runner's.
+function hostCountdown() {
+  const on = autoDealOn() && !holds.size && !!state && num(state.hand_number) > 0;
+  const afterMs = Math.round(1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1));
+  if (hostAuto?.on !== on || hostAuto?.afterMs !== afterMs) {
+    hostAuto = {on, afterMs};
+    hostDealAt = 0;
+    hostRun({type: 'autoDeal', on, afterMs});
+  }
+  if (!hostDealAt || !state?.complete) { syncDeal(); return; }
+  dealAt = performance.now() + (hostDealAt - Date.now());
+  const mine = session;
+  const tick = () => {
+    if (mine !== session) return;
+    const left = dealAt - performance.now();
+    if (left <= 0) { dealTimer = null; syncDeal(); return; }
+    dealTimer = setTimeout(tick, left - (Math.ceil(left / 1000) - 1) * 1000);
+    syncDeal();
+  };
+  tick();
+}
+
+// The host approves a chip request: the ledger counts them as given.
+function hostApprove(seat) {
+  const req = hostInfo.chipRequests.find(x => x.seat === seat);
+  const who = guestsSeated.find(p => p.seat === seat);
+  hostRun({type: 'chips', seat, ok: true}, {gift: req && who ? {id: who.client_id, name: req.name, amount: req.amount} : null});
+}
+
+// The host's own chips, within the table's limits.
+function hostChips(amount) {
+  hostRun({type: 'host', cmd: {type: 'chips', amount}}, {gift: {id: HOST_KEY, name: setup.name, amount}});
+}
+
+// The runner stops: no more wake-ups.
+function hostStop() {
+  clearTimeout(hostWake);
+  hostWake = null;
+  hostDealAt = 0;
+  hostAuto = null;
+  hostPaused = false;
+  call('runnerDrop', HOST_TABLE).catch(() => {});
 }
 
 // ---- a one-off cash game's standings (#403) ----
@@ -2384,16 +2514,12 @@ document.addEventListener('toggle', e => { if (e.target.matches?.('[data-standin
 const HOST_KEY = 'host'; // the host's row in the ledger (relay ids are UUIDs)
 const betweenHandsNow = s => !!s && (s.complete || !num(s.hand_number));
 
-// After each host call: chips given (an approved request, the host's own),
-// handed back, taken away, and between hands everyone's chips.
-function keepLedger(r, op, args) {
+// After each engine result: chips handed back, taken away, and between
+// hands everyone's chips. (Chips given are counted as they're taken: see
+// hostRun's `gift`.)
+function keepLedger(r) {
   if (!ledger || !r?.state) return;
   const seats = r.state.seats || [];
-  if (op === 'hostApprove') {
-    const req = hostInfo.chipRequests.find(x => x.seat === args[0]);
-    const who = guestsSeated.find(p => p.seat === args[0]) || (r.players || []).find(p => p.seat === args[0]);
-    if (req && who) give(ledger, who.client_id, req.name, num(req.amount));
-  } else if (op === 'hostChips') give(ledger, HOST_KEY, setup.name, num(args[0]));
   for (const x of r.refunds || []) handBack(ledger, x.client_id, num(x.chips));
   for (const x of r.departed || []) cashOut(ledger, x.client_id, num(x.chips));
   if (betweenHandsNow(r.state)) {
@@ -2475,52 +2601,38 @@ function downloadStandings() {
   download(fileName(f.title), csv);
 }
 
-// Stops or restarts the friends table's clock to match who can be reached.
-function syncHostClock() {
-  const stop = mode === 'host' && (!linkOk || (guestsSeated.length > 0 && !guestsSeated.some(p => guestsOnline.has(p.client_id))));
-  if (stop === !!clockStopped) return;
-  // The turn shown on screen resumes with the time it had left.
-  if (stop) clockStopped = Date.now();
-  else { if (turnEnds) turnEnds += Date.now() - clockStopped; clockStopped = 0; }
-  hostChain = hostChain.then(() => call('clockPause', 'host', stop)).catch(e => console.warn(e));
-  hold('offline', stop);
-  render();
-}
-
-// A host call that isn't the player's own request (a message, the clock).
-function hostEvent(op, ...args) {
-  const mine = session;
-  hostCall(op, ...args).then(r => {
-    if (mine === session && mode === 'host' && r.seq !== shownSeq) show(r);
-  }, e => console.warn(e));
-}
-
 async function hostTable() {
   fnote = readFriendsStep();
   if (fnote) { render(); return; }
   setupNote = '';
   const f = setup.friends;
   forgetSavedTable();
-  startHosting(newCode(), f.game);
-  hostTitle = f.title || `${setup.name}’s game`;
-  fstep = 1;
   // The host starts with 100 BB, kept within the table's limits.
   const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
   const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  give(ledger, HOST_KEY, setup.name, hostChips);
   const bombs = f.bomb ? bombEvery(f.bombEvery) : 0;
-  request('friends', Math.min(f.seats, maxSeats(f.game)), setup.name, hostChips, min, max, f.sb, f.bb, crypto.getRandomValues(new Uint32Array(1))[0], f.game, FRIENDS_TURN_SECS * 1000)
-    .then(async snap => {
-      if (snap && bombs) { await request('bombPots', bombs, f.bb); tableBombs = bombs; }
-      if (snap) show(snap);
-    });
+  const config = {
+    seats: Math.min(f.seats, maxSeats(f.game)), hostName: setup.name, hostChips, minBuyIn: min, maxBuyIn: max,
+    sb: f.sb, bb: f.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0], game: f.game, turnMs: FRIENDS_TURN_SECS * 1000, bombEvery: bombs,
+    link: false,
+  };
+  const mine = session;
+  startHosting(newCode(), f.game, () => call('runnerFriends', HOST_TABLE, config)).then(ok => {
+    if (!ok && mine === session) leaveTable('That table couldn’t be started.');
+  });
+  hostTitle = f.title || `${setup.name}’s game`;
+  tableBombs = bombs;
+  fstep = 1;
+  give(ledger, HOST_KEY, setup.name, hostChips);
   // The table shows on the Play tab.
   location.hash = 'play';
 }
 
 // Hosting a friends table with code `code`: the relay connection, keys and
-// clocks, for a new table (hostTable) or one resumed (resumeHosting).
-function startHosting(code, game) {
+// the table's runner, made by `create` (a new table, hostTable, or one
+// resumed, resumeHosting); it's told about everyone connected from then on.
+// Resolves to whether the runner could be made.
+function startHosting(code, game, create) {
   tableGame = gameOf(game);
   tableBombs = 0;
   hostGame = game;
@@ -2549,51 +2661,59 @@ function startHosting(code, game) {
   guestsOnline.clear();
   guestsSeated = [];
   clockStopped = 0;
+  // The runner first: every event waits for it.
+  const made = Promise.resolve().then(create).then(() => true, e => { console.warn(e); return false; });
+  hostChain = made;
+  hostRun({type: 'state'});
+  const presence = (id, on) => hostRun({type: 'presence', id, on});
   net = connect(room, 'host', null, {
     // The relay tells us again who's connected.
-    onOpen() { if (mine === session) guestsOnline.clear(); },
+    onOpen() {
+      if (mine !== session) return;
+      for (const id of guestsOnline) presence(id, false);
+      guestsOnline.clear();
+    },
     onMessage(m) {
       if (mine !== session) return;
-      if (m.event === 'open') { guestsOnline.add(m.from); syncHostClock(); sendHostKey(m.from); maybeResume(); }
-      else if (m.event === 'close') { guestsOnline.delete(m.from); syncHostClock(); hostEvent('hostDisconnected', m.from); }
+      if (m.event === 'open') { guestsOnline.add(m.from); presence(m.from, true); sendHostKey(m.from); }
+      else if (m.event === 'close') { guestsOnline.delete(m.from); presence(m.from, false); hostRun({type: 'disconnected', id: m.from}); }
       else if (m.data) hostIncoming(m.from, m.data);
     },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
-    onHealth(ok) { if (mine !== session) return; linkOk = ok; syncHostClock(); },
+    onHealth(ok) { if (mine !== session) return; linkOk = ok; hostRun({type: 'link', ok}); },
   }, {heartbeat: true, persistent: true});
-  hostTimer = setInterval(() => { if (!clockStopped && turnEnds && Date.now() >= turnEnds) hostEvent('hostTick'); }, 250);
   startClock();
+  return made;
 }
 
 // ---- resuming a friends table (#117) ----
 //
 // After every change the host's table is saved in this browser (with
-// ducy's MultiTable.save: every card of the hand in progress, so only this
+// the runner's save: every card of the hand in progress, so only this
 // page reads it). If the page closes or the browser restarts, the setup
 // screen offers to resume: the table comes back under the same code, so
-// players' pages, which keep reconnecting, find it again. Play waits until
-// everyone seated is back, or RESUME_GRACE_MS, after which whoever is
+// players' pages, which keep reconnecting, find it again. The runner waits
+// until everyone seated is back, or a minute, after which whoever is
 // missing counts as disconnected. Leaving the table forgets it.
 
 const SAVED = ['friends', 'host']; // its table-store key
 const SAVED_FOR_MS = 24 * 3600_000; // older saves aren't offered
-const RESUME_GRACE_MS = 60_000;
 let savedTable = null; // {json, room, game, seq, at}, if there's one to offer
 let hostGame = ''; // the game being hosted, saved with the table
 let savedSeq = -1, noSave = false; // the last state saved; the engine can't save
-let resuming = null; // while a resumed table waits for its players: the grace timer
 
 getTable(...SAVED).then(rec => {
   if (rec && Date.now() - rec.at < SAVED_FOR_MS) { savedTable = rec; render(); }
 }).catch(() => {});
 
-// Saves the hosted table when its state changed. A table that can't be saved
-// (an older ducy-wasm, or storage blocked) just plays on, as before.
-async function saveHostTable(r) {
-  if (mode !== 'host' || noSave || r.seq == null || r.seq === savedSeq || resuming) return;
+// Saves the hosted table when its state changed, but not while a resumed
+// one waits for its people. A table that can't be saved (storage blocked)
+// just plays on, as before.
+async function saveHostTable(r, paused) {
+  if (mode !== 'host' || noSave || r.seq == null || r.seq === savedSeq || paused) return;
   try {
-    const json = await call('hostSave');
+    const json = await call('runnerSave', HOST_TABLE);
     if (json == null) { noSave = true; return; }
     await putTable(...SAVED, {json, room, game: hostGame, title: hostTitle, seq: r.seq, at: Date.now(), ledger});
     savedSeq = r.seq;
@@ -2617,39 +2737,16 @@ async function resumeHosting() {
   savedTable = null;
   savedSeq = rec.seq;
   noSave = false;
-  startHosting(rec.room, rec.game);
+  const mine = session;
+  const made = startHosting(rec.room, rec.game, () => call('runnerRestoreFriends', HOST_TABLE, rec.json, {link: false}));
   hostTitle = rec.title || '';
   // The standings so far come back with it (#403).
   if (rec.ledger?.players) ledger = rec.ledger;
+  netNote = 'Resumed: play goes on once everyone is back (at most a minute).';
   location.hash = 'play';
-  resuming = setTimeout(() => wake(), RESUME_GRACE_MS);
-  try {
-    show(await hostCall('hostRestore', rec.json));
-    netNote = 'Resumed: play goes on once everyone is back (at most a minute).';
-    maybeResume();
-  } catch (e) {
-    console.warn(e);
-    clearTimeout(resuming);
-    resuming = null;
-    forgetSavedTable();
-    leaveTable('That table couldn’t be resumed. Host a new one.');
-  }
-}
-
-// A player came back: once everyone seated is, play goes on.
-function maybeResume() {
-  if (resuming && guestsSeated.length && guestsSeated.every(p => guestsOnline.has(p.client_id))) wake();
-}
-
-// The resumed table plays on: everyone not back yet counts as disconnected
-// (they check or fold, and their seat waits for them as usual).
-function wake() {
-  if (!resuming) return;
-  clearTimeout(resuming);
-  resuming = null;
-  netNote = '';
-  for (const p of guestsSeated) if (!guestsOnline.has(p.client_id)) hostEvent('hostDisconnected', p.client_id);
-  hostEvent('hostResume');
+  if (await made || session !== mine) return;
+  forgetSavedTable();
+  leaveTable('That table couldn’t be resumed. Host a new one.');
 }
 
 // Joins the friends table `code` as `name` (the Join tab). `hostId`, from
@@ -2662,6 +2759,8 @@ export function joinTable({code, name, hostId = ''}) {
   saveSetup();
   startGuest(code);
   joinedByCode = true;
+  friendsFair = fairPlayer();
+  friendsHands.clear();
   const mine = session;
   e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId, inbox: Promise.resolve()};
   net = connect(code, 'guest', clientId(), {
@@ -2682,6 +2781,10 @@ export function joinTable({code, name, hostId = ''}) {
   else render();
 }
 let joinedByCode = false; // at a table joined with its code (joinTable)
+// Its fair deals (fair-check.js): this page's side, and the last few hands
+// it was dealt, by number ({cards, board}).
+let friendsFair = null;
+const friendsHands = new Map();
 
 // Where the table you're at belongs in the navigation (#209): bots under
 // Train, a friends table under Play, a club's table under Clubs; null when
@@ -2702,7 +2805,7 @@ export function setTableName(n) {
 export const tablePrefs = () => ({dealSecs: DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1, autoDeal: !!setup.autoDeal, runTwice: RUN_PREFS.includes(setup.runTwice) ? setup.runTwice : 'ask', sounds: !!setup.sounds, gameSounds: !!setup.gameSounds});
 export function cycleTablePref(key) {
   if (key === 'dealSecs') { setup.dealSecs = DEAL_DELAYS[(DEAL_DELAYS.indexOf(tablePrefs().dealSecs) + 1) % DEAL_DELAYS.length]; armDeal(); }
-  else if (key === 'autoDeal') setup.autoDeal = !setup.autoDeal;
+  else if (key === 'autoDeal') { setup.autoDeal = !setup.autoDeal; armDeal(); }
   else if (key === 'sounds') setup.sounds = !setup.sounds;
   else if (key === 'gameSounds') setup.gameSounds = !setup.gameSounds;
   else if (key === 'runTwice') setup.runTwice = RUN_PREFS[(RUN_PREFS.indexOf(tablePrefs().runTwice) + 1) % RUN_PREFS.length];
@@ -2854,6 +2957,13 @@ function startGuest(code) {
 
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
+  // A fair deal at a friends table (#136, #462): answer the host's round, or
+  // check a finished hand against what this page was dealt.
+  if (m.type === 'fair' && joinedByCode) {
+    const check = friendsFair?.message(m, cmd => net?.send(cmd), friendsHands.get(Number(m.hand)) || {});
+    if (check) showFairCheck(check);
+    return;
+  }
   if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
   // A one-off cash game's standings (#403); final: the host ended the game.
   if (m.type === 'standings' && joinedByCode) {
@@ -2881,6 +2991,11 @@ function guestMessage(m) {
   }
   if (m.type === 'state') {
     lastView = m.view;
+    const hn = num(m.view?.hand_number);
+    if (joinedByCode && hn) {
+      friendsHands.set(hn, {cards: m.view.seats?.[0]?.cards || [], board: m.view.board || []});
+      while (friendsHands.size > 8) friendsHands.delete(friendsHands.keys().next().value);
+    }
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
     // Sitting out (#70): out or not, missed blinds, time left before the seat goes.
     mySeat = m.me ? {...m.me, outEnds: m.me.out_ms_left != null ? Date.now() + num(m.me.out_ms_left) : 0} : null;
@@ -3038,13 +3153,10 @@ function leaveTable(note = '') {
   celebration = null;
   lastSummary = null;
   clearTimeout(timer);
-  clearTimeout(resuming);
-  resuming = null;
   cancelDeal();
-  clearInterval(hostTimer);
+  if (mode === 'host') hostStop();
   clearInterval(clockTimer);
   clockStopped = 0;
-  holds.delete('offline');
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
   ledger = null;
   endAfterHand = false;
@@ -3845,7 +3957,8 @@ function netBarHtml() {
   }
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
   if (mode === 'guest' && idleAsk) h += '<span class="pl-idle" role="alert"><b>Still here?</b><button class="tr-btn yes" data-act="stillhere">Stay</button></span>';
-  if (mode === 'host' && clockStopped) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
+  // (Alone at the table there's nothing to pause.)
+  if (mode === 'host' && clockStopped && (!linkOk || guestsSeated.length)) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
   return h;
 }
 
@@ -4275,14 +4388,14 @@ function onClick(e) {
     render();
     return;
   }
-  if (d.approve != null) { hostEvent('hostApprove', +d.approve); return; }
-  if (d.deny != null) { hostEvent('hostDeny', +d.deny); return; }
+  if (d.approve != null) { hostApprove(+d.approve); return; }
+  if (d.deny != null) { hostRun({type: 'chips', seat: +d.deny, ok: false}); return; }
   if (d.remove != null) {
     const who = state?.seats[+d.remove]?.name || 'this player';
-    if (confirm(`Remove ${who} from the table? They fold out of this hand, and their chips leave with them.`)) hostEvent('hostRemove', +d.remove);
+    if (confirm(`Remove ${who} from the table? They fold out of this hand, and their chips leave with them.`)) hostRun({type: 'remove', seat: +d.remove});
     return;
   }
-  if (d.act === 'hostchips') { chipAsk = chipAmount(); hostEvent('hostChips', chipAsk); return; }
+  if (d.act === 'hostchips') { chipAsk = chipAmount(); hostChips(chipAsk); return; }
   if (d.act === 'askchips' || d.act === 'addchips') { chipAsk = chipAmount(); chipsOpen = false; net?.send({type: 'request_chips', amount: chipAsk}); return; }
   // A club table with nothing available: the manager is asked (#404).
   if (d.act === 'addopen') { chipsOpen = true; chipAsk = 0; render(); return; }
