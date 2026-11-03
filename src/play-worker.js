@@ -14,32 +14,20 @@
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
 // play-review.js), or null.
-// Hosting a table for friends uses MultiTable (ops starting with "host"):
-//   hostFriends(seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed,
-//     game, turnMs) | hostNewHand | hostAdvance | hostAct(kind, amount) |
-//   hostRunTwice(yes) |
-//   hostHandle(client, msg) | hostDisconnected(client) | hostTick |
-//   hostApprove(seat) | hostDeny(seat) | hostChips(amount) | hostRemove(seat)
-// Those return {seq, state, botToAct, turnMsLeft, openSeats, playersIn,
-// chipRequests, buyIn, hostPendingChips, out}, where out lists {to, data}
-// messages for the page to relay to each player.
-// A club's tables (club-host.js) use the ops in club-engine.js (runnerCreate,
-// runnerEvent, runnerSave, runnerRestore, ...): each table and its runner,
-// the same code an always-on club runs in the relay's Worker.
+// A club's tables (club-host.js) and the friends table (play.js, #462) use
+// the ops in club-engine.js (runnerCreate, runnerFriends, runnerEvent,
+// runnerSave, runnerRestore, ...): each table and its runner, the same code
+// an always-on club runs in the relay's Worker.
 import init, * as wasm from '../wasm/ducy_wasm.js';
 import { clubEngine } from './club-engine.js';
 
 // A namespace import, so bindings an older ducy-wasm lacks (loadGtoPlo) are
 // just undefined instead of failing the whole module.
-const { BotTable, MultiTable, botPersonalities, loadGto } = wasm;
+const { BotTable, botPersonalities, loadGto } = wasm;
 
 const ready = init({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)});
-// Club tables, and the clocks every hosted table runs on (the friends
-// table's is 'host').
 const clubs = clubEngine();
-const now = clubs.now;
 let table = null;
-let host = null;
 // The table's hands kept for review that reviewNew has returned.
 let reviewedHands = 0;
 
@@ -218,46 +206,7 @@ const ops = {
     } catch {}
     return true;
   },
-  hostCreate: (bots, open, name, buyIn, sb, bb, seed, game, turnMs) => {
-    host = new MultiTable(bots, Uint8Array.from(open, o => (o ? 1 : 0)), name, BigInt(buyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-    return host.state(now('host')); // deal once the players are in
-  },
-  // Friends: empty seats people take as they join, and real chips the host
-  // hands out on request.
-  hostFriends: (seats, name, hostChips, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs) => {
-    clubs.clocks.delete('host');
-    host = MultiTable.friends(seats, name, BigInt(hostChips), BigInt(minBuyIn), BigInt(maxBuyIn), BigInt(sb), BigInt(bb), BigInt(seed), game, BigInt(turnMs));
-    return host.state(now('host'));
-  },
-  // The friends table as JSON, to resume it if the page closes (#117); null
-  // with an older ducy-wasm.
-  hostSave: () => (host?.save ? host.save(now('host')) : null),
-  // A friends table saved with hostSave, paused until hostResume (throws if
-  // it can't be loaded).
-  hostRestore: json => {
-    if (!MultiTable.restore) throw new Error('this ducy-wasm can’t restore tables');
-    const t = MultiTable.restore(json, Date.now());
-    clubs.clocks.delete('host');
-    host?.free();
-    host = t;
-    return host.state(now('host'));
-  },
-  hostResume: () => host.resume(now('host')),
-  // A bomb pot every `every` hands, on two boards; with a ducy-wasm older
-  // than setBombPots, just the state.
-  hostBombPots: (every, ante) => (host.setBombPots ? host.setBombPots(BigInt(every), BigInt(ante), true, now('host')) : host.state(now('host'))),
-  hostApprove: seat => host.approveChips(seat, now('host')),
-  hostDeny: seat => host.denyChips(seat, now('host')),
-  hostChips: amount => host.hostChips(BigInt(amount), now('host')),
-  hostRemove: seat => host.remove(seat, now('host')),
-  hostNewHand: () => host.newHand(now('host')),
-  hostAdvance: () => host.advance(now('host')),
-  hostAct: (kind, amount) => host.act(kind, BigInt(amount), now('host')),
-  hostRunTwice: yes => host.hostRunTwice(!!yes, now('host')),
-  hostHandle: (client, msg) => host.handle(client, msg, now('host')),
-  hostDisconnected: client => host.disconnected(client, now('host')),
-  hostTick: () => host.tick(now('host')),
-  // A club's tables (club-engine.js).
+  // A club's tables and the friends table (club-engine.js).
   ...clubs.ops,
 };
 

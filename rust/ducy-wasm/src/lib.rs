@@ -6,6 +6,9 @@ mod book;
 // The ladder, the Regulars, reviews and bot chat (ducy-bot-games): the site's.
 #[cfg(feature = "site")]
 mod bot_games;
+// Chat at a friends table: the site's.
+#[cfg(feature = "site")]
+mod chat;
 mod club;
 // The equity calculator's sampling: the study pages'.
 #[cfg(feature = "site")]

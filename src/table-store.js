@@ -2,7 +2,7 @@
 // progress survives the host's tab closing or the browser restarting. One
 // record per running table, keyed "<club code>/<table id>":
 //   {key, json, ledgerN, seq, at}
-// where json is ducy's MultiTable.save() (every card of the hand in
+// where json is ducy's ClubTable.save() (every card of the hand in
 // progress: only this browser's host page reads it), ledgerN the table's
 // newest ledger entry when it was saved (club-tables.js tableLedgerN), and
 // seq the engine's state number.

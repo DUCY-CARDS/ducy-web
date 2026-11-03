@@ -43,7 +43,7 @@ use ducy_gto::{
 };
 use serde::Serialize;
 
-pub(crate) use crate::util::{club_host, default_chip, err, rules_for, to_js};
+pub(crate) use crate::util::{bomb_pots, club_host, default_chip, err, rules_for, to_js};
 use wasm_bindgen::prelude::*;
 
 #[derive(Serialize)]
@@ -211,15 +211,6 @@ pub fn replay_frames(
 ) -> Result<JsValue, JsError> {
     let events: Vec<ducy_play::Event> = serde_wasm_bindgen::from_value(events).map_err(err)?;
     to_js(&ducy_play::replay::replay_frames(&events, &stacks, &names))
-}
-
-/// Bomb pots every `every` hands, or none for 0.
-fn bomb_pots(every: u64, ante: u64, double_board: bool) -> Option<ducy_play::BombPots> {
-    (every > 0).then_some(ducy_play::BombPots {
-        every,
-        ante,
-        double_board,
-    })
 }
 
 /// The GTO bot's data, once the page has loaded it with `loadGto`.
@@ -1151,9 +1142,9 @@ struct BuyIn {
     max: u64,
 }
 
-/// A table hosted for people on other devices: the host in seat 0, and the
-/// other seats either bots that people may take over (`new`) or empty seats
-/// for friends, with real chips the host hands out (`friends`). Every call
+/// A table hosted for people on other devices: the host in seat 0 and bots
+/// that people may take over (`new`), or a club table (`club`). (A friends
+/// table runs on the table runner: `ClubTable.friends`.) Every call
 /// takes the time in milliseconds (e.g. `Date.now()`) and returns `{seq,
 /// state, botToAct, turnMsLeft, openSeats, playersIn, chipRequests, buyIn,
 /// hostPendingChips, out}`, where `out` lists `{to, data}` messages for the
@@ -1201,54 +1192,6 @@ impl MultiTable {
             .chain(open.iter().map(|&o| o != 0))
             .collect();
         let host = TableHost::new(table, open, turn_ms).map_err(err)?;
-        Ok(MultiTable { host })
-    }
-
-    /// A table for friends: the host in seat 0 and `seats - 1` empty seats
-    /// (2 to 10 in all) that people take as they join. No bots: a hand is
-    /// dealt to whoever is seated with chips, once there are two. Chips are
-    /// real: the host starts with `host_chips`, everyone else asks the host
-    /// for chips, and a stack after a request must be `min_buy_in` to
-    /// `max_buy_in` chips.
-    #[allow(clippy::too_many_arguments)]
-    pub fn friends(
-        seats: usize,
-        host_name: String,
-        host_chips: u64,
-        min_buy_in: u64,
-        max_buy_in: u64,
-        small_blind: u64,
-        big_blind: u64,
-        seed: u64,
-        game: Option<String>,
-        turn_ms: u64,
-    ) -> Result<MultiTable, JsError> {
-        let rules = rules_for(game.as_deref(), small_blind, big_blind)?;
-        if small_blind == 0 || big_blind < small_blind || min_buy_in < big_blind {
-            return Err(JsError::new("invalid blinds or buy-in"));
-        }
-        if !(2..=ducy_play::MAX_PLAYERS).contains(&seats) {
-            return Err(JsError::new("a table seats 2 to 10"));
-        }
-        if host_chips < min_buy_in || host_chips > max_buy_in {
-            return Err(JsError::new(
-                "the host's chips must be within the buy-in limits",
-            ));
-        }
-        let name: String = host_name.trim().chars().take(ducy_host::MAX_NAME).collect();
-        let mut all = vec![TableSeat::human(
-            if name.is_empty() { "Host" } else { &name },
-            "you",
-        )];
-        all.extend((1..seats).map(|_| TableSeat::empty()));
-        let mut table = Table::new(rules, all, host_chips, seed)
-            .map_err(err)?
-            .with_secure_deals();
-        table.set_run_it_twice(true);
-        let open = (0..seats).map(|s| s > 0).collect();
-        let host = TableHost::new(table, open, turn_ms)
-            .and_then(|h| h.with_bank(min_buy_in, max_buy_in))
-            .map_err(err)?;
         Ok(MultiTable { host })
     }
 

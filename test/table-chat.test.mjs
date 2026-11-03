@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './wasm.mjs';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from '../src/table-chat.js';
 
 test('a chat message is trimmed, flattened to one line and cut short', () => {
