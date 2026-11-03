@@ -10,7 +10,7 @@
 #
 # Only index.html, manage.html (the club manager) and admin.html are rewritten (to point
 # at v/<version>/src/). The JS loads
-# mc.js, the workers and the WASM relative to its own URL, so those resolve
+# the workers and the WASM relative to its own URL, so those resolve
 # inside the same release folder.
 #
 # Usage: scripts/build-site.sh <version> <out-dir>

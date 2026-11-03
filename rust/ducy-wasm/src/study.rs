@@ -12,7 +12,7 @@ use ducy::games::omaha_hilo::{OmahaHiLoGameEvaluation, OmahaHiLoGameState};
 use ducy::games::{GameEquityEvaluation, GameEvaluation};
 use ducy::games::{omaha_range, omaha_range_equity};
 
-fn to_js_err(e: ducy::error::DucyError) -> JsError {
+pub(crate) fn to_js_err(e: ducy::error::DucyError) -> JsError {
     JsError::new(&e.to_string())
 }
 
@@ -210,7 +210,7 @@ struct WinnerResult {
     hand: String,
 }
 
-fn parse_ranges(ranges: &[String]) -> Result<Vec<HoldemRange>, JsError> {
+pub(crate) fn parse_ranges(ranges: &[String]) -> Result<Vec<HoldemRange>, JsError> {
     ranges
         .iter()
         .map(|r| HoldemRange::parse(r).map_err(to_js_err))
@@ -819,7 +819,7 @@ thread_local! {
 
 const OMAHA_RANGE_CACHE: usize = 32;
 
-fn omaha_ranges(
+pub(crate) fn omaha_ranges(
     ranges: &[String],
     cards: usize,
 ) -> Result<Vec<std::rc::Rc<omaha_range_equity::OmahaRangeSampler>>, JsError> {
