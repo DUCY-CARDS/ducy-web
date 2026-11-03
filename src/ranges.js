@@ -1,9 +1,8 @@
 // Hold'em starting-hand classes and range text, shared by the equity
-// calculator and the trainer. A hand class is "AA", "AKs" or "AKo". ducy reads
-// the range text (holdemRangeReport); the page adds "top N%".
+// calculator and the trainer. A hand class is "AA", "AKs" or "AKo".
+// ducy-training reads the range text, "top N%" included (#464).
 
-import { HOLDEM_PERCENTILE } from './holdem-rank.js';
-import { holdemRangeReport } from '../wasm/ducy_wasm.js';
+import { training } from '../wasm/ducy_wasm.js';
 
 export const RK = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
 
@@ -33,48 +32,19 @@ export function comboCount(sel) {
 }
 
 /**
- * The top `pct`% of Hold'em hands by the trainer's ranking (holdem-rank.js):
- * every class whose middle combo falls inside the cutoff, so the range covers
- * about pct% of the 1,326 combos.
+ * The top `pct`% of Hold'em hands by the trainer's ranking: every class whose
+ * middle combo falls inside the cutoff, so the range covers about pct% of the
+ * 1,326 combos.
  */
 export function topRange(pct) {
-  return new Set(Object.keys(HOLDEM_PERCENTILE).filter(c => HOLDEM_PERCENTILE[c] < pct));
+  return new Set(training({op: 'topRange', pct: Number(pct) || 0}));
 }
 
 /**
  * Parses range text like "QQ+, AKs, A5s-A2s, KQ, top 20%" into a Set of hand
  * classes. Terms ducy can't read are skipped, so a range being typed keeps
- * showing what's readable so far; `rangeErrors` lists them.
+ * showing what's readable so far.
  */
 export function parseRange(text) {
-  return readRange(text).sel;
-}
-
-/** The terms of range text that aren't hands or ranges, as ducy's messages. */
-export function rangeErrors(text) {
-  return readRange(text).errors;
-}
-
-function readRange(text) {
-  const sel = new Set();
-  const errors = [];
-  // "top 20%" (or "top20%") adds the top 20% of hands.
-  text = text.replace(/\btop\s*(\d+(?:\.\d+)?)\s*%?/gi, (_, n) => {
-    for (const c of topRange(+n)) sel.add(c);
-    return ' ';
-  });
-  // Each bad term ducy names is blanked out and the rest read again.
-  for (let tries = 0; tries < 100; tries++) {
-    const r = holdemRangeReport(text, undefined);
-    if (r.ok) {
-      for (const c of r.classes) sel.add(c);
-      break;
-    }
-    const {term, start: byte, message} = r.error;
-    errors.push(message);
-    // ducy gives a byte offset into the UTF-8 text.
-    const start = new TextDecoder().decode(new TextEncoder().encode(text).slice(0, byte)).length;
-    text = text.slice(0, start) + ' '.repeat(term.length) + text.slice(start + term.length);
-  }
-  return {sel, errors};
+  return new Set(training({op: 'readRange', text: String(text ?? '')}).classes);
 }

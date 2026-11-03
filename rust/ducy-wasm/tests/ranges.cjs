@@ -14,7 +14,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const pkgDir = process.env.DUCY_WASM_PKG || path.join(__dirname, "..", "pkg-node");
-const { holdemRangeReport, omahaRangeReport } = require(path.join(pkgDir, "ducy_wasm.js"));
+const { holdemRangeReport, omahaRangeReport, training } = require(path.join(pkgDir, "ducy_wasm.js"));
 const fixture = require("./ranges-fixture.json");
 
 for (const c of fixture.cases) {
@@ -40,5 +40,11 @@ assert.equal(plo.total, 270725);
 const ploBad = omahaRangeReport("AAxx, $nonsense", 4);
 assert.equal(ploBad.ok, false);
 assert.deepEqual([ploBad.error.term, ploBad.error.start], ["$nonsense", 6]);
+
+// The pages' reader (ducy-training): "top N%" too, and every bad term named.
+const read = training({op: "readRange", text: "top 1%, AKx, AKs, 🂡"});
+assert.deepEqual(read.classes, ["AA", "KK", "AKs"]);
+assert.equal(read.errors.length, 2);
+assert.deepEqual(training({op: "topRange", pct: 1}), ["AA", "KK"]);
 
 console.log(`ranges: ok (${fixture.cases.length} preset and example texts)`);

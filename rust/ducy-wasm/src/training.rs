@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use ducy_training::chart::{self, SceneSizes, Spot};
 use ducy_training::holdem_rank::HOLDEM_PERCENTILE;
 use ducy_training::practice::{self, Dice, Practice};
+use ducy_training::ranges;
 use ducy_training::skills::{self, Record};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -179,6 +180,13 @@ enum Op {
         pct: f64,
         seed: u64,
     },
+    // ---- Hold'em range text ----
+    ReadRange {
+        text: String,
+    },
+    TopRange {
+        pct: f64,
+    },
 }
 
 fn full_band() -> [f64; 2] {
@@ -307,6 +315,8 @@ pub fn training(op: JsValue) -> Result<JsValue, JsError> {
             let (inside, outside) = practice::top_examples(cards, pct, &mut Dice::new(seed));
             json!({"inside": inside, "outside": outside})
         }
+        Op::ReadRange { text } => json!(ranges::read_holdem_range(&text)),
+        Op::TopRange { pct } => json!(ranges::top_range(pct)),
     };
     to_js(&v)
 }

@@ -11,6 +11,7 @@ pub mod holdem;
 pub mod holdem_rank;
 pub mod omaha;
 pub mod practice;
+pub mod ranges;
 pub mod skills;
 
 /// A number as JavaScript writes it (`String(x)`): "2.5", "3", "0.1".
