@@ -1,5 +1,5 @@
 // Range text as the equity calculator and trainer read it: ducy's notation
-// (holdemRangeReport) plus the page's "top N%". Needs the wasm build in wasm/.
+// plus "top N%" (ducy-training's ranges). Needs the wasm build in wasm/.
 // Run with: node --test test/ranges.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -43,8 +43,15 @@ export function topRange(pct) {
 /**
  * Parses range text like "QQ+, AKs, A5s-A2s, KQ, top 20%" into a Set of hand
  * classes. Terms ducy can't read are skipped, so a range being typed keeps
- * showing what's readable so far.
+ * showing what's readable so far; `rangeErrors` lists them.
  */
 export function parseRange(text) {
-  return new Set(training({op: 'readRange', text: String(text ?? '')}).classes);
+  return new Set(readRange(text).classes);
 }
+
+/** The terms of range text that aren't hands or ranges, as ducy's messages. */
+export function rangeErrors(text) {
+  return readRange(text).errors;
+}
+
+const readRange = text => training({op: 'readRange', text: String(text ?? '')});
