@@ -180,6 +180,14 @@ enum Op {
         pct: f64,
         seed: u64,
     },
+    RecordAnswer {
+        #[serde(default)]
+        rec: Option<Value>,
+        pr: Practice,
+        tags: Vec<String>,
+        correct: bool,
+        now: f64,
+    },
     // ---- Hold'em range text ----
     ReadRange {
         text: String,
@@ -314,6 +322,20 @@ pub fn training(op: JsValue) -> Result<JsValue, JsError> {
         Op::TopExamples { cards, pct, seed } => {
             let (inside, outside) = practice::top_examples(cards, pct, &mut Dice::new(seed));
             json!({"inside": inside, "outside": outside})
+        }
+        Op::RecordAnswer {
+            rec,
+            pr,
+            tags,
+            correct,
+            now,
+        } => {
+            let mut rec = match rec {
+                Some(Value::Object(m)) => m,
+                _ => serde_json::Map::new(),
+            };
+            practice::record_answer(&mut rec, &pr, &tags, correct, now);
+            Value::Object(rec)
         }
         Op::ReadRange { text } => json!(ranges::read_holdem_range(&text)),
         Op::TopRange { pct } => json!(ranges::top_range(pct)),

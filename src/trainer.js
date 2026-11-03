@@ -256,8 +256,6 @@ function renderOmahaSetup() {
 
 // A drill needs some hands on each side of the cutoff; it deals plays and folds
 // 50/50 either way, so a kind that's mostly folds (weak suited) still drills well.
-const SESSIONS_KEPT = 30;
-const RECENT_KEPT = 30;      // weakness is judged on each kind's latest hands, so improvement shows
 
 const shortLabel = (n, tag) => {
   const l = labelsFor(n)[tag].replace(/\s*\(.*$/, '');
@@ -273,7 +271,7 @@ function drillTags(cards, pct) {
   return drillCache.get(key);
 }
 
-/** Recent accuracy per kind for a target (its last RECENT_KEPT hands), weakest first. */
+/** Recent accuracy per kind for a target (its latest hands), weakest first. */
 const weakestKinds = (rec, tags) => training({op: 'weakestKinds', rec: rec && typeof rec === 'object' ? rec : null, tags});
 
 function levelChip(rec) {
@@ -346,19 +344,8 @@ function practiceCard(cards, pct) {
 function recordLifetime(pr, tags, correct) {
   try {
     const all = loadProgress();
-    const rec = all[pr.baseKey] ||= newRecord(pr.baseKey);
-    const kinds = rec.kinds ||= {};
-    // seen/wrong are lifetime totals; recent is the latest answers as '1' (right) / '0' (wrong).
-    for (const t of tags) {
-      const k = kinds[t] ||= {seen: 0, wrong: 0, recent: ''};
-      k.seen++; if (!correct) k.wrong++;
-      k.recent = ((k.recent || '') + (correct ? '1' : '0')).slice(-RECENT_KEPT);
-    }
-    const sessions = rec.sessions ||= [];
-    let sess = sessions.find(x => x.id === pr.sessionId);
-    if (!sess) { sess = {id: pr.sessionId, at: Date.now(), drill: pr.drill, hands: 0, correct: 0, from: pr.startScore}; sessions.push(sess); }
-    sess.hands++; if (correct) sess.correct++; sess.to = pr.score;
-    if (sessions.length > SESSIONS_KEPT) sessions.splice(0, sessions.length - SESSIONS_KEPT);
+    const rec = all[pr.baseKey] || newRecord(pr.baseKey);
+    all[pr.baseKey] = training({op: 'recordAnswer', rec, pr, tags, correct, now: Date.now()});
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
   } catch {}
 }
