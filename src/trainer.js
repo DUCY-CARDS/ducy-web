@@ -5,7 +5,7 @@
 
 import { RANGE_PRESETS } from './presets.js';
 import { training } from '../wasm/ducy_wasm.js';
-import { RK, parseRange, comboCount, handClass, gridLabel } from './ranges.js';
+import { RK, parseRange, topRange, comboCount, handClass, gridLabel } from './ranges.js';
 import { omahaPercentile, omahaLabels, omahaModelVersion } from './omaha-hand.js';
 import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { HOLDEM_TAG_LABELS } from './holdem-tags.js';
@@ -121,7 +121,7 @@ const labelsFor = n => (n === 2 ? HOLDEM_TAG_LABELS : omahaLabels());
 
 /** The top X% of Hold'em hands as a target, for drawing the 13x13 grid. */
 function holdemTopTarget(pct) {
-  return {value: new Set(Object.keys(HOLDEM_PERCENTILE).filter(c => HOLDEM_PERCENTILE[c] < pct)), bluff: new Set()};
+  return {value: topRange(pct), bluff: new Set()};
 }
 
 function handText(cards) {
