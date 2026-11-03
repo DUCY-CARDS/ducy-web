@@ -509,6 +509,84 @@ pub fn weakest_kinds(rec: Option<&Value>, tags: &[String]) -> Vec<Weak> {
     out
 }
 
+/// Sessions a target's record keeps, latest last.
+pub const SESSIONS_KEPT: usize = 30;
+/// Answers each kind keeps in `recent`: weakness is judged on the latest
+/// hands, so improvement shows.
+pub const RECENT_KEPT: usize = 30;
+
+/// Adds an answer to a target's saved record (`rec`, the page's JSON): each
+/// of the hand's kinds counts it in `kinds` (`seen` and `wrong` for all
+/// time, `recent` as "1" right and "0" wrong), and the session `pr` gets
+/// its entry in `sessions`, started at `now` (ms) if it's new. The page's
+/// own fields are kept.
+pub fn record_answer(
+    rec: &mut Map<String, Value>,
+    pr: &Practice,
+    tags: &[String],
+    correct: bool,
+    now: f64,
+) {
+    let obj = |v: &mut Value| {
+        if !v.is_object() {
+            *v = Value::Object(Map::new());
+        }
+    };
+    let kinds = rec
+        .entry("kinds")
+        .or_insert_with(|| Value::Object(Map::new()));
+    obj(kinds);
+    for t in tags {
+        let k = kinds
+            .as_object_mut()
+            .unwrap()
+            .entry(t.clone())
+            .or_insert_with(|| serde_json::json!({"seen": 0, "wrong": 0, "recent": ""}));
+        obj(k);
+        let n = |k: &Value, f: &str| k.get(f).and_then(Value::as_f64).unwrap_or(0.0);
+        let (seen, wrong) = (n(k, "seen") + 1.0, n(k, "wrong") + f64::from(!correct));
+        let mut recent = k
+            .get("recent")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        recent.push(if correct { '1' } else { '0' });
+        let recent = recent[recent.len().saturating_sub(RECENT_KEPT)..].to_string();
+        let k = k.as_object_mut().unwrap();
+        k.insert("seen".into(), seen.into());
+        k.insert("wrong".into(), wrong.into());
+        k.insert("recent".into(), recent.into());
+    }
+    let id = pr.extra.get("sessionId").cloned().unwrap_or(Value::Null);
+    let sessions = rec
+        .entry("sessions")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !sessions.is_array() {
+        *sessions = Value::Array(Vec::new());
+    }
+    let sessions = sessions.as_array_mut().unwrap();
+    let at = match sessions.iter().position(|s| s.get("id") == Some(&id)) {
+        Some(i) => i,
+        None => {
+            sessions.push(serde_json::json!({
+                "id": id, "at": now, "drill": pr.drill, "hands": 0, "correct": 0,
+                "from": pr.extra.get("startScore").cloned().unwrap_or(Value::Null),
+            }));
+            sessions.len() - 1
+        }
+    };
+    let s = &mut sessions[at];
+    obj(s);
+    let n = |f: &str| s.get(f).and_then(Value::as_f64).unwrap_or(0.0);
+    let (hands, right) = (n("hands") + 1.0, n("correct") + f64::from(correct));
+    let s = s.as_object_mut().unwrap();
+    s.insert("hands".into(), hands.into());
+    s.insert("correct".into(), right.into());
+    s.insert("to".into(), pr.score.into());
+    let over = sessions.len().saturating_sub(SESSIONS_KEPT);
+    sessions.drain(..over);
+}
+
 /// An answer in a practice session.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -986,6 +1064,47 @@ mod tests {
         assert_eq!(level_for(85.0).name, "Hard");
         assert_eq!(penalty_for(0.0, false), 1);
         assert_eq!(penalty_for(1.0, true), 20);
+    }
+
+    #[test]
+    fn answers_go_on_the_record() {
+        let mut pr = Practice {
+            score: 12.0,
+            ..Default::default()
+        };
+        pr.extra.insert("sessionId".into(), "s1".into());
+        pr.extra.insert("startScore".into(), 10.0.into());
+        let mut rec = Map::new();
+        rec.insert("score".into(), 12.into());
+        let tags = s(&["pairs_big"]);
+        record_answer(&mut rec, &pr, &tags, true, 5.0);
+        record_answer(&mut rec, &pr, &tags, false, 6.0);
+        let k = &rec["kinds"]["pairs_big"];
+        assert_eq!(
+            (k["seen"].as_f64(), k["wrong"].as_f64()),
+            (Some(2.0), Some(1.0))
+        );
+        assert_eq!(k["recent"], "10");
+        let sessions = rec["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["at"], 5.0);
+        assert_eq!(sessions[0]["from"], 10.0);
+        assert_eq!(
+            (
+                sessions[0]["hands"].as_f64(),
+                sessions[0]["correct"].as_f64()
+            ),
+            (Some(2.0), Some(1.0))
+        );
+        assert_eq!(rec["score"], 12);
+        // Only the latest answers and sessions are kept.
+        for i in 0..40 {
+            pr.extra.insert("sessionId".into(), format!("n{i}").into());
+            record_answer(&mut rec, &pr, &tags, true, 7.0);
+        }
+        assert_eq!(rec["sessions"].as_array().unwrap().len(), SESSIONS_KEPT);
+        assert_eq!(rec["sessions"][0]["id"], "n10");
+        assert_eq!(rec["kinds"]["pairs_big"]["recent"], "1".repeat(RECENT_KEPT));
     }
 
     #[test]
