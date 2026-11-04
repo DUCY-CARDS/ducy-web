@@ -2,7 +2,7 @@
 name = "ducy-bot-games"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 license = "MIT"
 description = "ducy.cards' games against the bots: the heads-up ladder, the Regulars' table, hand reviews and the bots' table talk."
 repository = "https://github.com/DUCY-CARDS/ducy-web"
