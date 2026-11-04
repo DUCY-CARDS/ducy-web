@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import {
-  draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tourneyCallsFor, tourneyCards,
+  draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tableSizes, tourneyCallsFor, tourneyCards,
 } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
@@ -140,6 +140,15 @@ test('the wizard: five steps read into a draft, checked, then the settings (#477
   assert.deepEqual([once.opensAt, once.opensBefore, once.repeat], [NOW, undefined, undefined]);
 });
 
+test('table sizes by game: short-handed and full; Omaha 6 is only short-handed', () => {
+  assert.deepEqual(tableSizes('nlhe', 9), [[6, 'Short-handed'], [9, 'Full']]);
+  assert.deepEqual(tableSizes('plo4', 8), [[6, 'Short-handed'], [8, 'Full']]);
+  assert.deepEqual(tableSizes('plo5', 6), [[6, 'Short-handed'], [8, 'Full']]);
+  assert.deepEqual(tableSizes('plo6', 6), [[6, 'Short-handed']]);
+  // A tournament that already has another size keeps it as a choice.
+  assert.deepEqual(tableSizes('nlhe', 7), [[6, 'Short-handed'], [7, '7-handed'], [9, 'Full']]);
+});
+
 test('the wizard’s pages: steps, Customize, schedule choices and the review (#477)', () => {
   const club = {payoutTables: [], members: {}};
   const editor = structureEditor({stack: 10000, presets: false});
@@ -153,6 +162,8 @@ test('the wizard’s pages: steps, Customize, schedule choices and the review (#
   h = page(2);
   assert.match(h, /value="custom"[^>]*><span class="tw-tile-name">Customize/);
   assert.match(h, /min levels</, 'each preset says how long its levels are');
+  assert.match(h, /name="tableSize" value="9" checked><span class="tw-tile-name">Full</);
+  assert.match(h, /name="tableSize" value="6"><span class="tw-tile-name">Short-handed</);
   assert.doesNotMatch(h, /data-tseditor/, 'blind levels behind Customize');
   assert.doesNotMatch(h, /data-ts="preset"/);
   assert.match(page(2, {preset: 'custom'}), /data-tseditor/);

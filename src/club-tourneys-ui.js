@@ -201,6 +201,21 @@ const fields = (html, cls = '') => `<div class="tw-fields${cls ? ` ${cls}` : ''}
 const num = (name, value, attrs = '') => `<input class="pl-text" name="${name}" type="number" step="1" inputmode="numeric" value="${esc(value)}" ${attrs}>`;
 const chips = (name, value) => `<input class="pl-text" name="${name}" type="number" min="0" step="${CHIP_STEP}" inputmode="decimal" value="${esc(chipInput(value))}">`;
 
+// A game's table sizes, [[seats, label]]: short-handed (6) and full (its
+// usual size above 6, else its most: Hold'em 9, Omaha 4 and 5 8); Omaha 6
+// is only ever 6. `now`: the size a tournament already has, if it's neither.
+export function tableSizes(game, now) {
+  const short = Math.min(6, maxSeats(game));
+  const full = defaultSeats(game) > 6 ? defaultSeats(game) : maxSeats(game);
+  const sizes = [[short, 'Short-handed']];
+  if (full > short) sizes.push([full, 'Full']);
+  if (Number.isInteger(now) && now >= 2 && now <= maxSeats(game) && !sizes.some(([n]) => n === now)) {
+    sizes.push([now, `${now}-handed`]);
+    sizes.sort((a, b) => a[0] - b[0]);
+  }
+  return sizes;
+}
+
 const presetLabel = id => PRESETS().find(p => p.id === id)?.label || id;
 const lateText = n => (n ? `End of level ${n}` : 'Off');
 const reentryText = d => (!d.reentry ? 'None' : d.maxReentries ? String(d.maxReentries) : 'No limit');
@@ -241,9 +256,9 @@ export function wizardHtml(w, club, payTable = null) {
   } else if (step === 2) {
     h += group('Stack and players', fields(
       field('Starting stack', num('stack', d.stack, 'min="20" data-tstack="1"'))
-      + field('Table size', num('tableSize', d.tableSize, `min="2" max="${maxSeats(d.game)}"`))
       + field('Minimum players', num('minPlayers', d.minPlayers, 'min="2"'))
       + field('Maximum players', num('maxPlayers', d.maxPlayers, 'min="2" max="1000"'))));
+    h += group('Table', tiles(tableSizes(d.game, d.tableSize).map(([n, label]) => tfRadio('tableSize', n, label, n === d.tableSize, label.startsWith(n) ? '' : `${n} a table`)).join('')));
     const levels = w.editor.steps().filter(s => !s.break).length;
     let blinds = tiles(PRESETS().map(p => tfRadio('preset', p.id, esc(p.label), d.preset === p.id, `${p.minutes} min levels`)).join('')
       + tfRadio('preset', 'custom', 'Customize', d.preset === 'custom', d.preset === 'custom' ? `${levels} levels` : ''));
