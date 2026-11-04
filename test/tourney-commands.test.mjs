@@ -86,6 +86,42 @@ test('members register and unregister; the manager cancels with every buy-in bac
   await assert.rejects(async () => server.run('cancel_tourney', {id: 'nope'}), /No such tournament/);
 });
 
+test('a repeating tournament with a rake: the next made on its timer, changed for the whole series, stopped (#477)', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {club, server, ids, say, got, timers} = await serverFor();
+  const H = 3600e3, DAY = 24 * H;
+  const first = Date.now() + H;
+  // Daily, three times, registration an hour before each.
+  const t = {...tourney(), rake: 10, startsAt: first, opensBefore: H, repeat: {every: 'day', count: 3}};
+  delete t.opensAt;
+  const tid = await server.run('new_tourney', {tourney: t});
+  assert.equal(club.tourneySeries.length, 1);
+  // The next is due when its registration opens: a day on, an hour before.
+  const due = () => timers.filter(x => x.fn && x.ms > DAY - 2 * H && x.ms < DAY + H);
+  assert.equal(due().length, 1);
+  // Bob registers for the first: the buy-in and the rake.
+  club.tourneys[0].opensAt = Date.now() - 1;
+  await say('bob', {type: 'tourney', tourney: tid, op: 'register'});
+  assert.equal(club.members[ids.bob.id].balance, 1000 - 110);
+  await until('the lobby', () => got('ann', 'tourneys').at(-1)?.tourneys[0].rake === 10);
+  // Its time comes: the second is made, with the same settings, and timed.
+  club.tourneySeries[0].next = Date.now() + H - 1;
+  due()[0].fn();
+  await until('the second', () => club.tourneys.length === 2);
+  const second = club.tourneys[1];
+  assert.deepEqual([second.name, second.rake, second.series], ['Sunday', 10, club.tourneys[0].series]);
+  assert.ok(timers.some(x => x.fn && x.ms > H - 5000 && x.ms <= H), 'its start is timed');
+  // The whole series from the second on: 20 rake.
+  await server.run('edit_tourney', {id: second.id, series: true, tourney: {...t, rake: 20, startsAt: second.startsAt, repeat: undefined}});
+  assert.equal(club.tourneys[1].rake, 20);
+  assert.equal(club.tourneys[0].rake, 10, 'the first stays');
+  assert.equal(club.tourneySeries[0].settings.rake, 20);
+  // Cancelling the first with its series: refunds with the rake, no more made.
+  await server.run('cancel_tourney', {id: tid, series: true});
+  assert.equal(club.members[ids.bob.id].balance, 1000);
+  assert.deepEqual(club.tourneys.map(x => x.status), ['cancelled', 'cancelled']);
+  assert.ok(club.tourneySeries[0].stopped);
+});
+
 test('the plan limits new tournaments a day', {skip: !haveWasm && 'no wasm build'}, async () => {
   const {server} = await serverFor();
   server.setLimits({tourneysPerDay: 1});

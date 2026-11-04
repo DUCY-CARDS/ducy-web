@@ -5,7 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { memberTourneysHtml, tourneyCallsFor } from '../src/club-tourneys-ui.js';
+import {
+  draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tourneyCallsFor, tourneyCards,
+} from '../src/club-tourneys-ui.js';
+import { structureEditor } from '../src/tourney-structure-ui.js';
 
 const NOW = 1_000_000_000;
 const structure = [{sb: 25, bb: 50, ante: 0, minutes: 10}, {break: true, minutes: 5}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
@@ -70,4 +73,130 @@ test('cancelled: your buy-in is back', () => {
   assert.doesNotMatch(h, /cl-tdetails/);
   const other = memberTourneysHtml(member([t]), 'zed', {hostHere: true, playing: null}, NOW);
   assert.doesNotMatch(other, /buy-in is back/);
+});
+
+test('rake: shown with the buy-in, paid with it, and back with it (#477)', () => {
+  const t = tourney({rake: 1000, players: [{id: 'bo', name: 'Bo'}], in: ['bo'], every: 'week'});
+  const h = memberTourneysHtml(member([t]), 'me', {hostHere: true, playing: null}, NOW);
+  assert.match(h, /buy-in 100 \+ 10 /);
+  assert.match(h, /Register \(110\)/);
+  assert.match(h, /rake 10/);
+  assert.match(h, /weekly/);
+  const back = memberTourneysHtml(member([{...t, status: 'cancelled', players: [{id: 'me', name: 'Ann'}]}]), 'me', {hostHere: true, playing: null}, NOW);
+  assert.match(back, /Your 110 buy-in is back/);
+});
+
+test('past the last level the live blinds say what they are (#477)', () => {
+  assert.equal(levelText(structure, {level: 2, blinds: {sb: 100, bb: 200, ante: 20}}), 'Level 3 · 100/200 (ante 20)');
+  assert.equal(levelText(structure, {level: 1}), 'Level 2 · 50/100 (ante 10)');
+});
+
+// A form as the wizard's steps read it: elements by name, and checked days.
+function form(values, days = []) {
+  const elements = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, {value: String(v)}]));
+  if (days) elements.days = {};
+  return {elements, querySelectorAll: () => days.map(d => ({value: String(d)}))};
+}
+
+test('the wizard: five steps read into a draft, checked, then the settings (#477)', () => {
+  const H = 3_600_000, DAY = 24 * H;
+  const d = newDraft({stack: 5000, rake: 200}, NOW);
+  assert.equal(d.when, 'once');
+  assert.ok(d.startsAt > NOW);
+  assert.equal(d.rake, 200, 'the last rake');
+  // 1: game and buy-in.
+  assert.match(readStep(form({name: ' Sunday ', game: 'plo4', buyIn: '20', rake: 'x', added: '0'}), d, 1), /amounts like 10/);
+  assert.equal(readStep(form({name: ' Sunday ', game: 'plo4', buyIn: '20', rake: '2', added: '5'}), d, 1), '');
+  assert.deepEqual([d.name, d.game, d.buyIn, d.rake, d.added], ['Sunday', 'plo4', 2000, 200, 500]);
+  // 2: stack and structure.
+  assert.match(readStep(form({stack: 10, tableSize: 9, minPlayers: 2, maxPlayers: 50, preset: 'turbo'}), d, 2), /at least 20/);
+  assert.equal(readStep(form({stack: 3000, tableSize: 6, minPlayers: 4, maxPlayers: 30, preset: 'turbo'}), d, 2), '');
+  assert.match(readStep(form({stack: 3000, tableSize: 6, minPlayers: 4, maxPlayers: 30, preset: 'custom'}), d, 2, {structureErrors: ['Step 2: bad']}), /Step 2/);
+  d.preset = 'turbo';
+  // 3: payouts.
+  readStep(form({payoutTable: 'abc'}), d, 3);
+  assert.equal(d.payoutTable, 'abc');
+  // 4: schedule, weekly on Mon and Thu, 8 times, registration a day before.
+  const start = NOW + 2 * DAY;
+  const local = new Date(start - new Date(start).getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  const sched = {when: 'week', startsAt: local, end: 'count', count: 8, opensBefore: DAY, lateLevel: 4, reentries: 2};
+  assert.match(readStep(form(sched, []), d, 4, {now: NOW}), /days of the week/);
+  assert.equal(readStep(form(sched, [1, 4]), d, 4, {now: NOW}), '');
+  assert.deepEqual([d.days, d.count, d.opensBefore, d.lateLevel, d.reentry, d.maxReentries], [[1, 4], 8, DAY, 4, true, 2]);
+  assert.match(repeatText(d), /^Weekly on Mon, Thu, 8 times$/);
+  assert.match(readStep(form({...sched, count: 1}, [1]), d, 4, {now: NOW}), /2 to 500/);
+  readStep(form(sched, [1, 4]), d, 4, {now: NOW});
+  assert.match(readStep(form({...sched, startsAt: '1970-01-02T10:00'}, [1]), d, 4, {now: NOW}), /later than now/);
+  readStep(form(sched, [1, 4]), d, 4, {now: NOW});
+  // The settings for the host.
+  const s = draftSettings(d, [{sb: 10, bb: 20, ante: 0, minutes: 8}], {now: NOW});
+  assert.equal(s.opensBefore, DAY);
+  assert.equal(s.opensAt, undefined);
+  assert.deepEqual({...s.repeat, offsetMin: 0}, {every: 'week', days: [1, 4], count: 8, offsetMin: 0});
+  assert.equal(s.rake, 200);
+  // Just this one of a series: no repeat. Once, opening now: opensAt.
+  assert.equal(draftSettings(d, [], {repeat: false, now: NOW}).repeat, undefined);
+  const once = draftSettings({...d, when: 'once', opensBefore: 0}, [], {now: NOW});
+  assert.deepEqual([once.opensAt, once.opensBefore, once.repeat], [NOW, undefined, undefined]);
+});
+
+test('the wizard’s pages: steps, Customize, schedule choices and the review (#477)', () => {
+  const club = {payoutTables: [], members: {}};
+  const editor = structureEditor({stack: 10000, presets: false});
+  const d = newDraft({}, NOW);
+  const page = (step, over = {}, edit = null) => hostTourneysHtml(club, {}, {wizard: {step, d: {...d, ...over}, editor, edit}}, NOW);
+  let h = page(1);
+  assert.match(h, /<h3>New tournament<\/h3>/);
+  assert.match(h, /name="rake"/);
+  assert.match(h, /form="tw-form">Next</);
+  assert.doesNotMatch(h, /tw-back/);
+  h = page(2);
+  assert.match(h, /value="custom"[^>]*>Customize/);
+  assert.doesNotMatch(h, /data-tseditor/, 'blind levels behind Customize');
+  assert.doesNotMatch(h, /data-ts="preset"/);
+  assert.match(page(2, {preset: 'custom'}), /data-tseditor/);
+  h = page(4);
+  assert.match(h, /value="once" checked/);
+  assert.doesNotMatch(h, /name="days"/);
+  assert.match(h, /<option value="0" selected>Now<\/option>/);
+  h = page(4, {when: 'week', opensBefore: 2 * 3_600_000});
+  assert.match(h, /name="days"/);
+  assert.match(h, /name="count"/);
+  assert.doesNotMatch(h, />Now</, 'a series opens before each start');
+  assert.match(page(4, {when: 'day', end: 'until'}), /name="until" type="date"/);
+  // Changing one of a series: no repeat choices.
+  assert.doesNotMatch(page(4, {}, {id: 't1', series: false}), /name="when"/);
+  h = page(5, {name: 'Nightly', buyIn: 1000, rake: 100, when: 'day', count: 5, opensBefore: 3_600_000});
+  assert.match(h, /<dt>Buy-in<\/dt><dd>10 \+ 1 rake<\/dd>/);
+  assert.match(h, /<dd>Daily, 5 times<\/dd>/);
+  assert.match(h, /<dd>1 hour before<\/dd>/);
+  assert.match(h, />Create</);
+  assert.match(page(5, {}, {id: 't1', series: true}), />Save</);
+});
+
+test('the Tournaments page: a repeating series is one card with its next start (#477)', () => {
+  const t = (id, over) => ({id, name: 'Nightly', game: 'nlhe', buyIn: 1000, rake: 100, added: 0, stack: 1500, structure,
+    opensAt: NOW - 1000, startsAt: NOW + 3_600_000, minPlayers: 2, maxPlayers: 20, tableSize: 9, lateLevel: 0,
+    status: 'scheduled', entries: [], series: 's1', ...over});
+  const se = {id: 's1', every: 'day', next: NOW + 3 * 86_400_000, opensBefore: 3_600_000, count: 10, made: 3, settings: {name: 'Nightly', buyIn: 1000, rake: 100, stack: 1500}};
+  const club = {members: {}, payoutTables: [], tourneySeries: [se],
+    tourneys: [t('a', {status: 'finished', startsAt: NOW - 86_400_000, paid: []}), t('b', {}), t('c', {startsAt: NOW + 86_400_000})]};
+  assert.deepEqual(tourneyCards(club).map(c => c.t?.id || c.series.id), ['b', 'a']);
+  let h = hostTourneysHtml(club, {}, {}, NOW);
+  assert.equal(h.match(/class="cl-tourney"/g).length, 2);
+  assert.match(h, /cl-badge">Daily</);
+  assert.match(h, /buy-in 10 \+ 1/);
+  assert.match(h, /data-cl="t-ask" data-act="edit" data-id="b"/);
+  // Edit asks: this one or the whole series.
+  h = hostTourneysHtml(club, {}, {ask: {id: 'b', act: 'edit'}}, NOW);
+  assert.match(h, /data-cl="t-edit" data-id="b" data-series="0">This one</);
+  assert.match(h, /data-cl="t-edit" data-id="b" data-series="1">Whole series</);
+  // None waiting to start: the series' own card, its next start.
+  const between = {...club, tourneys: [club.tourneys[0]]};
+  assert.deepEqual(tourneyCards(between).map(c => c.t?.id || c.series.id), ['s1', 'a']);
+  h = hostTourneysHtml(between, {}, {}, NOW);
+  assert.match(h, /data-cl="series-edit" data-id="s1"/);
+  assert.match(h, /Next /);
+  // Stopped: no card.
+  assert.deepEqual(tourneyCards({...between, tourneySeries: [{...se, stopped: true}]}).map(c => c.t.id), ['a']);
 });

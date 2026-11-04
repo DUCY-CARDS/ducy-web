@@ -17,7 +17,7 @@ import {
   MAX_ENTRIES, MAX_PAYOUT_ROWS, addPayoutTable, checkPayoutRows, defaultPayout, deletePayoutTable, editPayoutTable, finishTourney, knockedOut, newTourney, payoutRow,
   payoutRows, payoutShares, prizes, register, lateEntry, setPayout, setPayoutTable, startTourney, tourneysBody,
 } from '../src/club-tourneys.js';
-import { entriesOpen, hostTourneysHtml, memberTourneysHtml, payoutTablesHtml } from '../src/club-tourneys-ui.js';
+import { entriesOpen, hostTourneysHtml, memberTourneysHtml, newDraft } from '../src/club-tourneys-ui.js';
 import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow, rowsEditorHtml, starterRows } from '../src/payout-table-ui.js';
 import { HOST_ID, joinPrivate, lobbyBody, newPrivateTourney, paidPlaces, privateClub, prizeTotals, setPrizes } from '../src/private-tourney.js';
 import { setupHtml } from '../src/private-tourney-ui.js';
@@ -141,13 +141,19 @@ test('an older tournament’s own payout pays the same: one row from 1 entry', (
   assert.deepEqual(prizes(t, club), [500, 300, 200]);
   assert.deepEqual(prizes(t), [500, 300, 200], 'without the club too');
   // The manager's page shows it as its own, besides Default and the club's tables.
-  addPayoutTable(club, {name: 'Standard', rows: ROWS});
-  const h = hostTourneysHtml(club, {}, {form: false}, 500);
+  const p = addPayoutTable(club, {name: 'Standard', rows: ROWS});
+  const h = hostTourneysHtml(club, {}, {}, 500);
   assert.match(h, /<option value="">Default<\/option><option value="[a-z0-9]+">Standard<\/option><option value="own" selected>Its own<\/option>/);
   assert.match(h, /50%<\/td><td>5<\/td>/);
-  assert.match(h, /<h2>Payout tables<\/h2>/);
-  assert.match(h, /data-cl="paytable-edit"/);
-  assert.match(payoutTablesHtml(club, {id: 'new', name: 'X', draft: draftOf()}), /form class="cl-paytable" data-paytable="new"/);
+  // Payout tables are chosen and made in the New tournament wizard (#477), not on the page.
+  assert.doesNotMatch(h, /Payout tables|paytable-edit/);
+  const w = {step: 3, d: {...newDraft(), payoutTable: p.id}, editor: structureEditor({stack: 1500}), edit: null};
+  const step3 = hostTourneysHtml(club, {}, {wizard: w}, 500);
+  assert.match(step3, /name="payoutTable" value="" ?>/, 'Default, not picked');
+  assert.match(step3, new RegExp(`value="${p.id}" checked`));
+  assert.match(step3, /data-cl="paytable-edit"/);
+  assert.match(step3, /data-cl="paytable-new"/);
+  assert.match(hostTourneysHtml(club, {}, {wizard: w, payTable: {id: 'new', name: 'X', draft: draftOf()}}, 500), /form class="cl-paytable" data-paytable="new"/);
 });
 
 test('members see the row in force, for the entries so far until registration closes', () => {

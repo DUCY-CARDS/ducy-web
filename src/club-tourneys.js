@@ -3,11 +3,15 @@
 // one (#81, club-tourney-host.js runs the tables). ducy-play's club_tourneys
 // (clubTourneys, from ducy-wasm, #457) runs the rules; here the chips move.
 //
-// A tournament: {id, name, game, buyIn, added, stack, structure, opensAt,
-// startsAt, minPlayers, maxPlayers, tableSize, lateLevel, reentry,
-// maxReentries, payout, status, entries, held, createdAt}.
-// - buyIn and added are club chips (hundredths, chip-format.js). The pool is
-//   every entry's buy-in plus the added chips. No fee for now.
+// A tournament: {id, name, game, buyIn, rake, added, stack, structure,
+// opensAt, startsAt, minPlayers, maxPlayers, tableSize, lateLevel, reentry,
+// maxReentries, payout, series, status, entries, held, createdAt}.
+// - buyIn, rake and added are club chips (hundredths, chip-format.js). The
+//   pool is every entry's buy-in plus the added chips. The rake (#477) is the
+//   club's fee on each entry and re-entry: paid with the buy-in and held with
+//   it, back with a refund, out of play once the tournament finishes.
+// - series: the club.tourneySeries it's one of, if it repeats (#477): each
+//   one made with the same settings when its registration should open.
 // - stack and the structure (#78: [{sb, bb, ante, minutes} | {break: true,
 //   minutes}]) are tournament chips: whole numbers, nothing to do with club chips.
 // - lateLevel: registration and re-entry stay open until the end of that
@@ -61,12 +65,13 @@ const byId = (list, from) => {
 // Runs `op` on the club's tournaments; returns its value. A tournament or
 // payout table someone holds stays the one in the club. Throws why, if refused.
 function rules(club, op, now = Date.now()) {
-  const part = {code: club.code, members: club.members || {}, tourneys: club.tourneys || [], payoutTables: club.payoutTables || []};
+  const part = {code: club.code, members: club.members || {}, tourneys: club.tourneys || [], payoutTables: club.payoutTables || [], tourneySeries: club.tourneySeries || []};
   const r = ducy.clubTourneys(JSON.stringify(part), op, now);
   if (!r.ok) throw new Error(r.message);
   if (r.club) {
     club.tourneys = byId(club.tourneys, r.club.tourneys);
     club.payoutTables = byId(club.payoutTables, r.club.payoutTables);
+    if (club.tourneySeries || r.club.tourneySeries?.length) club.tourneySeries = byId(club.tourneySeries, r.club.tourneySeries || []);
   }
   return r.value;
 }
@@ -224,10 +229,12 @@ export function knockedOut(club, tid, id, place) {
 // The tournament has a winner: places are final, and the prizes go into
 // winners' club balances. Returns [{member, place, amount}].
 export function finishTourney(club, tid, winner, now = Date.now()) {
-  const {paid, issued} = rules(club, {op: 'finish', tid, winner}, now);
+  const {paid, issued, raked} = rules(club, {op: 'finish', tid, winner}, now);
   for (const p of paid) payTo(club, p.member, 'prize', p.amount, tid, now);
-  // What was paid beyond what was held: the added chips, issued now.
+  // What was paid beyond what was held: the added chips, issued now. The
+  // rake held is the club's: out of play.
   club.chips.issued += issued;
+  club.chips.reclaimed += raked || 0;
   return paid;
 }
 
@@ -255,5 +262,6 @@ export function tourneyHost(club, tid, op, args = {}, now = Date.now()) {
   Object.assign(club.chips ??= {}, r.club.chips);
   club.log = r.club.log;
   club.tourneys = byId(club.tourneys, r.club.tourneys);
+  if (club.tourneySeries || r.club.tourneySeries?.length) club.tourneySeries = byId(club.tourneySeries, r.club.tourneySeries || []);
   return r.value;
 }

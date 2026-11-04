@@ -17,7 +17,7 @@ use crate::groups::MustMove;
 use crate::money::{CLUB, EntryKind};
 use crate::promos::{PromoState, Promos};
 use crate::rules::{RuleError, refuse};
-use crate::tourneys::{PayoutTable, Tourney, Tourneys};
+use crate::tourneys::{PayoutTable, Series, Tourney, Tourneys};
 
 /// The whole club the host keeps, as ducy-web's JSON.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -32,6 +32,9 @@ pub struct ClubState {
     /// Its payout tables.
     #[serde(default)]
     pub payout_tables: Vec<PayoutTable>,
+    /// Its repeating tournaments (#477).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tourney_series: Vec<Series>,
     /// Its promotions.
     #[serde(default)]
     pub promos: PromoState,
@@ -74,8 +77,13 @@ pub struct Outcome {
     pub help_to: Vec<String>,
     /// Promotions changed: re-arm the timer for the next period's end.
     pub arm_promos: bool,
-    /// New tournaments: time their starts.
+    /// New tournaments, or ones moved: time their starts.
     pub schedule: Vec<String>,
+    /// Series changed: re-arm the timer for the next one to make, at
+    /// `next_series`.
+    pub arm_series: bool,
+    /// When the next series tournament is to be made (`series_due`), if any is.
+    pub next_series: Option<u64>,
     /// Tournaments cancelled: stop their tables.
     pub stop_tourneys: Vec<String>,
     /// Members whose waitlists changed: send them theirs.
@@ -123,6 +131,13 @@ fn text(v: &Value, k: &str) -> String {
     }
 }
 
+/// The plan's tournaments a day (#265), from a command's `limits`.
+fn most_a_day(args: &Value) -> Option<u64> {
+    args.get("limits")
+        .and_then(|l| l.get("tourneysPerDay"))
+        .and_then(Value::as_u64)
+}
+
 /// A host setting and whether `v` will do for it.
 fn setting_ok(k: &str, v: &Value) -> bool {
     let int = |lo: i64, hi: i64| v.as_i64().is_some_and(|n| (lo..=hi).contains(&n));
@@ -156,10 +171,12 @@ impl ClubState {
             members: self.book.club.members.clone(),
             tourneys: std::mem::take(&mut self.tourneys),
             payout_tables: std::mem::take(&mut self.payout_tables),
+            series: std::mem::take(&mut self.tourney_series),
         };
         let r = f(&mut t);
         self.tourneys = t.tourneys;
         self.payout_tables = t.payout_tables;
+        self.tourney_series = t.series;
         r
     }
 
@@ -486,26 +503,104 @@ impl ClubState {
             // every buy-in back. `limits`: the plan's (#265, tourneysPerDay).
             "new_tourney" => {
                 let s = args.get("tourney").cloned().unwrap_or_else(|| json!({}));
-                let most = args
-                    .get("limits")
-                    .and_then(|l| l.get("tourneysPerDay"))
-                    .and_then(Value::as_u64);
+                let most = most_a_day(args);
                 let t = self.with_tourneys(|t| t.new_tourney(&s, now, most, rng))?;
                 out.schedule.push(t.id.clone());
+                out.arm_series = t.series.is_some();
                 out.value = t.id.into();
+                out.tell.push(Tell::Tourneys);
+            }
+            // A tournament still to start changed (#477): just it, or with
+            // `series`, its series from it on.
+            "edit_tourney" => {
+                let s = args.get("tourney").cloned().unwrap_or_else(|| json!({}));
+                let whole = args.get("series").and_then(Value::as_bool) == Some(true);
+                let most = most_a_day(args);
+                let ids = if whole {
+                    self.with_tourneys(|t| t.from_on(&id))?
+                } else {
+                    vec![id.clone()]
+                };
+                let t = self.with_tourneys(|t| t.edit_tourney(&id, &s, whole, now, most))?;
+                let what = if whole && t.series.is_some() {
+                    "the series"
+                } else {
+                    "tournament"
+                };
+                self.book
+                    .log_action(&actor, &format!("Changed {what} {}", t.name), now, None);
+                out.schedule.extend(ids);
+                out.arm_series = whole;
+                out.tell.push(Tell::Tourneys);
+            }
+            // A series with none of it waiting to start (#477): what the next
+            // ones are made with, or no more of them.
+            "edit_series" => {
+                let s = args.get("tourney").cloned().unwrap_or_else(|| json!({}));
+                let se = self.with_tourneys(|t| t.edit_series(&id, &s, now))?;
+                let name = se
+                    .settings
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                self.book
+                    .log_action(&actor, &format!("Changed the series {name}"), now, None);
+                out.arm_series = true;
+                out.tell.push(Tell::Tourneys);
+            }
+            "stop_series" => {
+                self.with_tourneys(|t| t.stop_series(&id))?;
+                out.arm_series = true;
                 out.tell.push(Tell::Tourneys);
             }
             "cancel_tourney" => {
                 if !self.tourneys.iter().any(|t| t.id == id) {
                     return refuse("No such tournament.");
                 }
+                // With `series`: it, every one of its series after it, and
+                // none made from now on.
+                let whole = args.get("series").and_then(Value::as_bool) == Some(true);
+                let ids = if whole {
+                    self.with_tourneys(|t| t.from_on(&id))?
+                } else {
+                    vec![id.clone()]
+                };
                 let mut step = crate::tourney_host::TourneyStep::default();
-                self.tourney_abandon(&id, "the manager cancelled it", true, now, &mut step)?;
+                for tid in &ids {
+                    self.tourney_abandon(tid, "the manager cancelled it", true, now, &mut step)?;
+                }
+                if whole
+                    && let Some(sid) = self
+                        .tourneys
+                        .iter()
+                        .find(|t| t.id == id)
+                        .and_then(|t| t.series.clone())
+                {
+                    self.with_tourneys(|t| t.stop_series(&sid))?;
+                    out.arm_series = true;
+                }
                 for m in &step.chips_changed {
                     self.account_latest(m, &mut out);
                 }
-                out.stop_tourneys.push(id);
+                out.stop_tourneys.extend(ids);
                 out.tell.push(Tell::Tourneys);
+            }
+            // The series' tournaments whose registration should open now
+            // (#477), made with the same settings; the club's timer runs it.
+            "series_due" => {
+                let most = most_a_day(args);
+                let (made, skipped) = self.with_tourneys(|t| Ok(t.series_due(now, most, rng)))?;
+                let host = self.book.club.host_id.clone();
+                for why in &skipped {
+                    self.book.log_action(&host, why, now, None);
+                }
+                if !made.is_empty() {
+                    out.tell.push(Tell::Tourneys);
+                }
+                out.schedule.extend(made.iter().map(|t| t.id.clone()));
+                out.value = made.len().into();
+                out.arm_series = true;
             }
             // A member registering or unregistering before the start (#77):
             // the buy-in down their path, or back up it. `tid`: the tournament.
@@ -564,7 +659,15 @@ impl ClubState {
             }
             _ => return refuse(format!("no host action {op}")),
         }
+        if out.arm_series {
+            out.next_series = self.next_series_at();
+        }
         Ok(out)
+    }
+
+    /// When the next series tournament is to be made, if one is.
+    pub fn next_series_at(&self) -> Option<u64> {
+        self.tourney_series.iter().filter_map(Series::due_at).min()
     }
 }
 
@@ -802,6 +905,139 @@ mod tests {
         );
         assert_eq!(c.book.balance("ann"), 1000);
         assert!(run(&mut c, "cancel_tourney", json!({"id": "nope"})).is_err());
+    }
+
+    #[test]
+    fn a_repeating_tournament_makes_each_one_when_its_registration_opens() {
+        let mut c = club(&["ann", "bob"]);
+        run(&mut c, "give", json!({"id": "ann", "amount": 1000})).unwrap();
+        const H: u64 = 3_600_000;
+        const DAY: u64 = 24 * H;
+        let start = 10 * DAY;
+        let s = json!({"name": "Nightly", "buyIn": 100, "rake": 10, "stack": 1500, "startsAt": start,
+                       "opensBefore": 2 * H, "repeat": {"every": "day", "count": 3},
+                       "structure": [{"sb": 10, "bb": 20, "minutes": 10}]});
+        let o = run(&mut c, "new_tourney", json!({"tourney": s})).unwrap();
+        let first = o.value.as_str().unwrap().to_string();
+        assert!(o.arm_series);
+        // The next opens two hours before its start, a day on.
+        assert_eq!(o.next_series, Some(start + DAY - 2 * H));
+        let t = c.tourneys[0].clone();
+        assert_eq!(
+            (t.opens_at, t.rake, t.series.is_some()),
+            (start - 2 * H, 10, true)
+        );
+        let at =
+            |c: &mut ClubState, now: u64| c.run("series_due", &json!({}), now, &mut rng()).unwrap();
+        // Not yet.
+        assert_eq!(at(&mut c, start + DAY - 2 * H - 1).value, 0);
+        let o = at(&mut c, start + DAY - 2 * H);
+        assert_eq!(o.value, 1);
+        assert_eq!(o.next_series, Some(start + 2 * DAY - 2 * H));
+        let second = c.tourneys[1].clone();
+        assert_eq!(
+            (second.starts_at, second.opens_at),
+            (start + DAY, start + DAY - 2 * H)
+        );
+        assert_eq!(
+            (second.name.as_str(), second.buy_in, second.rake),
+            ("Nightly", 100, 10)
+        );
+        assert_eq!(second.series, t.series);
+        assert_eq!(o.schedule, std::slice::from_ref(&second.id));
+
+        // Ann registers for the second; the whole series moves an hour later
+        // and pays 20 added, from the second on. The game, buy-in and rake
+        // stay once someone's in.
+        c.run(
+            "register",
+            &json!({"tid": second.id, "id": "ann"}),
+            start + DAY - H,
+            &mut rng(),
+        )
+        .unwrap();
+        assert_eq!(c.book.balance("ann"), 890);
+        let mut s2 = s.clone();
+        s2["startsAt"] = (start + DAY + H).into();
+        s2["added"] = 20.into();
+        s2.as_object_mut().unwrap().remove("repeat");
+        let o = run(
+            &mut c,
+            "edit_tourney",
+            json!({"id": second.id, "tourney": s2, "series": true}),
+        )
+        .unwrap();
+        assert!(o.schedule.contains(&second.id));
+        let moved = c.tourneys.iter().find(|x| x.id == second.id).unwrap();
+        assert_eq!((moved.starts_at, moved.added), (start + DAY + H, 20));
+        // The first stays as it was.
+        assert_eq!(c.tourneys[0].starts_at, start);
+        assert_eq!(c.tourney_series[0].next, start + 2 * DAY + H);
+        let mut s3 = s2.clone();
+        s3["rake"] = 5.into();
+        assert!(
+            run(
+                &mut c,
+                "edit_tourney",
+                json!({"id": second.id, "tourney": s3})
+            )
+            .unwrap_err()
+            .0
+            .contains("buy-in and rake stay")
+        );
+        // The third is made with the new settings, an hour later.
+        at(&mut c, start + 2 * DAY + H - 2 * H);
+        let third = c.tourneys[2].clone();
+        assert_eq!((third.starts_at, third.added), (start + 2 * DAY + H, 20));
+        // Three in all: no more.
+        assert_eq!(c.next_series_at(), None);
+
+        // Cancelling the second with the series: it and the third, refunds
+        // with the rake, and the series stops.
+        let o = run(
+            &mut c,
+            "cancel_tourney",
+            json!({"id": second.id, "series": true}),
+        )
+        .unwrap();
+        assert_eq!(o.stop_tourneys, [second.id.clone(), third.id.clone()]);
+        assert_eq!(c.book.balance("ann"), 1000);
+        assert!(c.tourney_series[0].stopped);
+        assert_eq!(
+            c.tourneys[0].status,
+            crate::tourneys::TourneyStatus::Scheduled
+        );
+        assert!(!first.is_empty());
+    }
+
+    #[test]
+    fn a_series_needs_an_end_and_skips_starts_gone_by() {
+        let mut c = club(&[]);
+        const DAY: u64 = 86_400_000;
+        let mut s = json!({"stack": 1500, "startsAt": 5 * DAY, "opensBefore": DAY,
+                           "repeat": {"every": "week"},
+                           "structure": [{"sb": 10, "bb": 20, "minutes": 10}]});
+        assert!(
+            run(&mut c, "new_tourney", json!({"tourney": s}))
+                .unwrap_err()
+                .0
+                .contains("stops repeating")
+        );
+        s["repeat"]["until"] = (5 * DAY + 21 * DAY).into();
+        run(&mut c, "new_tourney", json!({"tourney": s})).unwrap();
+        // The club was off for two weeks: the ones gone by are skipped, and
+        // the last, on the end date, is made when its registration opens.
+        let o = c
+            .run("series_due", &json!({}), 20 * DAY, &mut rng())
+            .unwrap();
+        assert_eq!(o.value, 0);
+        assert_eq!(o.next_series, Some(25 * DAY));
+        let o = c
+            .run("series_due", &json!({}), 25 * DAY, &mut rng())
+            .unwrap();
+        assert_eq!(o.value, 1);
+        assert_eq!(c.tourneys.last().unwrap().starts_at, 26 * DAY);
+        assert_eq!(o.next_series, None);
     }
 
     #[test]

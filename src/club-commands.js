@@ -20,7 +20,7 @@ export const HOSTED = new Set([
   'offer_agent', 'revoke_agent', 'assign_agent', 'help_answer', 'settings', 'set_info', 'set_payout',
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
-  'new_tourney', 'cancel_tourney', 'set_must_move', 'list_remove', 'offer_game', 'remove_offer',
+  'new_tourney', 'edit_tourney', 'edit_series', 'stop_series', 'cancel_tourney', 'set_must_move', 'list_remove', 'offer_game', 'remove_offer',
 ]);
 
 // The club's fields a command may change.
@@ -49,7 +49,7 @@ function apply(club, out) {
   }
   Object.assign(club.chips ??= {}, out.chips);
   // Lists a club has had, or now has something in.
-  for (const k of ['tourneys', 'payoutTables']) {
+  for (const k of ['tourneys', 'payoutTables', 'tourneySeries']) {
     if (club[k] || out[k]?.length) club[k] = byId(club[k], out[k]);
   }
   if (!club.promos && !out.promos?.list?.length) return;
@@ -62,7 +62,8 @@ function apply(club, out) {
 
 // Runs command `op` with `args` on `club`. Returns what it did: {value,
 // replies, accounts, tell, tablesTo, helpTo, armPromos, schedule (new
-// tournaments to time), stopTourneys (cancelled ones to stop), listsTo
+// tournaments to time), stopTourneys (cancelled ones to stop), armSeries and
+// nextSeries (when the next repeating tournament is made, #477), listsTo
 // (members whose waitlists changed)}. Besides the
 // manager's commands, a member's own 'register' and 'unregister' {tid, id}
 // for a tournament run here too. Throws why not.
