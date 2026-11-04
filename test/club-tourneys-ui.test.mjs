@@ -151,7 +151,8 @@ test('the wizard’s pages: steps, Customize, schedule choices and the review (#
   assert.match(h, /form="tw-form">Next</);
   assert.doesNotMatch(h, /tw-back/);
   h = page(2);
-  assert.match(h, /value="custom"[^>]*>Customize/);
+  assert.match(h, /value="custom"[^>]*><span class="tw-tile-name">Customize/);
+  assert.match(h, /min levels</, 'each preset says how long its levels are');
   assert.doesNotMatch(h, /data-tseditor/, 'blind levels behind Customize');
   assert.doesNotMatch(h, /data-ts="preset"/);
   assert.match(page(2, {preset: 'custom'}), /data-tseditor/);

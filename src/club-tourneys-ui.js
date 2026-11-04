@@ -183,11 +183,21 @@ export function readStep(f, d, step, {strict = true, now = Date.now(), edit = nu
   return '';
 }
 
-const tfRadio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="radio" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}>${label}</label>`;
-const tfCheck = (name, value, label, on) => `<label class="cc-btn tf-opt"><input type="checkbox" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}>${label}</label>`;
+// The wizard's pieces: a choice as a tile (`meta`: a line of data under
+// it), a row of tiles, a segmented choice, a group with its heading, and
+// a field with its label.
+const tile = (type, name, value, label, on, meta = '') =>
+  `<label class="tw-tile"><input type="${type}" name="${name}" value="${esc(value)}"${on ? ' checked' : ''}><span class="tw-tile-name">${label}</span>${meta ? `<span class="tw-tile-meta">${meta}</span>` : ''}</label>`;
+const tfRadio = (name, value, label, on, meta) => tile('radio', name, value, label, on, meta);
+const tfCheck = (name, value, label, on) => tile('checkbox', name, value, label, on);
+const tiles = (html, cls = '') => `<div class="tw-tiles${cls}">${html}</div>`;
+const seg = (label, html) => `<div class="tw-row"><span class="tw-label">${label}</span><div class="tw-seg">${html}</div></div>`;
+const group = (label, html) => `<section class="tw-group"><h4>${label}</h4>${html}</section>`;
 const options = (list, picked) => list.map(([v, label]) => `<option value="${v}"${v === picked ? ' selected' : ''}>${esc(label)}</option>`).join('');
-const row = (label, html) => `<div class="pl-row"><span class="pl-label">${label}</span><div class="pl-opts">${html}</div></div>`;
-const field = (label, html) => `<label>${label}${html}</label>`;
+const field = (label, html, wide = false) => `<label class="tw-field${wide ? ' tw-wide' : ''}"><span class="tw-label">${label}</span>${html}</label>`;
+// `cls`: tw-trio (three short numbers, side by side even on a phone),
+// tw-roomy (wider fields, for a date and time).
+const fields = (html, cls = '') => `<div class="tw-fields${cls ? ` ${cls}` : ''}">${html}</div>`;
 const num = (name, value, attrs = '') => `<input class="pl-text" name="${name}" type="number" step="1" inputmode="numeric" value="${esc(value)}" ${attrs}>`;
 const chips = (name, value) => `<input class="pl-text" name="${name}" type="number" min="0" step="${CHIP_STEP}" inputmode="decimal" value="${esc(chipInput(value))}">`;
 
@@ -213,34 +223,38 @@ export function wizardHtml(w, club, payTable = null) {
   const tables = club.payoutTables || [];
   const title = w.edit ? 'Change tournament' : 'New tournament';
   let h = '<div class="tw">';
-  h += `<div class="tw-head"><h3>${title}</h3><button class="btn-small" type="button" data-cl="cancel-tourney-form" aria-label="Close">✕</button></div>`;
+  h += `<div class="tw-head"><h3>${title}</h3><button class="tw-close" type="button" data-cl="cancel-tourney-form" aria-label="Close">✕</button></div>`;
+  // The steps: done ones go back to themselves.
   h += '<ol class="tw-steps">';
   WIZARD_STEPS.forEach((label, i) => {
     const n = i + 1;
-    const cls = n === step ? ' class="on"' : n < step ? ' class="done"' : '';
-    h += `<li${cls}>${n < step ? `<button type="button" data-cl="tw-go" data-step="${n}">${n}. ${esc(label)}</button>` : `<span>${n}. ${esc(label)}</span>`}</li>`;
+    const inner = `<span class="tw-dot">${n < step ? '✓' : n}</span><span class="tw-name">${esc(label)}</span>`;
+    const cls = n === step ? ' class="on" aria-current="step"' : n < step ? ' class="done"' : '';
+    h += `<li${cls}>${n < step ? `<button type="button" class="tw-step" data-cl="tw-go" data-step="${n}">${inner}</button>` : `<span class="tw-step">${inner}</span>`}</li>`;
   });
   h += '</ol>';
-  h += `<form class="cl-tableform tf" id="tw-form" data-tourneyform="${step}">`;
+  h += `<form class="tw-body" id="tw-form" data-tourneyform="${step}">`;
   if (step === 1) {
-    h += '<div class="tf-fields">' + field('Name', `<input class="pl-text" name="name" maxlength="40" placeholder="Tournament" value="${esc(d.name)}">`) + '</div>';
-    h += row('Game', GAMES.map(g => tfRadio('game', g.id, esc(g.label), g.id === d.game)).join(''));
-    h += '<div class="tf-fields">' + field('Buy-in', chips('buyIn', d.buyIn)) + field('Rake', chips('rake', d.rake)) + field('Added', chips('added', d.added)) + '</div>';
+    h += fields(field('Name', `<input class="pl-text" name="name" maxlength="40" placeholder="Tournament" value="${esc(d.name)}">`, true));
+    h += group('Game', tiles(GAMES.map(g => tfRadio('game', g.id, esc(g.label), g.id === d.game)).join('')));
+    h += group('Entry', fields(field('Buy-in', chips('buyIn', d.buyIn)) + field('Rake', chips('rake', d.rake)) + field('Added', chips('added', d.added)), 'tw-trio'));
   } else if (step === 2) {
-    h += '<div class="tf-fields">';
-    h += field('Starting stack', num('stack', d.stack, 'min="20" data-tstack="1"'));
-    h += field('Table size', num('tableSize', d.tableSize, `min="2" max="${maxSeats(d.game)}"`));
-    h += field('Minimum players', num('minPlayers', d.minPlayers, 'min="2"'));
-    h += field('Maximum players', num('maxPlayers', d.maxPlayers, 'min="2" max="1000"'));
-    h += '</div>';
-    h += row('Blinds', PRESETS().map(p => tfRadio('preset', p.id, esc(p.label), d.preset === p.id)).join('') + tfRadio('preset', 'custom', 'Customize', d.preset === 'custom'));
-    if (d.preset === 'custom') h += `<div data-tseditor="1">${w.editor.html()}</div>`;
+    h += group('Stack and players', fields(
+      field('Starting stack', num('stack', d.stack, 'min="20" data-tstack="1"'))
+      + field('Table size', num('tableSize', d.tableSize, `min="2" max="${maxSeats(d.game)}"`))
+      + field('Minimum players', num('minPlayers', d.minPlayers, 'min="2"'))
+      + field('Maximum players', num('maxPlayers', d.maxPlayers, 'min="2" max="1000"'))));
+    const levels = w.editor.steps().filter(s => !s.break).length;
+    let blinds = tiles(PRESETS().map(p => tfRadio('preset', p.id, esc(p.label), d.preset === p.id, `${p.minutes} min levels`)).join('')
+      + tfRadio('preset', 'custom', 'Customize', d.preset === 'custom', d.preset === 'custom' ? `${levels} levels` : ''));
+    if (d.preset === 'custom') blinds += `<div class="tw-editor" data-tseditor="1">${w.editor.html()}</div>`;
+    h += group('Blinds', blinds);
   } else if (step === 3) {
     h += '<div class="tw-pays">';
-    h += `<label class="tw-pay">${'<input type="radio" name="payoutTable" value=""' + (d.payoutTable ? '' : ' checked') + '>'}<span class="cl-name">Default</span></label>`;
+    h += `<div class="tw-pay"><label><input type="radio" name="payoutTable" value=""${d.payoutTable ? '' : ' checked'}><span class="tw-tile-name">Default</span></label></div>`;
     for (const p of tables) {
       const on = d.payoutTable === p.id;
-      h += `<div class="tw-pay${on ? ' on' : ''}"><label><input type="radio" name="payoutTable" value="${esc(p.id)}"${on ? ' checked' : ''}><span class="cl-name">${esc(p.name)}</span></label>`;
+      h += `<div class="tw-pay"><label><input type="radio" name="payoutTable" value="${esc(p.id)}"${on ? ' checked' : ''}><span class="tw-tile-name">${esc(p.name)}</span></label>`;
       if (on && payTable?.id !== p.id) {
         h += `<span class="cl-acts"><button class="btn-small" type="button" data-cl="paytable-edit" data-id="${esc(p.id)}">Edit</button><button class="btn-small" type="button" data-cl="paytable-delete" data-id="${esc(p.id)}">Delete</button></span>`;
         h += rowsTableHtml(p.rows);
@@ -250,35 +264,44 @@ export function wizardHtml(w, club, payTable = null) {
     h += '</div>';
   } else if (step === 4) {
     const repeatable = !w.edit || w.edit.series;
-    if (repeatable) h += row('Repeats', [['once', 'Once'], ['day', 'Daily'], ['week', 'Weekly']].map(([v, l]) => tfRadio('when', v, l, d.when === v)).join(''));
-    h += '<div class="tf-fields">' + field(d.when === 'once' || !repeatable ? 'Starts' : 'First start', `<input class="pl-text" name="startsAt" type="datetime-local" value="${localInput(d.startsAt)}">`) + '</div>';
     const repeats = repeatable && d.when !== 'once';
-    if (repeats && d.when === 'week') h += row('Days', WEEKDAYS.map((l, i) => tfCheck('days', i, l, d.days.includes(i))).join(''));
+    let when = '';
+    if (repeatable) when += seg('Repeats', [['once', 'Once'], ['day', 'Daily'], ['week', 'Weekly']].map(([v, l]) => tfRadio('when', v, l, d.when === v)).join(''));
+    if (repeats && d.when === 'week') when += seg('Days', WEEKDAYS.map((l, i) => tfCheck('days', i, l, d.days.includes(i))).join(''));
+    let at = field(repeats ? 'First start' : 'Starts', `<input class="pl-text" name="startsAt" type="datetime-local" value="${localInput(d.startsAt)}">`);
     if (repeats) {
-      h += row('Ends', tfRadio('end', 'count', 'After', d.end === 'count') + tfRadio('end', 'until', 'On a date', d.end === 'until'));
-      h += '<div class="tf-fields">' + (d.end === 'until'
+      at += `<div class="tw-field"><span class="tw-label">Ends</span><div class="tw-seg">${tfRadio('end', 'count', 'After', d.end === 'count') + tfRadio('end', 'until', 'On a date', d.end === 'until')}</div></div>`;
+      at += d.end === 'until'
         ? field('Last date', `<input class="pl-text" name="until" type="date" value="${dateInput(d.until)}">`)
-        : field('Times', num('count', d.count, 'min="2" max="500"'))) + '</div>';
+        : field('Times', num('count', d.count, 'min="2" max="500"'));
     }
-    h += '<div class="tf-fields">';
-    h += field('Registration opens', `<select class="pl-text" name="opensBefore">${options(OPENS.filter(([v]) => !repeats || v > 0), d.opensBefore)}</select>`);
-    h += field('Late registration', `<select class="pl-text" name="lateLevel">${options(Array.from({length: LATE_LEVELS + 1}, (_, n) => [n, lateText(n)]), d.lateLevel)}</select>`);
-    h += field('Re-entries', `<select class="pl-text" name="reentries">${options(REENTRIES, d.reentry ? d.maxReentries : -1)}</select>`);
-    h += '</div>';
+    h += group('When', when + fields(at, 'tw-roomy'));
+    h += group('Registration', fields(
+      field('Opens', `<select class="pl-text" name="opensBefore">${options(OPENS.filter(([v]) => !repeats || v > 0), d.opensBefore)}</select>`)
+      + field('Late entry', `<select class="pl-text" name="lateLevel">${options(Array.from({length: LATE_LEVELS + 1}, (_, n) => [n, lateText(n)]), d.lateLevel)}</select>`)
+      + field('Re-entries', `<select class="pl-text" name="reentries">${options(REENTRIES, d.reentry ? d.maxReentries : -1)}</select>`), 'tw-roomy'));
   } else {
     const steps = w.editor.steps().filter(s => !s.break);
     const blinds = d.preset === 'custom' ? `Custom · ${steps.length} levels` : presetLabel(d.preset);
     const payName = d.payoutTable ? tables.find(p => p.id === d.payoutTable)?.name || 'Default' : 'Default';
-    const rows = [
-      ['Name', d.name || 'Tournament'], ['Game', gameName(d.game)], ['Buy-in', d.rake ? `${club$(d.buyIn)} + ${club$(d.rake)} rake` : club$(d.buyIn)],
-      ...(d.added ? [['Added', club$(d.added)]] : []), ['Starting stack', whole(d.stack)], ['Table size', String(d.tableSize)],
-      ['Players', `${d.minPlayers}–${d.maxPlayers}`], ['Blinds', blinds], ['Payouts', payName],
-      [d.when === 'once' || (w.edit && !w.edit.series) ? 'Starts' : 'First start', dateTime(d.startsAt)],
-      ...(!w.edit || w.edit.series ? [['Repeats', repeatText(d)]] : []),
-      ['Registration opens', opensText(d.when !== 'once' && (!w.edit || w.edit.series) && !d.opensBefore ? 2 * HOUR : d.opensBefore)],
-      ['Late registration', lateText(d.lateLevel)], ['Re-entries', reentryText(d)],
+    const repeatable = !w.edit || w.edit.series;
+    // The review, by step, each with its way back.
+    const parts = [
+      [['Name', d.name || 'Tournament'], ['Game', gameName(d.game)], ['Buy-in', d.rake ? `${club$(d.buyIn)} + ${club$(d.rake)} rake` : club$(d.buyIn)],
+        ...(d.added ? [['Added', club$(d.added)]] : [])],
+      [['Starting stack', whole(d.stack)], ['Table size', String(d.tableSize)], ['Players', `${d.minPlayers}–${d.maxPlayers}`], ['Blinds', blinds]],
+      [['Table', payName]],
+      [[d.when === 'once' || !repeatable ? 'Starts' : 'First start', dateTime(d.startsAt)],
+        ...(repeatable ? [['Repeats', repeatText(d)]] : []),
+        ['Registration opens', opensText(d.when !== 'once' && repeatable && !d.opensBefore ? 2 * HOUR : d.opensBefore)],
+        ['Late entry', lateText(d.lateLevel)], ['Re-entries', reentryText(d)]],
     ];
-    h += `<dl class="tw-review">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+    h += '<div class="tw-review">';
+    parts.forEach((rows, i) => {
+      h += `<section class="tw-sum"><div class="tw-sum-head"><h4>${esc(WIZARD_STEPS[i])}</h4><button type="button" class="tw-edit" data-cl="tw-go" data-step="${i + 1}">Edit</button></div>`;
+      h += `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></section>`;
+    });
+    h += '</div>';
   }
   if (w.note) h += `<p class="pl-desc pl-neterr tf-note">${esc(w.note)}</p>`;
   h += '</form>';
@@ -287,7 +310,7 @@ export function wizardHtml(w, club, payTable = null) {
     if (payTable) h += payTableForm(payTable.id, payTable.name, payTable.draft);
     else h += '<div class="pl-actions"><button class="btn-small" type="button" data-cl="paytable-new">New payout table</button></div>';
   }
-  h += '<div class="cl-formacts">';
+  h += '<div class="tw-foot">';
   if (step > 1) h += '<button class="btn-small" type="button" data-cl="tw-back">Back</button>';
   h += `<button class="btn-small primary" type="submit" form="tw-form">${step < 5 ? 'Next' : w.edit ? 'Save' : 'Create'}</button>`;
   return h + '</div></div>';
