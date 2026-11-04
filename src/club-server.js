@@ -389,6 +389,7 @@ export function createClubServer({
       ...engine,
     });
     tourneyHost.startAll();
+    if (club.tourneySeries?.length) makeSeries();
     // A "Join?" question open when the club last stopped goes on, on time;
     // so do seat offers and places kept on the waitlists.
     for (const g of club.groups || []) if (g.ask) armAsk(g.id);
@@ -688,9 +689,11 @@ export function createClubServer({
 
   // A command the club host runs (club-commands.js, #456): it changes the
   // club, then what it means for everyone else is carried out here.
+  const LIMITED = new Set(['new_tourney', 'edit_tourney', 'edit_series', 'series_due']);
   async function hosted(op, args) {
-    // A new tournament counts against the plan's tournaments a day (#265).
-    const out = command(club, op, op === 'new_tourney' ? {...args, limits} : args);
+    // A new tournament counts against the plan's tournaments a day (#265),
+    // as does one moved or made for a series (#477).
+    const out = command(club, op, LIMITED.has(op) ? {...args, limits} : args);
     changed();
     // Tournaments: new ones start at their time; cancelled ones stop.
     for (const tid of out.stopTourneys) tourneyHost?.stop(tid);
@@ -728,7 +731,23 @@ export function createClubServer({
       for (const id of memberIds()) sendToPlayer({to: id, body});
     }
     if (out.armPromos) armPromos();
+    if (out.armSeries) armSeries(out.nextSeries);
     return out.value ?? undefined;
+  }
+
+  // Repeating tournaments (#477): each is made when its registration should
+  // open, on a timer for the soonest (the room's alarm in an always-on club),
+  // and whenever the tables start, so one due while the club slept is made
+  // on waking.
+  let seriesTimer = null;
+  function armSeries(next) {
+    if (seriesTimer != null) promoTimers.clear(seriesTimer);
+    seriesTimer = null;
+    if (next != null) seriesTimer = promoTimers.set(makeSeries, Math.min(Math.max(0, next - Date.now()) + 1000, 2 ** 31 - 1));
+  }
+  function makeSeries() {
+    seriesTimer = null;
+    hosted('series_due', {}).catch(e => console.warn('club: repeating tournaments:', e));
   }
 
   // `extraOps`: actions only where the club runs can do them (an always-on

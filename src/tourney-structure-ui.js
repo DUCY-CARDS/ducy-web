@@ -17,17 +17,22 @@ export const FIELD_SIZES = [6, 9, 18, 27, 45];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const num = n => Number(n).toLocaleString('en-US');
 
-export function structureEditor({stack, tableSize = 9, preset = 'regular', onChange = () => {}}) {
-  let steps = presetStructure(preset, stack);
-  let chosen = preset;
+// `steps`: a structure to start from (a tournament being changed), else the
+// preset's.
+// `presets` false: no preset buttons (the page has its own).
+export function structureEditor({stack, tableSize = 9, preset = 'regular', steps: from = null, presets = true, onChange = () => {}}) {
+  let steps = from ? from.map(s => ({...s})) : presetStructure(preset, stack);
+  let chosen = from ? null : preset;
 
   const changed = () => { onChange(steps); return true; };
 
   function html() {
     let h = '<div class="ts-editor">';
-    h += '<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">';
-    h += PRESETS().map(p => `<button type="button" class="cc-btn${chosen === p.id ? ' on' : ''}" data-ts="preset" data-preset="${p.id}">${esc(p.label)}</button>`).join('');
-    h += '</div></div>';
+    if (presets) {
+      h += '<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">';
+      h += PRESETS().map(p => `<button type="button" class="cc-btn${chosen === p.id ? ' on' : ''}" data-ts="preset" data-preset="${p.id}">${esc(p.label)}</button>`).join('');
+      h += '</div></div>';
+    }
     h += '<table class="ts-levels"><thead><tr><th>Level</th><th>Small blind</th><th>Big blind</th><th>Ante</th><th>Minutes</th><th></th></tr></thead><tbody>';
     let level = 0;
     steps.forEach((s, i) => {
@@ -107,5 +112,12 @@ export function structureEditor({stack, tableSize = 9, preset = 'regular', onCha
     return changed();
   }
 
-  return {html, errors, click, input, setStack, steps: () => steps.map(s => ({...s}))};
+  // A preset picked outside the editor (the wizard's Turbo, Regular, Deep).
+  function setPreset(id) {
+    chosen = id;
+    steps = presetStructure(id, stack);
+    return changed();
+  }
+
+  return {html, errors, click, input, setStack, setPreset, preset: () => chosen, steps: () => steps.map(s => ({...s}))};
 }

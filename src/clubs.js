@@ -51,10 +51,11 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { celebrateAtTable, joinTableVia, showFairCheck, tableChanged } from './play.js';
-import { hostTourneysHtml, memberTourneysHtml, readTourneyForm, tourneyCallsFor } from './club-tourneys-ui.js';
+import { draftLast, draftSettings, hostTourneysHtml, memberTourneysHtml, newDraft, readStep, tourneyCallsFor, tourneyDraft } from './club-tourneys-ui.js';
+import { checkStructure } from './tourney-structure.js';
 import { hostPromosHtml, memberPromosHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { readServiceForm, servicesHtml } from './club-services-ui.js';
-import { payoutTableById } from './club-tourneys.js';
+import { payoutTableById, tourneyById } from './club-tourneys.js';
 import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './payout-table-ui.js';
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
@@ -113,10 +114,12 @@ const appBase = () => new URL('./', location.href).href;
 // (#152); a club run in a browser is still opened and moved as before.
 let alwaysFailed = null;
 let tableForm = false; // the New table form is open
-// Tournaments (#64): the New tournament form and its blind structure
-// editor, and the payout table being edited (#424: {id ('new' for a new
-// one), name, draft}, payout-table-ui.js), kept as it's typed.
-let tourneyForm = false, tEditor = null, payTable = null;
+// Tournaments (#64): the New tournament wizard (#477: {step, d, editor,
+// edit, note}, club-tourneys-ui.js wizardHtml), the payout table being made
+// or edited in it (#424: {id ('new' for a new one), name, draft},
+// payout-table-ui.js), kept as it's typed, and a series question open on
+// the Tournaments page ({id, act}).
+let tourneyForm = null, payTable = null, tAsk = null;
 const syncPayTable = fm => { if (payTable) { payTable.name = fm.elements.name.value; payTable.draft = readRows(fm, payTable.draft); } };
 const TOURNEY_KEY = 'ducyTourneyChoice';
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
@@ -333,6 +336,49 @@ function tableFormHtml({wizard = false, offer = false} = {}) {
   h += `<div class="cl-formacts"><button class="btn-small primary" type="submit">${offer ? 'Offer' : 'Open table'}</button>`;
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-invite">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
   return h + '</div></form>';
+}
+
+// ---- the New tournament wizard (#477) ----
+
+// Choices in the wizard that change what its step shows.
+const WIZARD_CHOICES = new Set(['game', 'preset', 'when', 'end', 'payoutTable']);
+
+// Opens the wizard on draft `d`: a new tournament, or `edit` ({id, series,
+// startsAt}: changing a tournament, the whole series too with `series`;
+// {sid}: a series none of which is waiting to start) with its `structure`.
+function openWizard(d, edit = null, structure = null) {
+  const editor = structureEditor({stack: d.stack, tableSize: d.tableSize, preset: d.preset === 'custom' ? 'regular' : d.preset, steps: structure, presets: false});
+  tourneyForm = {step: 1, d, edit, note: '', editor};
+  payTable = null;
+  tAsk = null;
+  render();
+}
+
+// The blind structure follows the preset picked, at the starting stack.
+function syncWizardBlinds(w) {
+  if (w.d.preset !== 'custom' && w.editor.preset() !== w.d.preset) w.editor.setPreset(w.d.preset);
+  w.editor.setStack(w.d.stack);
+}
+
+// Next: the step read and checked, then the next one; after Review, the
+// tournament made or changed.
+function wizardNext(f) {
+  const w = tourneyForm;
+  if (!w) return;
+  w.note = readStep(f, w.d, w.step, {edit: w.edit, structureErrors: w.d.preset === 'custom' ? checkStructure(w.editor.steps()) : []});
+  if (w.step === 2) syncWizardBlinds(w);
+  if (w.note) { render(); return; }
+  if (w.step < 5) { w.step++; payTable = null; render(); return; }
+  const s = draftSettings(w.d, w.editor.steps(), {repeat: !w.edit || !!w.edit.series});
+  const done = !w.edit ? hostAct('new_tourney', {tourney: s})
+    : w.edit.sid ? hostAct('edit_series', {id: w.edit.sid, tourney: s})
+      : hostAct('edit_tourney', {id: w.edit.id, tourney: s, series: !!w.edit.series});
+  done.then(ok => {
+    if (!ok) return;
+    if (!w.edit) save(TOURNEY_KEY, draftLast(w.d));
+    tourneyForm = null;
+    render();
+  });
 }
 
 const formTableName = (game, sb, bb) => defaultTableName(club || {tables: []}, game, sb, bb);
@@ -972,21 +1018,10 @@ function onSubmitIn(e) {
       .then(ok => { if (ok) { mustMoveForm = ''; render(); } });
     return;
   }
-  // A new tournament (#77), or a club payout table (#424).
+  // A step of the New tournament wizard (#77, #477), or a club payout table
+  // made or changed in it (#424).
   const tof = e.target.closest('form[data-tourneyform]');
-  if (tof) {
-    e.preventDefault();
-    let tourney;
-    try { tourney = readTourneyForm(tof, tEditor); } catch (err) { alert(err.message); return; }
-    hostAct('new_tourney', {tourney}).then(ok => {
-      if (!ok) return;
-      const {name: _, opensAt: __, startsAt: ___, structure: ____, ...last} = tourney;
-      save(TOURNEY_KEY, last);
-      tourneyForm = false;
-      render();
-    });
-    return;
-  }
+  if (tof) { e.preventDefault(); wizardNext(tof); return; }
   const pf = e.target.closest('form[data-paytable]');
   if (pf) {
     e.preventDefault();
@@ -995,7 +1030,13 @@ function onSubmitIn(e) {
     let table;
     try { table = {name: payTable.name, rows: cleanRows(payTable.draft)}; } catch (err) { alert(err.message); return; }
     const id = pf.dataset.paytable;
-    hostAct(id === 'new' ? 'add_payout_table' : 'edit_payout_table', id === 'new' ? {table} : {id, table}).then(ok => { if (ok) { payTable = null; render(); } });
+    hostAct(id === 'new' ? 'add_payout_table' : 'edit_payout_table', id === 'new' ? {table} : {id, table}).then(ok => {
+      if (!ok) return;
+      payTable = null;
+      // A new one is the wizard's pick.
+      if (tourneyForm && id === 'new') tourneyForm.pick = String(table.name).split(/\s+/).filter(Boolean).join(' ').toLowerCase();
+      render();
+    });
     return;
   }
   const bf = e.target.closest('form[data-clform="backup"]');
@@ -2144,7 +2185,11 @@ const pageHead = (title, extra = '') => `<div class="mg-head"><h1 class="mg-h">$
 function pageHtml(at) {
   const {page, member} = at;
   if (page === 'cash') return (openGame ? '' : pageHead('Tables')) + cashHtml();
-  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {form: tourneyForm, editor: tEditor, last: load(TOURNEY_KEY, {}), payTable, heading: false});
+  // A payout table just made in the wizard is its pick, once the club has it
+  // (an always-on club's comes back from its room).
+  const made = tourneyForm?.pick && (club.payoutTables || []).find(p => p.name.toLowerCase() === tourneyForm.pick);
+  if (made) { tourneyForm.d.payoutTable = made.id; tourneyForm.pick = null; }
+  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {wizard: tourneyForm, payTable, ask: tAsk, heading: false});
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
@@ -3177,9 +3222,9 @@ function sendToHost(code, body) {
 // ---- events ----
 
 async function onClickIn(e) {
-  // The blind structure editor in the New tournament form redraws itself.
+  // The blind structure editor in the New tournament wizard redraws itself.
   const ed = tourneyForm && e.target.closest('[data-tseditor]');
-  if (ed && tEditor.click(e)) { ed.innerHTML = tEditor.html(); return; }
+  if (ed && tourneyForm.editor.click(e)) { ed.innerHTML = tourneyForm.editor.html(); return; }
   // Going to another page closes the drawer and notifications on a phone (#398).
   if (e.target.closest('a[href^="#"]') && (navOpen || notesOpen)) {
     navOpen = notesOpen = false;
@@ -3376,16 +3421,46 @@ async function onClickIn(e) {
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
   // Tournaments: the host's.
   else if (act === 'new-tourney') {
-    const last = load(TOURNEY_KEY, {});
-    tEditor = structureEditor({stack: last.stack || 10000, tableSize: last.tableSize || 9});
-    tourneyForm = true;
-    render();
+    openWizard(newDraft(load(TOURNEY_KEY, {})));
     root.querySelector('form[data-tourneyform] [name=name]')?.focus();
-  } else if (act === 'cancel-tourney-form') { tourneyForm = false; render(); }
+  } else if (act === 'cancel-tourney-form') { tourneyForm = null; payTable = null; render(); }
+  // The wizard's steps: back one, or to one already done.
+  else if (act === 'tw-back' || act === 'tw-go') {
+    const f = root.querySelector('form[data-tourneyform]');
+    if (tourneyForm && f) readStep(f, tourneyForm.d, tourneyForm.step, {strict: false});
+    if (tourneyForm) { tourneyForm.step = act === 'tw-back' ? Math.max(1, tourneyForm.step - 1) : Number(b.dataset.step); tourneyForm.note = ''; }
+    payTable = null;
+    render();
+  }
+  // A tournament of a series (#477): this one, or the whole series?
+  else if (act === 't-ask') { tAsk = {id: b.dataset.id, act: b.dataset.act}; render(); }
+  else if (act === 't-ask-close') { tAsk = null; render(); }
+  else if (act === 't-edit') {
+    const t = tourneyById(club, b.dataset.id);
+    const se = b.dataset.series === '1' && t?.series ? (club.tourneySeries || []).find(s => s.id === t.series) : null;
+    if (t) openWizard(tourneyDraft(t, se), {id: t.id, series: !!se, startsAt: t.startsAt}, t.structure);
+  } else if (act === 'series-edit') {
+    const se = (club.tourneySeries || []).find(s => s.id === b.dataset.id);
+    if (se) {
+      const s = se.settings || {};
+      openWizard(tourneyDraft({...s, startsAt: se.next, opensAt: se.next - se.opensBefore}, se), {sid: se.id, series: true}, s.structure);
+    }
+  } else if (act === 't-cancel') {
+    const whole = b.dataset.series === '1';
+    if (confirm(whole ? 'Cancel this tournament and the rest of its series? Every buy-in goes back to the players.' : 'Cancel this tournament? Every buy-in goes back to the players.')) {
+      tAsk = null;
+      hostAct('cancel_tourney', {id: b.dataset.id, series: whole});
+    }
+  } else if (act === 'series-stop') { if (confirm('Cancel the rest of this series?')) hostAct('stop_series', {id: b.dataset.id}); }
   else if (act === 'cancel-tourney') { if (confirm('Cancel this tournament? Every buy-in goes back to the players.')) hostAct('cancel_tourney', {id: b.dataset.id}); }
   // The club's payout tables (#424): a new one, editing one (its rows and
   // places), deleting one.
-  else if (act === 'paytable-new') { payTable = {id: 'new', name: '', draft: draftOf()}; render(); }
+  else if (act === 'paytable-new') {
+    const f = root.querySelector('form[data-tourneyform]');
+    if (tourneyForm && f) readStep(f, tourneyForm.d, tourneyForm.step, {strict: false});
+    payTable = {id: 'new', name: '', draft: draftOf()};
+    render();
+  }
   else if (act === 'paytable-edit') { const p = payoutTableById(club, b.dataset.id); payTable = p ? {id: p.id, name: p.name, draft: draftOf(p.rows)} : null; render(); }
   else if (act === 'paytable-cancel') { payTable = null; render(); }
   else if (act === 'paytable-delete') { const p = payoutTableById(club, b.dataset.id); if (p && confirm(`Delete the payout table ${p.name}?`)) hostAct('delete_payout_table', {id: p.id}); }
@@ -3605,23 +3680,26 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
       if (f && ['game', 'blinds', 'blindsOther'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
-      // The New tournament form: a game's usual table size, and no more than it deals to.
       // What a tournament pays by (#424): Default or a club payout table.
       const pick = e.target.dataset?.paypick;
       if (pick && e.target.value !== 'own') hostAct('set_payout_table', {id: pick, table: e.target.value || null});
+      // The wizard (#477): a choice that changes what its step shows.
       const tf = e.target.closest('form[data-tourneyform]');
-      if (tf && e.target.name === 'game') {
-        const size = tf.elements.tableSize;
-        size.max = maxSeats(e.target.value);
-        size.value = defaultSeats(e.target.value);
+      if (tf && tourneyForm && WIZARD_CHOICES.has(e.target.name)) {
+        tourneyForm.d.game = tf.elements.game?.value || tourneyForm.d.game;
+        if (e.target.name === 'game') tourneyForm.d.tableSize = defaultSeats(e.target.value);
+        readStep(tf, tourneyForm.d, tourneyForm.step, {strict: false});
+        syncWizardBlinds(tourneyForm);
+        render();
       }
     });
     // The blind structure editor's fields, and the starting stack it follows.
     root.addEventListener('change', e => {
-      if (!tourneyForm || !tEditor) return;
+      if (!tourneyForm) return;
       const ed = root.querySelector('[data-tseditor]');
-      if (e.target.dataset.tstack) { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 20) { tEditor.setStack(n); if (ed) ed.innerHTML = tEditor.html(); } return; }
-      if (e.target.closest('[data-tseditor]') && tEditor.input(e) && ed) ed.innerHTML = tEditor.html();
+      const editor = tourneyForm.editor;
+      if (e.target.dataset.tstack) { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 20) { tourneyForm.d.stack = n; editor.setStack(n); if (ed) ed.innerHTML = editor.html(); } return; }
+      if (e.target.closest('[data-tseditor]') && editor.input(e) && ed) ed.innerHTML = editor.html();
     });
     // The Members search (#398) filters the rows as it's typed.
     root.addEventListener('input', e => {

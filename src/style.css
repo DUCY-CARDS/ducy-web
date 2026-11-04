@@ -1487,6 +1487,25 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-paytable-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cl-paytable-head .cl-name { margin-right: auto; }
 .pz-form .po-rows .pl-text { width: 60px; }
+
+/* The New tournament wizard (#477) */
+.tw { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
+.tw-head { display: flex; align-items: center; gap: 8px; }
+.tw-head h3 { margin: 0 auto 0 0; font-size: 16px; color: var(--fg-strong); }
+.tw-steps { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--fg-muted); }
+.tw-steps li.on { color: var(--fg-strong); font-weight: 700; }
+.tw-steps button { font: inherit; color: var(--teal); background: none; border: 0; padding: 0; cursor: pointer; }
+.tw-steps button:hover { text-decoration: underline; }
+.tw-pays { display: flex; flex-direction: column; gap: 6px; }
+.tw-pay { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.tw .tw-pay label, .tw label.tw-pay { flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.tw .tw-pay .cl-acts { margin-left: auto; }
+.tw-pay:has(input:checked) { border-color: var(--teal); }
+.tw-pay .po-scroll { flex-basis: 100%; }
+.tw-review { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+.tw-review dt { color: var(--fg-muted); }
+.tw-review dd { margin: 0; color: var(--fg-strong); }
+.cl-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex-basis: 100%; }
 @media (max-width: 560px) {
   .po-rows .pl-text, .pz-form .po-rows .pl-text { width: 52px; }
 }

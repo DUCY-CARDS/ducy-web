@@ -75,12 +75,22 @@ struct Result_<'a> {
     standings: &'a [ducy_play::Standing],
     tables: &'a [TableInfo],
     level: usize,
+    blinds: Blinds,
     players_left: usize,
     total_chips: u64,
     hand_for_hand: bool,
     over: bool,
     auto_to_act: bool,
     can_deal: bool,
+}
+
+/// The blinds being played: past a structure's last level, ones the runner
+/// added as they kept rising.
+#[derive(Serialize)]
+struct Blinds {
+    sb: u64,
+    bb: u64,
+    ante: u64,
 }
 
 impl<'a> Result_<'a> {
@@ -99,6 +109,11 @@ impl<'a> Result_<'a> {
             standings: &r.standings,
             tables: &r.tables,
             level: r.level,
+            blinds: Blinds {
+                sb: r.blinds.small_blind,
+                bb: r.blinds.big_blind,
+                ante: r.blinds.ante,
+            },
             players_left: r.players_left,
             total_chips: r.total_chips,
             hand_for_hand: r.hand_for_hand,

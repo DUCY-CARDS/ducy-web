@@ -321,6 +321,9 @@ impl ClubState {
             .collect();
         out.live = Some(json!({
             "level": clock.get("level"), "onBreak": truthy(clock.get("onBreak")),
+            // The blinds played: past the structure's last level, ones the
+            // runner added as they kept rising.
+            "blinds": res.get("blinds"),
             "stepEndsAt": clock.get("stepEndsAt"), "playersLeft": res.get("playersLeft"),
             "handForHand": res.get("handForHand"), "tables": tables,
             "standings": standings.into_iter().take(LIVE_STANDINGS).map(|s| s.1).collect::<Vec<_>>(),
@@ -364,6 +367,8 @@ impl ClubState {
         }
         // What was paid beyond what was held: the added chips, issued now.
         self.book.chips.issued += f.issued;
+        // The rake it held is the club's: out of play (#477).
+        self.book.chips.reclaimed += f.raked as i64;
         let name = self.tourney(tid).map_or(String::new(), |t| t.name.clone());
         let host = self.book.club.host_id.clone();
         let text = format!("{} won tournament {name}", self.name_of(winner));
@@ -643,6 +648,62 @@ mod tests {
         assert_eq!(c.book.balance("ann"), 900 + 350);
         assert!(o.chips_changed.contains(&"ann".to_string()));
         assert!(logged(&c, "Ann won tournament Sunday"));
+    }
+
+    #[test]
+    fn the_rake_goes_to_the_club_not_the_pool_and_a_refund_returns_it() {
+        let (mut c, tid) = club(&["ann", "bob", "cy"], 2);
+        // A second tournament with a rake of 10 on each 100 buy-in.
+        let s = json!({"name": "Raked", "buyIn": 100, "rake": 10, "stack": 1500,
+                       "opensAt": 0, "startsAt": 1000, "maxPlayers": 9, "reentry": true, "lateLevel": 3,
+                       "structure": [{"sb": 10, "bb": 20, "minutes": 10}]});
+        let mut rng = StdRng::seed_from_u64(2);
+        let rt = c
+            .with_tourneys(|t| t.new_tourney(&s, 0, None, &mut rng))
+            .unwrap()
+            .id;
+        c.with_tourneys(|ts| ts.cancel(&tid, "", 0)).unwrap();
+        for id in ["ann", "bob", "cy"] {
+            c.book.pay(id, "refund", Some(100), &tid, 0).unwrap();
+            let cost = c.with_tourneys(|t| t.check_register(&rt, id, 10)).unwrap();
+            assert_eq!(cost, 110);
+            c.book
+                .tourney_buy_in(id, &rt, Some(cost as i64), 10)
+                .unwrap();
+            c.with_tourneys(|t| t.register(&rt, id, 10)).unwrap();
+        }
+        assert!(c.totals().conserved);
+        // Unregistering gives the rake back too.
+        let back = c.with_tourneys(|t| t.unregister(&rt, "cy")).unwrap();
+        assert_eq!(back.amount, 110);
+        c.book.pay("cy", "refund", Some(110), &rt, 20).unwrap();
+        assert_eq!(c.book.balance("cy"), 1000);
+        assert!(c.totals().conserved);
+        c.tourney_at_start(&rt, 7, 1000).unwrap();
+        // Bob busts and re-enters: another 110, rake and all.
+        c.tourney_result(
+            &rt,
+            &json!({"events": {"busted": [{"id": "bob", "place": 2}]}}),
+            &json!({}),
+            1100,
+        )
+        .unwrap();
+        c.tourney_enter(&rt, "bob", 0, 1200).unwrap();
+        assert_eq!(c.book.balance("bob"), 1000 - 220);
+        let t = c.tourney(&rt).unwrap();
+        assert_eq!((t.pool(), t.held, t.raked()), (300, 330, 30));
+        let reclaimed = c.book.chips.reclaimed;
+        c.tourney_result(
+            &rt,
+            &json!({"events": {"busted": [{"id": "bob", "place": 2}], "winner": {"id": "ann"}}}),
+            &json!({}),
+            1300,
+        )
+        .unwrap();
+        // The pool (no rake) goes to Ann; the 30 rake is the club's.
+        assert_eq!(c.book.balance("ann"), 1000 - 110 + 300);
+        assert_eq!(c.book.chips.reclaimed, reclaimed + 30);
+        assert!(c.totals().conserved);
     }
 
     #[test]

@@ -13,6 +13,11 @@
 //!
 //! - `buy_in` and `added` are club chips. The pool is every entry's buy-in
 //!   plus the added chips, which the club issues when it pays.
+//! - `rake` is the club's fee on each entry and re-entry (#477): paid with
+//!   the buy-in and held with it, never in the pool, back with a refund,
+//!   and the club's (taken out of play) once the tournament finishes.
+//! - A repeating tournament is a [`Series`]: each one is made, with the same
+//!   settings, when its registration should open.
 //! - `stack` and the structure are tournament chips, nothing to do with
 //!   club chips.
 //! - Payouts are basis points by place adding up to exactly 10 000.
@@ -113,6 +118,211 @@ pub struct PayoutTable {
     pub rows: Vec<PayoutRow>,
 }
 
+/// Registration opens at most this long before the start: 4 weeks.
+pub const MAX_OPENS_BEFORE: u64 = 28 * DAY_MS;
+/// A series repeats at most this many times.
+pub const MAX_SERIES_COUNT: u64 = 500;
+/// A series' end date is at most this far after its first start: 2 years.
+pub const MAX_SERIES_SPAN: u64 = 731 * DAY_MS;
+const DAY_MS: u64 = 86_400_000;
+
+/// How often a series repeats.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Every {
+    /// Every day, at the same time.
+    #[default]
+    Day,
+    /// Every week, at the same time: on the same day, or on chosen days.
+    Week,
+}
+
+/// How a series repeats: how often (on which days of the week, in the
+/// manager's time), and until how many or when.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Repeat {
+    /// How often.
+    pub every: Every,
+    /// Weekly on these days (0 Sunday to 6 Saturday); none: the first one's.
+    pub days: Vec<u8>,
+    /// The manager's time zone, minutes ahead of UTC, for the days.
+    pub offset_min: i32,
+    /// How many in all.
+    pub count: Option<u64>,
+    /// The last start.
+    pub until: Option<u64>,
+}
+
+/// The day of the week of time `t` (0 Sunday), `offset_min` ahead of UTC.
+fn weekday(t: u64, offset_min: i32) -> u8 {
+    let local = t as i64 + i64::from(offset_min) * 60_000;
+    // 1 January 1970 was a Thursday.
+    ((local.div_euclid(DAY_MS as i64) + 4).rem_euclid(7)) as u8
+}
+
+impl Repeat {
+    /// The start after one at `from`.
+    pub fn after(&self, from: u64) -> u64 {
+        match self.every {
+            Every::Day => from + DAY_MS,
+            Every::Week if self.days.is_empty() => from + 7 * DAY_MS,
+            Every::Week => (1..=7)
+                .map(|d| from + d * DAY_MS)
+                .find(|&t| self.days.contains(&weekday(t, self.offset_min)))
+                .unwrap_or(from + 7 * DAY_MS),
+        }
+    }
+}
+
+/// A repeating tournament (#477): each one is made, with the same settings,
+/// when its registration should open.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Series {
+    /// Its id; each of its tournaments has it as `series`.
+    pub id: String,
+    /// How often.
+    pub every: Every,
+    /// Weekly on these days (0 Sunday); none: the first one's day.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub days: Vec<u8>,
+    /// The manager's time zone for the days, minutes ahead of UTC.
+    pub offset_min: i32,
+    /// When the next one still to be made starts.
+    pub next: u64,
+    /// Registration for each opens this long before its start.
+    pub opens_before: u64,
+    /// How many in all, if it ends after a number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    /// The last start, if it ends by a date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+    /// How many have been made (or skipped, their start gone by).
+    pub made: u64,
+    /// The settings each is made with: the form's, without its times.
+    pub settings: Value,
+    /// Stopped: no more are made.
+    pub stopped: bool,
+}
+
+impl Series {
+    /// Whether more are still to be made.
+    pub fn more(&self) -> bool {
+        !self.stopped
+            && self.count.is_none_or(|c| self.made < c)
+            && self.until.is_none_or(|u| self.next <= u)
+    }
+
+    /// When the next one is made: when its registration should open.
+    pub fn due_at(&self) -> Option<u64> {
+        self.more()
+            .then(|| self.next.saturating_sub(self.opens_before))
+    }
+
+    /// How it repeats.
+    pub fn repeat(&self) -> Repeat {
+        Repeat {
+            every: self.every,
+            days: self.days.clone(),
+            offset_min: self.offset_min,
+            count: self.count,
+            until: self.until,
+        }
+    }
+
+    fn set_repeat(&mut self, r: Repeat) {
+        self.every = r.every;
+        self.days = r.days;
+        self.offset_min = r.offset_min;
+        self.count = r.count;
+        self.until = r.until;
+    }
+}
+
+/// A series' repeat, `{every: "day" | "week", days?, offsetMin?, count |
+/// until}`, for a first start at `starts_at`.
+fn read_repeat(r: &Value, starts_at: u64) -> Result<Repeat, RuleError> {
+    let every = match r.get("every").and_then(Value::as_str) {
+        Some("day") => Every::Day,
+        Some("week") => Every::Week,
+        _ => return refuse("Pick how often it repeats: every day or every week."),
+    };
+    let mut days: Vec<u8> = vec![];
+    if every == Every::Week {
+        for d in r
+            .get("days")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+        {
+            match int(Some(d)) {
+                Some(d) if (0..=6).contains(&d) => days.push(d as u8),
+                _ => return refuse("Days of the week are 0 (Sunday) to 6."),
+            }
+        }
+        days.sort_unstable();
+        days.dedup();
+    }
+    let offset_min = int(given(r, "offsetMin"))
+        .filter(|m| m.abs() <= 14 * 60)
+        .unwrap_or(0) as i32;
+    let mut rep = Repeat {
+        every,
+        days,
+        offset_min,
+        count: None,
+        until: None,
+    };
+    match (given(r, "count"), given(r, "until")) {
+        (Some(c), _) => match int(Some(c)) {
+            Some(c) if (2..=MAX_SERIES_COUNT as i64).contains(&c) => rep.count = Some(c as u64),
+            _ => return refuse(format!("It repeats 2 to {MAX_SERIES_COUNT} times.")),
+        },
+        (None, Some(u)) => match whole(Some(u)) {
+            Some(u) if u >= rep.after(starts_at) && u <= starts_at + MAX_SERIES_SPAN => {
+                rep.until = Some(u);
+            }
+            _ => return refuse("The end date is after the second start and within 2 years."),
+        },
+        (None, None) => return refuse("Pick when it stops repeating: a date, or how many times."),
+    }
+    Ok(rep)
+}
+
+/// Whether tournament `t` may take `new`'s settings: once players have
+/// registered, the game, buy-in and rake stay, and the maximum takes them all.
+fn can_change(t: &Tourney, new: &Tourney) -> Result<(), RuleError> {
+    if t.entries.is_empty() {
+        return Ok(());
+    }
+    if t.game != new.game || t.buy_in != new.buy_in || t.rake != new.rake {
+        return refuse(format!(
+            "Players have registered for {}: its game, buy-in and rake stay as they are.",
+            t.name
+        ));
+    }
+    if new.max_players < t.player_count() {
+        return refuse(format!(
+            "{} players have registered for {}: the maximum can’t be fewer.",
+            t.player_count(),
+            t.name
+        ));
+    }
+    Ok(())
+}
+
+/// The settings a series keeps: the form's, without the times of the one
+/// made from them.
+fn series_settings(s: &Value) -> Value {
+    let mut v = s.clone();
+    if let Some(o) = v.as_object_mut() {
+        for k in ["startsAt", "opensAt", "opensBefore", "repeat"] {
+            o.remove(k);
+        }
+    }
+    v
+}
+
 /// A prize paid.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -139,6 +349,14 @@ pub struct Tourney {
     pub buy_in: u64,
     /// Chips the club adds to the pool.
     pub added: u64,
+    /// The club's fee on each entry and re-entry, in club chips: paid with
+    /// the buy-in, kept apart from the pool, back with a refund, and the
+    /// club's once it finishes.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rake: u64,
+    /// The series it's one of, if it repeats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
     /// The starting stack, in tournament chips.
     pub stack: u64,
     /// The blind structure.
@@ -197,7 +415,21 @@ pub struct Tourney {
     pub other: Map<String, Value>,
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 impl Tourney {
+    /// What one entry costs a player: the buy-in and the rake.
+    pub fn cost(&self) -> u64 {
+        self.buy_in + self.rake
+    }
+
+    /// The rake taken so far: every entry's.
+    pub fn raked(&self) -> u64 {
+        self.entry_count() * self.rake
+    }
+
     /// A member's current entry.
     pub fn entry_of(&self, id: &str) -> Option<&Entry> {
         self.entries.iter().rev().find(|e| e.member == id)
@@ -480,6 +712,8 @@ pub struct Finish {
     /// What the club issues for them beyond what the tournament held: the
     /// added chips (less if fewer places were paid).
     pub issued: i64,
+    /// The rake it held, the club's now: taken out of play.
+    pub raked: u64,
 }
 
 /// The part of a club these rules keep: its tournaments and payout tables,
@@ -497,6 +731,9 @@ pub struct Tourneys {
     pub tourneys: Vec<Tourney>,
     /// Its payout tables.
     pub payout_tables: Vec<PayoutTable>,
+    /// Its repeating tournaments.
+    #[serde(rename = "tourneySeries", skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<Series>,
 }
 
 impl Tourneys {
@@ -538,12 +775,24 @@ impl Tourneys {
     /// The club's plan allows `most` tournaments a day (#265): at most that
     /// many, not cancelled, starting within any 24 hours. None: no cap.
     pub fn check_limit(&self, starts_at: u64, most: Option<u64>) -> Result<(), RuleError> {
+        self.check_limit_but(starts_at, most, "")
+    }
+
+    /// [`Self::check_limit`], not counting tournament `except` (one moved).
+    fn check_limit_but(
+        &self,
+        starts_at: u64,
+        most: Option<u64>,
+        except: &str,
+    ) -> Result<(), RuleError> {
         let Some(most) = most else { return Ok(()) };
         let near = self
             .tourneys
             .iter()
             .filter(|t| {
-                t.status != TourneyStatus::Cancelled && t.starts_at.abs_diff(starts_at) < 86_400_000
+                t.id != except
+                    && t.status != TourneyStatus::Cancelled
+                    && t.starts_at.abs_diff(starts_at) < DAY_MS
             })
             .count() as u64;
         if near < most {
@@ -563,7 +812,9 @@ impl Tourneys {
     }
 
     /// A new tournament from its settings `s` (the form's), or why they
-    /// won't do. `most`: tournaments a day the club's plan allows.
+    /// won't do. `most`: tournaments a day the club's plan allows. With
+    /// `repeat` ({every: "day" | "week", count | until}) it's the first of a
+    /// [`Series`], the next made when its registration should open.
     pub fn new_tourney(
         &mut self,
         s: &Value,
@@ -571,6 +822,36 @@ impl Tourneys {
         most: Option<u64>,
         rng: &mut StdRng,
     ) -> Result<Tourney, RuleError> {
+        let mut t = self.settings(s, now)?;
+        self.check_limit(t.starts_at, most)?;
+        let repeat = match given(s, "repeat") {
+            None => None,
+            Some(r) => Some(read_repeat(r, t.starts_at)?),
+        };
+        t.id = random36(rng, 6);
+        t.created_at = now;
+        if let Some(rep) = repeat {
+            let id = random36(rng, 6);
+            t.series = Some(id.clone());
+            let mut se = Series {
+                id,
+                next: rep.after(t.starts_at),
+                opens_before: t.starts_at - t.opens_at,
+                made: 1,
+                settings: series_settings(s),
+                ..Default::default()
+            };
+            se.set_repeat(rep);
+            self.series.push(se);
+        }
+        self.tourneys.push(t.clone());
+        Ok(t)
+    }
+
+    /// A tournament from settings `s`, checked; not added, and with no id.
+    /// `opensBefore` (ms) sets when registration opens from the start;
+    /// else `opensAt`, else now.
+    fn settings(&self, s: &Value, now: u64) -> Result<Tourney, RuleError> {
         let name: String = given(s, "name")
             .map(|n| match n {
                 Value::String(s) => s.clone(),
@@ -599,24 +880,30 @@ impl Tourneys {
                 .filter(|&n| n >= 0 && n as u64 <= MAX_CHIPS)
                 .map(|n| n as u64),
         };
-        let (Some(buy_in), Some(added)) = (chips("buyIn"), chips("added")) else {
-            return refuse("The buy-in and added prize pool are 0 or more chips.");
+        let (Some(buy_in), Some(added), Some(rake)) =
+            (chips("buyIn"), chips("added"), chips("rake"))
+        else {
+            return refuse("The buy-in, rake and added prize pool are 0 or more chips.");
         };
         let Some(stack) = int(given(s, "stack")).filter(|&n| (20..=1_000_000_000).contains(&n))
         else {
             return refuse("The starting stack must be at least 20 chips.");
         };
-        let opens_at = match given(s, "opensAt") {
-            None => Some(now),
-            v => whole(v),
+        let starts_at = whole(given(s, "startsAt"));
+        let opens_at = match (given(s, "opensBefore"), given(s, "opensAt")) {
+            (Some(b), _) => match (whole(Some(b)), starts_at) {
+                (Some(b), Some(at)) if b <= MAX_OPENS_BEFORE => Some(at.saturating_sub(b)),
+                _ => None,
+            },
+            (None, None) => Some(now),
+            (None, v) => whole(v),
         };
-        let (Some(opens_at), Some(starts_at)) = (opens_at, whole(given(s, "startsAt"))) else {
+        let (Some(opens_at), Some(starts_at)) = (opens_at, starts_at) else {
             return refuse("Pick when registration opens and when it starts.");
         };
         if starts_at < opens_at {
             return refuse("It must start after registration opens.");
         }
-        self.check_limit(starts_at, most)?;
         let or = |k: &str, d: i64| match given(s, k) {
             None => Some(d),
             v => int(v),
@@ -653,12 +940,12 @@ impl Tourneys {
             Value::String(s) => !s.is_empty(),
             _ => true,
         });
-        let t = Tourney {
-            id: random36(rng, 6),
+        Ok(Tourney {
             name,
             game: game_id.into(),
             buy_in,
             added,
+            rake,
             stack: stack as u64,
             structure,
             opens_at,
@@ -676,9 +963,212 @@ impl Tourneys {
             held: 0,
             created_at: now,
             ..Default::default()
+        })
+    }
+
+    /// A series by id.
+    pub fn series_by_id(&self, id: &str) -> Option<&Series> {
+        self.series.iter().find(|s| s.id == id)
+    }
+
+    /// When the next series tournament is to be made, if one is.
+    pub fn next_series_at(&self) -> Option<u64> {
+        self.series.iter().filter_map(Series::due_at).min()
+    }
+
+    /// Makes each series' tournaments whose registration should be open by
+    /// `now`, with the series' settings. One whose start has gone by (the
+    /// club was off) is skipped, and so is one the plan's `most` a day
+    /// won't allow or the settings no longer make: those are returned with
+    /// why, after the ones made.
+    pub fn series_due(
+        &mut self,
+        now: u64,
+        most: Option<u64>,
+        rng: &mut StdRng,
+    ) -> (Vec<Tourney>, Vec<String>) {
+        let (mut made, mut skipped) = (vec![], vec![]);
+        for i in 0..self.series.len() {
+            while let Some(at) = self.series[i].due_at() {
+                if at > now {
+                    break;
+                }
+                let se = &mut self.series[i];
+                let start = se.next;
+                se.next = se.repeat().after(start);
+                se.made += 1;
+                if start <= now {
+                    continue;
+                }
+                let mut s = se.settings.clone();
+                s["startsAt"] = start.into();
+                s["opensBefore"] = se.opens_before.into();
+                let id = se.id.clone();
+                let t = self.settings(&s, now).and_then(|t| {
+                    self.check_limit(start, most)?;
+                    Ok(t)
+                });
+                match t {
+                    Ok(mut t) => {
+                        t.id = random36(rng, 6);
+                        t.series = Some(id);
+                        self.tourneys.push(t.clone());
+                        made.push(t);
+                    }
+                    Err(e) => {
+                        let name = given(&s, "name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("A tournament");
+                        skipped.push(format!("{name} wasn’t made: {}", e.0));
+                    }
+                }
+            }
+        }
+        (made, skipped)
+    }
+
+    /// Changes tournament `tid`, still to start, to settings `s` (as for a
+    /// new one). With `whole`, its series changes too, from it on: the ones
+    /// made after it and those still to be made, their times moved as its
+    /// start moved, and its repeat if `s` has one. Once players have
+    /// registered, the game, buy-in and rake stay. `most`: the plan's
+    /// tournaments a day. Returns it.
+    pub fn edit_tourney(
+        &mut self,
+        tid: &str,
+        s: &Value,
+        whole: bool,
+        now: u64,
+        most: Option<u64>,
+    ) -> Result<Tourney, RuleError> {
+        let old = self.get(tid)?.clone();
+        if old.status != TourneyStatus::Scheduled {
+            return refuse("It has started: it can’t be changed now.");
+        }
+        let new = self.settings(s, now)?;
+        self.check_limit_but(new.starts_at, most, tid)?;
+        let series = if whole { old.series.clone() } else { None };
+        let repeat = match (&series, given(s, "repeat")) {
+            (Some(_), Some(r)) => Some(read_repeat(r, new.starts_at)?),
+            _ => None,
         };
-        self.tourneys.push(t.clone());
-        Ok(t)
+        let delta = new.starts_at as i64 - old.starts_at as i64;
+        let shift = |at: u64| (at as i64 + delta).max(0) as u64;
+        let opens_before = new.starts_at - new.opens_at;
+        let mut ids = vec![tid.to_string()];
+        if let Some(sid) = &series {
+            for t in &self.tourneys {
+                if t.series.as_ref() == Some(sid)
+                    && t.id != tid
+                    && t.status == TourneyStatus::Scheduled
+                    && t.starts_at > old.starts_at
+                {
+                    ids.push(t.id.clone());
+                }
+            }
+        }
+        for id in &ids {
+            can_change(self.get(id)?, &new)?;
+        }
+        for id in &ids {
+            let t = self.get_mut(id)?;
+            let starts_at = if id == tid {
+                new.starts_at
+            } else {
+                shift(t.starts_at)
+            };
+            t.name = new.name.clone();
+            t.game = new.game.clone();
+            t.buy_in = new.buy_in;
+            t.added = new.added;
+            t.rake = new.rake;
+            t.stack = new.stack;
+            t.structure = new.structure.clone();
+            t.starts_at = starts_at;
+            t.opens_at = starts_at.saturating_sub(opens_before);
+            t.min_players = new.min_players;
+            t.max_players = new.max_players;
+            t.table_size = new.table_size;
+            t.late_level = new.late_level;
+            t.reentry = new.reentry;
+            t.max_reentries = new.max_reentries;
+            t.payout_table = new.payout_table.clone();
+            t.payout = None;
+        }
+        if let Some(sid) = series {
+            let last = self
+                .tourneys
+                .iter()
+                .filter(|t| t.series.as_ref() == Some(&sid))
+                .map(|t| t.starts_at)
+                .max()
+                .unwrap_or(new.starts_at);
+            if let Some(se) = self.series.iter_mut().find(|x| x.id == sid) {
+                se.settings = series_settings(s);
+                se.opens_before = opens_before;
+                if let Some(rep) = repeat {
+                    se.set_repeat(rep);
+                }
+                se.next = se.repeat().after(last);
+            }
+        }
+        self.get(tid).cloned()
+    }
+
+    /// Changes series `id` while none of it is waiting to start: the
+    /// settings the next ones are made with (`s`, as for a new tournament,
+    /// its `startsAt` the next start) and its repeat if `s` has one.
+    pub fn edit_series(&mut self, id: &str, s: &Value, now: u64) -> Result<Series, RuleError> {
+        if self.series_by_id(id).is_none() {
+            return refuse("No such series.");
+        }
+        let t = self.settings(s, now)?;
+        let repeat = match given(s, "repeat") {
+            Some(r) => Some(read_repeat(r, t.starts_at)?),
+            None => None,
+        };
+        let se = self
+            .series
+            .iter_mut()
+            .find(|x| x.id == id)
+            .expect("found above");
+        se.settings = series_settings(s);
+        se.opens_before = t.starts_at - t.opens_at;
+        se.next = t.starts_at;
+        if let Some(rep) = repeat {
+            se.set_repeat(rep);
+        }
+        Ok(se.clone())
+    }
+
+    /// Stops series `id`: no more are made.
+    pub fn stop_series(&mut self, id: &str) -> Result<(), RuleError> {
+        match self.series.iter_mut().find(|s| s.id == id) {
+            Some(s) => {
+                s.stopped = true;
+                Ok(())
+            }
+            None => refuse("No such series."),
+        }
+    }
+
+    /// The tournaments of tournament `tid`'s series still to start, from it
+    /// on (it first); just it, if it's not one of a series.
+    pub fn from_on(&self, tid: &str) -> Result<Vec<String>, RuleError> {
+        let t = self.get(tid)?;
+        let mut ids = vec![t.id.clone()];
+        if let Some(sid) = &t.series {
+            for o in &self.tourneys {
+                if o.series.as_ref() == Some(sid)
+                    && o.id != t.id
+                    && o.status == TourneyStatus::Scheduled
+                    && o.starts_at > t.starts_at
+                {
+                    ids.push(o.id.clone());
+                }
+            }
+        }
+        Ok(ids)
     }
 
     /// Whether `id` may register for `tid` before the start: registration
@@ -699,12 +1189,12 @@ impl Tourneys {
         if t.player_count() >= t.max_players {
             return refuse("The tournament is full.");
         }
-        Ok(t.buy_in)
+        Ok(t.cost())
     }
 
     fn enter(&mut self, tid: &str, id: &str, now: u64) -> Result<Entry, RuleError> {
         let t = self.get_mut(tid)?;
-        t.held += t.buy_in;
+        t.held += t.cost();
         let e = Entry {
             n: t.entry_count() + 1,
             member: id.into(),
@@ -735,10 +1225,10 @@ impl Tourneys {
         for (k, e) in t.entries.iter_mut().enumerate() {
             e.n = k as u64 + 1;
         }
-        t.held = t.held.saturating_sub(t.buy_in);
+        t.held = t.held.saturating_sub(t.cost());
         Ok(Move {
             member: id.into(),
-            amount: t.buy_in,
+            amount: t.cost(),
         })
     }
 
@@ -770,7 +1260,7 @@ impl Tourneys {
         } else if t.player_count() >= t.max_players {
             return refuse("The tournament is full.");
         }
-        Ok(t.buy_in)
+        Ok(t.cost())
     }
 
     /// A late entry or re-entry, its buy-in taken.
@@ -811,11 +1301,11 @@ impl Tourneys {
             if members.contains(&e.member) {
                 back.push(Move {
                     member: e.member.clone(),
-                    amount: t.buy_in,
+                    amount: t.cost(),
                 });
             }
         }
-        t.held = t.held.saturating_sub(t.buy_in * back.len() as u64);
+        t.held = t.held.saturating_sub(t.cost() * back.len() as u64);
         t.status = TourneyStatus::Cancelled;
         t.why = Some(why.into());
         t.ended_at = Some(now);
@@ -896,12 +1386,18 @@ impl Tourneys {
             });
         }
         let out: u64 = paid.iter().map(|p| p.amount).sum();
-        let issued = out as i64 - t.held as i64;
+        // The rake held is the club's now; the rest of what's held pays out.
+        let raked = t.raked().min(t.held);
+        let issued = out as i64 - (t.held - raked) as i64;
         t.held = 0;
         t.status = TourneyStatus::Finished;
         t.ended_at = Some(now);
         t.paid = Some(paid.clone());
-        Ok(Finish { paid, issued })
+        Ok(Finish {
+            paid,
+            issued,
+            raked,
+        })
     }
 
     /// The tournament's own payouts: a table `{rows}`, a list of shares (a
@@ -1042,6 +1538,18 @@ impl Tourneys {
             return refuse("No such payout table.");
         };
         let using = self.tourneys_using(id);
+        let series = self.series.iter().find(|s| {
+            s.more() && s.settings.get("payoutTable").and_then(Value::as_str) == Some(id)
+        });
+        if let (true, Some(s)) = (using.is_empty(), series) {
+            let name = given(&s.settings, "name")
+                .and_then(Value::as_str)
+                .unwrap_or("A series");
+            return refuse(format!(
+                "{name} repeats and pays by {}: pick another payout for the whole series first.",
+                p.name
+            ));
+        }
         if !using.is_empty() {
             let names: Vec<&str> = using.iter().map(|t| t.name.as_str()).collect();
             let (pays, them) = if using.len() == 1 {
@@ -1079,7 +1587,8 @@ impl Tourneys {
                 let n = t.entry_count().max(1) as usize;
                 let shares: Vec<u64> = t.payout_shares(&self.payout_tables).into_iter().take(n).collect();
                 let mut v = json!({
-                    "id": t.id, "name": t.name, "game": t.game, "buyIn": t.buy_in, "added": t.added, "stack": t.stack,
+                    "id": t.id, "name": t.name, "game": t.game, "buyIn": t.buy_in, "rake": t.rake, "added": t.added, "stack": t.stack,
+                    "every": t.series.as_deref().and_then(|s| self.series_by_id(s)).map(|s| s.every),
                     "opensAt": t.opens_at, "startsAt": t.starts_at, "minPlayers": t.min_players, "maxPlayers": t.max_players,
                     "tableSize": t.table_size, "lateLevel": t.late_level, "reentry": t.reentry, "maxReentries": t.max_reentries,
                     "status": t.status, "why": t.why.clone().unwrap_or_default(),
@@ -1406,6 +1915,41 @@ mod tests {
             .unwrap();
         assert_eq!(c.delete_payout_table(&p.id).unwrap().name, "Renamed");
         assert!(err(c.set_payout_table(&t, Some("nope"))).contains("No such payout table."));
+    }
+
+    #[test]
+    fn weekly_on_chosen_days_in_the_managers_time() {
+        const DAY: u64 = DAY_MS;
+        const H: u64 = 3_600_000;
+        // Monday 5 January 1970, 19:00 UTC; Monday, Wednesday and Friday.
+        let mon = 4 * DAY + 19 * H;
+        let r = read_repeat(
+            &json!({"every": "week", "days": [5, 1, 3, 3], "count": 4}),
+            mon,
+        )
+        .unwrap();
+        assert_eq!(r.days, vec![1, 3, 5]);
+        assert_eq!(r.after(mon), mon + 2 * DAY);
+        assert_eq!(r.after(mon + 2 * DAY), mon + 4 * DAY);
+        assert_eq!(r.after(mon + 4 * DAY), mon + 7 * DAY);
+        // Eight hours behind UTC, 19:00 UTC Monday is still Monday there,
+        // but 03:00 UTC Tuesday is Monday evening.
+        let late = 5 * DAY + 3 * H;
+        let r = read_repeat(
+            &json!({"every": "week", "days": [1], "offsetMin": -480, "count": 2}),
+            late,
+        )
+        .unwrap();
+        assert_eq!(r.after(late), late + 7 * DAY);
+        // The same day each week, and every day.
+        let r = read_repeat(&json!({"every": "week", "until": mon + 14 * DAY}), mon).unwrap();
+        assert_eq!(
+            (r.after(mon), r.until),
+            (mon + 7 * DAY, Some(mon + 14 * DAY))
+        );
+        assert!(read_repeat(&json!({"every": "day", "until": mon + H}), mon).is_err());
+        assert!(read_repeat(&json!({"every": "week", "days": [7], "count": 3}), mon).is_err());
+        assert!(read_repeat(&json!({"every": "day", "count": 1}), mon).is_err());
     }
 
     #[test]
