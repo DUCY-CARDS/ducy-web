@@ -2,7 +2,7 @@
 name = "ducy-wasm"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 # The site's bindings (ducy.cards), built with wasm-pack; not a crates.io crate.
 publish = false
 

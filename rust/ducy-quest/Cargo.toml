@@ -2,7 +2,7 @@
 name = "ducy-quest"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 license = "MIT"
 description = "ducy.cards' Bankroll Quest: a seeded world of card rooms, their games, players and waitlists, and the quest's bankroll and clock."
 repository = "https://github.com/DUCY-CARDS/ducy-web"

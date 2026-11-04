@@ -2,7 +2,7 @@
 name = "ducy-training"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 license = "MIT"
 description = "ducy.cards' study tools: practising pre-flop charts and ranges, their scoring, mastery and pacing."
 repository = "https://github.com/DUCY-CARDS/ducy-web"

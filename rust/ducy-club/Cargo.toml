@@ -2,7 +2,7 @@
 name = "ducy-club"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 license = "MIT"
 description = "ducy.cards' poker clubs: rules, money, tables, tournaments and promotions, on ducy-play's engine."
 repository = "https://github.com/DUCY-CARDS/ducy-web"
