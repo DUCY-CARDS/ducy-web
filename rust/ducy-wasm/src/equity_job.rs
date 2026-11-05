@@ -295,11 +295,8 @@ impl EquityJob {
         let t = &mut self.totals;
         let n = samples as u64;
         // ducy's plain Omaha sampling gives averages; the rest give sums.
-        let avg = |eq: Vec<rust_decimal::Decimal>| -> Vec<f64> {
-            eq.into_iter()
-                .map(|d| f64::try_from(d).unwrap_or(0.0) * samples as f64)
-                .collect()
-        };
+        let avg =
+            |eq: Vec<f64>| -> Vec<f64> { eq.into_iter().map(|d| d * samples as f64).collect() };
         match &self.game {
             Game::HoldemRanges(g, ranges) if self.job.exact => {
                 if t.done > 0.0 {
@@ -308,10 +305,6 @@ impl EquityJob {
                 let eq = HoldemGameEvaluation {}
                     .range_equity(g, ranges)
                     .map_err(to_js_err)?;
-                let eq: Vec<f64> = eq
-                    .into_iter()
-                    .map(|d| f64::try_from(d).unwrap_or(0.0))
-                    .collect();
                 add_sums(t, 1, &eq);
             }
             Game::HoldemRanges(g, ranges) => {

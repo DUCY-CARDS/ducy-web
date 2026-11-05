@@ -7,13 +7,13 @@ resolver = "3"
 members = ["ducy-wasm", "ducy-club", "ducy-training", "ducy-bot-games", "ducy-quest"]
 
 [workspace.dependencies]
-ducy = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0", default-features = false }
-ducy-play = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0", default-features = false }
-ducy-bots = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0", default-features = false }
-ducy-host = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0", default-features = false }
-ducy-gto = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0", default-features = false }
-ducy-shuffle = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0" }
-ducy-identity = { git = "https://github.com/allenpiscitello/ducy", rev = "7588771b64b8d97e66ed9e8ba928fe50c6c8aac0" }
+ducy = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828", default-features = false }
+ducy-play = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828", default-features = false }
+ducy-bots = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828", default-features = false }
+ducy-host = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828", default-features = false }
+ducy-gto = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828", default-features = false }
+ducy-shuffle = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828" }
+ducy-identity = { git = "https://github.com/allenpiscitello/ducy", rev = "7cfc46797cc33e2d8ee76880092e38f581f74828" }
 
 # The curve arithmetic in ducy-shuffle is ~50x slower unoptimized; keep
 # debug builds and tests quick by optimizing just that dependency.

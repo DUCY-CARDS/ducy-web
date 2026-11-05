@@ -182,11 +182,7 @@ impl HoldemGame {
     }
 
     pub fn evaluate_equity(&self) -> Vec<f64> {
-        self.eval
-            .evaluate_equity(&self.state)
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
+        self.eval.evaluate_equity(&self.state)
     }
 
     pub fn evaluate_winners(&self) -> Result<JsValue, JsError> {
@@ -195,7 +191,7 @@ impl HoldemGame {
             .into_iter()
             .map(|w| WinnerResult {
                 player_index: w.player_index(),
-                pot_share: w.pot_amount().try_into().unwrap_or(0.0),
+                pot_share: w.pot_amount(),
                 hand: w.winning_hand().to_string(),
             })
             .collect();
@@ -231,13 +227,9 @@ impl HoldemGame {
     /// Exact equity over every combo combination and runout.
     pub fn range_equity(&self, ranges: Vec<String>) -> Result<Vec<f64>, JsError> {
         let ranges = parse_ranges(&ranges)?;
-        Ok(self
-            .eval
+        self.eval
             .range_equity(&self.state, &ranges)
-            .map_err(to_js_err)?
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect())
+            .map_err(to_js_err)
     }
 
     /// Upper bound on hand evaluations `range_equity` would run, to decide
@@ -317,11 +309,7 @@ impl OmahaGame {
     }
 
     pub fn evaluate_equity(&self) -> Vec<f64> {
-        self.eval
-            .evaluate_equity(&self.state)
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
+        self.eval.evaluate_equity(&self.state)
     }
 
     pub fn evaluate_winners(&self) -> Result<JsValue, JsError> {
@@ -330,7 +318,7 @@ impl OmahaGame {
             .into_iter()
             .map(|w| WinnerResult {
                 player_index: w.player_index(),
-                pot_share: w.pot_amount().try_into().unwrap_or(0.0),
+                pot_share: w.pot_amount(),
                 hand: w.winning_hand().to_string(),
             })
             .collect();
@@ -342,9 +330,6 @@ impl OmahaGame {
     pub fn sample_equity(&self, samples: usize, seed: Option<f64>) -> Vec<f64> {
         self.eval
             .sample_equity_seeded(&self.state, samples, to_seed(seed))
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
     }
 }
 
@@ -392,11 +377,7 @@ impl OmahaHiLoGame {
     }
 
     pub fn evaluate_equity(&self) -> Vec<f64> {
-        self.eval
-            .evaluate_equity(&self.state)
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
+        self.eval.evaluate_equity(&self.state)
     }
 
     /// Average equity over `samples` random runouts. Passing a `seed` makes
@@ -404,9 +385,6 @@ impl OmahaHiLoGame {
     pub fn sample_equity(&self, samples: usize, seed: Option<f64>) -> Vec<f64> {
         self.eval
             .sample_equity_seeded(&self.state, samples, to_seed(seed))
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
     }
 }
 
@@ -465,11 +443,7 @@ impl OmahaBombPotGame {
     }
 
     pub fn evaluate_equity(&self) -> Vec<f64> {
-        self.eval
-            .evaluate_equity(&self.state)
-            .into_iter()
-            .map(|d| d.try_into().unwrap_or(0.0))
-            .collect()
+        self.eval.evaluate_equity(&self.state)
     }
 
     /// Deals seat `seat` (a position in the final player order) a hand
@@ -530,7 +504,7 @@ impl OmahaBombPotGame {
                     .into_iter()
                     .map(|w| WinnerResult {
                         player_index: w.player_index(),
-                        pot_share: w.pot_amount().try_into().unwrap_or(0.0),
+                        pot_share: w.pot_amount(),
                         hand: w.winning_hand().to_string(),
                     })
                     .collect()
@@ -626,7 +600,7 @@ fn winner_results<H: std::fmt::Display + ducy::ranking::hand_rank::HandRanking>(
         .into_iter()
         .map(|w| WinnerResult {
             player_index: w.player_index(),
-            pot_share: w.pot_amount().try_into().unwrap_or(0.0),
+            pot_share: w.pot_amount(),
             hand: w.winning_hand().to_string(),
         })
         .collect()
@@ -777,8 +751,7 @@ impl OmahaRange {
     /// Adds every hand matching `terms` (separated by commas or spaces).
     /// `weight` defaults to 1; a hand already in the range takes the new weight.
     pub fn add(&mut self, terms: &str, weight: Option<f64>) -> Result<(), JsError> {
-        let weight = rust_decimal::Decimal::try_from(weight.unwrap_or(1.0))
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        let weight = weight.unwrap_or(1.0);
         for term in terms
             .split([',', ' ', '\t', '\n'])
             .filter(|t| !t.is_empty())
