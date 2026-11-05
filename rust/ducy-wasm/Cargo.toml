@@ -18,7 +18,7 @@ site = ["dep:ducy-gto", "dep:ducy-training", "dep:ducy-bot-games", "dep:ducy-que
 
 [dependencies]
 ducy = { workspace = true }
-ducy-play = { workspace = true, features = ["serde"] }
+ducy-play = { workspace = true, features = ["serde", "fair-deal"] }
 ducy-bots = { workspace = true, features = ["serde"] }
 ducy-host = { workspace = true, features = ["serde"] }
 ducy-club = { path = "../ducy-club" }
@@ -33,5 +33,4 @@ wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 serde_json = "1"
-rust_decimal = "1.42.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
