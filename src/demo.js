@@ -206,6 +206,9 @@ async function setUp() {
 }
 
 if (demo) {
+  // ducy's engine first: setting up makes player IDs with it (identity.js),
+  // and the page importing this one waits, so it isn't loaded twice.
+  await import('../wasm/ducy_wasm.js').then(w => w.default({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)}));
   // Connections open at once; messages wait for the relay to load.
   useLocalRelay({
     connect(code, role, id, handlers) {
