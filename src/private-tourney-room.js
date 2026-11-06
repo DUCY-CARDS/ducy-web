@@ -33,7 +33,7 @@ import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e
 import { createTourneyHost } from './club-tourney-host.js';
 import { defaultSeats, maxSeats } from './club-tables.js';
 import { structureEditor } from './tourney-structure-ui.js';
-import { HOST_ID, MAX_POINTS, PAYOUTS, cleanName, joinPrivate, leavePrivate, lobbyBody, newPrivateTourney, privateClub, setPrizes, theTourney, tourneySettle, tourneyStandings } from './private-tourney.js';
+import { HOST_ID, MAX_POINTS, PAYOUTS, cleanName, joinPrivate, leavePrivate, lobbyBody, newPrivateTourney, privateClub, setPrizes, theTourney, tourneyStandings } from './private-tourney.js';
 import { bannerText, pageHtml, setupHtml, totalsText } from './private-tourney-ui.js';
 import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './payout-table-ui.js';
 import { download, fileName } from './oneoff-standings-ui.js';
@@ -160,10 +160,10 @@ function savePrizes(list, quiet = false) {
   publish(quiet);
 }
 
-// The standings and settle-up list as a file (#403).
+// The standings as a file (#403).
 function downloadStandings() {
   if (!body) return;
-  const csv = standingsCsv(tourneyStandings(body), tourneySettle(body), [
+  const csv = standingsCsv(tourneyStandings(body), [], [
     ['Player', r => r.name], ['Buy-in', r => r.buyIn], ['Won', r => r.won], ['Added', r => r.added], ['Net', r => r.net],
   ], String);
   download(fileName(body.name), csv);

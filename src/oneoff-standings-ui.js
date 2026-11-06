@@ -1,4 +1,4 @@
-// The standings and settle-up list of a one-off private game (#403), as
+// The standings of a one-off private game (#403), as
 // HTML: a cash game's (play.js) and a tournament's (private-tourney-ui.js).
 // Builders only; the page that shows them owns the clicks.
 
@@ -18,13 +18,6 @@ export function standingsHtml(rows, cols, fmt, me = null) {
     h += `<td class="${r.net > 0 ? 'oo-up' : r.net < 0 ? 'oo-down' : ''}">${signed(r.net, fmt)}</td></tr>`;
   }
   return h + '</tbody></table>';
-}
-
-// Who pays whom.
-export function settleHtml(transfers, fmt, me = null) {
-  if (!transfers.length) return '<p class="pl-meta">Nobody owes anything.</p>';
-  const who = (id, name) => (id === me ? '<b>You</b>' : `<b>${esc(name)}</b>`);
-  return '<ul class="oo-settle">' + transfers.map(t => `<li>${who(t.from, t.fromName)} → ${who(t.to, t.toName)} <span class="oo-amt">${fmt(t.amount)}</span></li>`).join('') + '</ul>';
 }
 
 // Saves `text` as a file `name` (a CSV).

@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { atTable, cashOut, cashStandings, give, handBack, newLedger, settleUp, standingsCsv } from '../src/oneoff-standings.js';
-import { settleHtml, signed, standingsHtml, fileName } from '../src/oneoff-standings-ui.js';
+import { signed, standingsHtml, fileName } from '../src/oneoff-standings-ui.js';
 import { HOST_ID, autoPrizes, joinPrivate, lobbyBody, newPrivateTourney, prizeList, prizeTotals, privateClub, results, setPrizes, theTourney, tourneySettle, tourneyStandings } from '../src/private-tourney.js';
 import { pageHtml, totalsText } from '../src/private-tourney-ui.js';
 
@@ -74,9 +74,6 @@ test('the standings on screen and in the download', () => {
   assert.match(h, /<tr class="oo-me"><th>Bo &lt;i&gt; \(you\)<\/th><td>100<\/td><td>250<\/td><td class="oo-up">\+150<\/td>/);
   assert.match(h, /<td class="oo-down">−150<\/td>/);
   assert.equal(signed(0, fmt), '0');
-  const s = settleHtml(settleUp(rows), fmt, 'me');
-  assert.match(s, /<b>Cy<\/b> → <b>You<\/b> <span class="oo-amt">150<\/span>/);
-  assert.match(settleHtml([], fmt), /Nobody owes anything/);
 
   const csv = standingsCsv(rows, settleUp(rows), [['Player', r => r.name], ['Net', r => r.net]], fmt);
   assert.equal(csv, 'Player,Net\nBo <i>,150\nCy,-150\n\nPays,To,Amount\nCy,Bo <i>,150\n');
@@ -194,8 +191,7 @@ test('a tournament’s standings: buy-in, points won, net; the host pays the ove
   let h = pageHtml(b, {me: 'g0'});
   assert.match(h, /Standings, in points/);
   assert.match(h, /<th>Added<\/th>/);
-  assert.match(h, /Settle up/);
-  assert.match(h, /<b>Ann<\/b> → <b>You<\/b>/);
+  assert.doesNotMatch(h, /Settle up|→/, 'no talk of who pays whom');
   assert.match(h, /data-tz="download">Download/);
   assert.match(h, /<th>1st<\/th><td>P0 \(you\)<\/td><td>300<\/td>/);
 

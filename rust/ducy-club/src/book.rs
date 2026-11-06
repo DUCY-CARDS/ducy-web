@@ -688,7 +688,9 @@ impl Book {
         let name = self.name(id);
         if was == "yes" {
             if self.balance(id) < 0 {
-                return refuse(format!("{name}'s account is in credit: settle up first."));
+                return refuse(format!(
+                    "{name}'s balance is below zero: bring it back to zero first."
+                ));
             }
             let open = self
                 .players_of(id)
@@ -701,7 +703,7 @@ impl Book {
                     ""
                 };
                 return refuse(format!(
-                    "{name} and {} settle up first{after}.",
+                    "{name} and {} have chips between them to clear first{after}.",
                     self.name(&p)
                 ));
             }
@@ -770,7 +772,7 @@ impl Book {
             let bal = self.balance(player);
             if bal != 0 {
                 return refuse(format!(
-                    "{name} has {} on their account: settle it first.",
+                    "{name} has {} on their account: clear it first.",
                     chip_text(bal.max(0) as u64)
                 ));
             }
@@ -1484,7 +1486,10 @@ mod tests {
                 .contains("Not one of your players")
         );
         // Revoking waits for them to settle up.
-        assert!(err(b.revoke_agent("al", 7)).contains("Al and Bo settle up first."));
+        assert!(
+            err(b.revoke_agent("al", 7))
+                .contains("Al and Bo have chips between them to clear first.")
+        );
         b.run_agent("al", &json!({"op": "take", "id": "bo", "amount": 500}), 8)
             .unwrap();
         b.revoke_agent("al", 9).unwrap();

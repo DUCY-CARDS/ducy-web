@@ -2344,8 +2344,8 @@ function pageHtml(at) {
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
   if (page === 'member') return memberPageHtml(member);
-  if (page === 'settle') return pageHead('Settle') + settleHtml();
-  if (page === 'chips') return pageHead('Chips') + accountingHtml();
+  if (page === 'settle') return pageHead('Balances') + settleHtml();
+  if (page === 'chips') return pageHead('Chips') + '<p class="pl-meta">Chips are play money with no cash value. Don’t use ducy to play for money.</p>' + accountingHtml();
   if (page === 'info') return pageHead('Club info') + infoEditHtml();
   if (page === 'rules') return pageHead('Rules') + rulesHtml();
   if (page === 'backup') return pageHead('Backup and devices') + backupPageHtml();
@@ -2754,14 +2754,14 @@ let promoForm = null, promoNote = '';
 // The prize whose Void form is open (#544).
 let voiding = '';
 
-// The Settle page (#454): the club's links with its own members, whoever
-// owes, largest first (an agent's row is all of their players' play too),
-// and whether the books add up. Paying up is Give or Take back, with a
-// note, on the member's page.
+// The Balances page (#454): the club's links with its own members, whoever
+// owes chips, largest first (an agent's row is all of their players' play
+// too), and whether the books add up. Give or Take back, on the member's
+// page, changes them.
 function settleHtml() {
   const rows = settleRows(club);
   let h = '';
-  if (!rows.length) h += '<p class="pl-meta">All settled.</p>';
+  if (!rows.length) h += '<p class="pl-meta">All at zero.</p>';
   else {
     h += '<table class="cl-acct cl-settle"><tbody>';
     for (const r of rows) {
@@ -3354,8 +3354,7 @@ const ROLE_TEXT = {
     name: 'agent',
     can: ['bring in your own players with your own invite link', 'give your players chips from your balance, on credit up to your limit', 'take chips back from them and answer their requests'],
     cannot: ['create chips, or act for members who aren’t your players'],
-    note: 'Credit you use is settled with the owner outside ducy; they record each payment as chips given or taken back.',
-    hostNote: 'They settle the credit they use with you outside ducy; you record each payment as chips given or taken back.',
+    note: 'Chips are play money with no cash value. Don’t use ducy to play for money.',
   },
 };
 
@@ -3367,7 +3366,7 @@ function roleHtml(kind, limit = null, name = '') {
   let h = `<div class="cl-role"><span>As ${kind === 'agent' ? 'an' : 'a'} <b>${r.name}</b>${limit != null ? ` (credit limit ${chips(limit)})` : ''}, ${name ? esc(name) : 'you'} can:</span><ul>`;
   h += r.can.map(t => `<li>${esc(them(t))}</li>`).join('') + `</ul><span>${name ? 'They' : 'You'} can’t:</span><ul>`;
   h += r.cannot.map(t => `<li>${esc(them(t))}</li>`).join('') + '</ul>';
-  return h + `<span class="pl-meta">${esc(name ? r.hostNote : r.note)}</span></div>`;
+  return h + `<span class="pl-meta">${esc(r.note)}</span></div>`;
 }
 
 // Signed messages to a club's host go out one at a time, in order: the host

@@ -36,8 +36,8 @@ import { fairPlayer } from './fair-check.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
-import { atTable, cashOut, cashStandings, give, handBack, newLedger, settleUp, standingsCsv } from './oneoff-standings.js';
-import { download, fileName, settleHtml, standingsHtml } from './oneoff-standings-ui.js';
+import { atTable, cashOut, cashStandings, give, handBack, newLedger, standingsCsv } from './oneoff-standings.js';
+import { download, fileName, standingsHtml } from './oneoff-standings-ui.js';
 import {
   checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
@@ -2501,7 +2501,7 @@ function hostStop() {
 // what they left with, and what they have at the table, and sends everyone
 // the standings as they change. Ending the game (the host's End game, after
 // the hand in play) sends the final standings, which everyone keeps on
-// screen with who owes whom and a download. Nothing carries over to another
+// screen with the standings and a download. Nothing carries over to another
 // game.
 
 let ledger = null; // the host's
@@ -2571,7 +2571,7 @@ async function endGame() {
   if (location.hash !== '#host') location.hash = 'host';
 }
 
-// The standings under the table: what each was given, has now, and who owes whom.
+// The standings under the table: what each was given and has now.
 function cashStandingsHtml() {
   const rows = mode === 'host' && ledger ? cashStandings(ledger) : mode === 'guest' && joinedByCode ? guestStandings : null;
   if (!rows?.length) return '';
@@ -2580,8 +2580,7 @@ function cashStandingsHtml() {
 }
 
 function standingsPart(rows, me) {
-  const h = standingsHtml(rows, [['Given', r => r.given], ['Chips', r => r.now]], c, me);
-  return h + `<div class="pl-chips-head"><b>Settle up</b></div>${settleHtml(settleUp(rows), c, me)}`;
+  return standingsHtml(rows, [['Given', r => r.given], ['Chips', r => r.now]], c, me);
 }
 
 // After a game: its final standings, until closed.
@@ -2595,7 +2594,7 @@ function finalStandingsHtml() {
 function downloadStandings() {
   const f = finalStandings;
   if (!f) return;
-  const csv = standingsCsv(f.rows, settleUp(f.rows), [
+  const csv = standingsCsv(f.rows, [], [
     ['Player', r => r.name], ['Given', r => chipInput(r.given)], ['Chips', r => chipInput(r.now)], ['Net', r => chipInput(r.net)],
   ], chipInput);
   download(fileName(f.title), csv);
