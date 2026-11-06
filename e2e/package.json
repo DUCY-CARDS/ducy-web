@@ -1,0 +1,12 @@
+{
+  "name": "ducy-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests of the site, in Chromium and WebKit (playwright.config.js).",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
