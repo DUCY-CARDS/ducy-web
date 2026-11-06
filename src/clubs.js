@@ -120,6 +120,9 @@ let tableForm = false; // the New table form is open
 // payout-table-ui.js), kept as it's typed, and a series question open on
 // the Tournaments page ({id, act}).
 let tourneyForm = null, payTable = null, tAsk = null;
+// A running tournament's payouts being changed, until it's confirmed
+// (#544): {id, table}.
+let payAsk = null;
 const syncPayTable = fm => { if (payTable) { payTable.name = fm.elements.name.value; payTable.draft = readRows(fm, payTable.draft); } };
 const TOURNEY_KEY = 'ducyTourneyChoice';
 let seatedAt = null; // the club table this browser plays at: {code, table, handlers}
@@ -198,10 +201,10 @@ const SAVED_MS = 3000;
 
 // A control's key, the same for it after a redraw: its form's data, its
 // tag, name and data, and whether it's in the notifications (the Overview
-// lists the same ones).
+// lists the same ones). A confirm's yes (data-sure) is its button's.
 function ctlKey(el) {
   if (!el?.tagName) return '';
-  const data = x => Object.entries(x.dataset).map(([k, v]) => `${k}=${v}`).join('&');
+  const data = x => Object.entries(x.dataset).filter(([k]) => k !== 'sure').map(([k, v]) => `${k}=${v}`).join('&');
   const f = el.tagName === 'FORM' ? null : el.form || el.closest('form');
   const keep = el.tagName === 'SUMMARY' ? el.parentElement?.dataset.keep || '' : '';
   return `${el.closest('.mg-notes') ? 'notes>' : ''}${f ? `${data(f)}>` : ''}${el.tagName}|${el.name || ''}|${el.type === 'submit' ? 'submit' : ''}|${keep}|${data(el)}`;
@@ -217,9 +220,34 @@ function failAt(el, text) {
   render();
 }
 
-// After a redraw: busy controls disabled with "…", Saved ✓ beside the last
-// saved, and the error beside the control it came from.
+// A button that asks first (#544): data-ask is the question, data-yes the
+// answer that does it ("Remove Ann? Remove · Keep"), asked in its place.
+// `asking`: the one asking, by ctlKey.
+let asking = '';
+function askInPlace() {
+  const el = asking && byKey(asking);
+  if (!el) { asking = ''; return; }
+  const box = document.createElement('span');
+  box.className = 'cl-confirm';
+  box.append(el.dataset.ask);
+  const yes = el.cloneNode(false);
+  yes.dataset.sure = '1';
+  yes.className = 'btn-small primary';
+  yes.textContent = el.dataset.yes || el.textContent;
+  const no = document.createElement('button');
+  no.className = 'btn-small';
+  no.type = 'button';
+  no.dataset.cl = 'ask-no';
+  no.textContent = 'Keep';
+  box.append(yes, no);
+  el.replaceWith(box);
+}
+
+// After a redraw: a question asked in place, busy controls disabled with
+// "…", Saved ✓ beside the last saved, and the error beside the control it
+// came from.
 function markControls() {
+  askInPlace();
   for (const key of busy) {
     const el = byKey(key);
     const btn = el?.tagName === 'FORM' ? el.querySelector('[type=submit]') : el;
@@ -782,7 +810,7 @@ function cashHtml() {
     h += `<span role="cell" class="mg-num" data-label="Tables">${g.tables.length}</span><span role="cell" class="mg-num" data-label="Seated">${seated} / ${seats}</span>`;
     h += `<span role="cell" class="mg-num mg-wait" data-label="Waitlist">${w}</span>`;
     h += `<span role="cell" class="mg-bacts">${w ? `<button class="btn-small" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>` : ''}<button class="btn-small" data-cl="game-open" data-key="${esc(g.key)}">View</button>`;
-    if (g.offered) h += `<button class="btn-small" data-cl="offer-remove" data-key="${esc(g.key)}">Stop offering</button>`;
+    if (g.offered) h += `<button class="btn-small" data-cl="offer-remove" data-key="${esc(g.key)}" data-ask="Stop offering ${esc(gameTitle(g.t))}?" data-yes="Stop">Stop offering</button>`;
     h += '</span></div>';
     if (!open) continue;
     for (const t of g.tables) {
@@ -821,7 +849,7 @@ function gameHtml(g, counts) {
     for (const e of list) {
       const name = club.members[e.member]?.name || 'Someone';
       const state = e.offer ? `Seat at ${esc(tableById(club, e.offer.table)?.name || 'a table')}` : e.missed ? 'Missed their seat' : clock(e.at);
-      h += `<li class="${e.missed ? 'missed' : ''}"><span><b>${esc(name)}</b> <span class="pl-meta">${state}</span></span><button class="btn-small" data-cl="list-remove" data-key="${esc(g.key)}" data-id="${esc(e.member)}" aria-label="Remove ${esc(name)}">Remove</button></li>`;
+      h += `<li class="${e.missed ? 'missed' : ''}"><span><b>${esc(name)}</b> <span class="pl-meta">${state}</span></span><button class="btn-small" data-cl="list-remove" data-key="${esc(g.key)}" data-id="${esc(e.member)}" aria-label="Remove ${esc(name)}" data-ask="Remove ${esc(name)}?" data-yes="Remove">Remove</button></li>`;
     }
     h += '</ol>';
   }
@@ -2284,7 +2312,7 @@ function pageHtml(at) {
   // (an always-on club's comes back from its room).
   const made = tourneyForm?.pick && (club.payoutTables || []).find(p => p.name.toLowerCase() === tourneyForm.pick);
   if (made) { tourneyForm.d.payoutTable = made.id; tourneyForm.pick = null; }
-  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {wizard: tourneyForm, payTable, ask: tAsk, heading: false});
+  if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {wizard: tourneyForm, payTable, ask: tAsk, payAsk, heading: false});
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote, voiding});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
@@ -2517,10 +2545,11 @@ function ledgerLineHtml(e, about = {}, names = {}, who = true) {
 function memberMenuHtml(m) {
   const items = [];
   if (m.id === club.ownerId) return '';
-  if (m.agent === 'yes') items.push(['revoke-agent', 'Stop being an agent']);
+  // Ending a role and removing someone ask first, naming them (#544).
+  if (m.agent === 'yes') items.push(['revoke-agent', 'Stop being an agent', '', `Stop ${m.name} being an agent?|Stop`]);
   else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
   else if (!m.agentOf) items.push(['make-agent', 'Make agent']);
-  items.push(['remove', 'Remove from the club']);
+  items.push(['remove', 'Remove from the club', '', `Remove ${m.name} from the club?|Remove`]);
   // Their agent is picked in the menu too (#193).
   const agents = membersByStatus(club, 'member').filter(a => a.agent === 'yes' && a.id !== m.id);
   const picker = !m.agent && agents.length
@@ -2599,7 +2628,7 @@ function noteHtml(n) {
     acts = btn('promo-approve', 'Pay', ` data-id="${esc(n.id)}"`, true) + (n.hand ? btn('promo-replay', 'Replay hand', ` data-code="${esc(club.code)}" data-who="host" data-hand="${esc(n.hand)}"`) : '');
   } else if (n.kind === 'stopped') {
     top = `<b>${esc(n.name)}</b> stopped dealing`;
-    acts = btn('close-table-yes', 'Close table', ` data-table="${esc(n.table)}"`);
+    acts = btn('close-table-yes', 'Close table', ` data-table="${esc(n.table)}" data-ask="Close ${esc(n.name)}?" data-yes="Close"`);
   } else if (n.kind === 'left_owing') {
     const t = tableById(club, n.table)?.name || 'a table';
     top = `<a href="#${ph('member', n.member)}">${who}</a> left ${esc(t)} owing <b>${chips(n.owesNow)}</b>`;
@@ -2652,7 +2681,9 @@ function backupPageHtml() {
     // Moving devices (#191): the backup is the way.
     h += '<h2>Another device</h2><p class="pl-desc">Back it up here, then on the other device: club manager › Start a club › Restore it from its backup. One device at a time runs the club.</p>';
   } else h += '<p class="pl-desc">Kept in this browser only. Move it to always on to back it up.</p>';
-  h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button><button class="link-btn" data-cl="close">Stop running it from this browser</button>' : '<button class="btn-small" data-cl="move-always">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
+  // Leaving this browser isn't deleting the club (#544): a section of its own.
+  if (remote) h += '<h2>This browser</h2><div class="pl-actions"><button class="btn-small" data-cl="close">Stop running it here</button></div>';
+  h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button>' : '<button class="btn-small" data-cl="move-always">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
   return h;
 }
 
@@ -2784,13 +2815,17 @@ function requestLogHtml() {
   return h + '</ul></details>';
 }
 
-// A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
+// A ⋯ menu (#144): items [action, label, title?, ask?], each a button
 // handled like any other data-cl click.
 // `attrs`: more attributes for every item (an agent's: the club's code).
 // It stays open over redraws (#544).
 function menuHtml(label, items, id = '', extra = '', attrs = '') {
   let h = `<details class="cl-menu" data-keep="menu:${esc(id)}:${esc(label)}"><summary class="btn-small" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="cl-menu-items">`;
-  for (const [act, text, title = ''] of items) h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${attrs}${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+  for (const [act, text, title = '', ask = ''] of items) {
+    // `ask`: the question it asks first (#544), and its yes ("Remove Ann?|Remove").
+    const [q, yes] = ask.split('|');
+    h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${attrs}${title ? ` title="${esc(title)}"` : ''}${ask ? ` data-ask="${esc(q)}" data-yes="${esc(yes)}"` : ''}>${text}</button>`;
+  }
   return h + extra + '</div></details>';
 }
 
@@ -3332,8 +3367,12 @@ async function onClickIn(e) {
   const b = e.target.closest('[data-cl]');
   if (!b) return;
   const act = b.dataset.cl;
+  // Asks first, in its place (#544): the yes goes on.
+  if (act === 'ask-no') { const k = asking; asking = ''; render(); byKey(k)?.focus(); return; }
+  if (b.dataset.ask && !b.dataset.sure) { asking = ctlKey(b); render(); root.querySelector('[data-cl="ask-no"]')?.focus(); return; }
+  if (b.dataset.sure) asking = '';
   // A ⋯ menu stays open over redraws (#544), until one of its items is picked.
-  if (b.classList.contains('cl-menu-item')) b.closest('details')?.removeAttribute('open');
+  if (b.classList.contains('cl-menu-item') || b.closest('.cl-menu-items')) b.closest('details')?.removeAttribute('open');
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'demo') showDemoList();
   // Another page of Members (#426) starts at its top.
@@ -3421,7 +3460,7 @@ async function onClickIn(e) {
   else if (act === 'close-table-yes') { closingTable = null; hostAct('close_table', {table: b.dataset.table}); render(); }
   else if (act === 'close-table-no') { closingTable = null; render(); }
   else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
-  else if (act === 'remove') { if (confirm('Remove this member from the club?')) hostAct('remove', {id: b.dataset.id}); }
+  else if (act === 'remove') hostAct('remove', {id: b.dataset.id});
   else if (act === 'revoke') { if (confirm('Make a new invite link? The current link stops working for anyone who hasn’t used it yet.')) hostAct('revoke_invite'); }
   else if (act === 'copy') {
     try { await navigator.clipboard.writeText(link()); } catch { root.querySelector('#cl-link')?.select(); }
@@ -3539,6 +3578,9 @@ async function onClickIn(e) {
   // A tournament of a series (#477): this one, or the whole series?
   else if (act === 't-ask') { tAsk = {id: b.dataset.id, act: b.dataset.act}; render(); }
   else if (act === 't-ask-close') { tAsk = null; render(); }
+  // A running tournament's payouts, once the change is confirmed (#544).
+  else if (act === 'pay-yes') { payAsk = null; hostAct('set_payout_table', {id: b.dataset.id, table: b.dataset.table || null}); }
+  else if (act === 'pay-no') { payAsk = null; render(); }
   else if (act === 't-edit') {
     const t = tourneyById(club, b.dataset.id);
     const se = b.dataset.series === '1' && t?.series ? (club.tourneySeries || []).find(s => s.id === t.series) : null;
@@ -3789,8 +3831,12 @@ export async function openClubs(el, v = 'clubs') {
       const f = e.target.closest('form[data-tableform]');
       if (f && ['game', 'blinds', 'blindsOther'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
       // What a tournament pays by (#424): Default or a club payout table.
+      // A running one's asks first (#544).
       const pick = e.target.dataset?.paypick;
-      if (pick && e.target.value !== 'own') hostAct('set_payout_table', {id: pick, table: e.target.value || null});
+      if (pick && e.target.value !== 'own') {
+        if (e.target.dataset.running) { payAsk = {id: pick, table: e.target.value}; render(); root.querySelector('[data-cl="pay-no"]')?.focus(); }
+        else hostAct('set_payout_table', {id: pick, table: e.target.value || null});
+      }
       // The wizard (#477): a choice that changes what its step shows.
       const tf = e.target.closest('form[data-tourneyform]');
       if (tf && tourneyForm && WIZARD_CHOICES.has(e.target.name)) {
@@ -3825,8 +3871,10 @@ export async function openClubs(el, v = 'clubs') {
       render();
     });
     document.addEventListener('keydown', onDocKey);
-    // A ⋯ menu closes when you click anywhere else.
+    // A ⋯ menu closes when you click anywhere else. A click whose target the
+    // page has just redrawn (a question asked in a menu, #544) was in it.
     document.addEventListener('click', e => {
+      if (!e.target.isConnected) return;
       for (const d of document.querySelectorAll('details.cl-menu[open]')) if (!d.contains(e.target)) d.open = false;
     });
   }

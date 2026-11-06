@@ -226,6 +226,16 @@ test('the Tournaments page: a repeating series is one card with its next start (
   h = hostTourneysHtml(between, {}, {}, NOW);
   assert.match(h, /data-cl="series-edit" data-id="s1"/);
   assert.match(h, /Next /);
+  // The buttons that refund buy-ins say what they cancel (#544).
+  assert.match(hostTourneysHtml(club, {}, {}, NOW), /data-cl="t-ask" data-act="cancel" data-id="b">Cancel tournament</);
+  assert.match(hostTourneysHtml(between, {}, {}, NOW), /data-cl="series-stop" data-id="s1">Cancel series</);
+  // A running one's payouts ask before they change; one to come doesn't.
+  const running = {...club, payoutTables: [{id: 'p1', name: 'Flat', rows: []}], tourneys: [t('r', {status: 'running', series: null})]};
+  assert.match(hostTourneysHtml(running, {}, {}, NOW), /data-paypick="r" data-running="1"/);
+  assert.doesNotMatch(hostTourneysHtml(club, {}, {}, NOW), /data-running/);
+  h = hostTourneysHtml(running, {}, {payAsk: {id: 'r', table: 'p1'}}, NOW);
+  assert.match(h, /<option value="p1" selected>Flat/);
+  assert.match(h, /Change payouts mid-tournament\?<button[^>]*data-cl="pay-yes" data-id="r" data-table="p1">Change<\/button><button[^>]*data-cl="pay-no">Keep</);
   // Stopped: no card.
   assert.deepEqual(tourneyCards({...between, tourneySeries: [{...se, stopped: true}]}).map(c => c.t.id), ['a']);
 });

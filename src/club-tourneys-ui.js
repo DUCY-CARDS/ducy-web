@@ -378,13 +378,16 @@ function prizesTable(amounts, shares) {
 
 // A tournament's payouts, for the manager: what it pays by (Default, a club
 // table; picked here) and the row in force, for the entries so far while
-// entries can still come.
-function payoutsHtml(club, t, live) {
+// entries can still come. Running, a change asks first (#544): `ask`, the
+// table picked ({id, table}), until it's answered.
+function payoutsHtml(club, t, live, ask = null) {
   const amounts = prizes(t, club);
   const shares = payoutShares(t, club);
   const own = !t.payoutTable && !!t.payout;
+  const asked = ask?.id === t.id ? ask : null;
   let h = '<div class="cl-payouts">';
-  h += `<label class="pl-label">Payouts <select class="pl-text" data-paypick="${esc(t.id)}">${payoutOptions(club.payoutTables || [], t.payoutTable || '', own)}</select></label>`;
+  h += `<label class="pl-label">Payouts <select class="pl-text" data-paypick="${esc(t.id)}"${t.status === 'running' ? ' data-running="1"' : ''}>${payoutOptions(club.payoutTables || [], asked ? asked.table : t.payoutTable || '', own && !asked)}</select></label>`;
+  if (asked) h += `<span class="cl-confirm">Change payouts mid-tournament?<button class="btn-small primary" data-cl="pay-yes" data-id="${esc(t.id)}" data-table="${esc(asked.table)}">Change</button><button class="btn-small" data-cl="pay-no">Keep</button></span>`;
   if (entriesOpen(t, live)) h += '<span class="pl-meta">For the entries so far</span>';
   return h + prizesTable(amounts, shares) + '</div>';
 }
@@ -399,7 +402,7 @@ const everyText = se => (se.every === 'day' ? 'Daily' : se.days?.length ? `Weekl
 // or the whole series from it on.
 function askHtml(t, act) {
   const verb = act === 'edit' ? 't-edit' : 't-cancel';
-  return `<div class="cl-ask"><span class="pl-label">${act === 'edit' ? 'Change' : 'Cancel'}</span><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="0">This one</button><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="1">Whole series</button><button class="btn-small" data-cl="t-ask-close" aria-label="Close">✕</button></div>`;
+  return `<div class="cl-ask"><span class="pl-label">${act === 'edit' ? 'Change' : 'Cancel tournament'}</span><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="0">This one</button><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="1">Whole series</button><button class="btn-small" data-cl="t-ask-close" aria-label="Close">✕</button></div>`;
 }
 
 // The cards on the Tournaments page, in order: running ones, then those to
@@ -427,14 +430,14 @@ function seriesCardHtml(se, now) {
   let h = `<li class="cl-tourney"><span class="cl-name">${esc(s.name || 'Tournament')}</span><span class="cl-status">${esc(everyText(se))}</span>`;
   h += `<span class="pl-meta">${esc(gameName(s.game || 'nlhe'))} · buy-in ${buyInText({buyIn: s.buyIn || 0, rake: s.rake || 0})} · stack ${whole(s.stack)}</span>`;
   h += `<span class="pl-meta">Next ${esc(dateTime(se.next))} · registration opens ${until(se.next - se.opensBefore, now)}</span>`;
-  h += `<span class="cl-acts"><button class="btn-small" data-cl="series-edit" data-id="${esc(se.id)}">Edit</button><button class="btn-small" data-cl="series-stop" data-id="${esc(se.id)}">Cancel</button></span>`;
+  h += `<span class="cl-acts"><button class="btn-small" data-cl="series-edit" data-id="${esc(se.id)}">Edit</button><button class="btn-small" data-cl="series-stop" data-id="${esc(se.id)}">Cancel series</button></span>`;
   return h + '</li>';
 }
 
 // The host's Tournaments tab. `club` has the tournaments; `live` how running
 // ones are going; `ui` = {wizard (wizardHtml's), payTable, ask ({id, act}:
-// a series question open), heading} (heading false: the page has its own,
-// #398).
+// a series question open), payAsk (a running one's payouts being changed,
+// payoutsHtml), heading} (heading false: the page has its own, #398).
 export function hostTourneysHtml(club, live, ui, now = Date.now()) {
   let h = ui.heading === false ? '' : '<h2>Tournaments</h2>';
   if (ui.wizard) return h + wizardHtml(ui.wizard, club, ui.payTable);
@@ -457,7 +460,7 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
       h += '<span class="cl-acts">';
       if (t.status === 'scheduled') h += `<button class="btn-small" data-cl="${se ? 't-ask' : 't-edit'}" data-act="edit" data-id="${esc(t.id)}" data-series="0">Edit</button>`;
       const askCancel = se && t.status === 'scheduled' && seriesGoesOn(se);
-      h += `<button class="btn-small" data-cl="${askCancel ? 't-ask' : 'cancel-tourney'}" data-act="cancel" data-id="${esc(t.id)}">Cancel</button></span>`;
+      h += `<button class="btn-small" data-cl="${askCancel ? 't-ask' : 'cancel-tourney'}" data-act="cancel" data-id="${esc(t.id)}">Cancel tournament</button></span>`;
       if (ui.ask?.id === t.id) h += askHtml(t, ui.ask.act);
     }
     const l = live?.[t.id];
@@ -473,7 +476,7 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
       for (const p of (t.paid || [])) h += `<li value="${p.place}">${esc(club.members[p.member]?.name || p.member)} <span class="pl-meta">${club$(p.amount)}</span></li>`;
       h += '</ol>';
     }
-    if (t.status !== 'cancelled' && t.status !== 'finished') h += payoutsHtml(club, t, l);
+    if (t.status !== 'cancelled' && t.status !== 'finished') h += payoutsHtml(club, t, l, ui.payAsk);
     if (t.entries.length && t.status === 'scheduled') {
       const names = [...new Set(t.entries.map(e => club.members[e.member]?.name || e.member))];
       h += `<span class="pl-desc">Registered: ${names.map(esc).join(', ')}</span>`;
