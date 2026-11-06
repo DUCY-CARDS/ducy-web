@@ -66,8 +66,8 @@ html.browser-old body > :not(.browser-update) { display: none !important; }
 .notice-close:hover { opacity: 1; }
 body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
-/* The clubs' testing note: on Join, Host and My clubs, and at a club table. */
-body.mode-play:is(.tab-join, .tab-clubs, .club-table) .clubs-notice { display: block; }
+/* The play money note: on Join, Host and My clubs, and at a club table. */
+body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice { display: block; }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 
@@ -2158,7 +2158,6 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .oo-down { color: #f2907f !important; }
 .pz-page .oo-up { color: var(--green) !important; }
 .pz-page .oo-down { color: var(--red) !important; }
-.oo-settle { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .oo-amt { font-family: var(--font-data); margin-left: 6px; }
 .pl-chips .oo-standings { min-width: 0; width: 100%; }
 .oo-details > summary { cursor: pointer; color: var(--fg-strong); }

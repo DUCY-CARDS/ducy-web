@@ -10,8 +10,8 @@
 
 import { GAMES, maxSeats } from './club-tables.js';
 import { levelText } from './club-tourneys-ui.js';
-import { PAYOUTS, results, tourneySettle, tourneyStandings } from './private-tourney.js';
-import { settleHtml, standingsHtml } from './oneoff-standings-ui.js';
+import { PAYOUTS, results, tourneyStandings } from './private-tourney.js';
+import { standingsHtml } from './oneoff-standings-ui.js';
 import { draftOf, rowsEditorHtml } from './payout-table-ui.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
@@ -122,14 +122,13 @@ function prizesHtml(b, host, draft) {
   return h;
 }
 
-// The standings and who owes whom, at the end (#403).
+// The standings, at the end (#403).
 function standingsPart(b, me) {
   const rows = tourneyStandings(b);
   if (!rows.length) return '';
   const cols = [['Buy-in', r => r.buyIn], ['Won', r => r.won]];
   if (rows.some(r => r.added)) cols.push(['Added', r => r.added]);
-  let h = `<span class="sg-label">Standings, in points</span>${standingsHtml(rows, cols, whole, me)}`;
-  h += `<span class="sg-label">Settle up</span>${settleHtml(tourneySettle(b), whole, me)}`;
+  const h = `<span class="sg-label">Standings, in points</span>${standingsHtml(rows, cols, whole, me)}`;
   return h + '<div class="pl-actions"><button class="btn-small" data-tz="download">Download</button></div>';
 }
 

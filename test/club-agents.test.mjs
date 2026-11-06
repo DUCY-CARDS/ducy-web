@@ -230,10 +230,10 @@ test('ledgers: every agent move adds up on both links, and the host keeps the fi
   chipsForTable(club, 'r', t, 800);
   leftTable(club, 'r', 0);
   assert.equal(accountOf(club, 'a').creditUsed, 300);
-  assert.throws(() => revokeAgent(club, 'a'), /account is in credit: settle up first/);
+  assert.throws(() => revokeAgent(club, 'a'), /balance is below zero: bring it back to zero first/);
   issue(club, 'a', 300);
   // Q still has 300 from A: they settle that first too.
-  assert.throws(() => revokeAgent(club, 'a'), /A and Q settle up first/);
+  assert.throws(() => revokeAgent(club, 'a'), /A and Q have chips between them to clear first/);
   runAgent(club, 'a', {op: 'take', id: 'q', amount: 300});
   assert.ok(revokeAgent(club, 'a'));
   // Their players play through the club now.
