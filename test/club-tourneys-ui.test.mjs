@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import {
-  draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tableSizes, tourneyCallsFor, tourneyCards,
+  draftKey, draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tableSizes, tourneyCallsFor, tourneyCards,
 } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
@@ -184,6 +184,23 @@ test('the wizard’s pages: steps, Customize, schedule choices and the review (#
   assert.match(h, /<dd>1 hour before<\/dd>/);
   assert.match(h, />Create</);
   assert.match(page(5, {}, {id: 't1', series: true}), />Save</);
+});
+
+test('the wizard’s ✕ asks Discard? only once something is entered (#544)', () => {
+  const d = newDraft({reentry: false, maxReentries: 2}, NOW);
+  const steps = [{sb: 10, bb: 20, ante: 0, minutes: 8}];
+  const start = draftKey(d, steps);
+  // Read back as it opened: nothing entered (re-entries off, whatever the last limit).
+  readStep(form({name: '', game: d.game, buyIn: '0', rake: '0', added: '0'}), d, 1);
+  readStep(form({reentries: -1}, null), d, 4, {strict: false});
+  assert.equal(draftKey(d, steps), start);
+  assert.notEqual(draftKey({...d, name: 'Sunday'}, steps), start);
+  assert.notEqual(draftKey(d, [...steps, {sb: 20, bb: 40, ante: 0, minutes: 8}]), start);
+  const club = {payoutTables: [], members: {}};
+  const editor = structureEditor({stack: 10000, presets: false});
+  const h = hostTourneysHtml(club, {}, {wizard: {step: 1, d, editor, discard: true}}, NOW);
+  assert.match(h, /Discard\?<button[^>]*data-cl="tw-discard">Discard<\/button><button[^>]*data-cl="tw-keep">Keep editing</);
+  assert.doesNotMatch(h, /cancel-tourney-form/);
 });
 
 test('the Tournaments page: a repeating series is one card with its next start (#477)', () => {

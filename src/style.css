@@ -1614,6 +1614,12 @@ button.tw-step:hover .tw-name { color: var(--fg-strong); }
 .cl-checklist > .link-btn { align-self: flex-start; }
 .cl-nag { margin: 6px 0; }
 .cl-confirm { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+/* An action's answer beside its control (#544): Saved ✓, or what went wrong */
+.cl-saved { margin-left: 8px; color: var(--teal); }
+.cl-acterr { display: block; flex-basis: 100%; grid-column: 1 / -1; margin: 4px 0; font-size: 13px; }
+.tw-discard { flex-basis: auto; }
+.cl-voidform { flex-basis: 100%; }
+.cl-voidform .pl-text { flex: 1 1 160px; }
 /* A tournament calling you (#189): stays until you sit down or close it */
 .cl-callbar { border-color: var(--teal); }
 body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
