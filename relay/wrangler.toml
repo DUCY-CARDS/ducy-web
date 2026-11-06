@@ -34,3 +34,7 @@ ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
+# The beta (#551): a club takes a grant, with no trial clubs, and unused clubs
+# aren't deleted.
+TRIALS = "off"
+KEEP_UNUSED_CLUBS = "on"

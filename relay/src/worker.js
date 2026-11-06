@@ -220,7 +220,9 @@ export class Registry {
   }
 
   async alarm() {
-    for (const code of await this.reg.expired()) {
+    // The beta keeps clubs as long as it can (#551): none are deleted for being unused.
+    const unused = this.env.KEEP_UNUSED_CLUBS === 'on' ? [] : await this.reg.expired();
+    for (const code of unused) {
       // The room deletes the club (telling its members), after checking again.
       await roomOf(this.env, code).fetch(`https://room/admin/expire/${encodeURIComponent(code)}`).catch(e => console.warn('club: not expired:', e));
     }

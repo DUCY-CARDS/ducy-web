@@ -12,9 +12,17 @@ function memoryStorage() {
 }
 
 test('limits come from the environment, with defaults of 3 per owner and 25 in all', () => {
-  assert.deepEqual(limitsFrom({}), {perOwner: 3, total: 25, creators: []});
-  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: '1', MAX_CLUBS: '2', CLUB_CREATORS: 'ann, bob ,'}), {perOwner: 1, total: 2, creators: ['ann', 'bob']});
-  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: 'x', MAX_CLUBS: '-1'}), {perOwner: 3, total: 25, creators: []});
+  assert.deepEqual(limitsFrom({}), {perOwner: 3, total: 25, creators: [], noTrials: false});
+  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: '1', MAX_CLUBS: '2', CLUB_CREATORS: 'ann, bob ,'}), {perOwner: 1, total: 2, creators: ['ann', 'bob'], noTrials: false});
+  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: 'x', MAX_CLUBS: '-1'}), {perOwner: 3, total: 25, creators: [], noTrials: false});
+  assert.equal(limitsFrom({TRIALS: 'off'}).noTrials, true);
+});
+
+test('with trials off, a player needs a grant to start a club', async () => {
+  const reg = registry(memoryStorage(), limitsFrom({TRIALS: 'off'}));
+  await assert.rejects(reg.claim('ann', 'AAAA-BBBB', 1000, 'Owls'), /takes permission/);
+  await reg.grant('ann', {note: 'host'});
+  assert.equal((await reg.claim('ann', 'AAAA-BBBB', 1000, 'Owls')).plan, 'club');
 });
 
 test('without permission, a player gets one trial club, once, with the free limits', async () => {

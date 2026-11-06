@@ -246,8 +246,10 @@ let ladderProgress = loadProgress();
 let ladder = null;
 let ladderNote = '';
 let ladderOpen = new Set();
-// Hand review works against the Hold'em GTO bot only.
-const reviewTable = () => gtoTable && tableGame.id === 'nlhe';
+// Hand review works against the Hold'em GTO bot only. The beta has none: you
+// just play (#551).
+const REVIEW_ON = false;
+const reviewTable = () => REVIEW_ON && gtoTable && tableGame.id === 'nlhe';
 // The last finished hand's review: {hand, data} once it's back, {hand,
 // pending: true} while it's worked out. `reviewOpen` holds the decisions
 // expanded to show the bot's mix.
@@ -661,7 +663,7 @@ async function startLadderGame() {
 // loaded once (a few MB the first time, then kept on this device). Without
 // it the game is played all the same, just not reviewed.
 async function ladderReviewer() {
-  if (!gtoAvailable) return false;
+  if (!REVIEW_ON || !gtoAvailable) return false;
   if (gtoReady) return true;
   root.innerHTML = '<div class="pl-wrap"><p class="pl-meta">Loading the hand review (about 3 MB the first time, then it’s kept on this device)…</p></div>';
   try { navigator.storage?.persist?.(); } catch {}
@@ -4226,7 +4228,7 @@ function ladderReviewHtml() {
 // On the Ladder tab: the last game's review, folded away.
 function ladderLastReviewHtml() {
   const rv = ladderProgress.lastReview;
-  if (!rv?.totals?.hands) return '';
+  if (!REVIEW_ON || !rv?.totals?.hands) return '';
   const who = esc(botInfo(rv.opp).name);
   const pending = ladder?.at === rv.at && ladder.pending > 0;
   return `<details class="ld-last"><summary>Your last game, ${rv.won ? 'won' : 'lost'} against ${who}: where to improve</summary>${ladderLessonsHtml(rv, pending, rv.hands)}</details>`;

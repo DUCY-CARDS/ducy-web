@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- Local testing only: the Content Security Policy as .htaccess sends it (#436), plus a local relay. build-site.sh takes it out (#442). -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev ws://localhost:* http://localhost:*; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
-  <title>DUCY: Poker Games and Training</title>
-  <meta name="description" content="Play poker with friends and in private clubs, practise against Ducybot, a GTO bot, and personality bots, drill your ranges, and calculate equity for Hold’em and Omaha.">
-  <meta property="og:title" content="DUCY: Poker Games and Training">
-  <meta property="og:description" content="Play poker with friends and in private clubs, practise against Ducybot, a GTO bot, drill your ranges, and calculate equity.">
+  <title>DUCY: Poker with friends and bots</title>
+  <meta name="description" content="Play Hold’em and Omaha with friends, in private clubs, or against bots. Chips are play money.">
+  <meta property="og:title" content="DUCY: Poker with friends and bots">
+  <meta property="og:description" content="Play Hold’em and Omaha with friends, in private clubs, or against bots. Chips are play money.">
   <meta property="og:image" content="apple-touch-icon.png">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -38,7 +38,7 @@
   <main class="v3" id="v3" hidden></main>
 
   <!-- Shown on every page except the equity calculator (see style.css). -->
-  <p class="beta-notice" role="note"><strong>Beta.</strong> Still in development; hand recommendations may be wrong.</p>
+  <p class="beta-notice" role="note"><strong>Beta.</strong> Still in development.</p>
   <!-- Shown wherever people host or join a game (see style.css). -->
   <p class="beta-notice clubs-notice" role="note"><strong>Play money.</strong> Chips have no cash value. Don’t use ducy to play for money.</p>
 
