@@ -12,6 +12,7 @@ import { defaultSeats, GAMES, maxSeats } from './club-tables.js';
 import { entryCount, playerCount, pool, prizes, payoutShares } from './club-tourneys.js';
 import { pct, rowsEditorHtml, rowsTableHtml } from './payout-table-ui.js';
 import { PRESETS } from './tourney-structure.js';
+import { pickHtml, pickedOther, readPick } from './amount-picks.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const whole = n => Number(n || 0).toLocaleString();
@@ -137,7 +138,7 @@ export const draftLast = d => ({
 
 // A draft and its blind structure as they stand, to tell whether anything
 // was entered since the wizard opened (#544). Re-entries count only when on.
-export const draftKey = (d, structure) => JSON.stringify({...d, maxReentries: d.reentry ? d.maxReentries : 0, structure});
+export const draftKey = (d, structure) => JSON.stringify({...d, maxReentries: d.reentry ? d.maxReentries : 0, other: undefined, structure});
 
 // Reads wizard step `step`'s form into draft `d`. `strict`: also checks it,
 // returning what's wrong ('' if nothing); not strict (a choice that changes
@@ -145,18 +146,24 @@ export const draftKey = (d, structure) => JSON.stringify({...d, maxReentries: d.
 export function readStep(f, d, step, {strict = true, now = Date.now(), edit = null, structureErrors = []} = {}) {
   const el = f.elements;
   const v = name => el[name]?.value ?? '';
-  const int = name => Number(v(name));
+  // Picked from presets, or typed under Other (#544); Other stays open.
+  for (const k of PICKED[step] || []) {
+    if (!el[`${k}Pick`]) continue;
+    d.other = (d.other || []).filter(x => x !== k).concat(pickedOther(el, k) ? [k] : []);
+  }
+  const number = t => (t === '' ? NaN : Number(t));
+  const int = name => (PICKED[step]?.includes(name) ? readPick(el, name, number) : number(v(name)));
   if (step === 1) {
     d.name = v('name').trim();
     d.game = v('game') || d.game;
-    const [buyIn, rake, added] = ['buyIn', 'rake', 'added'].map(k => parseChips(v(k) || '0'));
+    const [buyIn, rake, added] = ['buyIn', 'rake', 'added'].map(k => readPick(el, k, t => parseChips(t || '0')));
     if (Number.isSafeInteger(buyIn)) d.buyIn = buyIn;
     if (Number.isSafeInteger(rake)) d.rake = rake;
     if (Number.isSafeInteger(added)) d.added = added;
     if (d.tableSize > maxSeats(d.game)) d.tableSize = maxSeats(d.game);
     if (strict && ![buyIn, rake, added].every(Number.isSafeInteger)) return 'The buy-in, rake and added are amounts like 10 or 2.50.';
   } else if (step === 2) {
-    for (const k of ['stack', 'tableSize', 'minPlayers', 'maxPlayers']) if (Number.isSafeInteger(int(k)) && v(k) !== '') d[k] = int(k);
+    for (const k of ['stack', 'tableSize', 'minPlayers', 'maxPlayers']) if (Number.isSafeInteger(int(k))) d[k] = int(k);
     d.preset = v('preset') || d.preset;
     if (!strict) return '';
     if (!(d.stack >= 20)) return 'The starting stack is at least 20 chips.';
@@ -204,6 +211,18 @@ const field = (label, html, wide = false) => `<label class="tw-field${wide ? ' t
 const fields = (html, cls = '') => `<div class="tw-fields${cls ? ` ${cls}` : ''}">${html}</div>`;
 const num = (name, value, attrs = '') => `<input class="pl-text" name="${name}" type="number" step="1" inputmode="numeric" value="${esc(value)}" ${attrs}>`;
 const chips = (name, value) => `<input class="pl-text" name="${name}" type="number" min="0" step="${CHIP_STEP}" inputmode="decimal" value="${esc(chipInput(value))}">`;
+// A number picked from presets, or typed under Other (#544, amount-picks.js):
+// `box` the Other box; Other stays picked once it is (d.other).
+const picks = (label, name, list, d, text, box) => seg(label, pickHtml(name, list, d[name], text, box, {tile: true, other: d.other?.includes(name)}));
+// The presets: club chips in hundredths (a buy-in of 20, 50 or 100, like
+// the tables' buy-ins), then tournament chips and players.
+const BUY_INS = [0, 2000, 5000, 10000];
+const RAKES = [0, 200, 500, 1000];
+const STACKS = [5000, 10000, 20000];
+const MIN_PLAYERS = [2, 4, 6];
+const MAX_PLAYERS = [10, 20, 50, 100];
+// The fields picked that way, by step.
+const PICKED = {1: ['buyIn', 'rake'], 2: ['stack', 'minPlayers', 'maxPlayers']};
 
 // A game's table sizes, [[seats, label]]: short-handed (6) and full (its
 // usual size above 6, else its most: Hold'em 9, Omaha 4 and 5 8); Omaha 6
@@ -261,12 +280,13 @@ export function wizardHtml(w, club, payTable = null) {
   if (step === 1) {
     h += fields(field('Name', `<input class="pl-text" name="name" maxlength="40" placeholder="Tournament" value="${esc(d.name)}">`, true));
     h += group('Game', tiles(GAMES.map(g => tfRadio('game', g.id, esc(g.label), g.id === d.game)).join('')));
-    h += group('Entry', fields(field('Buy-in', chips('buyIn', d.buyIn)) + field('Rake', chips('rake', d.rake)) + field('Added', chips('added', d.added)), 'tw-trio'));
+    h += group('Entry', picks('Buy-in', 'buyIn', BUY_INS, d, v => (v ? club$(v) : 'Free'), chips('buyIn', d.buyIn))
+      + picks('Rake', 'rake', RAKES, d, v => (v ? club$(v) : 'None'), chips('rake', d.rake))
+      + fields(field('Added', chips('added', d.added)), 'tw-trio'));
   } else if (step === 2) {
-    h += group('Stack and players', fields(
-      field('Starting stack', num('stack', d.stack, 'min="20" data-tstack="1"'))
-      + field('Minimum players', num('minPlayers', d.minPlayers, 'min="2"'))
-      + field('Maximum players', num('maxPlayers', d.maxPlayers, 'min="2" max="1000"'))));
+    h += group('Stack and players', picks('Starting stack', 'stack', STACKS, d, whole, num('stack', d.stack, 'min="20" data-tstack="1"'))
+      + picks('Minimum players', 'minPlayers', MIN_PLAYERS, d, String, num('minPlayers', d.minPlayers, 'min="2"'))
+      + picks('Maximum players', 'maxPlayers', MAX_PLAYERS, d, String, num('maxPlayers', d.maxPlayers, 'min="2" max="1000"')));
     h += group('Table', tiles(tableSizes(d.game, d.tableSize).map(([n, label]) => tfRadio('tableSize', n, label, n === d.tableSize, label.startsWith(n) ? '' : `${n} a table`)).join('')));
     const levels = w.editor.steps().filter(s => !s.break).length;
     let blinds = tiles(PRESETS().map(p => tfRadio('preset', p.id, esc(p.label), d.preset === p.id, `${p.minutes} min levels`)).join('')

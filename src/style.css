@@ -1621,6 +1621,21 @@ button.tw-step:hover .tw-name { color: var(--fg-strong); }
 /* Setting up a club: "Step 1 of 4" above each step's heading */
 .cl-step { display: block; margin-bottom: 2px; }
 .cl-menu-items .cl-confirm { padding: 8px 10px; max-width: 260px; }
+/* A button that can't be used now, with why beside it (#544) */
+.cl-off { display: inline-flex; align-items: center; gap: 6px; }
+.cl-off .pl-meta { font-size: 12px; }
+/* Presets with Other (#544, amount-picks.js): the box beside them */
+.pick-other { display: inline-flex; }
+.pick-other[hidden] { display: none; }
+.pick-other .pl-text { width: 110px; }
+.mg-card .pl-row { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.mg-card .pl-label { color: #1d3a2c; font-size: 13px; font-weight: 600; }
+.mg-card .pl-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mg-card label.tf-opt { display: inline-flex; flex-direction: row; }
+.mg-card .cc-btn { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
+.mg-card .tf-opt:has(input:checked) { background: #1d3a2c; border-color: #1d3a2c; color: #f3e7c9; }
+.mg-card .pick-other .pl-text { width: 140px; }
+.mg-card .cl-saved { color: #2f6b4f; margin-left: 0; }
 .cl-voidform { flex-basis: 100%; }
 .cl-voidform .pl-text { flex: 1 1 160px; }
 /* A tournament calling you (#189): stays until you sit down or close it */
@@ -2740,6 +2755,11 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .mg-bsub .mg-bgame { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
 .mg-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; border: 0; background: none; padding: 0; font: 700 15px var(--font-ui); color: inherit; cursor: pointer; text-align: left; }
 .mg-chev { width: 12px; font-size: 12px; color: #4f5c48; }
+/* The chevron shows a game's tables; its name opens it (#544). */
+.mg-bname { display: inline-flex; align-items: center; gap: 2px; }
+.mg-chevbtn { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 36px; margin-left: -8px; border: 0; background: none; padding: 0; cursor: pointer; }
+.mg-chevbtn:disabled { visibility: hidden; }
+.mg-bname .mg-toggle { text-decoration: underline; text-decoration-color: #c9b98f; text-underline-offset: 3px; }
 .mg-chain { font-family: var(--font-data); font-size: 12px; color: #4f5c48; }
 .mg-num { font-family: var(--font-data); }
 .mg-brow.waiting .mg-wait { color: #a33a22; font-weight: 700; }

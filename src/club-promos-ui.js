@@ -7,9 +7,14 @@ import { CATEGORIES, CATEGORY_NAMES, PERIODS, promosAdmin, tierCap, VOID_MS } fr
 import { GAMES } from './club-tables.js';
 import { chipInput, chipText, parseChips } from './chip-format.js';
 import { MAX_NOTE } from './club-chips.js';
+import { pickHtml, readPick } from './amount-picks.js';
 import { ago } from './time-ago.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+// A high hand's prize presets (#544), in hundredths: 25 to 250, the new
+// promotion's 50 among them.
+const PRIZES = [2500, 5000, 10000, 25000];
+
+const esc =s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const chips = n => esc(chipText(n));
 const SUIT = {s: '♠', h: '♥', d: '♦', c: '♣'};
 const cardsHtml = cards => `<span class="cl-promo-cards">${(cards || []).map(c => {
@@ -91,7 +96,7 @@ function formHtml(edit, newKind = 'high_hand', cd = '') {
   const v = edit || {kind: newKind, games: ['nlhe'], every: 'day', prizes: [5000], minCategory: 'full_house', ties: 'first',
     tiers: [{category: 'quads', amount: 1000, cap: 5}, {category: 'straight_flush', amount: 2500, cap: 5}, {category: 'royal_flush', amount: 10000, cap: 5}], capPerPlayer: 0, minPlayers: 4, minPot: 0, budget: 0, days: [5], from: 20 * 60, to: 23 * 60};
   const kind = v.kind;
-  let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}"${cd}>`;
+  let h = `<form class="cl-promo-form" data-promoform="${esc(edit?.id || '')}" data-kind="${esc(kind)}"${cd}>`;
   if (!edit) {
     h += `<div class="pl-row"><label class="pl-label">Kind <select class="pl-text" name="kind" data-promokind="1">
       <option value="high_hand"${kind === 'high_hand' ? ' selected' : ''}>High Hand</option>
@@ -107,7 +112,10 @@ function formHtml(edit, newKind = 'high_hand', cd = '') {
     // One prize; a promotion from before keeps its 2nd and 3rd.
     const pz = v.prizes || [];
     const place = (n, label, x) => `<label class="pl-label">${label} <input class="pl-text cl-num" name="${n}" inputmode="decimal" value="${x ? chipInput(x) : ''}"></label>`;
-    h += `<div class="pl-row">${place('p1', pz.length > 1 ? '1st' : 'Prize', pz[0])}${pz.length > 1 ? place('p2', '2nd', pz[1]) + place('p3', '3rd', pz[2]) : ''}</div>`;
+    // One prize: a few amounts, or Other (#544).
+    const box = `<input class="pl-text cl-num" name="p1" inputmode="decimal" aria-label="Prize" value="${pz[0] ? chipInput(pz[0]) : ''}">`;
+    h += pz.length > 1 ? `<div class="pl-row">${place('p1', '1st', pz[0])}${place('p2', '2nd', pz[1])}${place('p3', '3rd', pz[2])}</div>`
+      : `<div class="pl-row"><span class="pl-label">Prize</span><div class="pl-opts">${pickHtml('p1', PRIZES, pz[0] || 0, chipText, box)}</div></div>`;
     h += `<div class="pl-row"><label class="pl-label">At least <select class="pl-text" name="minCategory">${CAT_OPTIONS.map(c => `<option value="${c}"${v.minCategory === c ? ' selected' : ''}>${esc(tierName(c))}</option>`).join('')}</select></label>
       <label class="pl-label">Ties <select class="pl-text" name="ties"><option value="first"${v.ties !== 'split' ? ' selected' : ''}>First to make it wins</option><option value="split"${v.ties === 'split' ? ' selected' : ''}>Split the prize</option></select></label></div>`;
     h += `<div class="pl-row"><label><input type="checkbox" name="rollover"${v.rollover ? ' checked' : ''}> Rolls over when no one qualifies</label></div>`;
@@ -215,7 +223,8 @@ export function readPromoForm(f) {
     tz: -new Date().getTimezoneOffset(),
   };
   if (kind === 'high_hand') {
-    out.prizes = ['p1', 'p2', 'p3'].map((n, i) => amount(n, i ? `The ${['1st', '2nd', '3rd'][i]} prize` : 'The prize')).filter((x, i) => i === 0 || x > 0);
+    out.prizes = ['p1', 'p2', 'p3'].map((n, i) => (i === 0 && f.elements.p1Pick?.value && f.elements.p1Pick.value !== 'other' ? readPick(f.elements, 'p1')
+      : amount(n, i ? `The ${['1st', '2nd', '3rd'][i]} prize` : 'The prize'))).filter((x, i) => i === 0 || x > 0);
     out.minCategory = v('minCategory');
     out.ties = v('ties');
     out.rollover = !!f.elements.rollover?.checked;
