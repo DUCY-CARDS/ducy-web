@@ -9,6 +9,7 @@ import {
   draftKey, draftSettings, hostTourneysHtml, levelText, memberTourneysHtml, newDraft, readStep, repeatText, tableSizes, tourneyCallsFor, tourneyCards,
 } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
+import { pickHtml, readPick } from '../src/amount-picks.js';
 
 const NOW = 1_000_000_000;
 const structure = [{sb: 25, bb: 50, ante: 0, minutes: 10}, {break: true, minutes: 5}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
@@ -201,6 +202,31 @@ test('the wizard’s ✕ asks Discard? only once something is entered (#544)', (
   const h = hostTourneysHtml(club, {}, {wizard: {step: 1, d, editor, discard: true}}, NOW);
   assert.match(h, /Discard\?<button[^>]*data-cl="tw-discard">Discard<\/button><button[^>]*data-cl="tw-keep">Keep editing</);
   assert.doesNotMatch(h, /cancel-tourney-form/);
+});
+
+test('presets with Other: picked, or typed in the box Other shows (#544)', () => {
+  const h = pickHtml('stack', [5000, 10000], 10000, String, '<input name="stack">');
+  assert.match(h, /name="stackPick" value="10000" checked>/);
+  assert.match(h, /name="stackPick" value="other">Other/);
+  assert.match(h, /data-other="stack" hidden><input name="stack">/);
+  assert.match(pickHtml('stack', [5000, 10000], 7000, String, ''), /value="other" checked>Other<\/label><span class="pick-other" data-other="stack">/, 'a value not among them is Other');
+  assert.equal(readPick({stackPick: {value: '5000'}, stack: {value: '7000'}}, 'stack'), 5000);
+  assert.equal(readPick({stackPick: {value: 'other'}, stack: {value: '7000'}}, 'stack'), 7000);
+  assert.equal(readPick({stack: {value: '7000'}}, 'stack'), 7000, 'no buttons: the box');
+  // The wizard: buy-in and players picked; Other kept open once picked.
+  const d = newDraft({}, NOW);
+  assert.equal(readStep(form({name: '', game: 'nlhe', buyInPick: '5000', buyIn: '0', rakePick: 'other', rake: '3', added: '0'}), d, 1), '');
+  assert.deepEqual([d.buyIn, d.rake, d.other], [5000, 300, ['rake']]);
+  const editor = structureEditor({stack: 10000, presets: false});
+  let page = hostTourneysHtml({payoutTables: [], members: {}}, {}, {wizard: {step: 1, d, editor}}, NOW);
+  assert.match(page, /name="buyInPick" value="5000" checked><span class="tw-tile-name">50</);
+  assert.match(page, /name="rakePick" value="other" checked>/);
+  assert.equal(readStep(form({stackPick: '20000', stack: '10000', tableSize: 9, minPlayersPick: '4', minPlayers: '2', maxPlayersPick: 'other', maxPlayers: '30', preset: 'regular'}), d, 2), '');
+  assert.deepEqual([d.stack, d.minPlayers, d.maxPlayers], [20000, 4, 30]);
+  page = hostTourneysHtml({payoutTables: [], members: {}}, {}, {wizard: {step: 2, d, editor}}, NOW);
+  assert.match(page, /name="stackPick" value="20000" checked>/);
+  assert.match(page, /name="maxPlayersPick" value="other" checked>/);
+  assert.equal(draftKey({...d, other: []}, []), draftKey(d, []), 'Other open is not something entered');
 });
 
 test('the Tournaments page: a repeating series is one card with its next start (#477)', () => {

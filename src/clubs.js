@@ -61,6 +61,7 @@ import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
 import { managerPage, NAV, navOf, pageHash, pageTitle } from './club-nav.js';
+import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
 import { chipLines, leftSummary } from './club-member-view.js';
@@ -441,7 +442,8 @@ function tableFormHtml({wizard = false, offer = false} = {}) {
 // ---- the New tournament wizard (#477) ----
 
 // Choices in the wizard that change what its step shows.
-const WIZARD_CHOICES = new Set(['game', 'preset', 'when', 'end', 'payoutTable']);
+// A preset or Other (#544) too: Other's box shows, and a stack picked sets the blinds'.
+const WIZARD_CHOICES = new Set(['game', 'preset', 'when', 'end', 'payoutTable', 'buyInPick', 'rakePick', 'stackPick', 'minPlayersPick', 'maxPlayersPick']);
 
 // Opens the wizard on draft `d`: a new tournament, or `edit` ({id, series,
 // startsAt}: changing a tournament, the whole series too with `series`;
@@ -755,6 +757,14 @@ function tableTag(g, tid) {
 
 const gameTitle = t => `${gameLabel(t.game)} ${chips(t.sb)}/${chips(t.bb)}`;
 
+// A button that can't be used now, saying why beside it (#544).
+const offBtn = (btn, why) => `<span class="cl-off">${btn.replace('<button ', '<button disabled ')}<span class="pl-meta">${esc(why)}</span></span>`;
+// Watch table `id`, or why not.
+function watchBtn(id, cls = 'btn-small') {
+  const btn = `<button class="${cls}" data-cl="watch" data-table="${esc(id)}">Watch</button>`;
+  return !id ? offBtn(btn, 'No table') : tableRunning(id) ? btn : offBtn(btn, 'Not running');
+}
+
 function cashHtml() {
   const tables = openTables(club);
   const counts = seatedCounts();
@@ -801,15 +811,17 @@ function cashHtml() {
     const seats = g.tables.reduce((n, t) => n + t.seats, 0);
     const w = waiting(g);
     h += `<div class="mg-brow${w ? ' waiting' : ''}" role="row">`;
-    h += `<span role="cell" class="mg-bgame"><button class="mg-toggle" data-cl="board-row" data-key="${esc(g.key)}" aria-expanded="${open}"><span class="mg-chev" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(gameLabel(g.t.game))}</button>`;
+    // The chevron shows its tables here; the name opens the game (#544).
+    h += `<span role="cell" class="mg-bgame"><span class="mg-bname"><button class="mg-chevbtn" data-cl="board-row" data-key="${esc(g.key)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} tables"${g.tables.length ? '' : ' disabled'}><span class="mg-chev" aria-hidden="true">${open ? '▾' : '▸'}</span></button>`;
+    h += `<button class="mg-toggle" data-cl="game-open" data-key="${esc(g.key)}">${esc(gameLabel(g.t.game))}</button></span>`;
     if (g.group) h += `<span class="mg-chain">Must move ${esc(chainText(g.group))}</span>`;
     // On the menu, no table running: its list is who's interested.
     if (!g.tables.length) h += '<span class="mg-chain">Offered · not running</span>';
     h += '</span>';
-    h += `<span role="cell" class="mg-num">${chips(g.t.sb)}/${chips(g.t.bb)}</span><span role="cell">${seatsName(g.t.seats)}</span>`;
+    h += `<span role="cell" class="mg-num" data-label="Stakes">${chips(g.t.sb)}/${chips(g.t.bb)}</span><span role="cell" data-label="Seats">${seatsName(g.t.seats)}</span>`;
     h += `<span role="cell" class="mg-num" data-label="Tables">${g.tables.length}</span><span role="cell" class="mg-num" data-label="Seated">${seated} / ${seats}</span>`;
     h += `<span role="cell" class="mg-num mg-wait" data-label="Waitlist">${w}</span>`;
-    h += `<span role="cell" class="mg-bacts">${w ? `<button class="btn-small" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>` : ''}<button class="btn-small" data-cl="game-open" data-key="${esc(g.key)}">View</button>`;
+    h += `<span role="cell" class="mg-bacts"><button class="btn-small${w ? ' primary' : ''}" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>`;
     if (g.offered) h += `<button class="btn-small" data-cl="offer-remove" data-key="${esc(g.key)}" data-ask="Stop offering ${esc(gameTitle(g.t))}?" data-yes="Stop">Stop offering</button>`;
     h += '</span></div>';
     if (!open) continue;
@@ -818,7 +830,7 @@ function cashHtml() {
       h += `<div class="mg-brow mg-bsub" role="row"><span role="cell" class="mg-bgame"><b>${esc(t.name)}</b> ${tableTag(g.group, t.id)}${t.status === 'closing' ? ' <span class="pl-meta">Closing</span>' : ''}</span>`;
       h += `<span role="cell" class="pl-meta">${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}</span><span role="cell"></span><span role="cell"></span>`;
       h += `<span role="cell" class="mg-num" data-label="Seated">${n} of ${t.seats}</span><span role="cell"></span>`;
-      h += `<span role="cell" class="mg-bacts"><button class="btn-small" data-cl="watch" data-table="${esc(t.id)}"${tableRunning(t.id) ? '' : ' disabled'}>Watch</button></span></div>`;
+      h += `<span role="cell" class="mg-bacts">${watchBtn(t.id)}</span></div>`;
     }
   }
   return h + '</div>';
@@ -835,11 +847,13 @@ function gameHtml(g, counts) {
   let h = '<button class="link-btn mg-back" data-cl="game-close">‹ Tables</button>';
   h += `<div class="mg-head mg-ghead"><h1 class="mg-h">${esc(gameTitle(t))} · ${seatsName(t.seats)}</h1><span class="pl-meta">${seated} / ${seats} seated · ${list.length} waiting</span>`;
   h += `<button class="btn-small primary" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button></div>`;
+  // Must move needs two tables to move between (#544).
   if (mustMoveForm === g.key) h += mustMoveFormHtml(g);
-  else {
+  else if (group || g.tables.length >= 2) {
     h += '<div class="mg-chainrow">';
     h += group ? `<span class="pl-meta">Must move</span> <b class="mg-chain">${esc(chainText(group))}</b>` : '<span class="pl-meta">Must move off</span>';
-    h += `<button class="btn-small" data-cl="mm-edit" data-key="${esc(g.key)}">Edit</button></div>`;
+    if (g.tables.length >= 2) h += `<button class="btn-small" data-cl="mm-edit" data-key="${esc(g.key)}">Edit</button>`;
+    h += '</div>';
   }
   h += '<div class="mg-game">';
   h += '<section class="mg-wl"><h3>Waitlist</h3>';
@@ -865,7 +879,7 @@ function gameHtml(g, counts) {
       h += `<span class="cl-confirm">Close ${esc(x.name)}?`;
       h += `<button class="btn-small primary" data-cl="close-table-yes" data-table="${esc(x.id)}">Close</button><button class="btn-small" data-cl="close-table-no">Keep open</button></span>`;
     } else {
-      h += `<span class="cl-acts"><button class="btn-small" data-cl="watch" data-table="${esc(x.id)}"${tableRunning(x.id) ? '' : ' disabled'}>Watch</button>`;
+      h += `<span class="cl-acts">${watchBtn(x.id)}`;
       h += menuHtml(`More for ${x.name}`, [['close-table', 'Close table']], '', '', ` data-table="${esc(x.id)}"`) + '</span>';
     }
     // Who's at it: a must-move table's in move order, the rest by seat.
@@ -1077,7 +1091,7 @@ function onSubmitIn(e) {
   if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}); return; }
   // A member's credit limit (#404).
   const cf = e.target.closest('form[data-creditform]');
-  if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: parseChips(cf.elements.amount.value)}); return; }
+  if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: readPick(cf.elements, 'amount', parseChips)}); return; }
   // Sitting down with a buy-in (#404).
   const sf2 = e.target.closest('form[data-sitform]');
   if (sf2) {
@@ -1852,7 +1866,8 @@ function render() {
   const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.table}|${fm.dataset.id || ''}`;
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
-    values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.value])),
+    // A preset picked (#544): its radio's value.
+    values: Object.fromEntries([...fm.elements].filter(el => el.name && (el.type !== 'radio' || el.checked)).map(el => [el.name, el.value])),
   }));
   // And the Members search (#398), where it was being typed.
   const search = root.querySelector('[data-msearch]');
@@ -1861,6 +1876,10 @@ function render() {
   // itself is kept, since a chosen file can't be put back.
   const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"]');
   const clFocus = clForm?.contains(document.activeElement) && document.activeElement;
+  // A promotion being set up (#544), kept the same way: what's picked and
+  // ticked too. Its kind redraws it, and that one's new.
+  const promoKept = root.querySelector('form[data-promoform]');
+  const promoFocus = promoKept?.contains(document.activeElement) && document.activeElement;
   // A payout table being edited (#424) is redrawn from what's typed; the box being typed in keeps the focus.
   const payFocus = root.querySelector('form[data-paytable]')?.contains(document.activeElement) ? document.activeElement.name : '';
   // Whatever else had the focus gets it back after the redraw (#544).
@@ -1869,12 +1888,17 @@ function render() {
   if (payFocus) root.querySelector(`form[data-paytable] [name="${payFocus}"]`)?.focus({preventScroll: true});
   const clFresh = clForm && root.querySelector(`form[data-clform="${clForm.dataset.clform}"]`);
   if (clFresh) { clFresh.replaceWith(clForm); if (clFocus) clFocus.focus({preventScroll: true}); }
+  const promoFresh = promoKept && root.querySelector('form[data-promoform]');
+  if (promoFresh && promoFresh.dataset.promoform === promoKept.dataset.promoform && promoFresh.dataset.kind === promoKept.dataset.kind) {
+    promoFresh.replaceWith(promoKept);
+    if (promoFocus) promoFocus.focus({preventScroll: true});
+  }
   const lobbyInput = lobbyKept && root.querySelector('form[data-lobbyform] input');
   if (lobbyInput) { lobbyInput.value = lobbyKept.v; if (lobbyKept.focus) lobbyInput.focus({preventScroll: true}); }
   for (const k of typed) {
     const fm = [...root.querySelectorAll(KEPT_FORMS)].find(f => keepKey(f) === k.key);
     if (!fm) continue;
-    for (const [name, v] of Object.entries(k.values)) if (fm.elements[name] && !(fm.elements[name] instanceof RadioNodeList)) fm.elements[name].value = v;
+    for (const [name, v] of Object.entries(k.values)) if (fm.elements[name]) fm.elements[name].value = v;
     if (k.focus) fm.elements[k.focus]?.focus({preventScroll: true});
   }
   const searchInput = searchKept && root.querySelector('[data-msearch]');
@@ -1909,6 +1933,7 @@ function render() {
     [...form.elements].forEach((el, i) => { if (kept.values[i] != null && el.tagName === 'INPUT') el.value = kept.values[i]; });
     if (kept.focus) form.elements[kept.focus]?.focus();
   }
+  syncPicks(root);
   markControls();
   focusLater = '';
   if (focusKey && !root.contains(document.activeElement)) {
@@ -2130,7 +2155,8 @@ function createHtml() {
   }
   // Already have one (#191): its backup brings it back, here or on another
   // device. Not in a demo (#406), which starts empty.
-  if (!demo) h += '<span class="cl-act-desc cl-restore"><label class="link-btn">Restore from backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
+  // A real button (#544), which opens the hidden file picker.
+  if (!demo) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="restore-pick">Restore from backup</button><input type="file" data-clrestore accept=".json,application/json" hidden></span>';
   return h + '</section>';
 }
 
@@ -2443,7 +2469,8 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
     h += agents.map(a => `<option value="${esc(a.id)}"${a.id === agent ? ' selected' : ''}>${esc(a.name)} (${playersOf(club, a.id).length})</option>`).join('') + '</select>';
   }
   h += '</div>';
-  if (!list.length) return h + '<p class="pl-meta cl-empty">No one.</p>';
+  // A search or filter that finds no one: Clear (#544).
+  if (!list.length) return h + `<p class="pl-meta cl-empty">No one.${q || show !== 'all' || agent ? ' <button class="btn-small" data-cl="msearch-clear">Clear</button>' : ''}</p>`;
   // The order: column headings, or a select on a phone.
   const sortLink = (to, label, on) => `<a class="mg-sort${on ? ' on' : ''}" href="#${ph('members', '', {sort: to, show, agent})}"${on ? ' aria-current="true"' : ''}>${label}</a>`;
   const bal = sort === 'balance' || sort === 'balance-low';
@@ -2495,13 +2522,16 @@ function memberPageHtml(id) {
   }
   h += '</div>';
   h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give chips</button>`;
-  h += `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}"${m.balance > 0 ? '' : ' disabled'}>Take back</button>`;
+  const take = `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}">Take back</button>`;
+  h += m.balance > 0 ? take : offBtn(take, 'No chips');
   h += memberMenuHtml(m) + '</div>';
   if (chipForm?.id === m.id) h += chipFormHtml(m);
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
   // Credit (#404): the limit (0 for none), and what it leaves them.
   h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
-  h += `<label>Limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}"></label>`;
+  // None, or the tables' buy-ins (as Give offers them), or Other (#544).
+  const box = `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}" aria-label="Limit">`;
+  h += `<div class="pl-row"><span class="pl-label">Limit</span><div class="pl-opts">${pickHtml('amount', [0, ...quickAmounts()], c.credit || 0, v => (v ? chips(v) : 'None'), box)}</div></div>`;
   h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
   h += '<button class="btn-small primary" type="submit">Save</button></form>';
   const mine = entriesOf(club, m.id);
@@ -2622,7 +2652,7 @@ function noteHtml(n) {
     top = `${who}${n.table ? ` <span class="pl-meta">${esc(n.table)}</span>` : ''}`;
     body = `<span>“${esc(n.text)}”</span>`;
     acts = open ? form('reply', `<input class="pl-text mg-note-wide" name="reply" maxlength="${MAX_HELP_REPLY}" required aria-label="Reply">`, 'Send')
-      : btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`, true) + btn('watch', 'Watch', ` data-table="${esc(n.watch)}"${n.watch && tableRunning(n.watch) ? '' : ' disabled'}`) + btn('help-done', 'Done', ` data-id="${esc(n.id)}"`);
+      : btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`, true) + watchBtn(n.watch || '') + btn('help-done', 'Done', ` data-id="${esc(n.id)}"`);
   } else if (n.kind === 'prize') {
     top = `<b>${esc(n.promo)}</b> · ${esc(n.name)} · ${chips(n.amount)}`;
     if (n.handName) body = `<span class="pl-meta">${esc(n.handName)}</span>`;
@@ -3375,13 +3405,15 @@ async function onClickIn(e) {
   if (b.classList.contains('cl-menu-item') || b.closest('.cl-menu-items')) b.closest('details')?.removeAttribute('open');
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'demo') showDemoList();
+  else if (act === 'restore-pick') root.querySelector('[data-clrestore]')?.click();
   // Another page of Members (#426) starts at its top.
   else if (act === 'mpage') window.scrollTo(0, 0);
   else if (act === 'mtab') { setMemberTab(b.dataset.code, b.dataset.tab); render(); }
   // The manager's sidebar drawer and notifications on a phone (#398).
-  else if (act === 'mg-nav') { navOpen = !navOpen; notesOpen = false; render(); }
-  else if (act === 'mg-notes') { notesOpen = !notesOpen; navOpen = false; render(); }
-  else if (act === 'mg-close') { navOpen = notesOpen = false; render(); }
+  // Opened, the focus goes in; closed, back to the button (#544).
+  else if (act === 'mg-nav') { navOpen = !navOpen; notesOpen = false; render(); if (navOpen) root.querySelector('.mg-side a')?.focus(); }
+  else if (act === 'mg-notes') { notesOpen = !notesOpen; navOpen = false; render(); if (notesOpen) root.querySelector('.mg-notes button')?.focus(); }
+  else if (act === 'mg-close') closeDrawer();
   // Notifications' quick actions (#398).
   else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
@@ -3422,6 +3454,12 @@ async function onClickIn(e) {
   // Overview's numbers open Members, filtered.
   // Members with a filter (#426: in the address), from the Overview or on
   // Members, in the order it has, from the first page.
+  else if (act === 'msearch-clear') {
+    memberQuery = '';
+    const to = ph('members', '', {sort: managerPage(location.hash)?.sort});
+    if (location.hash.slice(1) !== to) location.hash = to; else render();
+    root.querySelector('[data-msearch]')?.focus();
+  }
   else if (act === 'mfilter') location.hash = ph('members', '', {show: b.dataset.f});
   else if (act === 'mfilter-here') location.hash = ph('members', '', {sort: managerPage(location.hash)?.sort, show: b.dataset.f});
   // High Hand promotions (#278).
@@ -3649,8 +3687,19 @@ async function onClickIn(e) {
   }
 }
 
-// The replayer's keys: ← → step, Space plays, Esc closes.
+// Closes the manager's drawer or notifications on a phone (#398), the focus
+// back on the button that opened it (#544).
+function closeDrawer() {
+  const opener = navOpen ? '.mg-burger' : notesOpen ? '.mg-bell' : '';
+  navOpen = notesOpen = false;
+  render();
+  if (opener) document.querySelector(opener)?.focus();
+}
+
+// The replayer's keys: ← → step, Space plays, Esc closes. Esc closes the
+// manager's drawer and notifications too (#544).
 function onDocKey(e) {
+  if (e.key === 'Escape' && !replay && (navOpen || notesOpen)) { closeDrawer(); return; }
   if (!replay || !open || e.target.closest?.('input, select, textarea')) return;
   if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(replay.i + 1); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(replay.i - 1); }
@@ -3845,6 +3894,16 @@ export async function openClubs(el, v = 'clubs') {
         readStep(tf, tourneyForm.d, tourneyForm.step, {strict: false});
         syncWizardBlinds(tourneyForm);
         render();
+        if (e.target.value === 'other') root.querySelector(`[data-other="${e.target.name.replace(/Pick$/, '')}"] input`)?.focus();
+      }
+      // Other's box (#544) in the other forms: shown while Other is picked.
+      else if (e.target.name?.endsWith('Pick')) {
+        // Other starts from the amount picked (the credit limit and a
+        // prize, both chip amounts).
+        const box = e.target.form?.querySelector(`[data-other="${e.target.name.replace(/Pick$/, '')}"] input`);
+        if (box && e.target.value !== 'other') box.value = chipInput(Number(e.target.value));
+        syncPicks(root);
+        if (e.target.value === 'other') root.querySelector(`[data-other="${e.target.name.replace(/Pick$/, '')}"] input`)?.focus();
       }
     });
     // The blind structure editor's fields, and the starting stack it follows.
