@@ -5,7 +5,8 @@
 //
 // Views, by the page's hash: #clubs (usage, permission, the club list),
 // #club=<code> (everything the club stores, read-only), #people,
-// #person=<id> (their activity in every club), #log (the admin log).
+// #person=<id> (their activity in every club), #log (the admin log), #errors
+// (what pages reported going wrong, #552).
 // A club's lobby chat and finished hands' cards stay hidden until "Show
 // chats and cards"; each use goes in the admin log.
 
@@ -70,7 +71,7 @@ let usage = null;
 function route() {
   const h = location.hash.slice(1);
   const [k, v] = h.split('=');
-  return {view: ['club', 'person', 'people', 'log'].includes(k) ? k : 'clubs', arg: v ? decodeURIComponent(v) : ''};
+  return {view: ['club', 'person', 'people', 'log', 'errors'].includes(k) ? k : 'clubs', arg: v ? decodeURIComponent(v) : ''};
 }
 
 async function show() {
@@ -88,6 +89,8 @@ async function show() {
       $('view').innerHTML = peopleHtml((await api('/admin/people')).people);
     } else if (view === 'person') {
       $('view').innerHTML = personHtml(await api('/admin/person', {id: arg}));
+    } else if (view === 'errors') {
+      $('view').innerHTML = errorsHtml((await api('/admin/errors')).errors);
     } else {
       $('view').innerHTML = logHtml((await api('/admin/log')).log);
     }
@@ -284,6 +287,14 @@ function logHtml(log) {
     when(e.at), `${esc(e.name)} <span class="muted">${esc(showId(e.by))}</span>`, esc(ACTIONS[e.action] || e.action),
     /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(e.target) ? `<button class="link" data-club="${esc(e.target)}"><code>${esc(e.target)}</code></button>` : pid(e.target),
     esc(e.detail),
+  ])), 'Nothing yet')}</section>`;
+}
+
+// What pages reported going wrong (#552), most recent first.
+function errorsHtml(errors) {
+  return `<section><h2>Errors</h2>${table(['Last seen', '#Times', 'Error', 'Page', 'Version', 'Browser'], errors.map(e => tr([
+    when(e.last), num(e.count), `${esc(e.message)}${e.where ? ` <span class="muted">${esc(e.where)}</span>` : ''}${e.stack ? `<details><summary class="muted">Stack</summary><pre>${esc(e.stack)}</pre></details>` : ''}`,
+    esc(e.page), esc(e.build), esc(e.ua),
   ])), 'Nothing yet')}</section>`;
 }
 

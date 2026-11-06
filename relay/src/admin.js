@@ -19,6 +19,7 @@
 //   /admin/people                 every player ID the server knows
 //   /admin/person {id}            their activity in every club
 //   /admin/log                    the admin log: every admin action
+//   /admin/errors                 what pages reported going wrong (#552)
 //
 // Changes, and each reveal, go in the admin log (registry.js), with who and
 // when. Owners aren't told.
@@ -104,6 +105,7 @@ export function mergePeople(list, perClub) {
 //   seen(id, seq)            throws if this admin's seq was seen (a replay)
 //   log(entry)               adds to the admin log
 //   logList()                the admin log
+//   errors()                 the pages' error reports
 //   list() grant(id, body) revoke(id) setClub(code, change) status(code)
 //                            the registry (registry.js)
 //   room(code, what, params) a club room's view: 'info', 'full' {reveal},
@@ -117,6 +119,7 @@ export async function adminApi(path, env, admins, ops, now = Date.now()) {
     const log = (action, target, detail = '') => ops.log({at: now, by: admin.id, name: admin.name, action, target, detail: String(detail).slice(0, 200)});
     if (path === '/admin/clubs') return ok(await ops.list());
     if (path === '/admin/log') return ok({log: await ops.logList()});
+    if (path === '/admin/errors') return ok({errors: await ops.errors()});
     if (path === '/admin/grant') {
       const out = await ops.grant(String(data.id), data);
       await log('grant', String(data.id), [data.note, data.maxClubs ? `${data.maxClubs} clubs` : '', data.limits ? `${data.limits.tables} tables, ${data.limits.tourneysPerDay}/day` : ''].filter(Boolean).join(' · '));

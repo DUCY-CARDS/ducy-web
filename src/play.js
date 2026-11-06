@@ -65,6 +65,7 @@ import {
   rungShown, rungsFor, saveProgress, stakesOffer, startGame,
 } from './ladder.js';
 import { addHand, lessonsByHand, lessonsShare } from './ladder-review.js';
+import { reportError } from './error-report.js';
 import { SPADE_PATH } from './home.js';
 
 let worker = null;
@@ -84,6 +85,7 @@ function call(op, ...args) {
     // flight will be answered, so say so to everything waiting rather than
     // leave it (and the table) hanging.
     worker.onerror = e => {
+      reportError(e, 'play-worker');
       for (const p of pending.values()) p.reject(new Error(e.message || 'The table engine stopped'));
       pending.clear();
     };

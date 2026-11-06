@@ -172,6 +172,7 @@ async function admin(req, res, url) {
     seen: (id, seq) => reg.adminSeen(id, seq),
     log: entry => reg.adminLog(entry),
     logList: () => reg.adminLogList(),
+    errors: () => reg.errors(),
     list: () => reg.list(),
     grant: (id, body) => reg.grant(id, body),
     revoke: id => reg.revoke(id),
@@ -220,6 +221,15 @@ async function service(req, res, code) {
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
+  // A page's error report (#552), as in the Worker.
+  if (url.pathname === '/report' && req.method === 'POST') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    try { await reg.report(JSON.parse(raw)); } catch {}
+    res.writeHead(204, {'access-control-allow-origin': '*'});
+    res.end();
+    return;
+  }
   // What a code is (#393): a club, or else a game.
   const look = url.pathname.match(/^\/code\/([^/]+)$/);
   if (look && req.method === 'GET') {

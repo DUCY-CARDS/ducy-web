@@ -83,6 +83,7 @@ test('every action is logged, a reveal before anything is shown', async () => {
     seen: (id, seq) => reg.adminSeen(id, seq),
     log: e => { order.push('log:' + e.action); return reg.adminLog(e); },
     logList: () => reg.adminLogList(),
+    errors: () => reg.errors(),
     list: () => reg.list(), grant: (id, b) => reg.grant(id, b), revoke: id => reg.revoke(id),
     setClub: (c, ch) => reg.setClub(c, ch), status: c => reg.status(c),
     room: async (code, what, p) => { order.push(`room:${what}${p?.reveal ? ':reveal' : ''}`); return {}; },
@@ -99,6 +100,8 @@ test('every action is logged, a reveal before anything is shown', async () => {
   assert.ok(order.includes('room:full:reveal'));
   // Looking without revealing isn't an action.
   assert.equal((await call('/admin/club/AAAA-BBBB', {})).status, 200);
+  await reg.report({message: 'boom'});
+  assert.deepEqual((await call('/admin/errors')).body.errors.map(e => e.message), ['boom']);
   const log = (await call('/admin/log')).body.log;
   assert.deepEqual(log.map(e => [e.action, e.target]), [['grant', 'p1'], ['revoke', 'p1'], ['pause', 'AAAA-BBBB'], ['limits', 'AAAA-BBBB'], ['plan', 'AAAA-BBBB'], ['reveal', 'AAAA-BBBB']]);
   assert.equal(log[0].detail, 'friend');

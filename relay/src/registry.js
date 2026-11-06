@@ -15,6 +15,7 @@
 //   day:<date>    {minutes: club-minutes of play that day (UTC)}
 //   adminSeq      {adminId: {seq: at}}: admin requests seen lately (#401)
 //   adminLog      [{at, by, name, action, target, detail}]: admin actions (#401)
+//   errors        {key: row}: what pages reported going wrong (#552, error-log.js)
 //
 // A Record: {owner, at, name, plan: 'trial' | 'club', expires (trials; ms),
 //   limits: {tables, tourneysPerDay}, suspended, lastActive, minutes (all
@@ -31,6 +32,7 @@
 // (CLUB_CREATORS), as well as the stored grants.
 
 import { clubRegistry } from '../../wasm/ducy_wasm.js';
+import { addReport, cleanReport, reportLimiter } from './error-log.js';
 
 // About what a club costs while its tables run (#93): its object awake at
 // 128 MB, so 0.128 GB-s a second; Workers Free allows 13,000 GB-s a day.
@@ -98,6 +100,8 @@ export function registry(storage, limits) {
     return r.value;
   }
 
+  const takeReport = reportLimiter();
+
   // Usage was seated time until #421, which one seat held for two weeks
   // made nonsense: it starts again from then, once (usageV2).
   let usageFresh = null;
@@ -155,7 +159,19 @@ export function registry(storage, limits) {
       return {clubs: Object.keys(all).length, limits: {perOwner: limits.perOwner, total: limits.total, inviteOnly: true, trialDays: TRIAL_DAYS, free: list.limits.free}, freeGBsPerDay: FREE_GBS_PER_DAY, days: out};
     },
 
+    // A page's error report (#552): junk, and any over the minute's limit, are dropped.
+    async report(raw, now = Date.now()) {
+      const report = cleanReport(raw);
+      if (!report || !takeReport(now)) return;
+      await storage.put('errors', addReport((await storage.get('errors')) || {}, report, now));
+    },
+
     // ---- the super admin's (admin.js: signed by a key in admins.json) ----
+
+    // What's gone wrong, most recent first.
+    async errors() {
+      return Object.values((await storage.get('errors')) || {}).sort((a, b) => b.last - a.last);
+    },
 
     // Admin `id`'s request numbered `seq` (the time it was signed): throws if
     // it was seen before, so a copied request can't be sent again (#401).

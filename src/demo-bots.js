@@ -19,6 +19,7 @@ import { CRUSHERS, LINEUP_SEATS, POOLS, STYLE_MIX, WHALES, WHALE_CHANCE, poolFor
 import { ROOMS, STAKES, regionOf } from './quest-rooms.js';
 import { personOf, tourist } from './quest-people.js';
 import { lineFor, speaks } from './bot-chat.js';
+import { reportError } from './error-report.js';
 
 // The generic players come from a Los Angeles room: its mix of people.
 const ROOM = ROOMS.find(r => regionOf(r)?.id === 'la')?.id || ROOMS[0].id;
@@ -128,7 +129,7 @@ export function thinker(ready) {
         if (e.data.error) w?.reject(new Error(e.data.error));
         else w?.resolve(e.data.result);
       };
-      worker.onerror = e => failAll(e.message || 'the bots’ worker failed');
+      worker.onerror = e => { reportError(e, 'demo-bot-worker'); failAll(e.message || 'the bots’ worker failed'); };
     }
     return new Promise((resolve, reject) => {
       const at = ++n;
