@@ -128,9 +128,8 @@ function formHtml(edit, newKind = 'high_hand', cd = '') {
   h += `<details class="cl-promo-more"${edit ? ' open' : ''}><summary>Conditions and budget</summary>
     <div class="pl-row"><label class="pl-label">Players dealt in, at least <input class="pl-text cl-num" type="number" min="2" max="9" name="minPlayers" value="${v.minPlayers ?? 4}"></label>
     <label class="pl-label">Pot, at least <input class="pl-text cl-num" name="minPot" inputmode="decimal" value="${v.minPot ? chipInput(v.minPot) : ''}"></label></div>
-    <div class="pl-row"><label class="pl-label">Budget per period <input class="pl-text cl-num" name="budget" inputmode="decimal" value="${v.budget ? chipInput(v.budget) : ''}"></label> <span class="pl-meta">Blank: none. Over it, a high hand waits for you to approve it, and bonuses stop.</span></div>
-    <div class="pl-row"><label><input type="checkbox" name="tourneys"${v.tourneys ? ' checked' : ''}> Tournament hands count too</label></div>
-    <p class="pl-meta">Prizes are club chips the club gives; nothing comes out of the pots.</p></details>`;
+    <div class="pl-row"><label class="pl-label">Budget per period <input class="pl-text cl-num" name="budget" inputmode="decimal" value="${v.budget ? chipInput(v.budget) : ''}" placeholder="None"></label></div>
+    <div class="pl-row"><label><input type="checkbox" name="tourneys"${v.tourneys ? ' checked' : ''}> Tournament hands count too</label></div></details>`;
   h += `<div class="pl-actions"><button class="tr-start" type="submit">${edit ? 'Save for the next period' : 'Start it'}</button><button class="btn-small" type="button" data-cl="promo-cancel"${cd}>Cancel</button></div>`;
   return h + '</form>';
 }
@@ -152,7 +151,7 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
   if (form) h += form.startsWith('new') ? formHtml(null, form === 'new-bonus' ? 'bonus' : 'high_hand', cd) : formHtml(a.list.find(p => p.id === form), 'high_hand', cd);
   else h += `<div class="pl-actions"><button class="tr-start" data-cl="promo-new"${cd}>New promotion</button></div>`;
   const live = a.list.filter(p => p.status !== 'ended');
-  if (!live.length && !form) h += '<p class="pl-meta">No promotions yet. A high hand of the day, or bonuses for quads and better, give members something to chase. The prizes are club chips the club gives.</p>';
+  if (!live.length && !form) h += '<p class="pl-meta">No promotions yet.</p>';
   for (const p of live) {
     h += `<div class="cl-promo"><div class="cl-promo-head"><b>${esc(p.name)}</b><span class="pl-meta">${p.status === 'paused' ? 'Paused' : p.period ? left(p.period.end, now) : 'Not on right now'}</span></div>`;
     h += `<p class="pl-desc">${esc(p.rules)}${p.next ? ' <span class="pl-meta">(changes waiting for the next period)</span>' : ''}</p>`;
@@ -163,7 +162,7 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
       }
     }
     if (p.caps) h += `<ul class="cl-promo-caps">${p.caps.map(c => `<li>${esc(tierName(c.category))} ${chips(c.amount)}: ${c.used}${c.cap ? ` of ${c.cap}` : ''} paid</li>`).join('')}</ul>`;
-    h += `<div class="pl-actions"><button class="btn-small" data-cl="promo-edit" data-id="${esc(p.id)}"${cd}>Change</button>`;
+    h += `<div class="pl-actions"><button class="btn-small" data-cl="promo-edit" data-id="${esc(p.id)}"${cd}>Edit</button>`;
     h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="${p.status === 'paused' ? 'running' : 'paused'}"${cd}>${p.status === 'paused' ? 'Resume' : 'Pause'}</button>`;
     h += `<button class="btn-small" data-cl="promo-status" data-id="${esc(p.id)}" data-status="ended"${cd}>End</button></div></div>`;
   }
@@ -175,7 +174,7 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
       h += `<span class="pl-meta">${esc(w.promoName)}${w.place ? ` · ${w.place === 1 ? '1st' : w.place === 2 ? '2nd' : '3rd'}` : ''} · ${esc(ago(w.paidAt || w.at))}${w.status === 'void' ? ' · voided' : w.status === 'held' ? ' · waiting to be paid' : ''}</span>`;
       h += '<span class="cl-acts">';
       if (replay && w.hand) h += `<button class="btn-small" data-cl="promo-replay" data-code="${esc(replay)}" data-who="host" data-hand="${esc(w.hand)}">Replay</button>`;
-      if (w.status === 'held') h += `<button class="btn-small primary" data-cl="promo-approve" data-id="${esc(w.id)}"${cd}>Pay it</button>`;
+      if (w.status === 'held') h += `<button class="btn-small primary" data-cl="promo-approve" data-id="${esc(w.id)}"${cd}>Pay</button>`;
       if (canVoid && voiding !== w.id) h += `<button class="btn-small" data-cl="promo-void" data-id="${esc(w.id)}"${cd}>Void</button>`;
       h += '</span>';
       if (canVoid && voiding === w.id) {
