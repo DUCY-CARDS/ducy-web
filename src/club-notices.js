@@ -3,11 +3,11 @@
 // them and their buttons). ducy-play's club_overview builds them from the
 // club (#456).
 //
-//   join        asks to join                    Let in · No
-//   chips       asks for chips                  Give (the amount) · Other · No
-//   at_limit    a credit player at their limit  Raise limit (new amount) · No (#404)
-//   help        a help request                  Reply · Watch
-//   prize       a promotion prize held          Pay · Replay hand
+//   join        asks to join                    Let in · Decline
+//   chips       asks for chips                  Give (the amount) · Other · Decline
+//   at_limit    a credit player at their limit  Raise limit (new amount) · Decline (#404)
+//   help        a help request                  Reply · Watch · Done
+//   prize       a promotion prize held          Pay · Replay
 //   stopped     a table stopped dealing         Close table
 //   left_owing  left a table owing the club     (a notice) (#404)
 // Each has a `key`, unique and stable while it stands, so the notices that

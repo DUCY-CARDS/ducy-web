@@ -25,7 +25,7 @@
 import { loadIdentity, MIN_NEW_PASSWORD, showId, signMessage, Verifier } from './identity.js';
 import { clubBackupText, proveClubBackup } from './club-backup.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY, RESTORE_WARNING } from './player-settings.js';
+import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -646,7 +646,7 @@ function hostLobbyHtml() {
 }
 
 // The open help requests, for the host: who, when, from which table, with
-// a reply and Mark handled.
+// a reply and Done.
 function helpListHtml(list, dis = '') {
   if (!list?.length) return '';
   let h = `<div class="cl-needs cl-helpreqs"><h3>Help requests (${list.length})</h3><ul class="cl-list">`;
@@ -654,7 +654,7 @@ function helpListHtml(list, dis = '') {
     h += `<li><span class="cl-name">${esc(x.name)}</span><span class="pl-meta">${clock(x.at)}${x.table ? ` · at ${esc(x.table)}` : ''}</span><span class="cl-help-text">“${esc(x.text)}”</span>`;
     if (x.reply) h += `<span class="pl-meta">Replied: “${esc(x.reply)}”</span>`;
     h += `<form class="cl-chipform" data-helpreply="${esc(x.id)}"><input class="pl-text" name="reply" maxlength="${MAX_HELP_REPLY}" placeholder="Reply (optional)">`;
-    h += `<button class="btn-small" type="submit"${dis}>Reply</button><button class="btn-small primary" type="button" data-cl="help-done" data-id="${esc(x.id)}"${dis}>Mark handled</button></form></li>`;
+    h += `<button class="btn-small" type="submit"${dis}>Reply</button><button class="btn-small primary" type="button" data-cl="help-done" data-id="${esc(x.id)}"${dis}>Done</button></form></li>`;
   }
   return h + '</ul></div>';
 }
@@ -1555,7 +1555,7 @@ function resultsHtml(entries, names = null, tableNames = {}) {
 // names one. `who`: whose history to look in ('host', or your id).
 function promoReplayBtn(e, code, who) {
   if (!e.hand || (e.kind !== 'prize' && e.kind !== 'void')) return '';
-  return ` <button class="link-btn" data-cl="promo-replay" data-code="${esc(code)}" data-who="${esc(who)}" data-hand="${esc(e.hand)}">Replay the hand</button>`;
+  return ` <button class="link-btn" data-cl="promo-replay" data-code="${esc(code)}" data-who="${esc(who)}" data-hand="${esc(e.hand)}">Replay</button>`;
 }
 
 // Opens the hand behind a prize: in the host's history by its id; in a
@@ -1972,7 +1972,6 @@ function managerHtml() {
   }
   const card = c => `<a class="cl-club cream" href="#${c.href}"><span class="cl-club-text"><span class="cl-club-name">${esc(c.name)}</span><span class="cl-club-who">${esc(c.who)}</span></span>${c.waiting ? `<span class="cl-pill hot">${c.waiting} need${c.waiting === 1 ? 's' : ''} you</span>` : ''}<span class="cl-club-go">Manage →</span></a>`;
   let h = '<div class="pl-head"><h1>Club manager</h1></div>';
-  h += `<p class="pl-desc">Run your club, or help run one. Playing at clubs and joining them is in <a href="${playerHref('clubs')}">the ducy app</a>.</p>`;
   h += '<div class="cl-clubs">';
   if (own) {
     const members = club?.members ? membersByStatus(club, 'member').length : 0;
@@ -2123,7 +2122,7 @@ function createHtml() {
   if (club || isRemote()) return '';
   let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span>';
   h += `<span class="cl-act-row"><input class="pl-text" id="cl-clubname" aria-label="Club name" maxlength="${MAX_CLUB_NAME}" placeholder="Club name" value="${esc(alwaysFailed?.name || (demo ? 'Demo Club' : ''))}">`;
-  h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create a club'}</button></span>`;
+  h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create'}</button></span>`;
   if (alwaysFailed) {
     h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
     // Asking for permission (#265): ducy needs this player's ID to grant it.
@@ -2131,13 +2130,13 @@ function createHtml() {
   }
   // Already have one (#191): its backup brings it back, here or on another
   // device. Not in a demo (#406), which starts empty.
-  if (!demo) h += `<span class="cl-act-desc cl-restore">Already run one? <label class="link-btn">Restore it from its backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span><span class="cl-act-desc cl-restore">${RESTORE_WARNING}</span>`;
+  if (!demo) h += '<span class="cl-act-desc cl-restore"><label class="link-btn">Restore from backup<input type="file" data-clrestore accept=".json,application/json" hidden></label></span>';
   return h + '</section>';
 }
 
 // A demo club (#406, demo.js): be its manager and its players, in this window.
 function demoCardHtml() {
-  return '<section class="cl-act-card"><span class="cl-act-title">Try a demo club</span><span class="cl-act-row"><button class="tr-start" data-cl="demo">Start demo</button></span></section>';
+  return '<section class="cl-act-card"><span class="cl-act-title">Try a demo club</span><span class="cl-act-row"><button class="tr-start" data-cl="demo">Open</button></span></section>';
 }
 
 // Setting up a club (#152, #395), one step at a time (see WIZARD_STEPS):
@@ -2147,7 +2146,9 @@ function demoCardHtml() {
 function wizardHtml() {
   const name = club?.name || owner?.record?.name || '';
   const setup = !!wizard.setup;
-  const step = n => (setup ? `<span class="pl-meta">Step ${n} of 5</span>` : '');
+  // Its steps from 1 (#544), the label always above the heading. Naming the
+  // club came before them.
+  const step = n => (setup ? `<span class="pl-meta cl-step">Step ${n} of 4</span>` : '');
   const err = backupNote ? `<p class="pl-desc pl-neterr">${esc(backupNote)}</p>` : '';
   let h = '<section class="cl-card cl-wizard">';
   if (wizard.step === 'skip') {
@@ -2156,7 +2157,7 @@ function wizardHtml() {
     return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-back">Back up after all</button><button class="btn-small" data-cl="wiz-onward">Skip anyway</button></div></section>';
   }
   if (wizard.step === 'prove') {
-    h += `${step(3)}<h2>Prove it works</h2><p class="pl-desc">Now open the file you just saved, and enter its password. This only checks it: nothing on this device changes.</p>`;
+    h += `${step(2)}<h2>Prove it works</h2><p class="pl-desc">Now open the file you just saved, and enter its password. This only checks it: nothing on this device changes.</p>`;
     h += '<form class="pl-idform" data-clform="prove">';
     h += '<label>Backup file<input class="pl-text" type="file" name="file" required accept=".json,application/json"></label>';
     h += '<label>Password<input class="pl-text" type="password" name="pw" required autocomplete="current-password"></label>';
@@ -2165,15 +2166,15 @@ function wizardHtml() {
   }
   if (wizard.step === 'table') {
     if (provedNote) h += `<p class="pl-desc cl-proved">${provedNote}</p>`;
-    h += `${step(4)}<h2>Your first table</h2><p class="pl-desc">Pick a game and blinds; the rest has good defaults.</p>`;
+    h += `${step(3)}<h2>Your first table</h2>`;
     return h + tableFormHtml({wizard: true}) + '</section>';
   }
   if (wizard.step === 'invite') {
-    h += `${step(5)}<h2>Your invite link</h2><p class="pl-desc">Send it to your players. You let each one in as they ask, and give them chips.</p>`;
+    h += `${step(4)}<h2>Your invite link</h2>`;
     h += club ? inviteRowHtml() : '<p class="pl-meta">Connecting to your club…</p>';
     return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-done">Go to your club</button></div></section>';
   }
-  h += setup ? `<h2>${esc(name)} is ready</h2>${step(2)}<h3>Back it up</h3>` : `<h2>Back up ${esc(name)}</h2>`;
+  h += `${step(1)}<h2>Back up ${esc(name)}</h2>`;
   h += '<p class="pl-desc">The backup is a file, locked with a password you choose, that lets you run the club again from any browser if this one loses it. Then you open it once here, to prove it works.</p>';
   h += '<form class="pl-idform" data-clform="backup">';
   h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
@@ -2378,7 +2379,7 @@ function requestsPageHtml() {
     // with Give (#395).
     for (const m of pending) {
       h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>${removedHtml(m.removedAt)}`;
-      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">No</button></span></li>`;
+      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
     }
     for (const m of asking) h += askRowHtml(m);
     h += '</ul>';
@@ -2402,10 +2403,10 @@ function askRowHtml(m) {
     const n = {credit: creditRow(m).credit, asked: m.request.amount, available: creditRow(m).available};
     h += `<span class="pl-meta">At their credit limit (${chips(n.credit)})</span>`;
     h += `<form class="cl-acts" data-noteform="raise" data-id="${esc(m.id)}"><label class="pl-meta">New limit <input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(raiseTo(n)))}"></label>`;
-    return h + `<button class="btn-small primary" type="submit">Raise limit</button><button class="btn-small" type="button" data-cl="deny-now" data-id="${esc(m.id)}">No</button></form></li>`;
+    return h + `<button class="btn-small primary" type="submit">Raise limit</button><button class="btn-small" type="button" data-cl="deny-now" data-id="${esc(m.id)}">Decline</button></form></li>`;
   }
   h += `<span class="cl-acts"><button class="btn-small primary" data-cl="grant" data-id="${esc(m.id)}">Give ${chips(m.request.amount)}</button>`;
-  h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">No</button></span>`;
+  h += `<button class="btn-small" data-cl="grant-other" data-id="${esc(m.id)}">Other</button><button class="btn-small" data-cl="deny" data-id="${esc(m.id)}">Decline</button></span>`;
   if (chipForm?.id === m.id && (chipForm.kind === 'grant' || chipForm.kind === 'deny')) h += chipFormHtml(m);
   return h + '</li>';
 }
@@ -2606,17 +2607,17 @@ function noteHtml(n) {
   const open = noteForm === n.key;
   if (n.kind === 'join') {
     top = `${who} asks to join${n.via ? ` <span class="pl-meta">via ${esc(n.via)}</span>` : ''}${removedHtml(n.removedAt)}`;
-    acts = btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('decline', 'No', ` data-id="${id}"`);
+    acts = btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('decline', 'Decline', ` data-id="${id}"`);
   } else if (n.kind === 'chips') {
     top = `${who} asks for <b>${chips(n.amount)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
     if (n.note) body = `<span class="pl-meta">“${esc(n.note)}”</span>`;
     acts = open ? form('grant', amount(n.amount, 'Chips to give'), 'Give')
-      : btn('grant', `Give ${chips(n.amount)}`, ` data-id="${id}"`, true) + btn('note-open', 'Other', ` data-key="${esc(n.key)}"`) + btn('deny-now', 'No', ` data-id="${id}"`);
+      : btn('grant', `Give ${chips(n.amount)}`, ` data-id="${id}"`, true) + btn('note-open', 'Other', ` data-key="${esc(n.key)}"`) + btn('deny-now', 'Decline', ` data-id="${id}"`);
   } else if (n.kind === 'at_limit') {
     // Credit is never given past the limit (#404): raise it, or no.
     top = `${who} asks for <b>${chips(n.asked)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
     body = `<span class="pl-meta">At their credit limit (${chips(n.credit)})</span>`;
-    acts = `<form class="mg-note-acts" data-noteform="raise" data-id="${id}"><label class="pl-meta">New limit ${amount(raiseTo(n), 'New credit limit')}</label><button class="btn-small primary" type="submit">Raise limit</button>${btn('deny-now', 'No', ` type="button" data-id="${id}"`)}</form>`;
+    acts = `<form class="mg-note-acts" data-noteform="raise" data-id="${id}"><label class="pl-meta">New limit ${amount(raiseTo(n), 'New credit limit')}</label><button class="btn-small primary" type="submit">Raise limit</button>${btn('deny-now', 'Decline', ` type="button" data-id="${id}"`)}</form>`;
   } else if (n.kind === 'help') {
     top = `${who}${n.table ? ` <span class="pl-meta">${esc(n.table)}</span>` : ''}`;
     body = `<span>“${esc(n.text)}”</span>`;
@@ -2625,7 +2626,7 @@ function noteHtml(n) {
   } else if (n.kind === 'prize') {
     top = `<b>${esc(n.promo)}</b> · ${esc(n.name)} · ${chips(n.amount)}`;
     if (n.handName) body = `<span class="pl-meta">${esc(n.handName)}</span>`;
-    acts = btn('promo-approve', 'Pay', ` data-id="${esc(n.id)}"`, true) + (n.hand ? btn('promo-replay', 'Replay hand', ` data-code="${esc(club.code)}" data-who="host" data-hand="${esc(n.hand)}"`) : '');
+    acts = btn('promo-approve', 'Pay', ` data-id="${esc(n.id)}"`, true) + (n.hand ? btn('promo-replay', 'Replay', ` data-code="${esc(club.code)}" data-who="host" data-hand="${esc(n.hand)}"`) : '');
   } else if (n.kind === 'stopped') {
     top = `<b>${esc(n.name)}</b> stopped dealing`;
     acts = btn('close-table-yes', 'Close table', ` data-table="${esc(n.table)}" data-ask="Close ${esc(n.name)}?" data-yes="Close"`);
@@ -2677,9 +2678,8 @@ function backupPageHtml() {
     if (plan?.temporary) h += '<p class="pl-meta pl-neterr">Temporary club: no backup proved yet.</p>';
     else if (plan?.provedAt) h += `<p class="pl-meta">Backed up ✓ ${esc(new Date(plan.provedAt).toLocaleString())}</p>`;
     if (last) h += `<p class="pl-meta">Last backup from this browser: ${esc(new Date(last).toLocaleString())}</p>`;
+    // Moving devices (#191) is restoring this backup there.
     h += '<div class="pl-actions"><button class="btn-small primary" data-cl="backup">Back up the club</button></div>';
-    // Moving devices (#191): the backup is the way.
-    h += '<h2>Another device</h2><p class="pl-desc">Back it up here, then on the other device: club manager › Start a club › Restore it from its backup. One device at a time runs the club.</p>';
   } else h += '<p class="pl-desc">Kept in this browser only. Move it to always on to back it up.</p>';
   // Leaving this browser isn't deleting the club (#544): a section of its own.
   if (remote) h += '<h2>This browser</h2><div class="pl-actions"><button class="btn-small" data-cl="close">Stop running it here</button></div>';
@@ -3290,7 +3290,7 @@ function agentHtml(m, hostHere, {page = false} = {}) {
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.recruits.length) {
     h += `<span class="pl-meta">Asking to join through you (${a.recruits.length})</span><ul class="cl-list">`;
-    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('ag-approve', x, 'Approve', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
+    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('ag-approve', x, 'Let in', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
     h += '</ul>';
   }
   if (!page) h += `<span class="pl-meta">Your players (${a.players.length})</span>`;

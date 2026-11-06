@@ -241,7 +241,7 @@ export function repeatText(d) {
 export function wizardHtml(w, club, payTable = null) {
   const {d, step} = w;
   const tables = club.payoutTables || [];
-  const title = w.edit ? 'Change tournament' : 'New tournament';
+  const title = w.edit ? 'Edit tournament' : 'New tournament';
   let h = '<div class="tw">';
   h += `<div class="tw-head"><h3>${title}</h3>`;
   h += w.discard
@@ -402,7 +402,7 @@ const everyText = se => (se.every === 'day' ? 'Daily' : se.days?.length ? `Weekl
 // or the whole series from it on.
 function askHtml(t, act) {
   const verb = act === 'edit' ? 't-edit' : 't-cancel';
-  return `<div class="cl-ask"><span class="pl-label">${act === 'edit' ? 'Change' : 'Cancel tournament'}</span><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="0">This one</button><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="1">Whole series</button><button class="btn-small" data-cl="t-ask-close" aria-label="Close">✕</button></div>`;
+  return `<div class="cl-ask"><span class="pl-label">${act === 'edit' ? 'Edit' : 'Cancel tournament'}</span><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="0">This one</button><button class="btn-small" data-cl="${verb}" data-id="${esc(t.id)}" data-series="1">Whole series</button><button class="btn-small" data-cl="t-ask-close" aria-label="Close">✕</button></div>`;
 }
 
 // The cards on the Tournaments page, in order: running ones, then those to
