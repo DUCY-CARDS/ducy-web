@@ -51,7 +51,7 @@ import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsB
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { celebrateAtTable, joinTableVia, showFairCheck, tableChanged } from './play.js';
-import { draftLast, draftSettings, hostTourneysHtml, memberTourneysHtml, newDraft, readStep, tourneyCallsFor, tourneyDraft } from './club-tourneys-ui.js';
+import { draftKey, draftLast, draftSettings, hostTourneysHtml, memberTourneysHtml, newDraft, readStep, tourneyCallsFor, tourneyDraft } from './club-tourneys-ui.js';
 import { checkStructure } from './tourney-structure.js';
 import { hostPromosHtml, memberPromosHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
 import { readServiceForm, servicesHtml } from './club-services-ui.js';
@@ -186,11 +186,83 @@ function newServer() {
   });
 }
 
-// A host action (club-server.js), here or in an always-on club's room;
-// tells the host if it can't be done. Resolves to whether it was.
+// The control an action came from (#544): the button clicked, the form
+// sent or the select changed, and when. Its busy state, Saved ✓ and any
+// error show beside it, across redraws.
+let actor = null, actorAt = 0;
+// Controls whose action the server is answering (by ctlKey), the last one
+// saved ({key, at}), and the last action that failed ({key, text}).
+const busy = new Set();
+let saved = null, failed = null;
+const SAVED_MS = 3000;
+
+// A control's key, the same for it after a redraw: its form's data, its
+// tag, name and data, and whether it's in the notifications (the Overview
+// lists the same ones).
+function ctlKey(el) {
+  if (!el?.tagName) return '';
+  const data = x => Object.entries(x.dataset).map(([k, v]) => `${k}=${v}`).join('&');
+  const f = el.tagName === 'FORM' ? null : el.form || el.closest('form');
+  const keep = el.tagName === 'SUMMARY' ? el.parentElement?.dataset.keep || '' : '';
+  return `${el.closest('.mg-notes') ? 'notes>' : ''}${f ? `${data(f)}>` : ''}${el.tagName}|${el.name || ''}|${el.type === 'submit' ? 'submit' : ''}|${keep}|${data(el)}`;
+}
+const byKey = key => (key && root ? [...root.querySelectorAll('button, select, input, textarea, summary, a, form')].find(el => ctlKey(el) === key) : null);
+
+// What went wrong, beside control `el` (or its key); the top of the page
+// when there's none.
+function failAt(el, text) {
+  const key = typeof el === 'string' ? el : ctlKey(el);
+  failed = key ? {key, text} : null;
+  if (!key) note = text;
+  render();
+}
+
+// After a redraw: busy controls disabled with "…", Saved ✓ beside the last
+// saved, and the error beside the control it came from.
+function markControls() {
+  for (const key of busy) {
+    const el = byKey(key);
+    const btn = el?.tagName === 'FORM' ? el.querySelector('[type=submit]') : el;
+    if (!btn) continue;
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    if (btn.tagName === 'BUTTON' && !btn.textContent.endsWith('…')) btn.textContent += '…';
+  }
+  const span = (cls, text, role) => {
+    const p = document.createElement('span');
+    p.className = cls;
+    p.setAttribute('role', role);
+    p.textContent = text;
+    return p;
+  };
+  // Saved ✓ right beside the button.
+  const s = saved && Date.now() - saved.at < SAVED_MS && byKey(saved.key);
+  if (s) s.after(span('pl-meta cl-saved', 'Saved ✓', 'status'));
+  // An error under the row of buttons (or the form) the control is in.
+  if (failed) {
+    const el = byKey(failed.key);
+    const at = el && ((el.closest('details.cl-menu') || el).closest('.cl-acts, .mg-note-acts, .pl-actions, .cl-formacts, form') || el);
+    if (at) { at.after(span('pl-desc pl-neterr cl-acterr', failed.text, 'alert')); failed.shown = true; }
+    // Its control gone before it could say: the top of the page. Gone
+    // since (another page): it's over.
+    else { if (!failed.shown) note = failed.text; failed = null; }
+  }
+}
+
+// A host action (club-server.js), here or in an always-on club's room. The
+// control it came from is busy until it's answered, then says Saved ✓ (a
+// Save) or what went wrong. Resolves to whether it was done.
 async function hostAct(op, args) {
+  const from = Date.now() - actorAt < 1000 ? actor : null;
+  actor = null;
+  const key = ctlKey(from);
+  const saves = from?.type === 'submit' && from.textContent.trim() === 'Save';
+  failed = null;
+  if (key) { busy.add(key); render(); }
   let ok = true;
-  try { await (isRemote() ? own().run(op, args) : server.run(op, args)); } catch (e) { alert(e.message); ok = false; }
+  try { await (isRemote() ? own().run(op, args) : server.run(op, args)); } catch (e) { ok = false; failAt(key, e.message); }
+  busy.delete(key);
+  if (ok && saves) { saved = {key, at: Date.now()}; setTimeout(render, SAVED_MS); }
   render();
   return ok;
 }
@@ -348,7 +420,8 @@ const WIZARD_CHOICES = new Set(['game', 'preset', 'when', 'end', 'payoutTable'])
 // {sid}: a series none of which is waiting to start) with its `structure`.
 function openWizard(d, edit = null, structure = null) {
   const editor = structureEditor({stack: d.stack, tableSize: d.tableSize, preset: d.preset === 'custom' ? 'regular' : d.preset, steps: structure, presets: false});
-  tourneyForm = {step: 1, d, edit, note: '', editor};
+  // `start`: the draft as it opened, so ✕ asks before throwing away anything entered (#544).
+  tourneyForm = {step: 1, d, edit, note: '', editor, start: draftKey(d, editor.steps())};
   payTable = null;
   tAsk = null;
   render();
@@ -816,7 +889,7 @@ function seatedHtml(tid, players, dis = '', tables = [], ordered = false) {
     h += '<li>';
     if (dis || p.removing || p.moving) h += `<span>${esc(p.name)} ${chips(p.stack)}</span>`;
     else {
-      h += `<details class="cl-menu cl-namemenu"><summary>${esc(p.name)} <span class="cl-stack">${chips(p.stack)}</span></summary><div class="cl-menu-items">`;
+      h += `<details class="cl-menu cl-namemenu" data-keep="name:${esc(tid)}:${esc(p.id)}"><summary>${esc(p.name)} <span class="cl-stack">${chips(p.stack)}</span></summary><div class="cl-menu-items">`;
       h += `<button class="cl-menu-item" data-cl="seat-remove" data-id="${esc(p.id)}"${at}>Remove</button>`;
       h += `<a class="cl-menu-item" href="#${ph('member', p.id)}">View member</a></div></details>`;
     }
@@ -954,6 +1027,13 @@ function onSubmitIn(e) {
     hostAct(id ? 'edit_promo' : 'new_promo', id ? {id, promo: settings} : {promo: settings}).then(ok => { if (ok) { promoForm = null; promoNote = ''; render(); } });
     return;
   }
+  // Voiding a prize, with why (#544).
+  const vf = e.target.closest('form[data-voidform]');
+  if (vf) {
+    e.preventDefault();
+    hostAct('void_award', {id: vf.dataset.voidform, why: vf.elements.why.value}).then(ok => { if (ok) { voiding = ''; render(); } });
+    return;
+  }
   // A notification's form (#398): another amount, a reply, a new credit limit.
   const notef = e.target.closest('form[data-noteform]');
   if (notef) {
@@ -966,7 +1046,7 @@ function onSubmitIn(e) {
   }
   // Club info (#398).
   const inf = e.target.closest('form[data-infoform]');
-  if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}).then(ok => { if (ok) { infoSaved = Date.now(); render(); } }); return; }
+  if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}); return; }
   // A member's credit limit (#404).
   const cf = e.target.closest('form[data-creditform]');
   if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: parseChips(cf.elements.amount.value)}); return; }
@@ -1028,7 +1108,7 @@ function onSubmitIn(e) {
     if (!payTable) return;
     syncPayTable(pf);
     let table;
-    try { table = {name: payTable.name, rows: cleanRows(payTable.draft)}; } catch (err) { alert(err.message); return; }
+    try { table = {name: payTable.name, rows: cleanRows(payTable.draft)}; } catch (err) { failAt(e.submitter || pf.querySelector('[type=submit]'), err.message); return; }
     const id = pf.dataset.paytable;
     hostAct(id === 'new' ? 'add_payout_table' : 'edit_payout_table', id === 'new' ? {table} : {id, table}).then(ok => {
       if (!ok) return;
@@ -1069,13 +1149,14 @@ function onSubmitIn(e) {
   const id = f.dataset.id, kind = f.dataset.chipform;
   const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
-  chipForm = null;
   const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent'}[kind];
-  if (op) hostAct(op, {id, amount, note: why});
+  // The form stays, busy, until it's done; refused, it says why (#544).
+  if (op) hostAct(op, {id, amount, note: why}).then(ok => { if (ok && chipForm?.kind === kind && chipForm.id === id) { chipForm = null; render(); } });
 }
 
 
-function closeClub() {
+// `b`: the button, where a reason it can't be done shows.
+function closeClub(b) {
   if (isRemote()) {
     // An always-on club keeps running on the server; this browser just stops
     // running it. Deleting the club itself comes later (#98).
@@ -1085,7 +1166,7 @@ function closeClub() {
     render();
     return;
   }
-  if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first.'); return; }
+  if (Object.values(club.members).some(m => m.seat)) { failAt(b, 'People are still at tables. Close the tables first.'); return; }
   if (!confirm(`Close ${club.name}? Its members and records are deleted from this browser.`)) return;
   server = null;
   hostNet?.close();
@@ -1098,9 +1179,9 @@ function closeClub() {
 
 // Moves this browser's club to the server as an always-on club (#98): same
 // code, so members' links keep working, and they follow it there.
-async function moveToAlwaysOn() {
-  if (owner.record) { alert('This browser already runs an always-on club; one per browser for now.'); return; }
-  if (Object.values(club.members).some(m => m.seat)) { alert('People are still at tables. Close the tables first, or wait until everyone has left them.'); return; }
+async function moveToAlwaysOn(b) {
+  if (owner.record) { failAt(b, 'This browser already runs an always-on club; one per browser for now.'); return; }
+  if (Object.values(club.members).some(m => m.seat)) { failAt(b, 'People are still at tables. Close the tables first, or wait until everyone has left them.'); return; }
   if (!confirm(`Move ${club.name} to ducy’s server? It then stays open with this page closed, and you run it from here as its owner. Members don’t need to do anything.`)) return;
   const data = JSON.parse(JSON.stringify(club)), senders = verifier.toJSON();
   // The relay takes the club only once no tab hosts it.
@@ -1127,8 +1208,8 @@ async function moveToAlwaysOn() {
 // Opens an always-on club this player owns, made in another browser (#98).
 async function attachAlwaysOn(code) {
   code = normCode(code || '');
-  if (!code) { alert('Enter the club’s code, like ABCD-EFGH.'); return; }
-  if (owner.record) { alert('This browser already runs an always-on club; one per browser for now.'); return; }
+  if (!code) { note = 'Enter the club’s code, like ABCD-EFGH.'; render(); return; }
+  if (owner.record) { note = 'This browser already runs an always-on club; one per browser for now.'; render(); return; }
   note = 'Looking for your club…';
   render();
   try { await owner.attach(code); note = ''; location.hash = 'clubs/own'; } catch (e) { note = e.message; }
@@ -1451,8 +1532,10 @@ function promoReplayBtn(e, code, who) {
 
 // Opens the hand behind a prize: in the host's history by its id; in a
 // member's own by the table and hand number (their record of the same hand
-// was made in their browser, at a slightly different time).
-async function openPromoReplay(code, who, handId) {
+// was made in their browser, at a slightly different time). `b`: the
+// button, where it says if the hand is gone.
+async function openPromoReplay(code, who, handId, b = null) {
+  const key = ctlKey(b);
   const parts = String(handId).split(':');
   const at = Number(parts.pop()), hand = Number(parts.pop());
   parts.shift();
@@ -1465,7 +1548,7 @@ async function openPromoReplay(code, who, handId) {
   const rec = list.find(r => r.id === handId)
     || list.filter(r => r.table === table && r.hand === hand && Math.abs(r.at - at) < 30 * 60e3).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
   if (!rec) {
-    alert(who === 'host' ? 'That hand is no longer in the club’s hand history.' : 'That hand isn’t in this browser’s hand history: it keeps the hands you played here, up to a limit.');
+    failAt(key, who === 'host' ? 'That hand is no longer in the club’s hand history.' : 'That hand isn’t in this browser’s hand history: it keeps the hands you played here, up to a limit.');
     return;
   }
   replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
@@ -1698,8 +1781,11 @@ function toolsHtml() {
   return h;
 }
 
-// Forms whose typing survives a redraw (#398, #404).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform]';
+// Forms whose typing survives a redraw (#398, #404, #544).
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform]';
+// A control that had the focus while it was busy (disabled): it gets it back
+// once it's answered (#544).
+let focusLater = '';
 
 function render() {
   for (const f of listeners) f();
@@ -1735,7 +1821,7 @@ function render() {
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   // And what's typed in a notification's form or the Club info editor (#398).
-  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.table}|${fm.dataset.id || ''}`;
+  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.table}|${fm.dataset.id || ''}`;
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     values: Object.fromEntries([...fm.elements].filter(el => el.name).map(el => [el.name, el.value])),
@@ -1749,6 +1835,8 @@ function render() {
   const clFocus = clForm?.contains(document.activeElement) && document.activeElement;
   // A payout table being edited (#424) is redrawn from what's typed; the box being typed in keeps the focus.
   const payFocus = root.querySelector('form[data-paytable]')?.contains(document.activeElement) ? document.activeElement.name : '';
+  // Whatever else had the focus gets it back after the redraw (#544).
+  const focusKey = root.contains(document.activeElement) ? ctlKey(document.activeElement) : focusLater;
   root.innerHTML = h;
   if (payFocus) root.querySelector(`form[data-paytable] [name="${payFocus}"]`)?.focus({preventScroll: true});
   const clFresh = clForm && root.querySelector(`form[data-clform="${clForm.dataset.clform}"]`);
@@ -1792,6 +1880,13 @@ function render() {
   if (kept && form && form.dataset.chipform + form.dataset.id === kept.key) {
     [...form.elements].forEach((el, i) => { if (kept.values[i] != null && el.tagName === 'INPUT') el.value = kept.values[i]; });
     if (kept.focus) form.elements[kept.focus]?.focus();
+  }
+  markControls();
+  focusLater = '';
+  if (focusKey && !root.contains(document.activeElement)) {
+    const el = byKey(focusKey);
+    if (el?.disabled) focusLater = focusKey;
+    else el?.focus({preventScroll: true});
   }
 }
 
@@ -2190,7 +2285,7 @@ function pageHtml(at) {
   const made = tourneyForm?.pick && (club.payoutTables || []).find(p => p.name.toLowerCase() === tourneyForm.pick);
   if (made) { tourneyForm.d.payoutTable = made.id; tourneyForm.pick = null; }
   if (page === 'tourneys') return pageHead('Tournaments') + hostTourneysHtml(club, tourneyLive(), {wizard: tourneyForm, payTable, ask: tAsk, heading: false});
-  if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote});
+  if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote, voiding});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
   if (page === 'member') return memberPageHtml(member);
@@ -2577,10 +2672,10 @@ function infoEditHtml() {
   });
   h += '</fieldset>';
   h += area('chips', 3) + area('rules', 5);
-  h += `<div class="pl-actions"><button class="btn-small primary" type="submit">Save</button>${Date.now() - infoSaved < 4000 ? '<span class="pl-meta">Saved ✓</span>' : ''}</div></form>`;
+  // Saved ✓ shows beside Save once it is (markControls).
+  h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save</button></div></form>';
   return h;
 }
-let infoSaved = 0;
 
 // The Club info form, as club info.
 function readInfoForm(f) {
@@ -2595,6 +2690,8 @@ function readInfoForm(f) {
 
 // The promotion form open (#278): 'new', 'new-bonus' or a promotion's id; and what's wrong with it.
 let promoForm = null, promoNote = '';
+// The prize whose Void form is open (#544).
+let voiding = '';
 
 // The Settle page (#454): the club's links with its own members, whoever
 // owes, largest first (an agent's row is all of their players' play too),
@@ -2690,8 +2787,9 @@ function requestLogHtml() {
 // A ⋯ menu (#144): items [action, label, title?, data-id?], each a button
 // handled like any other data-cl click.
 // `attrs`: more attributes for every item (an agent's: the club's code).
+// It stays open over redraws (#544).
 function menuHtml(label, items, id = '', extra = '', attrs = '') {
-  let h = `<details class="cl-menu"><summary class="btn-small" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="cl-menu-items">`;
+  let h = `<details class="cl-menu" data-keep="menu:${esc(id)}:${esc(label)}"><summary class="btn-small" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="cl-menu-items">`;
   for (const [act, text, title = ''] of items) h += `<button class="cl-menu-item" data-cl="${act}"${id ? ` data-id="${esc(id)}"` : ''}${attrs}${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
   return h + extra + '</div></details>';
 }
@@ -3234,6 +3332,8 @@ async function onClickIn(e) {
   const b = e.target.closest('[data-cl]');
   if (!b) return;
   const act = b.dataset.cl;
+  // A ⋯ menu stays open over redraws (#544), until one of its items is picked.
+  if (b.classList.contains('cl-menu-item')) b.closest('details')?.removeAttribute('open');
   if (act === 'create') createClub(root.querySelector('#cl-clubname')?.value);
   else if (act === 'demo') showDemoList();
   // Another page of Members (#426) starts at its top.
@@ -3293,11 +3393,9 @@ async function onClickIn(e) {
     if (b.dataset.status === 'ended' && !confirm('End this promotion? A period under way pays out as usual at its end.')) return;
     hostAct('promo_status', {id: b.dataset.id, status: b.dataset.status});
   } else if (act === 'promo-approve') hostAct('approve_award', {id: b.dataset.id});
-  else if (act === 'promo-void') {
-    const why = prompt('Void this prize? Its chips are taken back from the member’s balance. Why (shown in their ledger)?', '');
-    if (why === null) return;
-    hostAct('void_award', {id: b.dataset.id, why});
-  }
+  // Voiding a prize asks why, in its row (#544).
+  else if (act === 'promo-void') { voiding = b.dataset.id; render(); root.querySelector('form[data-voidform] input')?.focus(); }
+  else if (act === 'void-cancel') { voiding = ''; render(); }
   // A new backup takes the backup and proof steps (#395).
   else if (act === 'backup' || act === 'backup-now') { backupNote = ''; setWizard('backup', {setup: false}); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
   else if (act === 'service-add' || act === 'service-edit') {
@@ -3331,8 +3429,8 @@ async function onClickIn(e) {
     setHostNote('shared', true);
     render();
     setTimeout(() => { copied = false; render(); }, 1500);
-  } else if (act === 'close') closeClub();
-  else if (act === 'move-always') moveToAlwaysOn();
+  } else if (act === 'close') closeClub(b);
+  else if (act === 'move-always') moveToAlwaysOn(b);
   else if (act === 'delete-always') deleteAlwaysOn();
   else if (act === 'attach') attachAlwaysOn(root.querySelector('#cl-attach')?.value);
   else if (act === 'forget') leaveMembership(b.dataset.code);
@@ -3406,13 +3504,12 @@ async function onClickIn(e) {
   else if (act === 'mm-cancel') { mustMoveForm = ''; render(); }
   else if (act === 'watch') watchTable(b.dataset.table);
   else if (act === 'seat-remove' || act === 'seat-keep') {
-    b.closest('details')?.removeAttribute('open');
     hostAct(act === 'seat-keep' ? 'keep_player' : 'remove_player', {table: b.dataset.table, id: b.dataset.id});
   }
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
   else if (act === 'replay') openReplay(b.dataset.id);
-  else if (act === 'promo-replay') openPromoReplay(b.dataset.code, b.dataset.who, b.dataset.hand);
+  else if (act === 'promo-replay') openPromoReplay(b.dataset.code, b.dataset.who, b.dataset.hand, b);
   else if (act === 'replay-to') stepReplay(Number(b.dataset.i));
   else if (act === 'replay-play') toggleReplayPlay();
   else if (act === 'replay-close') closeReplay();
@@ -3423,7 +3520,14 @@ async function onClickIn(e) {
   else if (act === 'new-tourney') {
     openWizard(newDraft(load(TOURNEY_KEY, {})));
     root.querySelector('form[data-tourneyform] [name=name]')?.focus();
-  } else if (act === 'cancel-tourney-form') { tourneyForm = null; payTable = null; render(); }
+  } else if (act === 'cancel-tourney-form') {
+    // ✕ on a draft with something entered asks first (#544).
+    const f = root.querySelector('form[data-tourneyform]');
+    if (tourneyForm && f) readStep(f, tourneyForm.d, tourneyForm.step, {strict: false});
+    if (tourneyForm && (payTable || draftKey(tourneyForm.d, tourneyForm.editor.steps()) !== tourneyForm.start)) { tourneyForm.discard = true; render(); root.querySelector('[data-cl="tw-keep"]')?.focus(); }
+    else { tourneyForm = null; payTable = null; render(); }
+  } else if (act === 'tw-discard') { tourneyForm = null; payTable = null; render(); }
+  else if (act === 'tw-keep') { if (tourneyForm) tourneyForm.discard = false; render(); }
   // The wizard's steps: back one, or to one already done.
   else if (act === 'tw-back' || act === 'tw-go') {
     const f = root.querySelector('form[data-tourneyform]');
@@ -3485,7 +3589,7 @@ async function onClickIn(e) {
     const code = b.dataset.code;
     const amount = parseChips(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
     const why = root.querySelector(`[data-ask-note="${code}"]`)?.value || '';
-    if (!Number.isSafeInteger(amount) || amount <= 0) { alert('Enter an amount above 0, like 50 or 12.50.'); return; }
+    if (!Number.isSafeInteger(amount) || amount <= 0) { failAt(b, 'Enter an amount above 0, like 50 or 12.50.'); return; }
     sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
   } else if (act === 'cancel-ask') {
     const code = b.dataset.code;
@@ -3656,6 +3760,10 @@ export async function openClubs(el, v = 'clubs') {
     // The club rules the page draws from are ducy-play's (#455).
     await loadEngine().catch(e => { note = `The club couldn’t start: ${e.message}`; });
     root = el;
+    // Which control an action comes from (#544), before it's handled.
+    for (const type of ['click', 'submit', 'change']) {
+      root.addEventListener(type, e => { actor = e.submitter || e.target.closest?.('button, select, input, textarea, a, form') || null; actorAt = Date.now(); }, true);
+    }
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);

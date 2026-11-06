@@ -294,6 +294,19 @@ test('the members’ panel: rules, leaders and prizes, names escaped (#278)', as
   assert.equal(memberPromosHtml({promos: [], recent: []}), '');
 });
 
+test('voiding a prize asks why in its row, not in a prompt (#544)', async () => {
+  const {hostPromosHtml} = await import('../src/club-promos-ui.js');
+  const club = clubWith('ann', 'bob');
+  newPromo(club, BONUS, T0);
+  processHand(club, rec({hands: [['Kc', 'Kd'], ['2c', '3d']], board: ['Kh', 'Ks', '8d', '7c', '9h'], at: T0}), players(['ann', 'bob']));
+  const id = promosAdmin(club, T0).awards[0].id;
+  assert.match(hostPromosHtml(club, {}, T0), new RegExp(`data-cl="promo-void" data-id="${id}"`));
+  const h = hostPromosHtml(club, {voiding: id}, T0);
+  assert.match(h, new RegExp(`<form class="cl-acts cl-voidform" data-voidform="${id}"><input class="pl-text" name="why"`));
+  assert.match(h, />Void<\/button><button class="btn-small" type="button" data-cl="void-cancel">Cancel</);
+  assert.doesNotMatch(h, /data-cl="promo-void"/);
+});
+
 test('changes to a running period wait for the next one (#274)', () => {
   const club = clubWith('ann', 'bob');
   const promo = newPromo(club, {...BONUS, capPerTier: 0}, T0);

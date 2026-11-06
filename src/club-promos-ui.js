@@ -6,6 +6,7 @@
 import { CATEGORIES, CATEGORY_NAMES, PERIODS, promosAdmin, tierCap, VOID_MS } from './club-promos.js';
 import { GAMES } from './club-tables.js';
 import { chipInput, chipText, parseChips } from './chip-format.js';
+import { MAX_NOTE } from './club-chips.js';
 import { ago } from './time-ago.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -141,8 +142,9 @@ export const hostPromosHtml = (club, opts = {}, now = Date.now()) => promosPartH
 // The same from promosAdmin's data `a`; `code` puts the club's code on the
 // buttons, and `disabled` while the club can't be reached.
 // `replay`: the club's code, for the host, whose history holds the hands
-// behind the prizes (#278).
-export function promosPartHtml(a, {form = null, note = '', code = '', disabled = false, replay = ''} = {}, now = Date.now()) {
+// behind the prizes (#278). `voiding`: the prize whose Void form is open
+// (#544: why, shown in the member's ledger).
+export function promosPartHtml(a, {form = null, note = '', code = '', disabled = false, replay = '', voiding = ''} = {}, now = Date.now()) {
   a ||= {list: [], awards: [], hands: []};
   const cd = (code ? ` data-code="${esc(code)}"` : '') + (disabled ? ' disabled' : '');
   let h = '<div class="cl-promos-host">';
@@ -174,8 +176,13 @@ export function promosPartHtml(a, {form = null, note = '', code = '', disabled =
       h += '<span class="cl-acts">';
       if (replay && w.hand) h += `<button class="btn-small" data-cl="promo-replay" data-code="${esc(replay)}" data-who="host" data-hand="${esc(w.hand)}">Replay</button>`;
       if (w.status === 'held') h += `<button class="btn-small primary" data-cl="promo-approve" data-id="${esc(w.id)}"${cd}>Pay it</button>`;
-      if (canVoid) h += `<button class="btn-small" data-cl="promo-void" data-id="${esc(w.id)}"${cd}>Void</button>`;
-      h += '</span></li>';
+      if (canVoid && voiding !== w.id) h += `<button class="btn-small" data-cl="promo-void" data-id="${esc(w.id)}"${cd}>Void</button>`;
+      h += '</span>';
+      if (canVoid && voiding === w.id) {
+        h += `<form class="cl-acts cl-voidform" data-voidform="${esc(w.id)}"><input class="pl-text" name="why" maxlength="${MAX_NOTE}" placeholder="Why" aria-label="Why">`;
+        h += `<button class="btn-small primary" type="submit"${cd}>Void</button><button class="btn-small" type="button" data-cl="void-cancel"${cd}>Cancel</button></form>`;
+      }
+      h += '</li>';
     }
     h += '</ul>';
   }

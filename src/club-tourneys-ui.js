@@ -135,6 +135,10 @@ export const draftLast = d => ({
   reentry: d.reentry, maxReentries: d.maxReentries,
 });
 
+// A draft and its blind structure as they stand, to tell whether anything
+// was entered since the wizard opened (#544). Re-entries count only when on.
+export const draftKey = (d, structure) => JSON.stringify({...d, maxReentries: d.reentry ? d.maxReentries : 0, structure});
+
 // Reads wizard step `step`'s form into draft `d`. `strict`: also checks it,
 // returning what's wrong ('' if nothing); not strict (a choice that changes
 // what the step shows), what's typed is kept as far as it reads.
@@ -232,13 +236,18 @@ export function repeatText(d) {
 // The wizard, step `w.step` (1 to 5). `w` = {step, d (the draft), editor
 // (its blind structure, tourney-structure-ui.js), edit ({id, series,
 // startsAt} changing a tournament, {sid} a series, or null), note (what's
-// wrong)}; `payTable`: a payout table being made or changed here (step 3).
+// wrong), discard (✕ asked about a draft with something entered, #544)};
+// `payTable`: a payout table being made or changed here (step 3).
 export function wizardHtml(w, club, payTable = null) {
   const {d, step} = w;
   const tables = club.payoutTables || [];
   const title = w.edit ? 'Change tournament' : 'New tournament';
   let h = '<div class="tw">';
-  h += `<div class="tw-head"><h3>${title}</h3><button class="tw-close" type="button" data-cl="cancel-tourney-form" aria-label="Close">✕</button></div>`;
+  h += `<div class="tw-head"><h3>${title}</h3>`;
+  h += w.discard
+    ? '<span class="cl-confirm tw-discard">Discard?<button class="btn-small primary" type="button" data-cl="tw-discard">Discard</button><button class="btn-small" type="button" data-cl="tw-keep">Keep editing</button></span>'
+    : '<button class="tw-close" type="button" data-cl="cancel-tourney-form" aria-label="Close">✕</button>';
+  h += '</div>';
   // The steps: done ones go back to themselves.
   h += '<ol class="tw-steps">';
   WIZARD_STEPS.forEach((label, i) => {
