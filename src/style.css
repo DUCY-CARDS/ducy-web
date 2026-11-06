@@ -1618,6 +1618,7 @@ button.tw-step:hover .tw-name { color: var(--fg-strong); }
 .cl-saved { margin-left: 8px; color: var(--teal); }
 .cl-acterr { display: block; flex-basis: 100%; grid-column: 1 / -1; margin: 4px 0; font-size: 13px; }
 .tw-discard { flex-basis: auto; }
+.cl-menu-items .cl-confirm { padding: 8px 10px; max-width: 260px; }
 .cl-voidform { flex-basis: 100%; }
 .cl-voidform .pl-text { flex: 1 1 160px; }
 /* A tournament calling you (#189): stays until you sit down or close it */
