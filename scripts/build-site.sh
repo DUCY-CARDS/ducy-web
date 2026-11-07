@@ -2,13 +2,13 @@
 # Assemble the deployable site into OUT_DIR with every asset under
 # v/<version>/, so a page only ever loads files from a single release.
 #
-#   OUT_DIR/index.html, manage.html, admin.html, admins.json, favicon.svg,
+#   OUT_DIR/index.html, manage.html, admin.html, privacy.html, admins.json, favicon.svg,
 #     apple-touch-icon.png, icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #   OUT_DIR/v/<version>/relay/src/club-room.js, registry.js (a demo club's)
 #
-# Only index.html, manage.html (the club manager) and admin.html are rewritten (to point
+# Only index.html, manage.html (the club manager), admin.html and privacy.html are rewritten (to point
 # at v/<version>/src/). The JS loads
 # the workers and the WASM relative to its own URL, so those resolve
 # inside the same release folder.
@@ -90,11 +90,17 @@ for ref in "href=\"v/$VERSION/src/admin.css\"" "src=\"v/$VERSION/src/admin.js\""
   grep -qF "$ref" "$OUT/admin.html" || { echo "admin.html is missing $ref" >&2; exit 1; }
 done
 
+# The privacy policy (#554): text only, no script, pointed at the same release.
+sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
+    "${NO_META[@]}" \
+    privacy.html > "$OUT/privacy.html"
+grep -qF "href=\"v/$VERSION/src/style.css\"" "$OUT/privacy.html" || { echo "privacy.html is missing its stylesheet" >&2; exit 1; }
+
 # No page carries a policy of its own (the header covers every file), nor
 # mentions the local relay, nor has an inline script, <style> or on…=
 # handler, which the policy would block.
 grep -qF 'Header set Content-Security-Policy' "$OUT/.htaccess" || { echo ".htaccess sends no Content-Security-Policy" >&2; exit 1; }
-for page in index.html manage.html admin.html; do
+for page in index.html manage.html admin.html privacy.html; do
   if grep -niF 'Content-Security-Policy' "$OUT/$page"; then
     echo "$page still has a policy of its own (above)" >&2
     exit 1
