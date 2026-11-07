@@ -68,6 +68,22 @@ body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
 /* The play money note: on Join, Host and My clubs, and at a club table. */
 body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice { display: block; }
+/* The link to the privacy policy (#554): under every page but a table in play.
+   The landing page fills the screen, so there it sits in the page's own margin. */
+.site-foot { padding: 14px 20px; font-size: 12px; text-align: center; }
+.site-foot a { color: var(--fg-muted); }
+body.mode-v3 .site-foot { position: relative; margin-top: -46px; }
+body.pl-seated .site-foot { display: none; }
+/* The privacy policy (privacy.html). */
+.legal { max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; line-height: 1.55; }
+.legal h1 { font-family: var(--font-display); font-size: 32px; font-weight: 400; line-height: 1.15; color: var(--fg-strong); }
+.legal h2 { margin: 32px 0 10px; font-size: 18px; font-weight: 600; color: var(--fg-strong); }
+.legal p + p { margin-top: 10px; }
+.legal-date { margin-top: 6px; font-size: 13px; color: var(--fg-muted); }
+.legal-table { margin-bottom: 14px; }
+.legal table { width: 100%; border-collapse: collapse; font-size: 14px; overflow-wrap: anywhere; }
+.legal :is(th, td) { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.legal th { font-weight: 600; color: var(--fg-strong); }
 .wasm-status.ok { color: var(--teal); }
 .wasm-status.err { color: var(--red); }
 

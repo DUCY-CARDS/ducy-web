@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
-const PAGES = ['index.html', 'manage.html', 'admin.html'];
+const APPS = ['index.html', 'manage.html', 'admin.html'];
+// The privacy policy has no script (#554), so it opens on any browser.
+const PAGES = [...APPS, 'privacy.html'];
 const LOCAL = ['ws://localhost:*', 'http://localhost:*'];
 const ENV = 'ducy_safari15';
 
@@ -123,8 +125,8 @@ test('build-site.sh takes the policy out of the site’s pages and checks it has
   assert.equal(b.split('"${NO_META[@]}"').length - 1, PAGES.length, 'for every page');
 });
 
-test('every page loads the update screen first, as a file', () => {
-  for (const page of PAGES) {
+test('every page with a script loads the update screen first, as a file', () => {
+  for (const page of APPS) {
     const html = read(page);
     const scripts = [...html.matchAll(/<script\b[^>]*\ssrc="([^"]+)"/g)].map(m => m[1]);
     assert.equal(scripts[0], 'src/browser-check.js', `${page}: browser-check.js comes first`);
