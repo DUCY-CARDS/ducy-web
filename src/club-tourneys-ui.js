@@ -7,6 +7,7 @@
 // Club chips (buy-ins, rake, prizes) are shown divided by 100
 // (chip-format.js); tournament chips (stacks, blinds) are whole numbers.
 
+import { OFF } from './club-beta.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { defaultSeats, GAMES, maxSeats } from './club-tables.js';
 import { entryCount, playerCount, pool, prizes, payoutShares } from './club-tourneys.js';
@@ -281,7 +282,7 @@ export function wizardHtml(w, club, payTable = null) {
     h += fields(field('Name', `<input class="pl-text" name="name" maxlength="40" placeholder="Tournament" value="${esc(d.name)}">`, true));
     h += group('Game', tiles(GAMES.map(g => tfRadio('game', g.id, esc(g.label), g.id === d.game)).join('')));
     h += group('Entry', picks('Buy-in', 'buyIn', BUY_INS, d, v => (v ? club$(v) : 'Free'), chips('buyIn', d.buyIn))
-      + picks('Rake', 'rake', RAKES, d, v => (v ? club$(v) : 'None'), chips('rake', d.rake))
+      + (OFF.has('rake') && !d.rake ? '' : picks('Rake', 'rake', RAKES, d, v => (v ? club$(v) : 'None'), chips('rake', d.rake)))
       + fields(field('Added', chips('added', d.added)), 'tw-trio'));
   } else if (step === 2) {
     h += group('Stack and players', picks('Starting stack', 'stack', STACKS, d, whole, num('stack', d.stack, 'min="20" data-tstack="1"'))
