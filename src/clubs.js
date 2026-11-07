@@ -60,7 +60,8 @@ import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './pay
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
-import { managerPage, NAV, navOf, pageHash, pageTitle } from './club-nav.js';
+import { OFF } from './club-beta.js';
+import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
@@ -2319,7 +2320,7 @@ function liveHtml() {
 function sideHtml(page) {
   const counts = {requests: hostWaiting(), promos: (club.promos?.awards || []).filter(a => a.status === 'held').length};
   let h = '<nav class="mg-side" aria-label="Club manager">';
-  for (const g of NAV) {
+  for (const g of shownNav()) {
     h += `<div class="mg-group">${g.group ? `<span class="mg-group-name">${g.group}</span>` : ''}`;
     for (const [id, label] of g.pages) {
       const on = navOf(page) === id;
@@ -2334,6 +2335,7 @@ const pageHead = (title, extra = '') => `<div class="mg-head"><h1 class="mg-h">$
 
 function pageHtml(at) {
   const {page, member} = at;
+  if (pageOff(page)) return overviewHtml();
   if (page === 'cash') return (openGame ? '' : pageHead('Tables')) + cashHtml();
   // A payout table just made in the wizard is its pick, once the club has it
   // (an always-on club's comes back from its room).
@@ -2462,7 +2464,7 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
   let h = '<div class="mg-tools-row">';
   h += `<input class="pl-text mg-search" type="search" data-msearch="1" placeholder="Search" aria-label="Search members" value="${esc(memberQuery)}">`;
   h += `<button class="btn-small" data-cl="copy">${copied ? 'Copied' : 'Copy invite link'}</button></div>`;
-  const shown = FILTERS.filter(x => agents.length || (x !== 'agents' && x !== 'noagent'));
+  const shown = FILTERS.filter(x => (agents.length || (x !== 'agents' && x !== 'noagent')) && (x !== 'owes' || !OFF.has('credit')));
   h += `<div class="mg-filters" role="group" aria-label="Show">${shown.map(x => `<button class="cc-btn${x === show ? ' on' : ''}" data-cl="mfilter-here" data-f="${x}" aria-pressed="${x === show}">${FILTER_TEXT[x]} <span class="pl-meta">${memberFilter(club, x, now).length}</span></button>`).join('')}`;
   if (agents.length) {
     h += `<select class="pl-text mg-agent-pick${show === 'agent' ? ' on' : ''}" data-magent="1" aria-label="By agent"><option value="">By agent</option>`;
@@ -2528,12 +2530,14 @@ function memberPageHtml(id) {
   if (chipForm?.id === m.id) h += chipFormHtml(m);
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
   // Credit (#404): the limit (0 for none), and what it leaves them.
-  h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
-  // None, or the tables' buy-ins (as Give offers them), or Other (#544).
-  const box = `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}" aria-label="Limit">`;
-  h += `<div class="pl-row"><span class="pl-label">Limit</span><div class="pl-opts">${pickHtml('amount', [0, ...quickAmounts()], c.credit || 0, v => (v ? chips(v) : 'None'), box)}</div></div>`;
-  h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
-  h += '<button class="btn-small primary" type="submit">Save</button></form>';
+  if (!OFF.has('credit') || c.credit) {
+    h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
+    // None, or the tables' buy-ins (as Give offers them), or Other (#544).
+    const box = `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}" aria-label="Limit">`;
+    h += `<div class="pl-row"><span class="pl-label">Limit</span><div class="pl-opts">${pickHtml('amount', [0, ...quickAmounts()], c.credit || 0, v => (v ? chips(v) : 'None'), box)}</div></div>`;
+    h += `<div class="pl-avail"><span>Available to ${esc(m.name)}</span><b>${chips(c.available)}</b></div>`;
+    h += '<button class="btn-small primary" type="submit">Save</button></form>';
+  }
   const mine = entriesOf(club, m.id);
   if (mine.length) {
     const names = memberNames();
@@ -2579,7 +2583,7 @@ function memberMenuHtml(m) {
   // Ending a role and removing someone ask first, naming them (#544).
   if (m.agent === 'yes') items.push(['revoke-agent', 'Stop being an agent', '', `Stop ${m.name} being an agent?|Stop`]);
   else if (m.agent === 'offered') items.push(['revoke-agent', 'Withdraw the agent offer']);
-  else if (!m.agentOf) items.push(['make-agent', 'Make agent']);
+  else if (!m.agentOf && !OFF.has('agents')) items.push(['make-agent', 'Make agent']);
   items.push(['remove', 'Remove from the club', '', `Remove ${m.name} from the club?|Remove`]);
   // Their agent is picked in the menu too (#193).
   const agents = membersByStatus(club, 'member').filter(a => a.agent === 'yes' && a.id !== m.id);
@@ -2693,7 +2697,7 @@ function rulesHtml() {
   }
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
-  if (remote) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
+  if (remote && !OFF.has('services')) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
   return h;
 }
 
