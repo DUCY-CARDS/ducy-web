@@ -57,6 +57,7 @@ export function limitsFrom(env = {}) {
     perOwner: n(env.MAX_CLUBS_PER_OWNER, 3),
     total: n(env.MAX_CLUBS, 25),
     creators: String(env.CLUB_CREATORS || '').split(',').map(s => s.trim()).filter(Boolean),
+    noTrials: env.TRIALS === 'off',
   };
 }
 

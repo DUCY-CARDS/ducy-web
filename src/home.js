@@ -1,5 +1,6 @@
 // V3's front pages (#225): the landing page and the two places it leads.
-//   #        the landing page: Study or Play, nothing else
+//   #        the beta's front page (#551): hosting, joining, clubs and bots
+//   #welcome the full landing page: Study, Play or Quest, not linked in the beta
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
 //            Heads-up training
 //   #challenge  Heads-up training: the GTO bot
@@ -15,10 +16,14 @@ import { skillTable } from './trainer-skills.js';
 import { ORDER, loadProgress as loadLadder } from './ladder.js';
 import { avatarUrl } from './avatars.js';
 
-export const HUBS = ['home', 'study', 'challenge', 'lobby'];
+// The small beta plays poker and nothing else (#551): Study and Quest stay at
+// their addresses, with no links to them from Play.
+export const BETA = true;
+
+export const HUBS = ['home', 'welcome', 'study', 'challenge', 'lobby'];
 
 // The window title of each hub ("Study · DUCY"); the landing page has none.
-export const HUB_TITLES = {home: '', study: 'Study', challenge: 'Heads-up training', lobby: 'Play'};
+export const HUB_TITLES = {home: '', welcome: '', study: 'Study', challenge: 'Heads-up training', lobby: 'Play'};
 
 // Where each older page sits in V3, and what it's called there.
 const CRUMBS = {
@@ -58,6 +63,7 @@ export function crumbFor(p, table) {
  * the Bankroll Challenge (#299), is its own top-level place.
  */
 export function sideSwitch(side) {
+  if (BETA) return '';
   const a = (s, href, label) => `<a href="${href}"${s === side ? ' aria-current="true"' : ''}>${label}</a>`;
   return `<nav class="v3-switch" aria-label="Study, Play or Quest">${a('study', '#study', 'Study')}${a('play', '#lobby', 'Play')}${a('quest', '#quest', 'Quest')}</nav>`;
 }
@@ -206,9 +212,9 @@ function challengePage(d) {
   return h + '</div></div>';
 }
 
-function lobbyPage(d) {
-  let h = '<div class="v3-page">' + head('Play', null, 'play');
-  h += '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
+// What Play offers: friends, clubs and the bots.
+function playTiles(d) {
+  let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
   // Enter a code (#393): a game's or a club's, or a link to either.
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game or club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
   h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form>';
@@ -224,9 +230,27 @@ function lobbyPage(d) {
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
   for (let i = 1; i <= d.rungs; i++) h += spade(26, i < d.rung ? 'won' : i === d.rung ? 'next' : 'open');
   h += '</span></a>';
+  // Ducybot, in each game it plays: just a game, with no grades (#551).
+  h += `<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><img class="v3-tile-av" src="${avatarUrl('gto')}" alt=""><span class="v3-tile-name">Ducybot</span></span><span class="v3-bot-games">`;
+  for (const g of GTO_GAMES) h += `<a class="v3-btn-red" href="#${g.hash}">${g.name}</a>`;
+  h += '</span></div>';
   // Quest (#299), also at the top: $1,000 to $1,000,000 across the card rooms.
-  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll Quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
-  return h + '</div>';
+  if (!BETA) h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll Quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
+  return h;
+}
+
+const PLAY_MONEY = '<p class="v3-fine">Beta. Chips are play money with no cash value. Don’t use ducy to play for money.</p>';
+
+function lobbyPage(d) {
+  return '<div class="v3-page">' + head('Play', null, 'play') + playTiles(d) + PLAY_MONEY + '</div>';
+}
+
+// The beta's front page: straight to a game.
+function betaPage(d) {
+  let h = '<div class="v3-page v3-landing">';
+  h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}<img class="v3-peek" src="${avatarUrl('gto')}" alt=""></div>`;
+  h += '<div class="v3-hero-text"><span class="v3-word">DUCY</span><h1>Pull up a chair.</h1></div></section>';
+  return h + playTiles(d) + PLAY_MONEY + '</div>';
 }
 
 /** The html of hub `name` (one of HUBS), with `d` from hubData. */
@@ -234,7 +258,8 @@ export function hubHtml(name, d) {
   if (name === 'study') return studyPage(d);
   if (name === 'challenge') return challengePage(d);
   if (name === 'lobby') return lobbyPage(d);
-  return homePage();
+  if (name === 'welcome' || !BETA) return homePage();
+  return betaPage(d);
 }
 
 // ---- the page ----

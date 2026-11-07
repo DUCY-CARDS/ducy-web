@@ -168,6 +168,8 @@ pub struct RelayLimits {
     pub total: u64,
     /// Player IDs allowed to create clubs from the environment.
     pub creators: Vec<String>,
+    /// No trial clubs: only a grant lets a player create a club.
+    pub no_trials: bool,
 }
 
 /// The registry's parts, as the relay stores them.
@@ -296,6 +298,9 @@ impl Registry {
                 r.limits = g.limits.unwrap_or(FREE_LIMITS);
             }
             None => {
+                if limits.no_trials {
+                    return Err("Starting a club takes permission from ducy.".into());
+                }
                 if self.trials.contains_key(owner) {
                     return Err("You’ve already had your free trial club. To run a club, ask ducy for permission.".into());
                 }
@@ -486,6 +491,7 @@ mod tests {
             per_owner: 2,
             total: 3,
             creators: vec!["boss".into()],
+            ..RelayLimits::default()
         }
     }
 
@@ -494,6 +500,26 @@ mod tests {
         assert_eq!(day_of(0), "1970-01-01");
         assert_eq!(day_of(1_761_955_200_000), "2025-11-01");
         assert_eq!(day_of(951_782_400_000), "2000-02-29");
+    }
+
+    #[test]
+    fn with_no_trials_only_a_grant_makes_a_club() {
+        let mut r = Registry::default();
+        let l = RelayLimits {
+            no_trials: true,
+            ..limits()
+        };
+        assert!(
+            r.claim("ann", "AAAA", "", true, &l, 10)
+                .unwrap_err()
+                .contains("permission")
+        );
+        assert!(r.trials.is_empty());
+        r.grant("ann", "", 1, None, 11).unwrap();
+        assert_eq!(
+            r.claim("ann", "AAAA", "", true, &l, 12).unwrap().plan,
+            "club"
+        );
     }
 
     #[test]
