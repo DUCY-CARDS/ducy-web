@@ -98,7 +98,8 @@ test('a demo club opens, and its main pages draw', async ({page, watch}) => {
   await watch(page).goto('/manage.html#clubs');
   await page.locator('[data-cl="demo"]').click();
   await page.locator('[data-demo-start="busy"]').click();
-  await expect(page).toHaveURL(/#clubs\//);
+  // Starting one changes the address, then reloads: the manager shows after that.
+  await expect(page.locator('.mg-side')).toBeAttached();
   for (const part of ['cash', 'tourneys', 'members', 'chips', 'history']) {
     await page.evaluate(p => { location.hash = `clubs/${p}`; }, part);
     await expect(page.locator('.mg-page')).toBeVisible();
