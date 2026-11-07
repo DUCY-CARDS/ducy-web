@@ -1,5 +1,7 @@
 // First, so a local test profile (?as=) is in place before anything reads storage.
 import { profile } from './profile.js';
+// Next, to hear about anything that goes wrong from here on (#552).
+import { reportError } from './error-report.js';
 // And a demo club's (#406), for the person you are in it.
 import './demo.js';
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
@@ -187,6 +189,7 @@ function startWorkerPool() {
 function onWorkerPoolError(err) {
   if (!mcPool) return;
   console.warn('Monte Carlo workers unavailable, using the main thread:', err.message || err);
+  reportError(err, 'mc-worker');
   mcPool.forEach(w => w.terminate());
   mcPool = null;
   if (calculating) runEquityCalc();
@@ -1886,6 +1889,7 @@ try {
   statusEl.textContent = 'WASM failed to load';
   statusEl.className = 'wasm-status err';
   console.error('WASM init failed:', err);
+  reportError(err, 'wasm');
 }
 
 // Clubs connect now, whichever page is open, so requests arrive live (#145).

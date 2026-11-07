@@ -49,6 +49,7 @@ import { adminView, codeInfo, createClub, importClub, openClub } from './club-ro
 import { adminApi, adminsFrom } from './admin.js';
 import adminList from '../../admins.json';
 import { limitsFrom, registry, removesAt } from './registry.js';
+import { MAX_REPORT_BYTES } from './error-log.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
 import { serviceHttp, serviceInRoom } from './service-http.js';
@@ -120,6 +121,7 @@ async function admin(req, env, url, cors) {
     seen: (id, seq) => reg('/admin-seen', {id, seq}),
     log: entry => reg('/admin-log', {entry}),
     logList: () => reg('/admin-log-list').then(r => r.log),
+    errors: () => reg('/errors').then(r => r.errors),
     list: () => reg('/list'),
     grant: (id, body) => reg('/grant', {...body, id}),
     revoke: id => reg('/revoke', {id}),
@@ -160,6 +162,14 @@ async function route(req, env) {
       : {};
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
     return admin(req, env, url, cors);
+  }
+  // A page's error report (#552): from the site only, small, and answered with nothing.
+  if (url.pathname === '/report') {
+    const origin = req.headers.get('Origin');
+    if (req.method !== 'POST' || !origin || (allowed.length && !allowed.includes(origin))) return new Response(null, {status: 403});
+    const raw = await req.text();
+    if (raw.length <= MAX_REPORT_BYTES) await registryOf(env).fetch('https://registry/report', {method: 'POST', body: raw}).catch(e => console.warn(e));
+    return new Response(null, {status: 204, headers: {'access-control-allow-origin': origin, vary: 'Origin'}});
   }
   // How much always-on clubs use against the free plan (#98): numbers only.
   if (url.pathname === '/usage' && req.method === 'GET') {
@@ -219,7 +229,7 @@ export class Registry {
 
   async fetch(req) {
     const path = new URL(req.url).pathname;
-    const body = req.method === 'POST' ? await req.json() : {};
+    const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
     if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
       if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {temporary: body.temporary !== false}));
@@ -241,6 +251,8 @@ export class Registry {
       else if (path === '/admin-seen') await this.reg.adminSeen(String(body.id), Number(body.seq));
       else if (path === '/admin-log') await this.reg.adminLog(body.entry || {});
       else if (path === '/admin-log-list') return Response.json({log: await this.reg.adminLogList()});
+      else if (path === '/report') await this.reg.report(body);
+      else if (path === '/errors') return Response.json({errors: await this.reg.errors()});
       else return new Response('not found', {status: 404});
       return Response.json({ok: true});
     } catch (e) {
