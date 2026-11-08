@@ -1,0 +1,24 @@
+name: Deploy staging
+
+# Every change to master goes to staging.ducy.cards and its relay
+# (deploy-env.yml, DEPLOY.md).
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: staging
+      ref: ${{ github.sha }}
+    secrets: inherit

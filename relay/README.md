@@ -46,6 +46,10 @@ storage; the dev relay keeps them in memory.
 
 To redeploy without a change, run the workflow from the Actions tab.
 
+Staging and sandbox have relays of their own (`ducy-relay-staging`,
+`ducy-relay-sandbox`, from `[env.staging]` and `[env.sandbox]` in
+`wrangler.toml`): see [DEPLOY.md](../DEPLOY.md).
+
 **By hand:**
 
 ```sh

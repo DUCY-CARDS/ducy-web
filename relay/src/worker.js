@@ -54,6 +54,7 @@ import { MAX_REPORT_BYTES } from './error-log.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
 import { serviceHttp, serviceInRoom } from './service-http.js';
+import { clubCodes, resetRefusal } from './reset.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -172,6 +173,19 @@ async function route(req, env) {
     if (raw.length <= MAX_REPORT_BYTES) await registryOf(env).fetch('https://registry/report', {method: 'POST', body: raw}).catch(e => console.warn(e));
     return new Response(null, {status: 204, headers: {'access-control-allow-origin': origin, vary: 'Origin'}});
   }
+  // Which relay this is (DEPLOY.md): its environment and commit, set at deploy.
+  if (url.pathname === '/version' && req.method === 'GET') {
+    return Response.json({environment: env.ENVIRONMENT || 'production', commit: env.COMMIT || ''}, {headers: {'access-control-allow-origin': '*'}});
+  }
+  // Wiping a test relay (reset.js): the sandbox only.
+  if (url.pathname === '/reset') {
+    const no = resetRefusal(env, req.headers.get('authorization'), req.method);
+    if (no) return Response.json({error: no.error}, {status: no.status});
+    const {codes} = await registryOf(env).fetch('https://registry/reset-list', {method: 'POST'}).then(r => r.json());
+    for (const code of codes) await roomOf(env, code).fetch(`https://room/reset/${encodeURIComponent(code)}`);
+    await registryOf(env).fetch('https://registry/reset', {method: 'POST'});
+    return Response.json({ok: true, clubs: codes.length});
+  }
   // How much always-on clubs use against the free plan (#98): numbers only.
   if (url.pathname === '/usage' && req.method === 'GET') {
     const res = await registryOf(env).fetch('https://registry/usage');
@@ -233,6 +247,17 @@ export class Registry {
 
   async fetch(req) {
     const path = new URL(req.url).pathname;
+    // Wiping a test relay (reset.js), from the Worker's /reset only.
+    if (this.env.RESETTABLE === 'on' && path === '/reset-list') {
+      return Response.json({codes: clubCodes(await this.state.storage.get('clubs'))});
+    }
+    if (this.env.RESETTABLE === 'on' && path === '/reset') {
+      await this.state.storage.deleteAlarm();
+      await this.state.storage.deleteAll();
+      const s = this.state.storage;
+      this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(this.env));
+      return Response.json({ok: true});
+    }
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
     if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
@@ -522,6 +547,16 @@ export class Room {
     loadEngine();
     const url = new URL(req.url);
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
+    // Wiping a test relay (reset.js), from the Worker's /reset only: everyone
+    // is let go and the room's storage deleted.
+    if (this.env.RESETTABLE === 'on' && url.pathname.startsWith('/reset/')) {
+      for (const ws of this.state.getWebSockets()) { try { ws.close(4004, 'the sandbox was reset'); } catch {} }
+      this.clubP = null;
+      this.timerMap?.clear();
+      await this.state.storage.deleteAlarm();
+      await this.state.storage.deleteAll();
+      return Response.json({ok: true});
+    }
     // From the Worker's admin API only: the outside world reaches rooms by
     // /room/<code> WebSockets alone.
     const adm = url.pathname.match(/^\/admin\/(refresh|info|expire)\//);

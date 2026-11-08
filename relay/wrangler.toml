@@ -38,3 +38,51 @@ CLUB_CREATORS = ""
 # aren't deleted.
 TRIALS = "off"
 KEEP_UNUSED_CLUBS = "on"
+
+# Staging and sandbox (DEPLOY.md): Workers of their own, so their own Durable
+# Objects and data, each allowing only its own site. `wrangler deploy --env
+# staging`. Environments don't inherit bindings or vars, so they're repeated;
+# migrations are inherited. No backup secrets are set on them, so backups are
+# off.
+[env.staging]
+name = "ducy-relay-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[env.staging.durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+ALLOWED_ORIGINS = "https://staging.ducy.cards"
+MAX_CLUBS_PER_OWNER = "3"
+MAX_CLUBS = "25"
+CLUB_CREATORS = ""
+TRIALS = "off"
+KEEP_UNUSED_CLUBS = "on"
+
+# The sandbox can be wiped (relay/src/reset.js): RESETTABLE turns that on.
+# Never set it on the live relay or staging.
+[env.sandbox]
+name = "ducy-relay-sandbox"
+
+[[env.sandbox.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[env.sandbox.durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
+[env.sandbox.vars]
+ENVIRONMENT = "sandbox"
+ALLOWED_ORIGINS = "https://sandbox.ducy.cards"
+MAX_CLUBS_PER_OWNER = "3"
+MAX_CLUBS = "25"
+CLUB_CREATORS = ""
+TRIALS = "off"
+KEEP_UNUSED_CLUBS = "on"
+RESETTABLE = "on"
