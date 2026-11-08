@@ -2,4 +2,4 @@
 // club manager; the code and the room's commands stay, and what a club already
 // has still shows. Delete a name to turn it back on.
 
-export const OFF = new Set(['agents', 'credit', 'balances', 'rake', 'promos', 'services']);
+export const OFF = new Set(['credit', 'balances', 'rake', 'promos', 'services']);

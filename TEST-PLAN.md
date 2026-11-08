@@ -20,7 +20,7 @@ A major release is any of these:
 | Part | Pages | Who uses it |
 |---|---|---|
 | **Main** | `/`: the front page (Friends, Private clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
-| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: agents, credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
+| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
 | **Club manager** | `manage.html`: Overview, Tables, Tournaments, Requests, Members, a member's page, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
 | **Admin** | `admin.html`: grants, club info, error reports | ducy's admins |
 
@@ -93,6 +93,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
 | Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
+| Agents: make one, their invite, their players' requests and chips | `club-agents.test` | no | C8 |
 | Demo clubs | `demo-club.test` | yes | C7 |
 
 ### Beta extras
@@ -107,7 +108,7 @@ here and a browser test.
 | Study: equity, pre-flop ranges, charts, drills | `ranges.test`, `trainer-skills.test`, `charts.test`, `chart-skills.test`, `drills-no-repeat.test` | B3 |
 | Hand review and live feedback | `play-review.test` | B4 |
 | Bankroll Quest | `quest*.test` | B5 |
-| Agents, credit, Balances | `club-agents.test`, `club-credit.test`, `club-credit-server.test` | B6 |
+| Credit, Balances | `club-credit.test`, `club-credit-server.test` | B6 |
 | Rake | `club-tourneys-ui.test` | B6 |
 | Promotions | `club-promos.test`, `club-promos-server.test` | B6 |
 | Club services | `club-services.test`, `relay-services.test` | B6 |
@@ -229,6 +230,13 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **C7 Demo clubs**
 1. Start each demo. Its pages draw, Reset works, and End demo returns to a clean manager.
+
+**C8 Agents** (three browsers: owner, agent, a player)
+1. Owner: on a member's page, Make agent. The member accepts, and their page shows their agent view.
+2. Owner: give the agent chips to back their players.
+3. A player joins through the agent's invite link. The request reaches the agent, not the owner, and the agent approves it.
+4. The agent gives that player chips, then takes some back. Each needs a recent passkey unlock. The agent's balance goes down and up by the same amounts, and the owner's activity log shows each move.
+5. The agent can't give chips to a player who isn't theirs, and can't make tables.
 
 ## Manual: admin
 
