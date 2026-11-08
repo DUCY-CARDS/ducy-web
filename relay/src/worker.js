@@ -764,7 +764,9 @@ export class Room {
     const pong = pingReply(msg);
     if (pong) { ws.send(pong); return; }
     const id = this.guestId(ws);
-    if (id && this.unproven(ws)) { await this.proving(ws, id, msg); return; }
+    // Checking a proof checks a signature, with the engine (after
+    // hibernation the Worker may have started again without it).
+    if (id && this.unproven(ws)) { loadEngine(); await this.proving(ws, id, msg); return; }
     if (id) {
       // An always-on club runs here: it gets the message. Or someone asks
       // to make this room one, or to move their club here.
