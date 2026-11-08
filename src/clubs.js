@@ -64,6 +64,7 @@ import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './cl
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { chipCap, clearableKeys, managerNotices, raiseTo } from './club-notices.js';
+import { entryTitle, fairPlayNotices, flagText, flowText, handsText } from './club-fair-play.js';
 import { chipLines, leftSummary } from './club-member-view.js';
 import { creditRow } from './club-credit.js';
 import { changedSince, formatInfo, isEmpty, MAX_EVENT_TEXT, MAX_INFO_TEXT, nextEvent, sectionName, SECTIONS } from './club-info.js';
@@ -2265,7 +2266,7 @@ function liveHtml() {
 
 // The sidebar: each group's pages, with what's waiting on them.
 function sideHtml(page) {
-  const counts = {requests: hostWaiting(), promos: (club.promos?.awards || []).filter(a => a.status === 'held').length};
+  const counts = {requests: hostWaiting(), promos: (club.promos?.awards || []).filter(a => a.status === 'held').length, fairplay: fairReport()?.flagged?.length || 0};
   let h = '<nav class="mg-side" aria-label="Club manager">';
   for (const g of shownNav()) {
     h += `<div class="mg-group">${g.group ? `<span class="mg-group-name">${g.group}</span>` : ''}`;
@@ -2295,6 +2296,7 @@ function pageHtml(at) {
   if (page === 'member') return memberPageHtml(member);
   if (page === 'settle') return pageHead('Balances') + settleHtml();
   if (page === 'chips') return pageHead('Chips') + accountingHtml();
+  if (page === 'fairplay') return pageHead('Fair play') + fairPlayHtml();
   if (page === 'info') return pageHead('Club info') + infoEditHtml();
   if (page === 'rules') return pageHead('Rules') + rulesHtml();
   if (page === 'backup') return pageHead('Backup and devices') + backupPageHtml();
@@ -2540,6 +2542,27 @@ function memberMenuHtml(m) {
   return menuHtml(`More for ${m.name}`, items, m.id, picker);
 }
 
+// Fair play (#582): the relay's last check of how players play against
+// each other (relay/src/collusion.js), each flagged player or pair with
+// its numbers and hands by number. No cards: the check never sends any.
+function fairPlayHtml() {
+  const r = fairReport();
+  if (!r) return '<p class="pl-meta">Not checked yet.</p>';
+  const names = memberNames();
+  let h = `<p class="pl-meta">Checked ${when(r.at)} · ${r.hands.toLocaleString()} hands</p>`;
+  if (!r.flagged?.length) return h + '<p class="pl-meta">Nothing stands out.</p>';
+  h += '<p class="pl-meta">Worth a look, not proof.</p>';
+  for (const e of r.flagged) {
+    h += `<section class="mg-sec cl-fair"><h2>${esc(entryTitle(e, names))}</h2>`;
+    const flow = flowText(e, names);
+    if (flow) h += `<p>${esc(flow)}</p>`;
+    h += '<ul class="cl-list">';
+    for (const f of e.flags) h += `<li><span>${esc(flagText(f, names))}</span>${f.hands?.length ? `<span class="pl-meta">${esc(handsText(f.hands))}</span>` : ''}</li>`;
+    h += '</ul></section>';
+  }
+  return h;
+}
+
 // History: the hands at the club's tables (#71) and the activity log (#190).
 function historyHtml() {
   let h = handsHtml(club.code, 'host', 'Hands');
@@ -2566,7 +2589,12 @@ function historyHtml() {
 // open; Clear puts away the ones that need no answer (kept per browser).
 let noteForm = '';
 const clearedNotes = () => new Set(hostNotes().cleared || []);
-const notices = () => (club ? managerNotices(club, {cleared: clearedNotes(), seated: seatedCounts()}) : []);
+// The relay's fair play check (#582) adds its flagged players and pairs.
+const fairReport = () => (isRemote() ? own().view?.checks || null : null);
+const notices = () => (club ? [
+  ...fairPlayNotices(fairReport(), {cleared: clearedNotes(), names: memberNames()}),
+  ...managerNotices(club, {cleared: clearedNotes(), seated: seatedCounts()}),
+] : []);
 const noteCount = () => notices().length;
 
 function notesHtml() {
@@ -2617,6 +2645,9 @@ function noteHtml(n) {
   } else if (n.kind === 'move') {
     // A big chip move, a removal or a cap change (#576).
     top = esc(n.text);
+  } else if (n.kind === 'fair_play') {
+    // Flagged by the relay's check (#582): the Fair play page has the numbers.
+    top = `<a href="#${ph('fairplay')}">${esc(n.name)}</a>`;
   } else if (n.kind === 'cap_raise') {
     // A raise of the daily chip cap waits a day (#576).
     top = `Daily chip cap rises to <b>${chips(n.to)}</b>`;
@@ -2628,7 +2659,7 @@ function noteHtml(n) {
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', cap_raise: 'Cap'};
+const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', cap_raise: 'Cap', fair_play: 'Fair play'};
 
 // When a raise of the chip cap applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});

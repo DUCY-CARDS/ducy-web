@@ -18,7 +18,7 @@ test('their pages leave the sidebar, and their addresses still parse', () => {
     assert.ok(pageOff(id));
     assert.equal(managerPage(`#${pageHash(id)}`).page, id);
   }
-  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'chips', 'info', 'rules', 'backup', 'history']);
+  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
   assert.ok(shownNav().every(g => g.pages.length), 'no empty group');
 });
 

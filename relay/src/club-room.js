@@ -18,8 +18,14 @@
 //   table:<id>           a table saved mid-hand (club-host.js)
 //   hands, hand:<…>      finished hands, as the host saw them (#125)
 //   fullHands, full:<…>  finished hands with every seat's cards, for ducy's
-//                        own checks (#580): only hand-records.js reads them
+//                        own checks (#580): only hand-records.js reads them,
+//                        for collusion.js
 //   seen                 when each player was last heard from, {id: ms} (#401)
+//   fairPlay             the latest collusion check's report (#582): counts
+//                        and hand numbers, no cards; the owner sees it
+//   fairPlayDue          when the first hand not yet checked was played
+//   conns, connSalt      each player's last few connections, hashed with
+//                        the club's salt (#582): only for the full records
 
 import { checkSignature, createIdentity, exportIdentity, importIdentity, signMessage, Verifier } from '../../src/identity.js';
 import { newClub } from '../../src/club.js';
@@ -29,6 +35,8 @@ import { clubEngine } from '../../src/club-engine.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
+import { checkClub, SCHEDULE } from './collusion.js';
+import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
 // Hands kept for the owner's history (#125); about 1–2 KB each.
 const MAX_HANDS = 500;
@@ -38,6 +46,59 @@ const SEEN_EVERY_MS = 60_000;
 const ADMIN_HANDS = 100;
 // Usage (#421): the longest pause in play that still counts.
 export const PLAY_GAP_MS = 60_000;
+
+// ---- connections, for the full hand records (#582) ----
+// Kept so ducy's checks can tell players who share a place or a device;
+// never sent to anyone, the owner included, and never the raw IP.
+
+// How many connections are kept per player.
+const CONNS_KEPT = 5;
+
+const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+async function hashed(salt, text) {
+  if (!text) return null;
+  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${text}`))).slice(0, 32);
+}
+
+// A user agent's family: {browser, os, mobile}.
+export function clientKind(ua) {
+  const u = String(ua || '');
+  const browser = /Edg\//.test(u) ? 'Edge' : /OPR\/|Opera/.test(u) ? 'Opera' : /Firefox\//.test(u) ? 'Firefox'
+    : /Chrome\/|CriOS\//.test(u) ? 'Chrome' : /Safari\//.test(u) ? 'Safari' : u ? 'Other' : null;
+  const os = /Android/.test(u) ? 'Android' : /iPhone|iPad|iPod/.test(u) ? 'iOS' : /Windows/.test(u) ? 'Windows'
+    : /Mac OS X|Macintosh/.test(u) ? 'macOS' : /Linux/.test(u) ? 'Linux' : u ? 'Other' : null;
+  return {browser, os, mobile: u ? /Mobi|iPhone|Android/.test(u) : null};
+}
+
+// What's kept of a connection the relay saw (`conn`: {ip, ua, asn, asOrg,
+// country, region, city, timezone}, worker.js connOf), at `now`: the IP and
+// user agent hashed with the club's own salt (the same player or device
+// shows as the same value at this club only), Cloudflare's network and
+// place for it, and the client's kind.
+export async function connSnapshot(conn, salt, now = Date.now()) {
+  const c = conn || {};
+  const str = v => (v == null || v === '' ? null : String(v).slice(0, 80));
+  return {
+    since: now, until: null,
+    ip: await hashed(salt, str(c.ip)), ua: await hashed(salt, str(c.ua)),
+    asn: Number.isFinite(Number(c.asn)) && c.asn !== '' && c.asn != null ? Number(c.asn) : null, asOrg: str(c.asOrg),
+    country: str(c.country), region: str(c.region), city: str(c.city), timezone: str(c.timezone),
+    client: clientKind(c.ua),
+  };
+}
+
+// Player `id`'s connection when a hand began at `at`, from their kept ones
+// (newest last): the one open then, else the last one before it.
+export function connAt(list, at) {
+  if (!list?.length) return null;
+  if (!Number.isFinite(at)) return list[list.length - 1];
+  const before = list.filter(c => c.since <= at);
+  const open = before.filter(c => c.until == null || c.until >= at);
+  const pick = open[open.length - 1] || before[before.length - 1] || null;
+  if (!pick) return null;
+  const {since: _s, until: _u, ...rest} = pick;
+  return rest;
+}
 
 // Runs room op `op` (ducy-play's club_room): its value, or throws why not.
 function room(op, now = Date.now()) {
@@ -209,7 +270,8 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     deleted = true;
     await saving;
     const hands = ((await storage.get('hands')) || []).map(h => h.key);
-    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', 'seen', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
+    timers?.clear(checkT);
+    const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', 'seen', 'fairPlay', 'fairPlayDue', 'conns', 'connSalt', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
     for (const k of keys) await storage.delete(k);
     await dropFullHands(storage);
     await onDeleted();
@@ -244,6 +306,69 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     if (!onProved) throw new Error('ducy’s server can’t record that right now.');
     server.setRecord(await onProved(club.ownerId));
   }
+  // The collusion check (#582, collusion.js): after a session (play quiet
+  // for SCHEDULE.QUIET_MS) and every SCHEDULE.EVERY_MS while play goes on,
+  // on the tables' timers (the room's alarm, in the Worker). `fairPlayDue`,
+  // kept, is when the first hand not yet checked was played, so a room
+  // evicted meanwhile checks once it's woken (openClub runs again).
+  let fairPlay = (await storage.get('fairPlay')) || null;
+  let due = (await storage.get('fairPlayDue')) || null;
+  let checkT = null, checking = null, kept = 0;
+  function checkFairPlay() {
+    timers?.clear(checkT);
+    checkT = null;
+    checking ||= (async () => {
+      const before = kept;
+      const report = await checkClub(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
+      if (deleted) return report;
+      fairPlay = report;
+      // Hands kept while it ran are due next time.
+      if (kept === before) due = null;
+      await later(async () => {
+        await storage.put('fairPlay', report);
+        if (due == null) await storage.delete('fairPlayDue');
+      });
+      server.ownerChanged();
+      return report;
+    })().finally(() => { checking = null; });
+    return checking;
+  }
+  function scheduleCheck(at) {
+    if (!timers || deleted) return;
+    timers.clear(checkT);
+    checkT = timers.set(() => checkFairPlay().catch(e => console.warn('club: fair play not checked:', e)), Math.max(0, at - Date.now()));
+  }
+  function handKept() {
+    const now = Date.now();
+    kept++;
+    if (due == null) { due = now; later(() => storage.put('fairPlayDue', due)); }
+    scheduleCheck(Math.min(now + SCHEDULE.QUIET_MS, due + SCHEDULE.EVERY_MS));
+  }
+  // Each player's last few connections (#582), for their seats' records:
+  // {id: [connSnapshot, newest last]}, hashed with the club's own salt.
+  // Only this file and the full hand records hold them.
+  const conns = (await storage.get('conns')) || {};
+  let salt = await storage.get('connSalt');
+  if (!salt) {
+    salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    later(() => storage.put('connSalt', salt));
+  }
+  const saveConns = () => later(() => storage.put('conns', structuredClone(conns)));
+  async function noteConn(id, conn) {
+    if (typeof id !== 'string' || !conn || typeof conn !== 'object') return;
+    const list = conns[id] || [];
+    const now = Date.now();
+    for (const c of list) if (c.until == null) c.until = now;
+    list.push(await connSnapshot(conn, salt, now));
+    conns[id] = list.slice(-CONNS_KEPT);
+    saveConns();
+  }
+  function noteClosed(id) {
+    const open = conns[id]?.filter(c => c.until == null);
+    if (!open?.length) return;
+    for (const c of open) c.until = Date.now();
+    saveConns();
+  }
   // When each player was last heard from, for the admin page's People
   // (#401) and the owner's Members (#426): saved at most once a minute
   // per player.
@@ -255,7 +380,13 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
     storeHand,
     // Every seat's cards, kept apart for ducy's checks (hand-records.js).
-    fullHand: (hand, opts) => later(() => keepFullHand(storage, fullRecord(hand), opts)),
+    fullHand: (hand, opts) => {
+      const start = hand.timing?.start;
+      const ids = (hand.players || []).map(p => p.client_id).filter(Boolean);
+      const at = Object.fromEntries(ids.map(id => [id, connAt(conns[id], start)]).filter(([, c]) => c));
+      return later(() => keepFullHand(storage, fullRecord({...hand, conns: at}), opts)).then(handKept);
+    },
+    checks: () => fairPlay,
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
     transport: {send, ack() {}},
     engine: {
@@ -302,6 +433,12 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
   const message = server.message;
   server.message = async msg => {
     noteSeen(msg?.from);
+    if (msg && 'conn' in msg) {
+      const {conn, ...rest} = msg;
+      msg = rest;
+      if (msg.event === 'open') await noteConn(msg.from, conn);
+    }
+    if (msg?.event === 'close') noteClosed(msg.from);
     if (msg?.event === 'open' && handoff) send(msg.from, handoff);
     if (msg?.data?.body?.type === 'host_moved') {
       if (!handoff && msg.from === club.ownerId && await isHandoff(club, msg.data)) {
@@ -316,5 +453,9 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
   await server.relayOpen();
   for (const id of online) await server.message({from: id, event: 'open'});
   server.flush = () => saving;
+  // The collusion check now (tests; the room runs it on its own), and the
+  // one left due when the room last stopped.
+  server.checkFairPlay = checkFairPlay;
+  if (due != null) scheduleCheck(Math.min(Date.now() + SCHEDULE.QUIET_MS, due + SCHEDULE.EVERY_MS));
   return server;
 }

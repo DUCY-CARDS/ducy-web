@@ -90,6 +90,18 @@ function allow(ws, rate, burst, now = Date.now()) {
   return true;
 }
 
+// A member's connection to an always-on club (#582): its IP and user agent
+// (club-room.js hashes them with the club's salt at once and never keeps
+// them as they are) and Cloudflare's network and place for it.
+function connOf(req) {
+  const cf = req.cf || {};
+  return {
+    ip: req.headers.get('CF-Connecting-IP') || '', ua: req.headers.get('User-Agent') || '',
+    asn: cf.asn ?? null, asOrg: cf.asOrganization ?? null, country: cf.country ?? null, region: cf.region ?? null,
+    city: cf.city ?? null, timezone: cf.timezone ?? null,
+  };
+}
+
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
 // How often the registry looks for unused temporary clubs to delete (#395).
@@ -613,7 +625,8 @@ export class Room {
       if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
       const tags = ['guest', 'g:' + id, 'c:' + code];
       this.state.acceptWebSocket(server, queue ? [...tags, 'queue'] : tags);
-      if (club) await club.message({from: id, event: 'open'});
+      // The club keeps a hashed snapshot of the connection for ducy's checks (#582).
+      if (club) await club.message({from: id, event: 'open', conn: connOf(req)});
       else if (host) host.send(JSON.stringify({from: id, event: 'open'}));
       else server.send(JSON.stringify({type: 'host_away'}));
     } else {

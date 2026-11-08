@@ -167,7 +167,8 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
       const u = await openBox(p.aes, env.enc);
       p.got.push(u);
       if (u.type === 'fair') p.fair.message(u, p.cmd);
-      else if (u.type === 'state' && u.view.legal && !u.view.complete) p.cmd({type: 'act', seq: u.seq, ...play(u.view.legal)});
+      // Ann's page says she looked away while deciding (#582).
+      else if (u.type === 'state' && u.view.legal && !u.view.complete) p.cmd({type: 'act', seq: u.seq, ...play(u.view.legal), away: name === 'Ann'});
     };
     people[ident.id] = p;
     return p;
@@ -183,8 +184,11 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   await server.message({from: owner.id, event: 'open'});
   await ownerSays('new_table', {table: {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 3, turnSecs: 30}});
   const tid = server.club.tables.find(t => t.name === 'Main').id;
+  // Each connects as the Worker passes it on (worker.js connOf).
+  const IP = '203.0.113.7', UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1';
+  const conn = {ip: IP, ua: UA, asn: 7922, asOrg: 'Comcast', country: 'US', region: 'Texas', city: 'Austin', timezone: 'America/Chicago'};
   for (const p of players) {
-    await server.message({from: p.ident.id, event: 'open'});
+    await server.message({from: p.ident.id, event: 'open', conn});
     await p.say({type: 'join', invite, name: p.name, key: p.keys.pub});
     await ownerSays('approve', {id: p.ident.id});
     await ownerSays('give', {id: p.ident.id, amount: 1000});
@@ -216,6 +220,11 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   for (const rec of full) {
     for (const k of ['id', 'at', 'table', 'hand', 'seats', 'actions', 'board', 'pots', 'deal']) assert.ok(k in rec, k);
     assert.equal(rec.table, tid);
+    // When each action came (#591's decision times): one per action, in
+    // order, ms since the hand began.
+    assert.equal(rec.times.length, rec.actions.length);
+    const known = rec.times.filter(x => x != null);
+    assert.ok(known.every((x, i) => x >= 0 && (i === 0 || x >= known[i - 1])), JSON.stringify(rec.times));
     for (const s of rec.seats) {
       assert.ok(ids.has(s.id), 'each seat by player ID');
       assert.equal(s.cards?.length, 2, 'each seat’s cards');
@@ -235,6 +244,39 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   }
   assert.ok(full.some(r => checkDeal(r).missing.length === 0), 'once everyone is in, every player’s value is used');
   assert.ok(foldedKept > 0, 'folded hands are in the full record');
+  assert.ok(full.some(r => r.times.some(x => x > 0)), 'actions after the first have their times');
+  // And the chips each put in, who made it, and whether they looked away.
+  for (const rec of full) {
+    assert.equal(rec.amounts.length, rec.actions.length);
+    rec.actions.forEach((e, i) => {
+      if (e.type === 'call' || e.type === 'small_blind' || e.type === 'big_blind') assert.equal(rec.amounts[i], e.amount);
+      if (e.type === 'check' || e.type === 'fold') assert.equal(rec.amounts[i], 0);
+      const who = people[rec.seats.find(s => s.seat === e.seat)?.id];
+      if (rec.how[i] === 'player') assert.equal(rec.away[i], who.name === 'Ann', `${who.name}'s away`);
+    });
+  }
+  assert.ok(full.some(r => r.how.includes('player')), 'players’ own actions are marked');
+  // Each seat's connection when the hand began: the IP and user agent only
+  // hashed, Cloudflare's network and place, the client's kind.
+  for (const rec of full) {
+    for (const s of rec.seats) {
+      // Not known in the table's first hand here; connected after.
+      assert.ok(s.connected === true || (s.connected === null && rec === full[0]), `${rec.hand}: ${s.connected}`);
+      assert.match(s.conn.ip, /^[0-9a-f]{32}$/);
+      assert.deepEqual({asn: s.conn.asn, country: s.conn.country, city: s.conn.city, timezone: s.conn.timezone}, {asn: 7922, country: 'US', city: 'Austin', timezone: 'America/Chicago'});
+      assert.deepEqual(s.conn.client, {browser: 'Safari', os: 'iOS', mobile: true});
+    }
+  }
+  const stored = JSON.stringify([...store.values()]);
+  assert.ok(!stored.includes(IP) && !stored.includes(UA), 'no raw IP or user agent kept');
+  // ducy's collusion check (#582) reads them on the relay; its report, for
+  // the owner, holds no card, and is kept for their view.
+  const report = await server.checkFairPlay();
+  assert.equal(report.hands, full.length);
+  const said = JSON.stringify(report);
+  for (const rec of full) for (const s of rec.seats) for (const c of s.cards) assert.ok(!said.includes(`"${c}"`), c);
+  await server.flush();
+  assert.deepEqual(await storage.get('fairPlay'), report);
   // A deal that doesn't match the cards fails the check.
   const bad = structuredClone(full[0]);
   [bad.seats[0].cards, bad.seats[1].cards] = [bad.seats[1].cards, bad.seats[0].cards];
@@ -284,10 +326,13 @@ test('only the relay’s hand-records.js reads full hand records, and nothing se
   const text = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
   // Their storage keys.
   assert.deepEqual(files.filter(f => /['"`](?:full:|fullHands['"`])/.test(text(f))), ['relay/src/hand-records.js']);
-  // The module: only the club's room loads it, to keep and drop records.
-  assert.deepEqual(files.filter(f => /hand-records\.js['"]/.test(text(f))), ['relay/src/club-room.js']);
-  const imported = text('relay/src/club-room.js').match(/import \{([^}]*)\} from '\.\/hand-records\.js'/)[1].split(',').map(s => s.trim()).sort();
-  assert.deepEqual(imported, ['dropFullHands', 'fullRecord', 'keepFullHand']);
+  // The module: only the club's room loads it, to keep and drop records,
+  // and ducy's collusion check (#582), to read them; it sends out counts
+  // and hand numbers only (test/collusion.test.mjs).
+  assert.deepEqual(files.filter(f => /hand-records\.js['"]/.test(text(f))), ['relay/src/club-room.js', 'relay/src/collusion.js']);
+  const imports = f => text(f).match(/import \{([^}]*)\} from '\.\/hand-records\.js'/)[1].split(',').map(s => s.trim()).sort();
+  assert.deepEqual(imports('relay/src/club-room.js'), ['dropFullHands', 'fullRecord', 'keepFullHand']);
+  assert.deepEqual(imports('relay/src/collusion.js'), ['fullHands']);
   // The engine's every-seat cards: only the club's room asks for them.
   assert.deepEqual(files.filter(f => /runnerCards|\.holeCards\(/.test(text(f))), ['src/club-engine.js', 'src/club-host.js']);
 });
