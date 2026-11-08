@@ -7,6 +7,8 @@ export const CHIP_OPS = new Set([
   'give', 'take', 'grant', 'set_credit', 'raise_credit', 'remove',
   'approve_award', 'void_award', 'offer_agent', 'revoke_agent', 'assign_agent',
   'service_add', 'service_update',
+  // The daily cap on chips given out (#576): changing it, or cancelling a raise.
+  'chip_cap', 'cancel_cap_raise',
 ]);
 
 // Whether signed message `m` (identity.js's envelope) moves chips: a member
