@@ -117,12 +117,12 @@ const mine = () => body?.players.find(p => p.id === myId()) || null;
 let draft = null;
 
 // The code the setup shows, and the lobby opens with (#566).
-let nextCode = '';
+let nextCode = '', setupCopied = false;
 
 const redrawPage = setTourneyPage({
   active: () => !!role,
   html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting, watching: watching?.table ?? null, draft}),
-  setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, code: (nextCode ||= newCode()), placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
+  setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, code: (nextCode ||= newCode()), link: joinLink(nextCode, linkHost), copied: setupCopied, placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
   click, change, join: joinPrivateTourney,
 });
 
@@ -189,6 +189,7 @@ async function openLobby(wrap) {
   // The code the setup showed (#566); the next setup shows a new one.
   const c = privateClub(nextCode || newCode(), tableName());
   nextCode = '';
+  setupCopied = false;
   try {
     newPrivateTourney(c, {...form, structure: ed().steps(), rows: form.payout === 'table' ? cleanRows(tableDraft()) : null});
   } catch (e) {
@@ -562,6 +563,12 @@ function end() {
   redraw();
 }
 
+// The setup's link (#566), to this site: copied, or shown for copying by hand.
+async function copySetupLink() {
+  try { await navigator.clipboard.writeText(joinLink(nextCode, linkHost)); setupCopied = true; } catch { setupCopied = false; }
+  redraw();
+}
+
 async function copyLink() {
   const link = joinLink(code, linkHost);
   try { await navigator.clipboard.writeText(link); note = 'Link copied'; } catch { note = link; }
@@ -577,6 +584,7 @@ function click(e) {
   if (!b) return false;
   const wrap = b.closest('.pl-wrap') || document;
   const d = b.dataset;
+  if (d.tz === 'copy-setup') { copySetupLink(); return true; }
   // The form's choices: the typed fields are read first, as it's redrawn.
   if (b.closest('[data-tzform]')) {
     readForm(wrap);

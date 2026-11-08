@@ -56,6 +56,10 @@ test('a private game shows its code before it opens, and opens with it (#566)', 
   await watch(page).goto(`/?relay=${RELAY}#host`);
   const shown = (await page.locator('.sg-code').innerText()).trim();
   expect(shown).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
+  // Its link, to this site, with the same code.
+  const link = new URL((await page.locator('.sg-link').innerText()).trim());
+  expect(link.origin).toBe(new URL(page.url()).origin);
+  expect(link.searchParams.get('table')).toBe(shown);
   await page.locator('#pl-name').fill('Hana');
   await page.locator('[data-act="host"]').click();
   await expect(page.getByText(shown).first()).toBeVisible();

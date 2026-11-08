@@ -845,9 +845,12 @@ function friendsSetupHtml() {
   h += field('Name it', `<input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}">`);
   if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
   h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
-  // The table's code, ready to share (#566); it works once the table is open.
+  // The table's code and link, ready to share (#566); they work once the
+  // table is open. The link is to this site (staging's, on staging).
+  const code = (nextCode ||= newCode());
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
-  h += `<div class="sg-code">${esc(nextCode ||= newCode())}</div><p class="sg-note">They enter it on Play once the table is open.</p></aside></div>`;
+  h += `<div class="sg-code">${esc(code)}</div><p class="sg-note">They enter it on Play, or open the link, once the table is open.</p>`;
+  h += `<p class="pl-meta sg-link">${esc(joinLink(code, me?.id))}</p><div class="pl-actions"><button class="btn-small primary" data-act="copy-setup">${setupCopied ? 'Copied' : 'Copy link'}</button></div></aside></div>`;
   return h;
 }
 
@@ -2626,6 +2629,7 @@ async function hostTable() {
   // The code the setup showed (#566); the next setup shows a new one.
   const code = nextCode || newCode();
   nextCode = '';
+  setupCopied = false;
   startHosting(code, f.game, () => call('runnerFriends', HOST_TABLE, config)).then(ok => {
     if (!ok && mine === session) leaveTable('That table couldn’t be started.');
   });
@@ -3203,6 +3207,17 @@ function leaveTable(note = '') {
   // Redraw even when the address stays the same (a club table's onLeave
   // goes to #play, often already there).
   else render();
+}
+
+// The setup's link (#566): copied, or shown selected for copying by hand.
+let setupCopied = false;
+async function copySetupLink() {
+  try { await navigator.clipboard.writeText(joinLink(nextCode, me?.id)); setupCopied = true; } catch { setupCopied = false; }
+  render();
+  if (!setupCopied) {
+    const p = root.querySelector('.sg-link');
+    if (p) getSelection().selectAllChildren(p);
+  }
 }
 
 async function copyLink() {
@@ -4512,6 +4527,7 @@ function onClick(e) {
   else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
   else if (el.dataset.act === 'host') hostTable();
   else if (el.dataset.act === 'copy') copyLink();
+  else if (el.dataset.act === 'copy-setup') copySetupLink();
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (el.dataset.act === 'runtwice' || el.dataset.act === 'runonce') runChoice(el.dataset.act === 'runtwice');
   else if (['fold', 'check', 'call', 'allin', 'bet', 'raise'].includes(el.dataset.act) && slotGuard(el)) return;
