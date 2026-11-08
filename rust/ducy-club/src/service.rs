@@ -171,7 +171,7 @@ impl ClubState {
         let (entry, line) = if op == "give" {
             let e = self
                 .book
-                .issue(&member, Some(amount as i64), &note, now)
+                .issue_capped(&member, Some(amount as i64), &note, now)
                 .map_err(|e| refusal(409, e))?;
             (
                 e,

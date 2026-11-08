@@ -194,6 +194,14 @@ impl ClubState {
         r
     }
 
+    fn name(&self, id: &str) -> String {
+        self.book
+            .club
+            .members
+            .get(id)
+            .map_or(id.to_string(), |m| m.name.clone())
+    }
+
     fn table_name(&self, id: &str) -> String {
         self.payout_tables
             .iter()
@@ -227,6 +235,14 @@ impl ClubState {
         if let Some(m) = self.book.club.members.get_mut(id) {
             m.other.insert("request".into(), Value::Null);
         }
+        // Always a notice to the owner (#576).
+        let mut text = format!("Removed {}", self.name(id));
+        if bal > 0 {
+            text += &format!(" (took back {})", crate::rules::chip_text(bal as u64));
+        }
+        let actor = self.actor();
+        self.book
+            .log_notice(&actor, &text, now, (bal > 0).then_some(bal));
         out.replies.extend(self.book.club.remove(id, now));
         if bal > 0 {
             out.account(id, Some(0));
@@ -270,6 +286,8 @@ impl ClubState {
         let mut out = Outcome::default();
         let id = text(args, "id");
         let actor = self.actor();
+        // A raise of the chip cap whose day is up applies (#576).
+        self.book.settle_cap(now);
         match op {
             "approve" | "decline" => {
                 let reply = if op == "approve" {
@@ -288,20 +306,43 @@ impl ClubState {
             }
             "remove" => self.remove(&id, now, &mut out)?,
             "revoke_invite" => self.book.club.revoke_invite(rng),
+            // Chips given stay within the daily cap; every move is logged,
+            // and a big one is a notice to the owner (#576).
             "give" | "take" => {
                 let amt = num(args, "amount");
                 let note = text(args, "note");
                 let e = if op == "give" {
-                    self.book.issue(&id, amt, &note, now)?
+                    self.book.issue_capped(&id, amt, &note, now)?
                 } else {
                     self.book.reclaim(&id, amt, &note, now)?
                 };
+                let moved = e.amount.unsigned_abs();
+                let (who, chips) = (self.name(&id), crate::rules::chip_text(moved));
+                let mut line = if op == "give" {
+                    format!("Gave {who} {chips}")
+                } else {
+                    format!("Took back {chips} from {who}")
+                };
+                if let Some(n) = e.note.as_deref().filter(|n| !n.is_empty()) {
+                    line += &format!(": {n}");
+                }
+                self.book.log_move(&line, moved, now);
                 out.account(&id, Some(e.n - 1));
             }
             "grant" => {
                 let e = self.book.grant_request(&id, num(args, "amount"), now)?;
+                let moved = e.amount.unsigned_abs();
+                let line = format!(
+                    "Gave {} {} they asked for",
+                    self.name(&id),
+                    crate::rules::chip_text(moved)
+                );
+                self.book.log_move(&line, moved, now);
                 out.account(&id, Some(e.n - 1));
             }
+            // The daily chip cap (#576): lower at once, higher after a day.
+            "chip_cap" => self.book.set_chip_cap(num(args, "amount"), now)?,
+            "cancel_cap_raise" => self.book.cancel_cap_raise(now)?,
             "deny" => {
                 self.book
                     .decline_request(&id, &text(args, "note"), "", now)?;

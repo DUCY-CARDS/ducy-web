@@ -64,7 +64,7 @@ import { OFF } from './club-beta.js';
 import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
-import { clearableKeys, managerNotices, raiseTo } from './club-notices.js';
+import { chipCap, clearableKeys, managerNotices, raiseTo } from './club-notices.js';
 import { chipLines, leftSummary } from './club-member-view.js';
 import { creditRow } from './club-credit.js';
 import { changedSince, formatInfo, isEmpty, MAX_EVENT_TEXT, MAX_INFO_TEXT, nextEvent, sectionName, SECTIONS } from './club-info.js';
@@ -1087,6 +1087,9 @@ function onSubmitIn(e) {
     hostAct(kind === 'raise' ? 'raise_credit' : 'grant', {id, amount: parseChips(notef.elements.amount.value)}).then(done);
     return;
   }
+  // The daily chip cap (#576).
+  const capf = e.target.closest('form[data-capform]');
+  if (capf) { e.preventDefault(); hostAct('chip_cap', {amount: parseChips(capf.elements.amount.value)}); return; }
   // Club info (#398).
   const inf = e.target.closest('form[data-infoform]');
   if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}); return; }
@@ -1809,7 +1812,7 @@ function toolsHtml() {
 }
 
 // Forms whose typing survives a redraw (#398, #404, #544).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform]';
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-capform]';
 // A control that had the focus while it was busy (disabled): it gets it back
 // once it's answered (#544).
 let focusLater = '';
@@ -1848,7 +1851,7 @@ function render() {
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   // And what's typed in a notification's form or the Club info editor (#398).
-  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.table}|${fm.dataset.id || ''}`;
+  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.capform || fm.dataset.table}|${fm.dataset.id || ''}`;
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     // A preset picked (#544): its radio's value.
@@ -2652,13 +2655,24 @@ function noteHtml(n) {
   } else if (n.kind === 'left_owing') {
     const t = tableById(club, n.table)?.name || 'a table';
     top = `<a href="#${ph('member', n.member)}">${who}</a> left ${esc(t)} owing <b>${chips(n.owesNow)}</b>`;
+  } else if (n.kind === 'move') {
+    // A big chip move, a removal or a cap change (#576).
+    top = esc(n.text);
+  } else if (n.kind === 'cap_raise') {
+    // A raise of the daily chip cap waits a day (#576).
+    top = `Daily chip cap rises to <b>${chips(n.to)}</b>`;
+    body = `<span class="pl-meta">${esc(capWhen(n.applies))}</span>`;
+    acts = btn('cap-cancel', 'Cancel');
   }
   // One row each (#516): what kind, who and what, how long ago, the answers.
   const tag = NOTE_TAGS[n.kind] || '';
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes'};
+const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', cap_raise: 'Cap'};
+
+// When a raise of the chip cap applies: "Sat 9:15 PM".
+const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
 
 // Rules (#398): how the club's tables and members work.
 function rulesHtml() {
@@ -2680,6 +2694,10 @@ function rulesHtml() {
     h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${(club.codeJoin === true) === on ? ' on' : ''}" data-cl="code-join" data-on="${on ? 1 : 0}">${text}</button>`).join('');
     h += '</div></div>';
   }
+  // The daily chip cap (#576): lower at once, a raise after a day.
+  const cap = chipCap(club);
+  h += `<div class="pl-row"><span class="pl-label">Daily chip cap</span><form class="pl-opts" data-capform="cap"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(cap.cap))}" aria-label="Daily chip cap"><button class="btn-small primary" type="submit">Save</button></form></div>`;
+  h += `<p class="pl-meta cl-cap-note">${chips(cap.left)} left today${cap.raise ? ` · rises to ${chips(cap.raise.to)} ${esc(capWhen(cap.raise.applies))} <button class="link-btn" data-cl="cap-cancel">Cancel</button>` : ''}</p>`;
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
   if (remote && !OFF.has('services')) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
@@ -3514,6 +3532,7 @@ async function onClickIn(e) {
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
   else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
   else if (act === 'call-time') hostAct('settings', {stayHands: Number(b.dataset.hands)});
+  else if (act === 'cap-cancel') hostAct('cancel_cap_raise', {});
   else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }

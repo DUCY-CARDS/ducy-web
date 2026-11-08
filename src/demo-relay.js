@@ -54,6 +54,8 @@ const LIMITS = {tables: 5, tourneysPerDay: 5};
 const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, temporary: false, at: Date.now()});
 // Add bots fills a table's empty seats, up to a full nine-handed table.
 const MAX_BOTS = 8;
+// The demo club's daily chip cap (#576): 1,000,000 chips.
+const DEMO_CHIP_CAP = 100_000_000;
 // How long a bot (or the person, in a simulated hand) takes to act.
 const PACE_MS = 600, FAST_MS = 250;
 // Deals tried for a chosen outcome before giving up on that hand.
@@ -145,6 +147,9 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       },
       onDeleted: () => { room.server = null; },
     });
+    // The demo gives its bots chips as the owner would, often: its daily
+    // chip cap (#576) is set high enough for them.
+    server.club.chipCap ??= DEMO_CHIP_CAP;
     // Bots follow the people at their tables (see syncBots), checked now and then.
     room.timer ||= setInterval(() => inRoom(room, () => syncBots(room)), 5000);
     room.timer.unref?.(); // (in Node, the tests)

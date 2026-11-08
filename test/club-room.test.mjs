@@ -104,6 +104,44 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   assert.ok(storage.keys().includes('identity') && storage.keys().includes('hostKey'));
 });
 
+test('the daily chip cap (#576): gives stop at it, a raise waits, and a restart changes neither', {skip: !haveWasm && 'no wasm build'}, async () => {
+  await engine();
+  const storage = memoryStorage();
+  const owner = await createIdentity(), ann = await createIdentity();
+  const code = 'CAPS-TEST';
+  const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Capped'}), code);
+  let box = inbox(hostId);
+  let server = await openClub({storage, send: box.send, online: [owner.id]});
+  const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
+  await server.message({from: ann.id, event: 'open'});
+  await say(ann, {type: 'join', invite, name: 'Ann'});
+  let n = 0;
+  const cmd = async (op, args = {}) => {
+    await say(owner, {type: 'owner_cmd', op, args, id: ++n});
+    await settle();
+    return (await box.bodies(owner.id, 'owner_result')).find(r => r.id === n);
+  };
+  await cmd('approve', {id: ann.id});
+  assert.equal((await cmd('chip_cap', {amount: 100_000})).error, '');
+  assert.equal((await cmd('give', {id: ann.id, amount: 60_000})).error, '');
+  assert.equal((await cmd('give', {id: ann.id, amount: 50_000})).error, 'That’s over the daily chip cap: 400 left today.');
+  assert.equal((await cmd('chip_cap', {amount: 500_000})).error, '');
+  assert.equal(server.club.capRaise.to, 500_000, 'a raise waits');
+
+  // The room restarts: what was given, and the raise waiting, still count.
+  await server.flush();
+  box = inbox(hostId);
+  server = await openClub({storage, send: box.send, online: [owner.id]});
+  assert.equal(server.club.chipCap, 100_000);
+  assert.equal(server.club.capRaise.to, 500_000);
+  assert.match((await cmd('give', {id: ann.id, amount: 50_000})).error, /400 left today/);
+  // The owner hears of the cap set lower, and of a give over a full buy-in.
+  const notes = server.club.log.filter(l => l.notice).map(l => l.text);
+  assert.deepEqual(notes, ['Daily chip cap set to 1,000', 'Gave Ann 600']);
+  assert.equal((await cmd('cancel_cap_raise')).error, '');
+  assert.equal(server.club.capRaise, undefined);
+});
+
 test('a browser-run club moves to its room (#98): balances kept, members follow the handoff', {skip: !haveWasm && 'no wasm build'}, async () => {
   const {newClub, approve, newMembership, playerReceive, hostReceive} = await import('../src/club.js');
   const {issue, totals} = await import('../src/club-chips.js');
