@@ -385,7 +385,8 @@ test.describe('a club member', () => {
     // Ava and Bo share their location, 40 m apart; Cy doesn't.
     const AT = {latitude: 30.2672, longitude: -97.7431, accuracy: 15};
     const join = async (name, geo) => {
-      const context = await browser.newContext(geo ? {permissions: ['geolocation'], geolocation: geo} : {});
+      // In Austin's time zone: a clock that doesn't fit the place is a sign of a faked location.
+      const context = await browser.newContext({timezoneId: 'America/Chicago', ...(geo ? {permissions: ['geolocation'], geolocation: geo} : {})});
       const page = watch(await context.newPage());
       await authenticator(page);
       await page.goto(invite);
