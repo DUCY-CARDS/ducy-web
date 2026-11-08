@@ -97,7 +97,6 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
         hostKP: null,
         seqs: {}, // the last seq seen from each person, to sign after it
         plans: new Map(), // member id → {kind, left, hand, opp, tries}
-        rigged: new Set(), // `${member}|${hand}`: hands whose deal was chosen here
         seen: new Map(), // member id → {table, view}: their last table update
         targets: {}, // table id → how many bots it keeps (they come and go)
         agents: new Map(), // agent id → identity: agents who back bots (#428)
@@ -225,8 +224,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
   }
 
   // What the club sends: a bot's goes to the bot; a person's goes to their
-  // page, except a fair-deal result for a hand whose deal was chosen here,
-  // which would only say the deal wasn't fair (#136).
+  // page.
   function deliver(room, to, data) {
     const bot = room.bots.get(to);
     if (bot) { bot.inbox = bot.inbox.then(() => botReceive(room, bot, data)).catch(e => console.warn('demo bot:', e)); return; }
@@ -237,7 +235,6 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     if (data?.type !== 'table' || !data.enc) { send(room, to, data); return; }
     conn.deliver = conn.deliver.then(async () => {
       const u = await peek(room, to, data);
-      if (u?.type === 'fair' && u.step === 'result' && room.rigged.has(`${to}|${num(u.hand)}`)) return;
       if (u?.type === 'state') personState(room, to, data.table, u);
       if (room.conns.get(to) === conn) conn.h.onMessage(JSON.parse(JSON.stringify(data)));
     }).catch(e => console.warn('demo relay:', e));
@@ -427,7 +424,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     if (!u) return;
     const tid = data.table;
     if (u.type === 'fair') {
-      bot.fair.message(u, cmd => inRoom(room, () => botSends(room, bot, {type: 'table', table: tid, cmd})), {});
+      bot.fair.message(u, cmd => inRoom(room, () => botSends(room, bot, {type: 'table', table: tid, cmd})));
       return;
     }
     // Too soon for a tournament's table (it was still starting): try again.
@@ -612,7 +609,6 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       const hand = num(s.state.hand_number) + 1;
       plan.hand = hand;
       plan.opp = opp;
-      for (const id of dealt) room.rigged.add(`${id}|${hand}`);
       changed();
       return chosen;
     }

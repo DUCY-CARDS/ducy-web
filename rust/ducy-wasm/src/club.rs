@@ -4,8 +4,8 @@
 //! Bytes cross as lowercase hex.
 
 use ducy_host::runner::{
-    ASK_MS, Action, Event, FairResult, HostCommand, IDLE_MS, NEXT_HAND_MS, PlayerCommand,
-    RunnerConfig, RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
+    ASK_MS, Action, Event, HostCommand, IDLE_MS, NEXT_HAND_MS, PlayerCommand, RunnerConfig,
+    RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
 };
 use ducy_host::{Command, HostSnapshot, TableHost};
 use ducy_play::fair_deal::{Bytes32, Reveal};
@@ -355,16 +355,19 @@ fn step_json(step: &Step, host: &TableHost) -> Result<Value, JsError> {
     let actions = step
         .actions
         .iter()
-        .map(|a| {
-            Ok(match a {
-                Action::Engine(res) => json!({"type": "engine", "res": result_json(res, host)?}),
+        .filter_map(|a| {
+            Some(Ok(match a {
+                Action::Engine(res) => match result_json(res, host) {
+                    Ok(r) => json!({"type": "engine", "res": r}),
+                    Err(e) => return Some(Err(e)),
+                },
                 Action::Send { to, update } => {
-                    json!({"type": "send", "to": to, "update": update_json(update)})
+                    json!({"type": "send", "to": to, "update": update_json(update)?})
                 }
                 Action::Active { id, at } => json!({"type": "active", "id": id, "at": at}),
                 Action::Idle { id } => json!({"type": "idle", "id": id}),
                 Action::Refused { reason } => json!({"type": "refused", "reason": reason}),
-            })
+            }))
         })
         .collect::<Result<Vec<_>, JsError>>()?;
     Ok(json!({
@@ -414,28 +417,19 @@ fn list_json(list: &[(String, Bytes32)]) -> Value {
         .collect()
 }
 
-fn update_json(u: &RunnerUpdate) -> Value {
-    match u {
+/// A runner's message for a member, or None for one that never goes to a
+/// player: a fair-deal result carries the hand's seed, and with it anyone
+/// could deal out every other seat's hole cards, folded ones too (#580).
+fn update_json(u: &RunnerUpdate) -> Option<Value> {
+    Some(match u {
         RunnerUpdate::FairCommit { round } => {
             json!({"type": "fair", "step": "commit", "round": round})
         }
         RunnerUpdate::FairReveal { round, list } => {
             json!({"type": "fair", "step": "reveal", "round": round, "list": list_json(list)})
         }
-        RunnerUpdate::FairResult(FairResult {
-            hand,
-            game,
-            dealt,
-            index,
-            seed,
-            list,
-            reveals,
-        }) => json!({
-            "type": "fair", "step": "result", "hand": hand, "game": game, "dealt": dealt, "index": index,
-            "seed": hex(seed), "list": list_json(list),
-            "reveals": reveals.iter().map(|(id, r)| json!({"id": id, "value": hex(&r.value), "nonce": hex(&r.nonce)})).collect::<Vec<_>>(),
-        }),
+        RunnerUpdate::FairResult(_) => return None,
         RunnerUpdate::IdleAsk { secs } => json!({"type": "idle", "secs": secs}),
         RunnerUpdate::IdleDone => json!({"type": "idle", "done": true}),
-    }
+    })
 }
