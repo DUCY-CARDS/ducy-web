@@ -15,8 +15,16 @@
 //   full:<day>:<n>     hand n of that day (day = days since 1970, UTC)
 //
 // A record: {id, at, club, table, tableName, game, hand, sb, bb, button,
-// seats: [{seat, id, name, cards, folded, net, won, stackEnd}] (the seats
-// dealt in, by seat), actions (the hand's events, by seat), board, board2,
+// startedAt (ms, when the relay first saw the hand; null if not known),
+// seats: [{seat, id, name, cards, folded, net, won, stackEnd, connected,
+// conn}] (the seats dealt in, by seat; `connected`: when the hand began,
+// null if not known; `conn`: their connection then, club-room.js
+// connSnapshot: a hashed IP, network, place, client, never the raw IP),
+// actions (the hand's events, by seat), and by action: times (ms since the
+// hand began, null where not known; #591's decision times), amounts (the
+// chips it put in, amountsOf), how ('player' their own command, 'clock' a
+// timeout or anything else, null), away (their page said it was hidden or
+// out of focus while they decided: true, false or null), board, board2,
 // pot, showdown, pots (who won what), deal: {seed, list, reveals, order}
 // or null}. `order` is the player IDs in the order the deal gave out cards.
 
@@ -32,19 +40,54 @@ const dayOf = at => Math.floor(at / DAY_MS);
 
 // The full record of a hand from the club's table (club-host.js onFullHand,
 // with {club, table, tableName, game}), at `now`.
-export function fullRecord({view, players, cards, deal, club, table, tableName, game}, now = Date.now()) {
+export function fullRecord({view, players, cards, deal, timing, conns, club, table, tableName, game}, now = Date.now()) {
   const rec = handRecord({club, table, tableName, game, view, who: 'ducy'}, now);
   const idAt = seat => players.find(p => p.seat === seat)?.client_id || null;
   const cardsAt = seat => cards?.seats?.find(s => s.seat === seat)?.cards || null;
+  const at = (list, i) => (list?.[i] === undefined ? null : list[i]);
+  const online = Array.isArray(timing?.online) ? new Set(timing.online) : null;
   return {
     id: rec.id, at: rec.at, club, table, tableName, game, hand: rec.hand,
     sb: rec.sb, bb: rec.bb, button: rec.button,
-    seats: rec.seats.filter(s => s.inHand).map(s => ({
-      seat: s.i, id: idAt(s.i), name: s.name, cards: cardsAt(s.i), folded: s.folded, net: s.net, won: s.won, stackEnd: s.stackEnd,
-    })),
-    actions: rec.events, board: rec.board, board2: rec.board2 || [], pot: rec.pot, showdown: rec.showdown, pots: view.pots || [],
+    startedAt: Number.isFinite(timing?.start) ? timing.start : null,
+    seats: rec.seats.filter(s => s.inHand).map(s => {
+      const id = idAt(s.i);
+      return {
+        seat: s.i, id, name: s.name, cards: cardsAt(s.i), folded: s.folded, net: s.net, won: s.won, stackEnd: s.stackEnd,
+        connected: online && id ? online.has(id) : null, conn: (id && conns?.[id]) || null,
+      };
+    }),
+    actions: rec.events,
+    times: rec.events.map((_, i) => (Number.isFinite(timing?.at?.[i]) ? timing.at[i] : null)),
+    amounts: amountsOf(rec.events),
+    how: rec.events.map((_, i) => at(timing?.how, i)),
+    away: rec.events.map((_, i) => at(timing?.away, i)),
+    board: rec.board, board2: rec.board2 || [], pot: rec.pot, showdown: rec.showdown, pots: view.pots || [],
     deal: deal ? {seed: deal.seed, list: deal.list, reveals: deal.reveals, order: deal.order} : null,
   };
+}
+
+// The chips each event put in, by event (null for one that isn't a seat's:
+// the board, an award): a blind or call its amount, a bet or raise what it
+// added to the seat's bet for the street, a check or fold 0.
+export function amountsOf(events) {
+  const bet = new Map();
+  const add = (seat, n) => bet.set(seat, (bet.get(seat) || 0) + n);
+  return (events || []).map(e => {
+    switch (e.type) {
+      case 'ante': return Number(e.amount) || 0;
+      case 'small_blind': case 'big_blind': case 'call': add(e.seat, Number(e.amount) || 0); return Number(e.amount) || 0;
+      case 'post': add(e.seat, Number(e.live) || 0); return (Number(e.dead) || 0) + (Number(e.live) || 0);
+      case 'bet': case 'raise': {
+        const put = (Number(e.to) || 0) - (bet.get(e.seat) || 0);
+        bet.set(e.seat, Number(e.to) || 0);
+        return put;
+      }
+      case 'check': case 'fold': return 0;
+      case 'board': bet.clear(); return null;
+      default: return null;
+    }
+  });
 }
 
 // Keeps `rec` (fullRecord) for the club's `days`, and drops what's older.

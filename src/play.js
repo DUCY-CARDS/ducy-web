@@ -1039,6 +1039,9 @@ function show(snap) {
   // their family's (a style is for you to read).
   if (mode === 'solo') for (const seat of snap.state?.seats || []) { const p = personOf(seat.id); if (p) seat.name = p.name; }
   state = mode === 'solo' ? snap.state : withStatIds(snap.state);
+  // When your turn began, for wasAway.
+  if (!state?.legal) turnSince = 0;
+  else if (!turnSince) turnSince = Date.now();
   gameSounds();
   botToAct = snap.botToAct;
   // A finished hand, for a club player's hand history (#71).
@@ -3030,10 +3033,19 @@ async function runChoice(yes) {
   if (snap) show(snap);
 }
 
+// Whether this tab was hidden or lost focus while you decided (#582): sent
+// with a club action, for ducy's own checks on the relay only.
+let turnSince = 0, awayAt = 0;
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.hidden) awayAt = Date.now(); });
+  window.addEventListener('blur', () => { awayAt = Date.now(); });
+}
+const wasAway = () => typeof document !== 'undefined' && (document.hidden || !document.hasFocus() || (turnSince > 0 && awayAt >= turnSince));
+
 // Sends the action to the host; the next view shows the result.
 function guestAct(kind, amount) {
   if (!state?.legal) return false;
-  net?.send({type: 'act', seq: shownSeq, kind, amount});
+  net?.send({type: 'act', seq: shownSeq, kind, amount, ...(clubTable ? {away: wasAway()} : {})});
   raiseTo = 0;
   state = {...state, legal: null};
   render();

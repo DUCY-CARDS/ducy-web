@@ -18,7 +18,9 @@
 import { overview } from './club-overview.js';
 
 // Notices only shown (no answer needed), which Clear puts away.
-export const CLEARABLE = new Set(['stopped', 'left_owing', 'move']);
+// fair_play (#582) comes from the relay's check, not the club (clubs.js
+// adds it: club-fair-play.js).
+export const CLEARABLE = new Set(['stopped', 'left_owing', 'move', 'fair_play']);
 
 export const managerNotices = (club, {cleared = new Set(), seated = {}} = {}, now = Date.now()) => overview(club, 'notices', {cleared: [...cleared], seated}, now);
 

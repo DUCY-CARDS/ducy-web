@@ -8,7 +8,7 @@ import { FILTERS, SORTS } from './club-overview.js';
 export const NAV = [
   {group: '', pages: [['overview', 'Overview']]},
   {group: 'Games', pages: [['cash', 'Tables'], ['tourneys', 'Tournaments'], ['promos', 'Promotions']]},
-  {group: 'Members', pages: [['requests', 'Requests'], ['members', 'Members'], ['settle', 'Balances'], ['chips', 'Chips']]},
+  {group: 'Members', pages: [['requests', 'Requests'], ['members', 'Members'], ['settle', 'Balances'], ['chips', 'Chips'], ['fairplay', 'Fair play']]},
   {group: 'Settings', pages: [['info', 'Club info'], ['rules', 'Rules'], ['backup', 'Backup and devices'], ['history', 'History']]},
 ];
 

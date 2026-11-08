@@ -16,7 +16,7 @@
 //   tablesChanged()     seat counts or tables changed: tell members
 //   onHand(table, view, players) a hand finished (the host's view: no hidden
 //                       cards; players: [{seat, client_id}], who sat where)
-//   onFullHand(table, {view, players, cards, deal})  only where the club
+//   onFullHand(table, {view, players, cards, deal, timing})  only where the club
 //                       keeps full records of its hands (its room on the
 //                       relay, #580): the same, with every seat's hole cards,
 //                       folded ones too ({hand, seats: [{seat, cards}]}), and
@@ -121,12 +121,18 @@ export function createTableHost({
   }
 
   // Sends table tid's runner an event, one at a time, and handles its step.
-  function run(tid, ev) {
+  // `away`: for a player's action, whether their page said it was hidden
+  // or out of focus while they decided (null: it didn't say).
+  function run(tid, ev, away = null) {
     const r = running.get(tid);
     if (!r) return Promise.resolve(null);
     const p = r.chain.then(async () => {
       if (!running.has(tid)) return null;
       const step = await call('runnerEvent', tid, ev);
+      // What made this step's events, for the full record: a player's own
+      // command, or the table's clock (a turn timed out, an away player's
+      // move) or anything else.
+      r.cause = ev.type === 'cmd' ? {id: ev.id, away} : {id: null, away: null};
       await apply(tid, r, step);
       return step;
     });
@@ -247,11 +253,12 @@ export function createTableHost({
       holdMs,
     });
     if (step.onPlay) onPlay();
+    if (onFullHand) noteTimes(r, res.state);
     // A hand just finished: for the host's hand history (#71), and its full
-    // record (apply, #580).
+    // record (apply, #580), with when each of its events came.
     if (step.onHand) {
       onHand?.(tid, res.state, r.seating.players);
-      r.finished = {view: res.state, players: r.seating.players.map(p => ({seat: p.seat, client_id: p.client_id}))};
+      r.finished = {view: res.state, players: r.seating.players.map(p => ({seat: p.seat, client_id: p.client_id})), timing: r.times?.hand === Number(res.state.hand_number) ? structuredClone(r.times) : null};
     }
     if (dealingNow(tid)) step.save = true;
     carry(tid, r, step);
@@ -259,6 +266,37 @@ export function createTableHost({
     const g = groupOf(club(), tid);
     if (g) moveUp(g.group.id);
     return t;
+  }
+
+  // When each event of the hand in play came, in ms since the hand began
+  // (when it was first seen here), for its full record (#580): ducy's checks
+  // on the relay read decision times from them (#591). The events already
+  // there when a hand is first seen (its blinds) are at 0; in the first hand
+  // since the table started here (it may have been restored mid-hand) they're
+  // null, not known.
+  //
+  // With each, how it came (`how`, by event): 'player' (the seat's own
+  // command), 'clock' (anything else: a turn that timed out, an away
+  // player's move, blinds), or null (not known); and `away` (the page said
+  // it was hidden or out of focus meanwhile: true, false, or null). And
+  // who was connected when the hand began (`online`, ids).
+  function noteTimes(r, view) {
+    const hand = Number(view?.hand_number), events = view?.events || [], n = events.length;
+    if (!hand) return;
+    const now = Date.now();
+    const known = !!r.times;
+    if (r.times?.hand !== hand) {
+      r.times = {hand, start: now, at: [], how: [], away: [], online: known ? r.seating.players.filter(p => online(p.client_id)).map(p => p.client_id) : null};
+    }
+    const first = !r.times.at.length;
+    const idAt = seat => r.seating.players.find(p => p.seat === seat)?.client_id;
+    while (r.times.at.length < n) {
+      const e = events[r.times.at.length];
+      r.times.at.push(first ? (known ? 0 : null) : now - r.times.start);
+      const mine = !first && e?.seat != null && r.cause?.id && idAt(e.seat) === r.cause.id;
+      r.times.how.push(first ? null : e?.seat == null ? null : mine ? 'player' : 'clock');
+      r.times.away.push(mine ? r.cause.away : null);
+    }
   }
 
   // Must move (#501, #518): for each seat free at group `gid`'s tables, the
@@ -595,7 +633,16 @@ export function createTableHost({
       sendTable(id, {type: 'table', table: tid, update: {type: 'rejected', reason: 'That table isn’t running.', fatal: true}});
       return;
     }
-    await run(tid, {type: 'cmd', id, cmd, online: online(id)});
+    // An action's `away` (#582): the player's tab was hidden or lost focus
+    // while they decided. Noted for the hand's full record, never given to
+    // the engine.
+    let away = null;
+    if (cmd.type === 'act' && 'away' in cmd) {
+      away = cmd.away === true;
+      const {away: _a, ...rest} = cmd;
+      cmd = rest;
+    }
+    await run(tid, {type: 'cmd', id, cmd, online: online(id)}, away);
     // "Still here?" answered: their seat's last activity is kept.
     if (cmd.type === 'still_here') save();
   }

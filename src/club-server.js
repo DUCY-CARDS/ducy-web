@@ -43,6 +43,9 @@
 //                  may change it too
 //   lastSeen()     when each player was last heard from, {id: ms}, kept by
 //                  an always-on club's room (#401); its owner sees it (#426)
+//   checks()       the latest fair play report (relay/src/collusion.js,
+//                  #582): counts and hand numbers, no cards; only the owner
+//                  gets it, with their view. server.ownerChanged() when it's new.
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -79,6 +82,7 @@ export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, fullHand = null, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
   lastSeen = () => ({}),
+  checks = () => null,
 }) {
   const planInfo = () => (plan || limits ? {...(plan || {}), limits} : null);
   const online = new Set(); // members connected now
@@ -165,7 +169,7 @@ export function createClubServer({
     const hostKey = (await hostKeys()).pub;
     // When each member was last heard from, for Members' Last active (#426).
     const seen = Object.fromEntries(Object.entries(lastSeen() || {}).filter(([mid]) => club.members[mid]));
-    for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId, seen}});
+    for (const id of to) sendToPlayer({to: id, body: {type: 'owner_view', club: club.code, data, seated: seatedCounts(), running, online: [...online], hostKey, tourneys: tourneyLive(), plan: planInfo(), owner: id === club.ownerId, seen, checks: checks() || null}});
   }
 
   // The owner watching a table (#73, #125): its spectator view, encrypted
@@ -609,7 +613,12 @@ export function createClubServer({
       else if (r.table.id.startsWith('list:')) listCmd(msg.from, r.table.id.slice(5), String(r.table.cmd?.type ?? ''), r.table.cmd?.min ?? null);
       else if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
         sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the club. Reload and try again.'}});
-      } else if (r.table.id.startsWith('tourney:')) tourneyHost?.handle(r.table.id.slice(8), r.table.from, r.table.cmd);
+      } else if (r.table.id.startsWith('tourney:')) {
+        // A cash table notes an action's `away` (club-host.js, #582); a tournament's doesn't.
+        const c = r.table.cmd;
+        const cmd = c && typeof c === 'object' ? Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'away')) : c;
+        tourneyHost?.handle(r.table.id.slice(8), r.table.from, cmd);
+      }
       else tableHost?.handle(r.table.id, r.table.from, r.table.cmd);
     }
     if (r.tourney && r.tourney.from === msg.from) { await handleTourney(r.tourney); return; }
@@ -823,5 +832,7 @@ export function createClubServer({
       if (was !== !!plan?.temporary) broadcastTables();
     },
     limits: () => limits,
+    // Something only the owner's view shows changed (the fair play report).
+    ownerChanged: () => sendOwnerView(),
   };
 }

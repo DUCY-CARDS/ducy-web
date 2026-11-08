@@ -59,7 +59,8 @@ cp -r src/avatars "$REL/src/"
 cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
 # A demo club runs the relay's club room in the page (src/demo-relay.js, #406).
 mkdir -p "$REL/relay/src"
-cp relay/src/club-room.js relay/src/registry.js relay/src/error-log.js "$REL/relay/src/"
+# club-room.js loads hand-records.js (#580) and collusion.js (#582) too.
+cp relay/src/club-room.js relay/src/hand-records.js relay/src/collusion.js relay/src/registry.js relay/src/error-log.js "$REL/relay/src/"
 cp favicon.svg apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest .htaccess "$OUT/"
 # Who may use the admin page (#401): public keys, so public. The relay
 # bundles its own copy.
