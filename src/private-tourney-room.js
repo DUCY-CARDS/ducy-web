@@ -116,10 +116,13 @@ const mine = () => body?.players.find(p => p.id === myId()) || null;
 // The prizes the host is typing, not saved yet (#403): kept over redraws.
 let draft = null;
 
+// The code the setup shows, and the lobby opens with (#566).
+let nextCode = '';
+
 const redrawPage = setTourneyPage({
   active: () => !!role,
   html: () => pageHtml(body, {me: myId(), host: role === 'host', link: code ? joinLink(code, linkHost) : '', note, atTable: !!seat, connecting, watching: watching?.table ?? null, draft}),
-  setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
+  setupHtml: lead => setupHtml(form, ed(), {lead, note: formNote, levelsOpen, code: (nextCode ||= newCode()), placeholder: tableName() ? `${tableName()}’s tournament` : 'Friday night tournament'}),
   click, change, join: joinPrivateTourney,
 });
 
@@ -183,7 +186,9 @@ async function openLobby(wrap) {
   else if (!relayUrl()) formNote = 'Games with other people need ducy’s relay, which isn’t set up here.';
   else if (ed().errors().length) formNote = ed().errors()[0];
   if (formNote) { redraw(); return; }
-  const c = privateClub(newCode(), tableName());
+  // The code the setup showed (#566); the next setup shows a new one.
+  const c = privateClub(nextCode || newCode(), tableName());
+  nextCode = '';
   try {
     newPrivateTourney(c, {...form, structure: ed().steps(), rows: form.payout === 'table' ? cleanRows(tableDraft()) : null});
   } catch (e) {

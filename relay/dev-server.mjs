@@ -230,13 +230,13 @@ const http = createServer(async (req, res) => {
     res.end();
     return;
   }
-  // What a code is (#393): a club, or else a game.
+  // What a code is (#393): a club, a game with its host here, or nothing (#566).
   const look = url.pathname.match(/^\/code\/([^/]+)$/);
   if (look && req.method === 'GET') {
     const code = decodeURIComponent(look[1]);
     const out = (v, status = 200) => { res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*'}); res.end(JSON.stringify(v)); };
     if (!CODE.test(code)) return out({error: 'bad code'}, 400);
-    if (!(await reg.has(code))) return out({kind: 'game'});
+    if (!(await reg.has(code))) return out({kind: rooms.get(code)?.host ? 'game' : 'none'});
     return out(codeInfo(rooms.get(code)?.store.get('club'), (url.searchParams.get('invite') || '').slice(0, 64)));
   }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);

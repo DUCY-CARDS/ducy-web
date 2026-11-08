@@ -204,6 +204,8 @@ let gto6Available = false;
 let gto6Ready = false;
 const GTO_IDS = [GTO.id, GTO6.id, ...Object.values(GTO_PLOS).map(p => p.bot.id)];
 let setupNote = '';
+// The code a private game's setup shows, and its table opens with (#566).
+let nextCode = '';
 let seated = false; // a table is in play
 let botToAct = false;
 let busy = false; // a request to the table is in flight
@@ -843,8 +845,9 @@ function friendsSetupHtml() {
   h += field('Name it', `<input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}">`);
   if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
   h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
+  // The table's code, ready to share (#566); it works once the table is open.
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
-  h += '<div class="sg-code" aria-hidden="true">····-····</div></aside></div>';
+  h += `<div class="sg-code">${esc(nextCode ||= newCode())}</div><p class="sg-note">They enter it on Play once the table is open.</p></aside></div>`;
   return h;
 }
 
@@ -2620,7 +2623,10 @@ async function hostTable() {
     link: false,
   };
   const mine = session;
-  startHosting(newCode(), f.game, () => call('runnerFriends', HOST_TABLE, config)).then(ok => {
+  // The code the setup showed (#566); the next setup shows a new one.
+  const code = nextCode || newCode();
+  nextCode = '';
+  startHosting(code, f.game, () => call('runnerFriends', HOST_TABLE, config)).then(ok => {
     if (!ok && mine === session) leaveTable('That table couldn’t be started.');
   });
   hostTitle = f.title || `${setup.name}’s game`;
@@ -2684,7 +2690,9 @@ function startHosting(code, game, create) {
     },
     onStatus(t) { netNote = t; render(); },
     onFail(t) { leaveTable(t); },
-    onHealth(ok) { if (mine !== session) return; linkOk = ok; hostRun({type: 'link', ok}); },
+    // Drawn at once (#566): a new table's clock stands still with no one else
+    // there, so the runner's step alone wouldn't redraw "can't reach the relay".
+    onHealth(ok) { if (mine !== session) return; linkOk = ok; hostRun({type: 'link', ok}); render(); },
   }, {heartbeat: true, persistent: true});
   startClock();
   return made;

@@ -35,7 +35,8 @@
 //   GET /code/<code>   {kind: 'club', ask, name, hostId} for an always-on
 //                      club (name and hostId only when it lets people ask
 //                      to join with the code: club-room.js codeInfo), else
-//                      {kind: 'game'} (a friends table, or nothing)
+//                      {kind: 'game'} (a friends table with its host
+//                      connected), else {kind: 'none'} (#566)
 //
 // Services (src/club-services.js, service-http.js): an always-on club's
 // outside servers send
@@ -188,7 +189,8 @@ async function route(req, env) {
     const code = decodeURIComponent(look[1]);
     if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
     const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
-    if (!has) return new Response(JSON.stringify({kind: 'game'}), {headers});
+    // Not a club: a game while its host is connected, else nothing (#566).
+    if (!has) return new Response((await roomOf(env, code).fetch(`https://room/hosted/${encodeURIComponent(code)}`)).body, {headers});
     const invite = (url.searchParams.get('invite') || '').slice(0, 64);
     const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
     return new Response(res.body, {headers});
@@ -530,6 +532,8 @@ export class Room {
       const out = await adminView(this.storage(), view[1], {reveal: url.searchParams.get('reveal') === 'true', id: url.searchParams.get('id') || ''});
       return Response.json(out || {});
     }
+    // Whether a game's host is here (#566), from the Worker.
+    if (url.pathname.startsWith('/hosted/')) return Response.json({kind: this.host() ? 'game' : 'none'});
     // What anyone may learn from the club's code (#393), from the Worker.
     if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club'), url.searchParams.get('invite') || ''));
     // A service's request, from the Worker (serviceHttp checked its shape).

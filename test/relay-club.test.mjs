@@ -87,7 +87,7 @@ test('what a code is: a club tells its name only when it takes requests by code 
   const owner = await createIdentity(), bob = await createIdentity();
   const code = 'EEEE-EEEE';
   const look = c => fetch(`http://localhost:${PORT}/code/${c}`).then(async r => ({status: r.status, body: await r.json()}));
-  assert.deepEqual((await look('FFFF-FFFF')).body, {kind: 'game'});
+  assert.deepEqual((await look('FFFF-FFFF')).body, {kind: 'none'}, 'no club, and no game open (#566)');
   assert.equal((await look('nope')).status, 400);
 
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`);

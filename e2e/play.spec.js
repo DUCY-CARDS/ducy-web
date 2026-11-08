@@ -39,10 +39,27 @@ test('the front page offers friends, clubs and the Regulars, and nothing else', 
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
   await expect(page.getByLabel('Game or club code')).toBeVisible();
   for (const name of ['Start a game', 'Private clubs', 'Play the Regulars']) await expect(page.getByRole('link', {name})).toBeVisible();
-  await expect(page.getByText('Chips are play money with no cash value')).toBeVisible();
+  await expect(page.getByText(/play money|Still in development/i)).toHaveCount(0);
   await expect(page.getByRole('link', {name: /Study|Quest|Heads-up challenge|Omaha 6/})).toHaveCount(0);
   await expect(page.getByText('Ducybot')).toHaveCount(0);
   await fitsTheScreen(page);
+});
+
+test('a code with no game behind it says so on the front page (#566)', async ({page, watch}) => {
+  await watch(page).goto(`/?relay=${RELAY}`);
+  await page.getByLabel('Game or club code').fill('ZZZZ-ZZZZ');
+  await page.locator('form[data-v3join] button[type=submit]').click();
+  await expect(page.getByText('No game or club with that code.')).toBeVisible();
+});
+
+test('a private game shows its code before it opens, and opens with it (#566)', async ({page, watch}) => {
+  await watch(page).goto(`/?relay=${RELAY}#host`);
+  const shown = (await page.locator('.sg-code').innerText()).trim();
+  expect(shown).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
+  await page.locator('#pl-name').fill('Hana');
+  await page.locator('[data-act="host"]').click();
+  await expect(page.getByText(shown).first()).toBeVisible();
+  await expect(page.getByText(/can’t reach the relay/)).toHaveCount(0, {timeout: 10_000});
 });
 
 test('Private clubs takes a code, with no clubs yet (#564)', async ({page, watch}) => {
