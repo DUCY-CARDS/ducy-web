@@ -2459,7 +2459,7 @@ body.mode-manage .mg-main .cl-wrap:has(.mg-shell) { max-width: none; padding: 0;
 .mg-note-tag { width: 50px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #8a5a10; }
 .mg-note-tag.k-help { color: #1f6a8a; }
 .mg-note-tag.k-join { color: #2f6b3d; }
-.mg-note-tag.k-stopped, .mg-note-tag.k-left_owing { color: #a33a22; }
+.mg-note-tag.k-stopped, .mg-note-tag.k-left_owing, .mg-note-tag.k-move, .mg-note-tag.k-cap_raise { color: #a33a22; }
 .mg-note-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .mg-note time { width: 64px; text-align: right; font-family: var(--font-data); }
 .mg-note > .mg-note-acts { width: 260px; justify-content: flex-end; }

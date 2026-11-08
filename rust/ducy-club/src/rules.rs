@@ -526,6 +526,13 @@ pub struct Club {
     /// Requests refused from keys that are no service of the club's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_refused: Option<Refusals>,
+    /// The most chips the club gives out in any 24 hours, as the owner set
+    /// it (ducy-web #576); none: the default ([`crate::cap`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chip_cap: Option<u64>,
+    /// A raise of the cap, waiting its day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap_raise: Option<crate::cap::CapRaise>,
 }
 
 fn one() -> u32 {
@@ -862,6 +869,8 @@ impl Club {
             interest: BTreeMap::new(),
             services: BTreeMap::new(),
             service_refused: None,
+            chip_cap: None,
+            cap_raise: None,
         })
     }
 

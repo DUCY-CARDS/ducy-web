@@ -9,6 +9,7 @@
 #![warn(missing_docs)]
 
 pub mod book;
+pub mod cap;
 pub mod groups;
 pub mod host;
 pub mod interest;

@@ -307,11 +307,13 @@ impl ClubState {
 
     /// What needs the manager, newest first, each with a `key` (unique and
     /// stable while it stands) and what its quick actions need: join, chips,
-    /// at_limit, help, prize, stopped, left_owing. Those `cleared` are left
+    /// at_limit, help, prize, stopped, left_owing, move (a big chip move,
+    /// a removal or a cap change, #576), cap_raise. Those `cleared` are left
     /// out; `seated`: seats taken by table.
-    pub fn notices(&self, cleared: &[String], seated: &Map<String, Value>) -> Vec<Value> {
+    pub fn notices(&self, cleared: &[String], seated: &Map<String, Value>, now: u64) -> Vec<Value> {
         let members = &self.book.club.members;
-        let mut out = vec![];
+        // Big chip moves, removals and the chip cap (#576).
+        let mut out = self.book.move_notices(now);
         for m in members.values() {
             if m.status == Status::Pending {
                 let via = m
@@ -443,8 +445,9 @@ impl ClubState {
                             .collect()
                     })
                     .unwrap_or_default();
-                to(&self.notices(&cleared, &obj("seated")))
+                to(&self.notices(&cleared, &obj("seated"), now))
             }
+            "chipCap" => self.book.cap_view(now),
             _ => return refuse(format!("no overview op {op}")),
         })
     }
@@ -635,7 +638,7 @@ mod tests {
             .unwrap();
         c.book.cash_out("dee", NOW - 10_000).unwrap();
         let none = Map::new();
-        let list = c.notices(&[], &none);
+        let list = c.notices(&[], &none, NOW);
         let kinds: Vec<&str> = list.iter().map(|n| n["kind"].as_str().unwrap()).collect();
         assert_eq!(kinds, ["left_owing", "stopped", "chips", "join"]);
         assert_eq!(list[0]["owesNow"], 20_000);
@@ -646,11 +649,11 @@ mod tests {
             .iter()
             .map(|n| n["key"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(c.notices(&cleared, &none).len(), 2);
+        assert_eq!(c.notices(&cleared, &none, NOW).len(), 2);
         // A debt settled says nothing.
         c.book.issue("dee", Some(20_000), "Cash", NOW).unwrap();
         assert!(
-            !c.notices(&[], &none)
+            !c.notices(&[], &none, NOW)
                 .iter()
                 .any(|n| n["kind"] == "left_owing")
         );

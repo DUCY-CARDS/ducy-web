@@ -10,15 +10,21 @@
 //   prize       a promotion prize held          Pay · Replay
 //   stopped     a table stopped dealing         Close table
 //   left_owing  left a table owing the club     (a notice) (#404)
+//   move        a big give or take back, a removal or a cap change (#576), for 7 days
+//   cap_raise   a raise of the daily chip cap, waiting its day     Cancel (#576)
 // Each has a `key`, unique and stable while it stands, so the notices that
-// need no answer (stopped, left_owing) can be cleared.
+// need no answer (stopped, left_owing, move) can be cleared.
 
 import { overview } from './club-overview.js';
 
 // Notices only shown (no answer needed), which Clear puts away.
-export const CLEARABLE = new Set(['stopped', 'left_owing']);
+export const CLEARABLE = new Set(['stopped', 'left_owing', 'move']);
 
-export const managerNotices = (club, {cleared = new Set(), seated = {}} = {}) => overview(club, 'notices', {cleared: [...cleared], seated});
+export const managerNotices = (club, {cleared = new Set(), seated = {}} = {}, now = Date.now()) => overview(club, 'notices', {cleared: [...cleared], seated}, now);
+
+// The daily chip cap (#576): {cap, given (in the last 24 hours), left, set
+// (the owner chose it), raise: {to, at, applies} or null}.
+export const chipCap = (club, now = Date.now()) => overview(club, 'chipCap', {}, now);
 
 // The keys of the clearable notices in `list`, to put away with Clear.
 export const clearableKeys = list => list.filter(n => CLEARABLE.has(n.kind)).map(n => n.key);

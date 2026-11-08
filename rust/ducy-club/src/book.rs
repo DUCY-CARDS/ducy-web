@@ -80,7 +80,7 @@ fn money_err(e: crate::money::MoneyError) -> RuleError {
     RuleError(e.to_string())
 }
 
-fn amount(a: Option<i64>) -> Result<u64, RuleError> {
+pub(crate) fn amount(a: Option<i64>) -> Result<u64, RuleError> {
     match a {
         Some(a) if a > 0 && a as u64 <= MAX_CHIPS => Ok(a as u64),
         _ => refuse("Enter a whole number of chips above 0."),
@@ -526,7 +526,7 @@ impl Book {
         self.check_grant(id)?;
         let given = amt.or_else(|| int(r.get("amount")));
         let why = r["note"].as_str().unwrap_or("").to_string();
-        let e = self.issue(id, given, &why, now)?;
+        let e = self.issue_capped(id, given, &why, now)?;
         self.answer_request(id, "granted", given.unwrap_or(0) as u64, "", "", None, now)?;
         Ok(e)
     }
