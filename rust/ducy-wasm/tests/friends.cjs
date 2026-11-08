@@ -64,6 +64,7 @@ step = runUntil(host, step, dealt);
 assert.ok(step, "dealt");
 r = results(step).find(x => !x.state.complete);
 assert.match(r.seed, /^[0-9a-f]{64}$/);
+const handSeed = r.seed;
 assert.equal(r.state.seats[1].stack + r.state.seats[1].street_bet, 120);
 assert.ok(r.state.seats.slice(2).every(s => s.empty));
 
@@ -71,8 +72,8 @@ assert.ok(r.state.seats.slice(2).every(s => s.empty));
 step = host.event({ type: "host", cmd: { type: "chips", amount: 1000 } }, t());
 assert.ok(step.actions.some(a => a.type === "refused"));
 
-// They play it out; Ann gets the deal to check, her cards second (the
-// host's seat was dealt first).
+// They play it out. Ann never gets the deal's seed (#580): with it she
+// could deal out the host's cards.
 let annView = toAnnOf(step).filter(d => d.type === "state").pop()?.view;
 while (!r.state.complete) {
   if (r.state.legal) {
@@ -83,8 +84,8 @@ while (!r.state.complete) {
   r = results(step).pop();
   annView = toAnnOf(step).filter(d => d.type === "state").pop()?.view || annView;
 }
-const result = sends(step).find(a => a.to === "ann" && a.update.step === "result");
-assert.deepEqual([result.update.index, result.update.dealt], [1, 2]);
+assert.ok(!sends(step).some(a => a.to === "ann" && a.update.step === "result"), "no fair-deal result");
+assert.ok(!JSON.stringify([sends(step), toAnnOf(step)]).includes(handSeed), "no seed to Ann");
 
 // Auto-deal: the next hand a second after this one.
 step = host.event({ type: "autoDeal", on: true, afterMs: 1000 }, t());
