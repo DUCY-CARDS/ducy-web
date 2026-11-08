@@ -1,0 +1,244 @@
+# ducy.cards test plan
+
+What each published part of ducy.cards must pass before a release, what CI
+already checks, and what someone has to try by hand.
+
+**Keep this current.** Every major release updates it in the same PR:
+- add new features to the coverage tables;
+- move a feature to "Automated" once a test covers it;
+- record the manual run under [Results](#results).
+
+A major release is any of these:
+- a change to what the front page offers;
+- a feature turned on or off (`BETA` in `src/home.js`, `OFF` in `src/club-beta.js`);
+- a relay change to rooms, clubs or codes;
+- a new Ducybot model;
+- an invite to new people.
+
+## What's published
+
+| Part | Pages | Who uses it |
+|---|---|---|
+| **Main** | `/`: the front page (Friends, Private clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
+| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: agents, credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
+| **Club manager** | `manage.html`: Overview, Tables, Tournaments, Requests, Members, a member's page, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
+| **Admin** | `admin.html`: grants, club info, error reports | ducy's admins |
+
+`sim.html` isn't published (`scripts/build-site.sh` doesn't ship it).
+
+## Levels
+
+| Level | When | What runs |
+|---|---|---|
+| **Every PR** | Always | CI: unit tests, browser tests, the Rust checks. Nothing merges unless all pass. |
+| **Release** | A major release | Every PR check, then [Manual: main](#manual-main) and [Manual: club manager](#manual-club-manager) on the live site after deploy. |
+| **Turning a beta extra on** | Before it shows on the front page or in the manager | Its row in [Manual: beta extras](#manual-beta-extras), on the live site, plus a browser test added for it. |
+
+## Automated
+
+**How to run:**
+- **Unit tests:** run the command in `.github/workflows/ci.yml`, step "Unit tests". It needs `wasm/` from a fresh build (`wasm-pack`, as in CI) and `npm ci --prefix relay`. A stale `wasm/` fails on engine wording, as `club-agents.test.mjs` once did.
+- **Browser tests:** `npm ci --prefix e2e`, then `npx playwright test` in `e2e/`. `E2E_CHANNEL=chrome` uses an installed Chrome. They serve the repo and start the dev relay with `TRIALS=off`.
+- **Rust:** `scripts/rust-checks.sh`.
+
+**What the browser tests cover** (`e2e/play.spec.js`, in Chromium and WebKit, desktop and 375 px):
+
+| Test | Part |
+|---|---|
+| Front page offers Friends, Private clubs and the Regulars, and nothing else | Main |
+| Private clubs takes a code, with no clubs yet | Main |
+| A hand against the Regulars plays to its end, with no grades | Main |
+| A friend joins a hosted game by its code | Main |
+| Starting a club without permission is refused | Club manager |
+| A demo club opens, and its main pages draw | Club manager |
+| The full landing page is still at `#welcome` | Beta extras |
+| The heads-up challenge deals a hand | Beta extras |
+
+Every browser test fails on an uncaught error, a console error, or a page wider than the screen.
+
+## Coverage
+
+"Unit" and "Browser" name what's automated. "Manual" names the step below that covers what the tests can't.
+
+### Main
+
+| Feature | Unit | Browser | Manual |
+|---|---|---|---|
+| Front page, its tiles and links | `home.test` | yes | M1 |
+| Code box: game code, club code, invite link, bad code | `play-net.test`, `relay-club.test` | partly | M2 |
+| Host a private cash game: setup, code, table opens | `e2e.test`, `play-net.test` | yes | M3 |
+| Host a private tournament | `private-tourney.test`, `tourney-run.test` | no | M4 |
+| Join a game; play hands with two or more people | `e2e.test`, `fair-deal.test`, `pots.test` | join only | M3 |
+| Bomb pots, run it twice, side pots | `pots.test`, `fair-deal.test` | no | M3 |
+| Disconnects, reloads, a host's table resuming | `heartbeat.test`, `idle-seats.test`, `hit-and-run.test` | no | M5 |
+| Table chat | `table-chat.test` | no | M3 |
+| Play the Regulars | `regulars.test`, `bot-chat.test` | yes | M1 |
+| Joining a club, asking for chips, playing at its tables | `club.test`, `club-member-view.test`, `relay-club.test` | no | M6 |
+| Player settings, name, avatar | – | no | M1 |
+| Identity backup and restore | `identity.test`, `backup.test` | no | M7 |
+| Error reports reach the admin page | `error-report.test` | no | M8 |
+| Privacy page | `privacy-page.test` | – | M1 |
+| Security policy (CSP), browser support, boot order | `csp.test`, `browser-support.test`, `boot-order.test` | – | – |
+| Installable web app | – | no | M9 |
+
+### Club manager
+
+| Feature | Unit | Browser | Manual |
+|---|---|---|---|
+| Starting a club takes a grant | `registry.test`, `relay-temporary.test` | yes | C1 |
+| Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
+| Tables: new, offer a game, move, remove a player | `club-tables.test`, `move-table.test`, `remove-from-table.test`, `table-groups.test` | no | C3 |
+| Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
+| Requests and members: join, give and take chips, remove | `club-chips.test`, `club-overview.test`, `club-log.test` | no | C5 |
+| Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
+| Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
+| History and hand replays | `hand-replay.test` | no | C5 |
+| Demo clubs | `demo-club.test` | yes | C7 |
+
+### Beta extras
+
+These stay unchecked until one is planned to go on. Then it needs both its row
+here and a browser test.
+
+| Feature | Unit | Manual |
+|---|---|---|
+| Ducybot heads-up, four games, at every depth it offers | `play-review.test`, `ladder.test` | B1 |
+| Heads-up challenge | `ladder.test`, `ladder-review.test` | B2 |
+| Study: equity, pre-flop ranges, charts, drills | `ranges.test`, `trainer-skills.test`, `charts.test`, `chart-skills.test`, `drills-no-repeat.test` | B3 |
+| Hand review and live feedback | `play-review.test` | B4 |
+| Bankroll Quest | `quest*.test` | B5 |
+| Agents, credit, Balances | `club-agents.test`, `club-credit.test`, `club-credit-server.test` | B6 |
+| Rake | `club-tourneys-ui.test` | B6 |
+| Promotions | `club-promos.test`, `club-promos-server.test` | B6 |
+| Club services | `club-services.test`, `relay-services.test` | B6 |
+
+### Admin
+
+| Feature | Unit | Manual |
+|---|---|---|
+| Signed admin requests; non-admins refused | `relay-admin.test`, `admin-api.test` | A1 |
+| Grants, club info, error reports | `admin-api.test`, `error-report.test` | A1, M8 |
+
+## Devices
+
+Run the manual steps on each device that has a ✓ below. Where no real device is
+available, the first testers' phones stand in, and the gap is noted in Results.
+
+| Device | Main | Club manager |
+|---|---|---|
+| Desktop Chrome | ✓ | ✓ |
+| Desktop Safari | ✓ | ✓ |
+| Desktop Firefox | ✓ | ✓ |
+| iPhone, current Safari | ✓ | ✓ |
+| iPhone, Safari 15.4 (the oldest supported) | ✓ | |
+| Android Chrome | ✓ | ✓ |
+
+## Manual: main
+
+Every step runs on the live site after deploy, in a fresh private window unless it says otherwise. "Two browsers" means two devices, or two private windows in different browsers.
+
+**M1 Front page and the Regulars**
+1. Open `/`. You see Friends, Private clubs and Play the Regulars, with no Beta or play money banners. Nothing scrolls sideways.
+2. Tap each tile. It opens its page, and Back returns to the front page.
+3. Play the Regulars: sit down and play five hands. You get no grades and no hand review.
+4. Open the gear: change your name and avatar, then reload. Both are kept.
+5. Open Privacy from the footer. It reads, and the wordmark goes back home.
+
+**M2 The code box** (front page, and again under Private clubs)
+1. Enter `hello`. You're told it isn't a code.
+2. Enter a well-formed code with no game, such as `ZZZZ-ZZZZ`. You're told there's no game or club with that code, without going to another page.
+3. Enter a live game's code (from M3). It goes to that game's join page.
+4. Paste a club's invite link. It goes to that club's join screen.
+
+**M3 A private cash game, two browsers**
+1. Host: Start a game. Under Invite your friends, the setup shows a code. Open the table: it has the same code, and no "can't reach the relay".
+2. Guest: enter the code, give a name, join. Each browser sees the other.
+3. Play 20 hands, including an all-in with a side pot (three players), a bomb pot, and running it twice. The chips add up after each hand.
+4. Use table chat, both ways.
+5. Host: End game. Standings show, and the download works.
+
+**M4 A private tournament, three browsers**
+1. Host: set one up. Its setup shows a code, and the lobby opens with it.
+2. Two guests register by code. The host starts it.
+3. Play to a winner. Blinds rise on schedule, and the payouts match the payout table.
+
+**M5 Connections**
+1. During M3, reload the guest. They return to their seat with their chips.
+2. Turn the guest's network off for 30 seconds, then back on. They return, and weren't folded while away.
+3. Reload the host. The table resumes, and the hand in progress is intact.
+4. Close the guest's tab for good. After the timeout the seat empties, and the chips are kept in the standings.
+
+**M6 A club, as a member** (needs a club from C1)
+1. Open the owner's invite link in a fresh browser and ask to join.
+2. Once let in, ask for chips. When the owner gives them, the balance shows.
+3. Sit at the club's table and play five hands with another member. Stand up: the balance is right.
+4. Private clubs on the front page lists the club, and it opens.
+
+**M7 Identity**
+1. Save a backup from player settings.
+2. In a fresh browser, restore it. The same name, the same clubs and the same balances come back.
+3. On an iPhone, with the site installed and then not installed: note whether anything is lost after 7 days without a visit. This takes a week, so record the date it started.
+
+**M8 Error reports**
+1. On the live site, cause an error: open the browser console and run `setTimeout(() => { throw new Error('test plan M8') })`.
+2. In `admin.html`, under Errors, the report shows the build, page and browser, with no cards or names.
+
+**M9 Installable app**
+1. Add to home screen on iPhone and Android. The app opens full screen on the front page.
+2. The installed app still runs M1 and M3.
+
+## Manual: club manager
+
+**C1 Starting a club**
+1. Without a grant, `manage.html` refuses to start a club and shows your ID.
+2. Grant that ID in `admin.html`. Starting the club now works, and its owner is asked to prove a backup.
+
+**C2 Pages**
+1. Visit every sidebar page at desktop and phone width. Each draws, with no empty page or dead menu item.
+2. None of the features `src/club-beta.js` turns off shows: no Promotions or Balances page, no Make agent, no Credit, no Rake in the wizard, no services. `#clubs/settle` and `#clubs/promos` open Overview.
+3. Edit club info and rules. A member sees the change, marked as updated.
+
+**C3 Tables**
+1. Make a cash table, and offer a game. A member sees both.
+2. Move a seated player to another table, then remove one. Their chips go back to their balance.
+
+**C4 Tournaments**
+1. Walk the wizard to the end: game, buy-in, stack and players, blinds, payouts, repeats.
+2. Run one to a winner with two members. The prizes reach their balances, and History records it.
+
+**C5 Members and chips**
+1. Approve a join request, give chips, take some back, and decline a request. The member sees each change.
+2. Members: search, filters and sort all work. A member's page shows their chips history.
+3. History: hands and replays open. Big chip moves stand out in the activity log.
+
+**C6 Backup and restore**
+1. Download the club's backup. Restore it into a fresh browser: the members, balances and tables come back.
+2. `node relay/hostrocket/check.mjs` passes. It needs the relay's backup secrets.
+
+**C7 Demo clubs**
+1. Start each demo. Its pages draw, Reset works, and End demo returns to a clean manager.
+
+## Manual: admin
+
+**A1**
+1. `admin.html` as an admin: grants, club info and error reports load.
+2. As someone who isn't an admin: the page refuses cleanly, and nothing in the player app links to it.
+
+## Manual: beta extras
+
+Run a row only when that feature is about to be turned on.
+
+- **B1:** Ducybot at each game and depth. The model loads, with progress shown on mobile data. It plays 50 hands without errors. Its description says what it's trained for and claims nothing more.
+- **B2:** the heads-up challenge. Win and lose a rung. Progress is kept after a reload.
+- **B3:** Study. Every tool opens. Equity results agree with a known example. The ranges and charts draw for every game.
+- **B4:** hand review and live feedback. Turn each on and off. Review the grades on 10 hands.
+- **B5:** Bankroll Quest. A new run, winning, going broke, travel and records.
+- **B6:** each club feature in `src/club-beta.js`. First take it out of `OFF`. Then a manager can set it up, a member sees its effect, and the ledger adds up.
+
+## Results
+
+Add one row per release. Name each device by its row in [Devices](#devices). List the failures as issue numbers. List what wasn't run, and why.
+
+| Date | Release | Who | Devices | Passed | Failed | Not run |
+|---|---|---|---|---|---|---|
+| | | | | | | |
