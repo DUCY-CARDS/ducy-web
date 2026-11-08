@@ -50,7 +50,7 @@ import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
-import { celebrateAtTable, joinTableVia, showFairCheck, tableChanged } from './play.js';
+import { celebrateAtTable, joinTableVia, tableChanged } from './play.js';
 import { draftKey, draftLast, draftSettings, hostTourneysHtml, memberTourneysHtml, newDraft, readStep, tourneyCallsFor, tourneyDraft } from './club-tourneys-ui.js';
 import { checkStructure } from './tourney-structure.js';
 import { hostPromosHtml, memberPromosHtml, readPromoForm, tableBannerText } from './club-promos-ui.js';
@@ -1540,9 +1540,6 @@ function handsHtml(code, who, label) {
     h += `<li><span class="pl-meta">${new Date(r.at).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}</span>`;
     h += `<span>${esc(r.tableName)} #${r.hand}</span><span class="cl-chips">pot ${chips(r.pot)}</span>`;
     h += mine ? `<span class="${mine.net > 0 ? 'cl-up' : mine.net < 0 ? 'cl-down' : 'pl-meta'}">${mine.net > 0 ? '+' : ''}${chips(mine.net)}</span>` : `<span class="pl-meta">${esc(summary(r))}</span>`;
-    // The deal's check (#136): fair, or what didn't check out.
-    if (r.fair) h += r.fair.ok ? '<span class="cl-fair" title="Dealt from a seed every player helped make, checked by this page">Fair deal ✓</span>'
-      : `<span class="cl-fair bad" title="${esc(r.fair.why)}">Deal didn’t check out</span>`;
     h += `<span class="cl-acts"><button class="btn-small" data-cl="replay" data-id="${esc(r.id)}">Replay</button></span></li>`;
   }
   return h + '</ul></div>';
@@ -1699,17 +1696,12 @@ function sitAt(code, table, amount = 0) {
       return {to: (g.to || []).join(' or '), order: order.map(p => p.name), mine: order.findIndex(p => p.id === me.id) + 1, moving: seatedAt?.reserve?.name || ''};
     },
     onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
-    // Each hand you played goes in your hand history (#71), as you saw it,
-    // kept here a moment for checking its deal (#136).
+    // Each hand you played goes in your hand history (#71), as you saw it.
     onHand: view => {
       if (view.seats[0]?.sitting_out || view.seats[0]?.empty) return;
-      const rec = handRecord({club: code, table, tableName: t.name, game: t.game, view, who: me.id});
-      handsSeen.set(Number(view.hand_number), {cards: view.seats[0]?.cards || [], board: view.board || [], rec});
-      while (handsSeen.size > 8) handsSeen.delete(handsSeen.keys().next().value);
-      storeHand(rec, {keep: keepHands()});
+      storeHand(handRecord({club: code, table, tableName: t.name, game: t.game, view, who: me.id}), {keep: keepHands()});
     },
   });
-  handsSeen.clear();
   if (amount > 0 && !tourney) sendToHost(code, {type: 'table', club: code, table, cmd: {type: 'request_chips', amount}});
   location.hash = 'play';
 }
@@ -1717,21 +1709,13 @@ function sitAt(code, table, amount = 0) {
 // What member `mem` may bring to a table: their balance and credit (#404;
 // from an older host, the balance).
 const availableIn = mem => (mem.available != null ? mem.available : Math.max(0, mem.balance || 0));
-// The last few hands played at the club table, by hand number: your cards,
-// the board and the stored record, for the fair-deal check.
-const handsSeen = new Map();
 
 function tableUpdate(u) {
   if (!seatedAt || !u) return;
-  // A fair deal (#136): answer the host's round, or check a finished hand.
+  // A fair deal (#136): this page's part of the host's round.
   if (u.type === 'fair') {
     const {code, table} = seatedAt;
-    const seen = handsSeen.get(Number(u.hand));
-    const check = fair.message(u, cmd => sendToHost(code, {type: 'table', club: code, table, cmd}), seen || {});
-    if (check) {
-      showFairCheck(check);
-      if (seen?.rec) { seen.rec.fair = {ok: check.ok, why: check.why}; storeHand(seen.rec, {keep: keepHands()}); }
-    }
+    fair.message(u, cmd => sendToHost(code, {type: 'table', club: code, table, cmd}));
     return;
   }
   // Refused for good (not a member, at another table, table closed).

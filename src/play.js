@@ -271,12 +271,6 @@ let statsSort = {key: 'seat', dir: 1};
 let mode = 'solo';
 let net = null; // relay connection
 let room = ''; // table code
-// The last fair-deal check at a club table (#136): {hand, ok, why}.
-let fairCheck = null;
-export function showFairCheck(check) {
-  fairCheck = check;
-  render();
-}
 // A friends table's name (#152): the host's, sent to each player.
 let hostTitle = '';
 let tableTitle = '';
@@ -2775,7 +2769,6 @@ export function joinTable({code, name, hostId = ''}) {
   startGuest(code);
   joinedByCode = true;
   friendsFair = fairPlayer();
-  friendsHands.clear();
   const mine = session;
   e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId, inbox: Promise.resolve()};
   net = connect(code, 'guest', clientId(), {
@@ -2796,10 +2789,8 @@ export function joinTable({code, name, hostId = ''}) {
   else render();
 }
 let joinedByCode = false; // at a table joined with its code (joinTable)
-// Its fair deals (fair-check.js): this page's side, and the last few hands
-// it was dealt, by number ({cards, board}).
+// Its fair deals (fair-check.js): this page's side.
 let friendsFair = null;
-const friendsHands = new Map();
 
 // Where the table you're at belongs in the navigation (#209): bots under
 // Train, a friends table under Play, a club's table under Clubs; null when
@@ -2960,7 +2951,6 @@ function startGuest(code) {
   recordedHand = 0;
   room = code;
   tableTitle = '';
-  fairCheck = null;
   netNote = 'Connecting…';
   shownSeq = -1;
   seated = true;
@@ -2972,11 +2962,10 @@ function startGuest(code) {
 
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
-  // A fair deal at a friends table (#136, #462): answer the host's round, or
-  // check a finished hand against what this page was dealt.
+  // A fair deal at a friends table (#136, #462): this page's part of the
+  // host's round.
   if (m.type === 'fair' && joinedByCode) {
-    const check = friendsFair?.message(m, cmd => net?.send(cmd), friendsHands.get(Number(m.hand)) || {});
-    if (check) showFairCheck(check);
+    friendsFair?.message(m, cmd => net?.send(cmd));
     return;
   }
   if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
@@ -3006,11 +2995,6 @@ function guestMessage(m) {
   }
   if (m.type === 'state') {
     lastView = m.view;
-    const hn = num(m.view?.hand_number);
-    if (joinedByCode && hn) {
-      friendsHands.set(hn, {cards: m.view.seats?.[0]?.cards || [], board: m.view.board || []});
-      while (friendsHands.size > 8) friendsHands.delete(friendsHands.keys().next().value);
-    }
     myChips = m.chips ? {min: num(m.chips.min), max: num(m.chips.max), requested: num(m.chips.requested), approved: num(m.chips.approved)} : null;
     // Sitting out (#70): out or not, missed blinds, time left before the seat goes.
     mySeat = m.me ? {...m.me, outEnds: m.me.out_ms_left != null ? Date.now() + num(m.me.out_ms_left) : 0} : null;
@@ -3977,10 +3961,6 @@ function netBarHtml() {
   let h = `<span class="pl-meta">${title ? `<b>${esc(title)}</b> · ` : ''}Table <b>${esc(room)}</b>`;
   if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
   else h += '</span>';
-  if (fairCheck && mode === 'guest') {
-    h += fairCheck.ok ? `<span class="cl-fair" title="Dealt from a seed every player helped make, checked by this page">Hand ${fairCheck.hand}: fair deal ✓</span>`
-      : `<span class="cl-fair bad">Hand ${fairCheck.hand}: the deal didn’t check out: ${esc(fairCheck.why)}.</span>`;
-  }
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
   if (mode === 'guest' && idleAsk) h += '<span class="pl-idle" role="alert"><b>Still here?</b><button class="tr-btn yes" data-act="stillhere">Stay</button></span>';
   // (Alone at the table there's nothing to pause.)

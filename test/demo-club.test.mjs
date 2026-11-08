@@ -392,11 +392,10 @@ test('a real club room refuses the demo’s simulate and bot commands', {skip: !
 // messages, and their side of the table's encryption and fair deals.
 async function person(relay, code, ident, name) {
   const keys = await newKeyPair();
-  const inbox = [], waiting = [], updates = [], checks = [], results = [];
+  const inbox = [], waiting = [], updates = [];
   const fair = fairPlayer();
   let aes = null, table = null;
-  const seen = new Map();
-  const p = {ident, keys, updates, checks, results, inbox};
+  const p = {ident, keys, updates, inbox};
   p.sign = body => signMessage(ident, {club: code, ...body});
   p.net = relay.connect(code, 'guest', ident.id, {
     onOpen() {}, onStatus() {}, onFail(r) { throw new Error(r); },
@@ -406,12 +405,9 @@ async function person(relay, code, ident, name) {
         const u = await openBox(aes, m.enc);
         updates.push(u);
         if (u.type === 'fair') {
-          if (u.step === 'result') results.push(Number(u.hand));
-          const c = fair.message(u, cmd => p.table(cmd), seen.get(Number(u.hand)) || {});
-          if (c) checks.push(c);
+          fair.message(u, cmd => p.table(cmd));
         } else if (u.type === 'state') {
           const v = u.view;
-          if (v.complete && Number(v.hand_number)) seen.set(Number(v.hand_number), {cards: v.seats[0].cards || [], board: v.board || []});
           p.last = u;
           // Between simulated hands, fold to anything (or check), as a person might.
           const st = await relay.status(ident.id);
@@ -525,9 +521,11 @@ test('the demo relay: a club made, joined and played in the page, with chosen ou
   assert.equal(club.members[ann.id].balance, 30_000);
   assert.ok(totals(club).conserved, 'every chip accounted for');
   assert.ok(club.money.ledger.some(e => e.member === ann.id && e.kind === 'cash_out'));
-  // The hands whose deal was chosen sent her no fair-deal result (it would
-  // only say the deal wasn't fair); any other hand she checked is fair.
-  for (const c of a.checks) assert.ok(c.ok, `hand ${c.hand}: ${c.why}`);
+  // No hand sent her its seed, or a bot's folded cards (#580).
+  for (const u of a.updates) {
+    assert.ok(!/"seed"/.test(JSON.stringify(u)), 'no seed');
+    if (u.type === 'state') u.view.seats.forEach((s, i) => assert.ok(i === 0 || !s.folded || !s.cards?.length, 'no folded cards'));
+  }
 
   // Back at the table, the manager removes her (#414): she's told, with her
   // result, and cashed out as when she leaves.
