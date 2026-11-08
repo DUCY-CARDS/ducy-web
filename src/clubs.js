@@ -2055,8 +2055,9 @@ function clubListHtml() {
     } else h += card({href: 'join', name: m.name || m.code, who: STATUS_TEXT[m.status] || m.status, go: 'Your request'});
   }
   h += '</div>';
-  // Joining is Play's Enter a code, or the invite link itself (#393).
-  return h + '<p class="pl-desc">To join a club, enter its code on <a href="#lobby">Play</a>, or open the invite link its manager sent you.</p>';
+  // Joining (#393, #564): a code or an invite link, here as on the front page.
+  h += '<form class="cl-ask" data-clcode><input class="pl-text" name="code" aria-label="Club code or invite link" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button class="btn-small primary" type="submit">Join</button></form>';
+  return h + (codeNote ? `<p class="pl-meta" role="status">${esc(codeNote)}</p>` : '');
 }
 
 // What's waiting for you at the club you run: join and chip requests, and
@@ -3848,8 +3849,13 @@ export function startClubs() {
   })());
 }
 
+// Private clubs' code box (#564): `enterCode(text)` is the front page's, and
+// may resolve to a word to show under it.
+let enterCode = null, codeNote = '';
+
 // Draws tab `v` of the Play section (see the views above) into `el`.
-export async function openClubs(el, v = 'clubs') {
+export async function openClubs(el, v = 'clubs', onCode = null) {
+  if (onCode) enterCode = onCode;
   if (!root) {
     // The club rules the page draws from are ducy-play's (#455).
     await loadEngine().catch(e => { note = `The club couldn’t start: ${e.message}`; });
@@ -3860,6 +3866,16 @@ export async function openClubs(el, v = 'clubs') {
     }
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
+    root.addEventListener('submit', async e => {
+      const f = e.target.closest('form[data-clcode]');
+      if (!f || !enterCode) return;
+      e.preventDefault();
+      const btn = f.querySelector('button[type=submit]');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try { codeNote = (await enterCode(String(f.elements.code.value || '').trim())) || ''; } finally { btn.disabled = false; }
+      render();
+    });
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
     // Restore a club from its backup file (#191).
