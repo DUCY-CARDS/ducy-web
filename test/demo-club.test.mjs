@@ -324,7 +324,8 @@ test('clubs run only on the relay: no page runs one, except the demo’s in-page
   // The club's host side runs in the club's room on the relay.
   assert.deepEqual(using('club-server.js'), ['relay/src/club-room.js']);
   // The room runs on the relay, and in the page only for a demo.
-  assert.deepEqual(using('club-room.js').filter(f => f.startsWith('src/')), ['src/demo-relay.js']);
+  const roomUsers = files.filter(f => /\/club-room\.js['"]/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')));
+  assert.deepEqual(roomUsers.filter(f => f.startsWith('src/')), ['src/demo-relay.js']);
   // The club manager connects to a club as its owner, never as its host.
   assert.doesNotMatch(readFileSync(new URL('../src/clubs.js', import.meta.url), 'utf8'), /connect\([^)]*'host'/);
 });
