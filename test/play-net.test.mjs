@@ -59,6 +59,7 @@ test('looking up a code asks the relay over http, and trusts only what it should
   assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'game'})), {kind: 'game'});
   assert.equal(asked[0], 'http://localhost:8787/code/ABCD-EFGH');
   assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'club', ask: false})), {kind: 'club', ask: false});
+  assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'none'})), {kind: 'none'});
   assert.equal(await lookupCode('ABCD-EFGH', answer({kind: 'what'})), null);
   assert.equal(await lookupCode('ABCD-EFGH', answer({}, false)), null);
   assert.equal(await lookupCode('ABCD-EFGH', async () => { throw new Error('offline'); }), null);

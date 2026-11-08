@@ -2099,7 +2099,7 @@ function requestsHtml() {
     h += '</span>';
     // What happens next (#185).
     if (m.status === 'pending' || m.status === 'new') {
-      h += `<span class="pl-desc cl-next">Next: the manager lets you in, then gives you chips (play money) to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
+      h += `<span class="pl-desc cl-next">Next: the manager lets you in, then gives you chips to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
     } else if (inNow) {
       h += '<span class="pl-desc cl-next">Next: ask the manager for chips on <a href="#clubs">Clubs</a>, then sit at one of the club’s tables.</span>';
     } else if (m.status === 'declined') {
@@ -2348,7 +2348,7 @@ function pageHtml(at) {
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
   if (page === 'member') return memberPageHtml(member);
   if (page === 'settle') return pageHead('Balances') + settleHtml();
-  if (page === 'chips') return pageHead('Chips') + '<p class="pl-meta">Chips are play money with no cash value. Don’t use ducy to play for money.</p>' + accountingHtml();
+  if (page === 'chips') return pageHead('Chips') + accountingHtml();
   if (page === 'info') return pageHead('Club info') + infoEditHtml();
   if (page === 'rules') return pageHead('Rules') + rulesHtml();
   if (page === 'backup') return pageHead('Backup and devices') + backupPageHtml();
@@ -2957,7 +2957,7 @@ function memberHomeHtml(m, manage = '') {
   // club's tables to ask for (#185).
   const fresh = !m.request && !m.balance && !m.entries?.length && !m.credit;
   const suggest = fresh ? Math.max(0, ...(m.tables || []).map(t => t.max || 0)) : 0;
-  if (fresh) h += `<p class="cl-next"><b>You’re in.</b> Ask the manager for chips (play money) to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
+  if (fresh) h += `<p class="cl-next"><b>You’re in.</b> Ask the manager for chips to play${suggest ? `: ${chips(suggest)} covers the biggest buy-in here` : ''}.</p>`;
   if (m.request) {
     h += `<p class="cl-side-note">You asked for ${chips(m.request.amount)}${m.request.note ? ` (“${esc(m.request.note)}”)` : ''}; waiting for the manager. `;
     h += `<button class="btn-small" data-cl="cancel-ask" data-code="${code}"${online ? '' : ' disabled title="Can’t reach the club right now"'}>Cancel</button></p>`;

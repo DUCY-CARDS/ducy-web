@@ -89,7 +89,7 @@ export async function lookupCode(code, get = globalThis.fetch, invite = '') {
     const r = await get(`${base}/code/${encodeURIComponent(code)}${invite ? `?invite=${encodeURIComponent(invite)}` : ''}`);
     if (!r.ok) return null;
     const v = await r.json();
-    return v?.kind === 'club' || v?.kind === 'game' ? v : null;
+    return ['club', 'game', 'none'].includes(v?.kind) ? v : null;
   } catch {
     return null;
   }

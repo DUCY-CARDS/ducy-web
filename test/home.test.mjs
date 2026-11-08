@@ -45,8 +45,8 @@ test('the beta opens on friends, clubs and the Regulars, and nothing else (#564)
   assert.match(h, /Game or club code/);
   const links = [...h.matchAll(/href="(#[a-z0-9-]+)"/g)].map(m => m[1]);
   assert.deepEqual(links, ['#host', '#clubs', '#practice']);
-  assert.match(h, /Chips are play money with no cash value/);
-  assert.doesNotMatch(h, /Study|Quest|training|Heads-up challenge|Ducybot/i);
+  assert.doesNotMatch(h, /Study|Quest|training|Heads-up challenge|Ducybot|play money/i);
+  assert.doesNotMatch(h, />[^<]*\bBeta\b/, 'no Beta notice (#566)');
 });
 
 test('the full landing page moved to #welcome, with Study, Play and Quest', () => {

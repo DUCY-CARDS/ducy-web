@@ -245,6 +245,8 @@ export async function enterCode(text) {
     const page = clubPage(what.code);
     if (page) { location.href = page; return ''; }
     const info = await lookupCode(what.code);
+    // No club, and no game open with it (#566); unknown (offline) still tries.
+    if (info?.kind === 'none') return 'No game or club with that code. Check it with whoever sent it.';
     if (info?.kind === 'club') {
       if (!info.ask || !isPlayerId(info.hostId)) return 'That’s a club’s code. To join the club, ask its host for the invite link.';
       codeClub = {code: what.code, hostId: info.hostId, name: String(info.name || '').slice(0, MAX_CLUB_NAME)};
@@ -291,7 +293,7 @@ function renderJoin() {
   if (club) {
     h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
     h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
-    h += '<p class="pj-meta">The manager sees your name, lets you in, and gives you chips (play money) for the club’s tables.</p>';
+    h += '<p class="pj-meta">The manager sees your name, lets you in, and gives you chips for the club’s tables.</p>';
     // About the club, from the club itself (#398).
     const about = aboutOf.get(club.code);
     if (about) h += `<div class="pj-about cl-info-text">${formatInfo(about)}</div>`;

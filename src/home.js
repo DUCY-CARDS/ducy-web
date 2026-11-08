@@ -241,10 +241,9 @@ function playTiles(d) {
   return h;
 }
 
-const PLAY_MONEY = '<p class="v3-fine">Beta. Chips are play money with no cash value. Don’t use ducy to play for money.</p>';
 
 function lobbyPage(d) {
-  return '<div class="v3-page">' + head('Play', null, 'play') + playTiles(d) + PLAY_MONEY + '</div>';
+  return '<div class="v3-page">' + head('Play', null, 'play') + playTiles(d) + '</div>';
 }
 
 // The beta's front page: straight to a game.
@@ -252,7 +251,7 @@ function betaPage(d) {
   let h = '<div class="v3-page v3-landing">';
   h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}</div>`;
   h += '<div class="v3-hero-text"><span class="v3-word">DUCY</span><h1>Pull up a chair.</h1></div></section>';
-  return h + playTiles(d) + PLAY_MONEY + '</div>';
+  return h + playTiles(d) + '</div>';
 }
 
 /** The html of hub `name` (one of HUBS), with `d` from hubData. */
