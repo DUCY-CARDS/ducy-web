@@ -269,6 +269,9 @@ test.describe('a club member', () => {
     await again.locator('#pset [name=pw]').fill(pw);
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
     await again.waitForEvent('load');
+    // Settled after the reload, so leaving doesn't cut a download short.
+    await expect(again.getByRole('heading', {name: 'Private clubs'})).toBeVisible();
+    await again.waitForLoadState('networkidle');
     await again.goto(invite);
     await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
     await again.locator('form[data-joinform] button[type="submit"]').click();
