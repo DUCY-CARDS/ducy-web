@@ -1778,7 +1778,11 @@ function loadFromHash() {
     const si = +pm[1];
     if (si >= gm.max) continue;
     if (v === 'random') {
-      seats[si] = { mode: 'random' };
+      // Dealt per sample in a bomb pot; elsewhere, the any-hand range (as
+      // Any hand sets it), which the calculator works out and can narrow.
+      if (isBombPot()) seats[si] = { mode: 'random' };
+      else if (curG === 'nlhe') seats[si] = { mode: 'range', sel: topRange(100) };
+      else seats[si] = { mode: 'orange', text: anyOmaha() };
     } else if (v.startsWith('r:')) {
       seats[si] = { mode: 'range', sel: parseRange(v.slice(2)) };
     } else if (v.startsWith('o:')) {

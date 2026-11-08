@@ -232,6 +232,111 @@ test.describe('a club member', () => {
   });
 });
 
+// Two hands in a member's history, made in the page as a club table makes
+// them (hand-replay.js handRecord): hand 1, Ann folds to Bob's bet; hand 2,
+// Ann and Bob check it down and Bob shows queens. Cy folds both preflop.
+async function seedHands(page) {
+  return page.evaluate(async () => {
+    const {handRecord} = await import('/src/hand-replay.js');
+    const {saveHand} = await import('/src/hand-store.js');
+    const {loadIdentity} = await import('/src/identity.js');
+    const me = await loadIdentity();
+    const code = JSON.parse(localStorage.getItem('ducyClubs'))[0].code;
+    const seat = s => ({id: '', human: true, away: false, street_bet: 0, all_in: false, empty: false, sitting_out: false, ...s});
+    const view = (n, events, seats, board, showdown) => ({
+      street: null, pot: 0, current_bet: 0, hero: 0, seat: 0, pot_limit: false, to_act: null, legal: null, complete: true,
+      hand_number: n, small_blind: 100, big_blind: 200, button: 0, hole_cards: 2, board, showdown,
+      pots: [{amount: 1200, eligible: [], awards: [], winning_hand: null}], events, seats: seats.map(seat),
+    });
+    const pre = [
+      {type: 'small_blind', seat: 1, amount: 100}, {type: 'big_blind', seat: 2, amount: 200},
+      {type: 'call', seat: 0, amount: 200, all_in: false}, {type: 'call', seat: 1, amount: 100, all_in: false}, {type: 'fold', seat: 2},
+      {type: 'board', street: 'flop', cards: ['Ah', '7c', '2d']},
+    ];
+    const one = view(1, [...pre, {type: 'bet', seat: 1, to: 400, all_in: false}, {type: 'fold', seat: 0}, {type: 'award', seat: 1, pot: 0, amount: 1000}], [
+      {name: 'Ann', stack: 9800, net: -200, won: 0, folded: true, cards: ['As', 'Kd']},
+      {name: 'Bob', stack: 10400, net: 400, won: 1000, folded: false, cards: null},
+      {name: 'Cy', stack: 9800, net: -200, won: 0, folded: true, cards: null},
+    ], ['Ah', '7c', '2d'], false);
+    const two = view(2, [...pre,
+      {type: 'check', seat: 1}, {type: 'check', seat: 0}, {type: 'board', street: 'turn', cards: ['Ks']},
+      {type: 'check', seat: 1}, {type: 'check', seat: 0}, {type: 'board', street: 'river', cards: ['3h']},
+      {type: 'check', seat: 1}, {type: 'check', seat: 0}, {type: 'award', seat: 0, pot: 0, amount: 600},
+    ], [
+      {name: 'Ann', stack: 10400, net: 400, won: 600, folded: false, cards: ['As', 'Kd']},
+      {name: 'Bob', stack: 9800, net: -200, won: 0, folded: false, cards: ['Qs', 'Qd']},
+      {name: 'Cy', stack: 9800, net: -200, won: 0, folded: true, cards: null},
+    ], ['Ah', '7c', '2d', 'Ks', '3h'], true);
+    const now = Date.now();
+    for (const [i, v] of [one, two].entries()) {
+      await saveHand(handRecord({club: code, table: 't-main', tableName: 'Main 1/2', game: 'nlhe', view: v, who: me.id}, now - 60_000 + i * 30_000));
+    }
+  });
+}
+
+test('a member replays their hands, steps by keys, and takes a spot to the equity calculator (#592)', async ({page, watch, browserName}, info) => {
+  await watch(page).goto('/manage.html#clubs');
+  await page.locator('[data-cl="demo"]').click();
+  // A small demo club, quick to set up.
+  await page.locator('[data-demo-start="credit"]').click();
+  await expect(page.locator('.mg-side')).toBeAttached();
+  // Player 1, a member.
+  await page.locator('.demo-who summary').click();
+  await page.locator('[data-demo-as="p1"]').click();
+  await expect(page.locator('[data-cl="mtab"][data-tab="history"]')).toBeVisible();
+  await seedHands(page);
+  await page.locator('[data-cl="mtab"][data-tab="history"]').click();
+  await page.locator('[data-cl="hands"]').click();
+  const replays = page.locator('[data-cl="replay"]');
+  await expect(replays).toHaveCount(2);
+  // The newest: hand 2.
+  await replays.first().click();
+  const dialog = page.getByRole('dialog', {name: 'Hand replay'});
+  await expect(dialog.getByText('Main 1/2 · hand 2')).toBeVisible();
+  await expect(dialog.getByText('2/2')).toBeVisible();
+  await expect(dialog.getByRole('button', {name: 'Next hand ›'})).toBeDisabled();
+  // → steps; Bob's queens show only at the end.
+  await page.keyboard.press('ArrowRight');
+  await expect(dialog.locator('.cl-replay-controls .pl-meta')).toHaveText(/^2\//);
+  await expect(dialog.getByText('Q♠')).toHaveCount(0);
+  await dialog.getByRole('button', {name: 'River'}).click();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(dialog.getByText('Q♠')).toBeVisible();
+  await fitsTheScreen(page);
+  if (browserName === 'chromium') await page.screenshot({path: info.outputPath('replayer.png')});
+  // Copy hand: on the clipboard, or shown to copy by hand.
+  await dialog.getByRole('button', {name: 'Copy hand'}).click();
+  await expect(dialog.getByRole('button', {name: 'Copied ✓'}).or(dialog.getByLabel('Hand text'))).toBeVisible();
+  if (await dialog.getByLabel('Hand text').count()) await expect(dialog.getByLabel('Hand text')).toHaveValue(/Dealt to Ann \[As Kd\]/);
+  // The previous hand, by its button; Shift+→ comes back, and Shift+← goes again.
+  await dialog.getByRole('button', {name: '‹ Previous hand'}).click();
+  await expect(dialog.getByText('Main 1/2 · hand 1')).toBeVisible();
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(dialog.getByText('Main 1/2 · hand 2')).toBeVisible();
+  await page.keyboard.press('Shift+ArrowLeft');
+  await expect(dialog.getByText('Main 1/2 · hand 1')).toBeVisible();
+  // On the flop of hand 1, before Ann folds: Equity has the board, her
+  // cards, and Bob random (Cy folded: left out).
+  await dialog.getByRole('button', {name: 'Flop', exact: true}).click();
+  const equity = dialog.getByRole('link', {name: 'Equity'});
+  await expect(equity).toHaveAttribute('href', '#g=nlhe&p0=As.Kd&p1=random&b=Ah.7c.2d');
+  await equity.click();
+  // The calculator works it out, with Bob as any hand.
+  await expect(page).toHaveURL(/#g=nlhe&p0=As\.Kd&p1=r:.*&b=Ah\.7c\.2d$/);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('#timer')).toHaveText(/\d/);
+  await expect(page.locator('#timer')).not.toHaveText(/Error|No valid/);
+  if (browserName === 'chromium') await page.screenshot({path: info.outputPath('equity.png')});
+  await fitsTheScreen(page);
+  // Back: the replay is where it was.
+  await page.goBack();
+  await expect(page.getByRole('dialog', {name: 'Hand replay'}).getByText('Main 1/2 · hand 1')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', {name: 'Hand replay'})).toHaveCount(0);
+});
+
 test('a demo club opens, and its main pages draw', async ({page, watch}) => {
   await watch(page).goto('/manage.html#clubs');
   await page.locator('[data-cl="demo"]').click();

@@ -46,7 +46,8 @@ import { createOwner } from './club-owner.js';
 import { accountOf, playersOf } from './club-agents.js';
 import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
-import { handRecord, replayFrames, streetStarts, summary, tableSessions, totalsByMember, STREETS } from './hand-replay.js';
+import { handRecord, summary, tableSessions, totalsByMember } from './hand-replay.js';
+import { Replayer } from './replayer.js';
 import { getHand, HOST_KEEP_DAYS, listHands, PLAYER_KEEP_HANDS, prune, saveHand } from './hand-store.js';
 import { getTable } from './table-store.js';
 import { celebrateAtTable, joinTableVia, tableChanged } from './play.js';
@@ -1458,7 +1459,12 @@ const keepHands = () => { try { return Number(localStorage.getItem(KEEP_KEY)) ||
 const handLists = new Map(); // `${club}|${who}` → records, newest first (loaded on demand)
 let historyOpen = new Set(); // which history sections are open: `${club}|${who}`
 let historyTable = {}; // `${club}|${who}` → table filter ('' for all)
-let replay = null; // {rec, frames, i, playing}
+// The replayer (replayer.js). On the club manager, the equity calculator
+// opens in a tab of the player app.
+const replay = new Replayer({
+  onChange: () => render(),
+  equityLink: hash => (mode === 'manage' ? {href: `index.html${hash}`, target: '_blank'} : {href: hash, target: ''}),
+});
 
 async function storeHand(rec, keep) {
   try {
@@ -1489,8 +1495,8 @@ function toggleHistory(code, who) {
   render();
 }
 
-const SUIT = {s: '♠', h: '♥', d: '♦', c: '♣'};
-const cardSpan = c => (c ? `<span class="cl-pc s-${c[1]}">${esc(c[0])}${SUIT[c[1]] || ''}</span>` : '<span class="cl-pc back"></span>');
+// A history's hands as listed: its table filter applied, newest first.
+const listedHands = k => (handLists.get(k) || []).filter(r => !historyTable[k] || r.table === historyTable[k]).slice(0, 100);
 
 // A club's stored hands for `who`, with a table filter, as a list to replay.
 function handsHtml(code, who, label) {
@@ -1502,18 +1508,18 @@ function handsHtml(code, who, label) {
   if (!all) return h + '<span class="pl-meta">Loading…</span></div>';
   const tables = [...new Map(all.map(r => [r.table, r.tableName])).entries()];
   const filter = historyTable[k] || '';
-  const rows = all.filter(r => !filter || r.table === filter);
+  const rows = listedHands(k);
   if (tables.length > 1) {
     h += `<select class="pl-text cl-handfilter" data-handfilter="${esc(k)}"><option value="">All tables</option>${tables.map(([id, n]) => `<option value="${esc(id)}"${id === filter ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
   }
   if (!rows.length) return h + `<p class="pl-meta">No hands yet${filter ? ' at this table' : ': they show here once hands are played at the club’s tables'}.</p></div>`;
   h += '<ul class="cl-list cl-handlist">';
-  for (const r of rows.slice(0, 100)) {
+  for (const r of rows) {
     const mine = r.who !== 'host' ? r.seats[0] : null;
     h += `<li><span class="pl-meta">${new Date(r.at).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}</span>`;
     h += `<span>${esc(r.tableName)} #${r.hand}</span><span class="cl-chips">pot ${chips(r.pot)}</span>`;
     h += mine ? `<span class="${mine.net > 0 ? 'cl-up' : mine.net < 0 ? 'cl-down' : 'pl-meta'}">${mine.net > 0 ? '+' : ''}${chips(mine.net)}</span>` : `<span class="pl-meta">${esc(summary(r))}</span>`;
-    h += `<span class="cl-acts"><button class="btn-small" data-cl="replay" data-id="${esc(r.id)}">Replay</button></span></li>`;
+    h += `<span class="cl-acts"><button class="btn-small" data-cl="replay" data-id="${esc(r.id)}" data-list="${esc(k)}">Replay</button></span></li>`;
   }
   return h + '</ul></div>';
 }
@@ -1564,68 +1570,17 @@ async function openPromoReplay(code, who, handId, b = null) {
     failAt(key, who === 'host' ? 'That hand is no longer in the club’s hand history.' : 'That hand isn’t in this browser’s hand history: it keeps the hands you played here, up to a limit.');
     return;
   }
-  replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
-  render();
+  replay.open(rec);
 }
 
-async function openReplay(id) {
+// A hand from a list (`list`: its history's key), with the others in the
+// list as the previous and next hands.
+async function openReplay(id, list = '') {
   // One loaded from an always-on club's room is already in the list (#125).
   const listed = [...handLists.values()].flat().find(r => r.id === id);
   const rec = listed || await getHand(id);
   if (!rec) return;
-  replay = {rec, frames: replayFrames(rec), i: 0, playing: null};
-  render();
-}
-
-function stepReplay(to) {
-  if (!replay) return;
-  replay.i = Math.max(0, Math.min(replay.frames.length - 1, to));
-  render();
-}
-
-function toggleReplayPlay() {
-  if (!replay) return;
-  if (replay.playing) { clearInterval(replay.playing); replay.playing = null; render(); return; }
-  if (replay.i >= replay.frames.length - 1) replay.i = 0;
-  replay.playing = setInterval(() => {
-    if (!replay || replay.i >= replay.frames.length - 1) { clearInterval(replay?.playing); if (replay) replay.playing = null; render(); return; }
-    stepReplay(replay.i + 1);
-  }, 900);
-  render();
-}
-
-function closeReplay() {
-  if (replay?.playing) clearInterval(replay.playing);
-  replay = null;
-  render();
-}
-
-function replayHtml() {
-  const {rec, frames, i} = replay;
-  const f = frames[i];
-  const starts = streetStarts(frames);
-  let h = '<div class="cl-replay-bg" data-cl="replay-close"></div><div class="cl-replay" role="dialog" aria-label="Hand replay">';
-  h += `<div class="cl-replay-head"><b>${esc(rec.tableName)} · hand ${rec.hand}</b><span class="pl-meta">${new Date(rec.at).toLocaleString()} · blinds ${chips(rec.sb)}/${chips(rec.bb)}</span><button class="link-btn" data-cl="replay-close">Close</button></div>`;
-  h += `<div class="cl-replay-board">${[0, 1, 2, 3, 4].map(k => (f.board[k] ? cardSpan(f.board[k]) : '<span class="cl-pc slot"></span>')).join('')}<span class="cl-chips">Pot ${chips(f.pot)}</span></div>`;
-  h += '<ul class="cl-replay-seats">';
-  f.seats.forEach((s, k) => {
-    if (!s.inHand) return;
-    const btn = k === rec.button ? ' <span class="pl-meta">(D)</span>' : '';
-    // Cards the viewer saw: their own, and any shown down (only at the end).
-    const shownNow = s.cards && (rec.who !== 'host' && k === 0 || i === frames.length - 1);
-    const cards = s.cards && shownNow ? s.cards.map(cardSpan).join('') : new Array(rec.holeCards).fill(null).map(cardSpan).join('');
-    h += `<li class="${s.folded ? 'folded' : ''}${f.event?.seat === k ? ' acting' : ''}"><span class="cl-name">${esc(s.name)}${btn}</span><span class="cl-hole">${cards}</span>`;
-    h += `<span class="cl-chips">${chips(s.stack)}</span>${s.bet ? `<span class="cl-bet">bet ${chips(s.bet)}</span>` : ''}${s.folded ? '<span class="pl-meta">folded</span>' : ''}${s.allIn ? '<span class="pl-meta">all-in</span>' : ''}</li>`;
-  });
-  h += '</ul>';
-  h += `<p class="cl-replay-text">${esc(f.text)}</p>`;
-  h += '<div class="cl-replay-controls">';
-  h += `<button class="btn-small" data-cl="replay-to" data-i="0" title="Start">⏮</button><button class="btn-small" data-cl="replay-to" data-i="${i - 1}"${i ? '' : ' disabled'} title="Back (←)">◀</button>`;
-  h += `<button class="btn-small primary" data-cl="replay-play">${replay.playing ? 'Pause' : 'Play'}</button>`;
-  h += `<button class="btn-small" data-cl="replay-to" data-i="${i + 1}"${i < frames.length - 1 ? '' : ' disabled'} title="Forward (→)">▶</button><button class="btn-small" data-cl="replay-to" data-i="${frames.length - 1}" title="End">⏭</button>`;
-  h += `<span class="pl-meta">${i + 1}/${frames.length}</span>`;
-  h += STREETS.filter(s => s in starts).map(s => `<button class="cc-btn${f.street === s ? ' on' : ''}" data-cl="replay-to" data-i="${starts[s]}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('');
-  return h + '</div></div>';
+  replay.open(rec, list ? listedHands(list) : [rec]);
 }
 
 // ---- playing at a club table ----
@@ -1795,10 +1750,10 @@ function render() {
   if (!open || !root) return;
   const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
   // Nothing for this tab: the play.js part of it stands alone.
-  root.hidden = !body && !replay;
+  root.hidden = !body && !replay.isOpen;
   if (root.hidden) { root.innerHTML = ''; return; }
   let h = '<div class="pl-wrap cl-wrap">' + body;
-  if (replay) h += replayHtml();
+  h += replay.html();
   h += '</div>';
   // Messages arriving redraw the page; keep what the host is typing in an open form.
   const named = [...root.querySelectorAll('form[data-tourneyform]')].map(fm => ({
@@ -3425,6 +3380,8 @@ async function onClickIn(e) {
     // Not a redraw: the link has yet to be followed.
     root.querySelector('.mg-shell')?.classList.remove('nav-open', 'notes-open');
   }
+  // The replayer's own controls (replayer.js).
+  if (replay.click(e.target.closest('[data-rp]'))) return;
   const b = e.target.closest('[data-cl]');
   if (!b) return;
   const act = b.dataset.cl;
@@ -3619,11 +3576,8 @@ async function onClickIn(e) {
   }
   // Hand history and the replayer.
   else if (act === 'hands') toggleHistory(b.dataset.code, b.dataset.who);
-  else if (act === 'replay') openReplay(b.dataset.id);
+  else if (act === 'replay') openReplay(b.dataset.id, b.dataset.list);
   else if (act === 'promo-replay') openPromoReplay(b.dataset.code, b.dataset.who, b.dataset.hand, b);
-  else if (act === 'replay-to') stepReplay(Number(b.dataset.i));
-  else if (act === 'replay-play') toggleReplayPlay();
-  else if (act === 'replay-close') closeReplay();
   else if (act === 'keep-days') { hostAct('settings', {keepDays: Number(b.dataset.days)}); prune(club.code, 'host', {days: club.keepDays}).then(() => loadHands(club.code, 'host')); render(); }
   else if (act === 'keep-hands') { try { localStorage.setItem(KEEP_KEY, b.dataset.n); } catch {} for (const m of memberships) prune(m.code, me.id, {keep: keepHands()}); render(); }
   else if (act === 'sit') sitAt(b.dataset.code, b.dataset.table);
@@ -3733,12 +3687,8 @@ function closeDrawer() {
 // The replayer's keys: ← → step, Space plays, Esc closes. Esc closes the
 // manager's drawer and notifications too (#544).
 function onDocKey(e) {
-  if (e.key === 'Escape' && !replay && (navOpen || notesOpen)) { closeDrawer(); return; }
-  if (!replay || !open || e.target.closest?.('input, select, textarea')) return;
-  if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(replay.i + 1); }
-  else if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(replay.i - 1); }
-  else if (e.key === ' ') { e.preventDefault(); toggleReplayPlay(); }
-  else if (e.key === 'Escape') closeReplay();
+  if (e.key === 'Escape' && !replay.isOpen && (navOpen || notesOpen)) { closeDrawer(); return; }
+  if (open) replay.key(e);
 }
 
 function onFilterIn(e) {

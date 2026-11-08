@@ -928,6 +928,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .cl-bet { font-family: var(--font-data); font-size: 12px; color: var(--teal); }
 .cl-replay-text { margin: 0; font-weight: 600; min-height: 1.4em; }
 .cl-replay-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cl-replay-hands { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.cl-replay-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.cl-replay-tools a.btn-small { text-decoration: none; display: inline-flex; align-items: center; }
+.cl-replay-copytext { width: 100%; box-sizing: border-box; font-family: var(--font-data); font-size: 12px; resize: vertical; }
 .cl-list li.cl-under { padding-left: 20px; border-left: 2px solid var(--border); }
 .cl-assign { display: inline-flex; align-items: center; gap: 6px; }
 .cl-assign .pl-text { width: auto; padding: 2px 6px; }
