@@ -1,0 +1,180 @@
+name: Deploy an environment
+
+# Deploys one commit to staging or sandbox (DEPLOY.md): first the relay
+# (Worker ducy-relay-<environment>, after its tests), then the site, built
+# for that relay, to <environment>.ducy.cards. Called by staging.yml and
+# sandbox.yml. The live site and relay deploy with deploy.yml and relay.yml.
+#
+# Uses the repository secrets the live deploys use: CLOUDFLARE_API_TOKEN,
+# CLOUDFLARE_ACCOUNT_ID, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS and
+# SSH_DEPLOY_TARGET (the subdomains' folders are inside the live site's).
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging or sandbox
+        type: string
+        required: true
+      ref:
+        description: The branch, tag or commit to deploy
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the environment
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+        run: |
+          case "$ENV_NAME" in staging|sandbox) ;; *) echo "not an environment: $ENV_NAME" >&2; exit 1 ;; esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
+        with:
+          targets: wasm32-unknown-unknown
+
+      # wasm-pack at a pinned version, checked against its release's SHA-256.
+      - name: Install wasm-pack
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          DIR="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$DIR.tar.gz"
+          echo "$WASM_PACK_SHA256  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP"
+          install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
+          wasm-pack --version
+
+      # The clubs-only build (#463), as relay.yml builds it.
+      - name: Build WASM
+        run: |
+          cd rust/ducy-wasm
+          wasm-pack build --target web --out-dir pkg --no-typescript --no-default-features
+          cd ../..
+          mkdir -p wasm
+          cp rust/ducy-wasm/pkg/ducy_wasm.js rust/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Relay tests
+        run: |
+          npm ci --prefix relay
+          node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/admin-api.test.mjs test/registry.test.mjs test/club-room.test.mjs test/relay-reset.test.mjs
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: relay
+          wranglerVersion: "4"
+          command: deploy --env ${{ inputs.environment }} --var COMMIT:${{ steps.commit.outputs.sha }}
+
+      - name: Check the relay
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          # A new workers.dev address can take a minute or two to answer.
+          for i in $(seq 1 18); do
+            OUT="$(curl -sS "https://ducy-relay-$ENV_NAME.ducy.workers.dev/version" || true)"
+            echo "$OUT"
+            if echo "$OUT" | grep -qF "\"commit\":\"$SHA\""; then exit 0; fi
+            sleep 10
+          done
+          echo "the relay doesn't report commit $SHA" >&2
+          exit 1
+
+  site:
+    needs: relay
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: https://${{ inputs.environment }}.ducy.cards/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Pinned ducy
+        id: ducy
+        run: echo "rev=$(scripts/ducy-rev.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-26
+        with:
+          targets: wasm32-unknown-unknown
+
+      # wasm-pack at a pinned version, checked against its release's SHA-256.
+      - name: Install wasm-pack
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          DIR="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o "$RUNNER_TEMP/wasm-pack.tar.gz" "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$DIR.tar.gz"
+          echo "$WASM_PACK_SHA256  $RUNNER_TEMP/wasm-pack.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/wasm-pack.tar.gz" -C "$RUNNER_TEMP"
+          install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
+          wasm-pack --version
+
+      - name: Build WASM
+        run: |
+          cd rust/ducy-wasm
+          wasm-pack build --target web --out-dir pkg --no-typescript
+          cd ../..
+          mkdir -p wasm
+          cp rust/ducy-wasm/pkg/ducy_wasm.js rust/ducy-wasm/pkg/ducy_wasm_bg.wasm wasm/
+
+      # As the live site: v/<site commit>-<pinned ducy commit>/, with this
+      # environment's relay.
+      - name: Build site
+        env:
+          DUCY_ENV: ${{ inputs.environment }}
+          RELAY_HOST: ducy-relay-${{ inputs.environment }}.ducy.workers.dev
+          DUCY_REV: ${{ steps.ducy.outputs.rev }}
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          scripts/build-site.sh "${SHA::8}-${DUCY_REV::8}" _site
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      # Into the subdomain's folder, keeping its password protection.
+      - name: Deploy via rsync
+        run: scripts/deploy-env.sh _site "${{ secrets.SSH_DEPLOY_TARGET }}/${{ inputs.environment }}"
+
+      # The site must answer, and ask for the password (401).
+      - name: Check the site
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+        run: |
+          for path in "" version.json gto/current.json; do
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://$ENV_NAME.ducy.cards/$path")"
+            echo "/$path: $CODE"
+            if [ "$CODE" != 401 ]; then
+              echo "expected 401 (password protected) from https://$ENV_NAME.ducy.cards/$path" >&2
+              exit 1
+            fi
+          done

@@ -15,13 +15,35 @@
 #
 # Usage: scripts/build-site.sh <version> <out-dir>
 # Expects the WASM build in ./wasm (ducy_wasm.js, ducy_wasm_bg.wasm).
+#
+# Settings, for staging and sandbox (DEPLOY.md):
+#   DUCY_ENV     production (the default), staging or sandbox
+#   RELAY_HOST   the relay's host, default ducy-relay.ducy.workers.dev; any
+#                other is written into the JS and .htaccess's policy in its place
+# Every build writes OUT_DIR/version.json. Any environment but production also
+# gets a strip on each page naming it and the version, and a noindex header.
 set -euo pipefail
 
 VERSION="${1:?usage: build-site.sh <version> <out-dir>}"
 OUT="${2:?usage: build-site.sh <version> <out-dir>}"
+DUCY_ENV="${DUCY_ENV:-production}"
+LIVE_RELAY_HOST='ducy-relay.ducy.workers.dev'
+RELAY_HOST="${RELAY_HOST:-$LIVE_RELAY_HOST}"
 
 if ! [[ "$VERSION" =~ ^[0-9a-zA-Z._-]+$ ]]; then
   echo "version must be letters, digits, '.', '_' or '-': $VERSION" >&2
+  exit 1
+fi
+if ! [[ "$DUCY_ENV" =~ ^[a-z]+$ ]]; then
+  echo "DUCY_ENV must be lowercase letters: $DUCY_ENV" >&2
+  exit 1
+fi
+if ! [[ "$RELAY_HOST" =~ ^[a-z0-9.-]+$ ]]; then
+  echo "RELAY_HOST must be a host name: $RELAY_HOST" >&2
+  exit 1
+fi
+if [ "$DUCY_ENV" = production ] && [ "$RELAY_HOST" != "$LIVE_RELAY_HOST" ]; then
+  echo "production uses the live relay, $LIVE_RELAY_HOST" >&2
   exit 1
 fi
 for f in wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm; do
@@ -115,4 +137,38 @@ for page in index.html manage.html admin.html privacy.html; do
   fi
 done
 
-echo "Built release $VERSION in $OUT"
+# Another environment's relay, in place of the live one: in the JS (play-net.js,
+# admin.js, service-client.js, error-report.js) and the policy's connect-src.
+if [ "$RELAY_HOST" != "$LIVE_RELAY_HOST" ]; then
+  sed -i "s#//$LIVE_RELAY_HOST#//$RELAY_HOST#g" "$REL"/src/*.js "$OUT/.htaccess"
+  if grep -rlF "$LIVE_RELAY_HOST" "$REL" "$OUT/.htaccess"; then
+    echo "the live relay is still named in the files above" >&2
+    exit 1
+  fi
+  grep -qF "connect-src 'self' wss://$RELAY_HOST https://$RELAY_HOST;" "$OUT/.htaccess" || { echo ".htaccess doesn't allow $RELAY_HOST" >&2; exit 1; }
+fi
+
+# Staging and sandbox: a strip on every page saying which site and release
+# this is (an inline style attribute, which the policy allows), and no indexing.
+if [ "$DUCY_ENV" != production ]; then
+  case "$DUCY_ENV" in sandbox) BG='#f08a4b' ;; *) BG='#f5c542' ;; esac
+  LABEL="${DUCY_ENV^} · $VERSION"
+  STRIP="<div class=\"env-strip\" role=\"note\" style=\"position:fixed;left:0;bottom:0;z-index:2147483647;pointer-events:none;padding:2px 8px;font:600 11px/1.5 system-ui,sans-serif;color:#1b1b1b;background:$BG;border-top-right-radius:6px;opacity:.9\">$LABEL</div>"
+  for page in index.html manage.html admin.html privacy.html; do
+    sed -i "0,/<body[^>]*>/s||&\n$STRIP|" "$OUT/$page"
+    grep -qF "$LABEL</div>" "$OUT/$page" || { echo "$page has no environment strip" >&2; exit 1; }
+  done
+  printf '\n# Not the live site: kept out of search engines.\n<IfModule mod_headers.c>\n  Header set X-Robots-Tag "noindex, nofollow"\n</IfModule>\n' >> "$OUT/.htaccess"
+fi
+
+# What this build is, for anyone asking a site what it runs.
+COMMIT="$(git rev-parse HEAD 2>/dev/null || echo "${GITHUB_SHA:-}")"
+DUCY_REV="$(scripts/ducy-rev.sh 2>/dev/null || true)"
+{
+  printf '{\n  "environment": "%s",\n  "version": "%s",\n  "commit": "%s",\n  "ducy": "%s",\n' "$DUCY_ENV" "$VERSION" "$COMMIT" "$DUCY_REV"
+  printf '  "relay": "wss://%s",\n  "built": "%s",\n  "models": ' "$RELAY_HOST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  cat gto-pins.json
+  printf '}\n'
+} > "$OUT/version.json"
+
+echo "Built release $VERSION ($DUCY_ENV) in $OUT"

@@ -1,0 +1,39 @@
+name: Deploy sandbox
+
+# Any branch, tag or commit to sandbox.ducy.cards and its relay, on request
+# (deploy-env.yml, DEPLOY.md). With "reset", the sandbox's data is wiped
+# afterwards (sandbox-reset.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit
+        type: string
+        required: true
+        default: master
+      reset:
+        description: Wipe the sandbox's data afterwards
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-sandbox
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: sandbox
+      ref: ${{ inputs.ref }}
+    secrets: inherit
+
+  reset:
+    needs: deploy
+    if: inputs.reset
+    uses: ./.github/workflows/sandbox-reset.yml
+    secrets: inherit
