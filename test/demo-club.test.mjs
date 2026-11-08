@@ -314,6 +314,22 @@ test('only the demo loads the demo relay: no real club or relay code imports it'
   }
 });
 
+test('clubs run only on the relay: no page runs one, except the demo’s in-page relay (#580)', () => {
+  const files = [
+    ...readdirSync(new URL('../src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `src/${f}`),
+    ...readdirSync(new URL('../relay/src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `relay/src/${f}`),
+    'relay/dev-server.mjs',
+  ];
+  const using = name => files.filter(f => new RegExp(`['"][./]*(?:src/)?${name.replace('.', '\\.')}['"]`).test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')));
+  // The club's host side runs in the club's room on the relay.
+  assert.deepEqual(using('club-server.js'), ['relay/src/club-room.js']);
+  // The room runs on the relay, and in the page only for a demo.
+  const roomUsers = files.filter(f => /\/club-room\.js['"]/.test(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')));
+  assert.deepEqual(roomUsers.filter(f => f.startsWith('src/')), ['src/demo-relay.js']);
+  // The club manager connects to a club as its owner, never as its host.
+  assert.doesNotMatch(readFileSync(new URL('../src/clubs.js', import.meta.url), 'utf8'), /connect\([^)]*'host'/);
+});
+
 test('demo bots are Quest’s players, picked as Quest’s line-ups pick them for the stakes', () => {
   const regs = new Set([...ORDER]);
   for (const [stakes, bb] of [['1/2', 200], ['2/5', 500], ['5/10', 1000], ['10/20', 2000], ['25/50', 5000], ['50/100', 10000]]) {

@@ -35,7 +35,6 @@ import { ensureChips, ledgerCsv, MAX_NOTE, totals } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
-import { createClubServer } from './club-server.js';
 import { feeds, isMain } from './club-groups.js';
 import { gameKey, listOf } from './club-lists.js';
 import { stakesBand } from '../wasm/ducy_wasm.js';
@@ -82,14 +81,15 @@ const listeners = new Set(); // onClubsChange callbacks
 // "You're in" for them).
 const justJoined = new Set();
 let me = null; // identity
-let club = null; // the club this browser hosts
+// The club this browser runs: an always-on club's latest view (see owner
+// below), or a club kept in this browser from before clubs ran on ducy's
+// server, which no longer runs here: it can only move there (#580).
+let club = null;
 let verifier = null;
-let hostNet = null, hostOnline = false;
 let memberships = []; // clubs this browser asked to join
 const playerNets = new Map(); // club code → {net, online, hostHere}
 let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
-let server = null; // runs the hosted club (club-server.js)
 // An always-on club this browser owns (#93, club-owner.js): `club` is then
 // its latest view from the relay, and host actions go there as commands.
 let owner = null;
@@ -112,8 +112,8 @@ const playerHref = hash => `./${hash ? `#${hash}` : ''}`;
 // Invite links open the player app, even when made on the club manager.
 const appBase = () => new URL('./', location.href).href;
 // Why the last create failed (the relay down or full), and the name it was
-// for: the form says so and offers to try again. New clubs are always on
-// (#152); a club run in a browser is still opened and moved as before.
+// for: the form says so and offers to try again. Clubs are always on
+// (#152): none runs in a browser tab (#580).
 let alwaysFailed = null;
 let tableForm = false; // the New table form is open
 // Tournaments (#64): the New tournament wizard (#477: {step, d, editor,
@@ -176,19 +176,6 @@ function saveClub() {
   if (isRemote()) return;
   save(CLUB_KEY, club);
   save(SENDERS_KEY, verifier.toJSON());
-}
-
-// The club's host logic, carrying its messages over this tab's relay connection.
-function newServer() {
-  server = createClubServer({
-    identity: me, club, verifier,
-    persist: saveClub,
-    transport: {send: (to, data) => hostNet?.send({to, data}), ack: n => hostNet?.send({ack: n})},
-    // This tab runs the club, so its host is around for help requests (#192).
-    hostInTab: true,
-    onChange: render,
-    storeHand,
-  });
 }
 
 // The control an action came from (#544): the button clicked, the form
@@ -279,7 +266,7 @@ function markControls() {
   }
 }
 
-// A host action (club-server.js), here or in an always-on club's room. The
+// A host action (club-server.js), in the always-on club's room. The
 // control it came from is busy until it's answered, then says Saved ✓ (a
 // Save) or what went wrong. Resolves to whether it was done.
 async function hostAct(op, args) {
@@ -290,40 +277,25 @@ async function hostAct(op, args) {
   failed = null;
   if (key) { busy.add(key); render(); }
   let ok = true;
-  try { await (isRemote() ? own().run(op, args) : server.run(op, args)); } catch (e) { ok = false; failAt(key, e.message); }
+  try {
+    if (!isRemote()) throw new Error('Move the club to ducy’s server first.');
+    await own().run(op, args);
+  } catch (e) { ok = false; failAt(key, e.message); }
   busy.delete(key);
   if (ok && saves) { saved = {key, at: Date.now()}; setTimeout(render, SAVED_MS); }
   render();
   return ok;
 }
 
-const seatedCounts = () => (isRemote() ? own().view?.seated || {} : server?.seatedCounts() || {});
-const tableRunning = id => (isRemote() ? !!own().view?.running?.includes(id) : !!server?.running(id));
+const seatedCounts = () => (isRemote() ? own().view?.seated || {} : {});
+const tableRunning = id => isRemote() && !!own().view?.running?.includes(id);
 // How running tournaments are going (club-tourney-host.js).
-const tourneyLive = () => (isRemote() ? own().view?.tourneys || {} : server?.tourneyLive?.() || {});
+const tourneyLive = () => (isRemote() ? own().view?.tourneys || {} : {});
 
 // The club's money runs in ducy's engine (club-money.js, #454), so this
 // page loads it before the club it runs starts.
 let pageEngine = null;
 const loadEngine = () => (pageEngine ||= import('../wasm/ducy_wasm.js').then(w => w.default({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)})));
-
-function startHosting() {
-  if (!club || hostNet || isRemote()) return;
-  if (!server) {
-    loadEngine().then(() => { if (!server) newServer(); startHosting(); }, e => { note = `The club couldn’t start: ${e.message}`; render(); });
-    return;
-  }
-  hostNet = connect(club.code, 'host', '', {
-    // Tables start once this tab is the club's host: a second tab, refused
-    // by the relay, never runs (or resumes) them.
-    onOpen() { hostOnline = true; server.relayOpen(); render(); },
-    onMessage: m => server.message(m),
-    onStatus(s) { hostOnline = !s; render(); },
-    onFail(reason) { hostNet = null; hostOnline = false; server.setLink(false); note = reason; render(); },
-    // Tables stop their clocks while the relay can't be reached (club-host.js).
-    onHealth(ok) { server.setLink(ok); render(); },
-  }, {heartbeat: true, persistent: true, retryInUse: true, inUse: 'This club is already open in another tab or window. Only one can run it: close the other one, then click Reconnect.'});
-}
 
 // A new club, always on (#93, #152): its room on the relay becomes the club.
 async function createClub(name) {
@@ -565,12 +537,8 @@ function watchTable(id) {
   joinTableVia(handlers => {
     // An always-on club's table runs in its room: its view comes encrypted
     // over the owner's (or a manager's) connection (#125).
-    if (isRemote()) {
-      ctl.watch(id, toPage(handlers)).catch(e => handlers.onFail(e.message));
-      return {send() {}, close: () => ctl.unwatch()};
-    }
-    const stop = server.watch(id, toPage(handlers));
-    return {send() {}, close: stop};
+    ctl.watch(id, toPage(handlers)).catch(e => handlers.onFail(e.message));
+    return {send() {}, close: () => ctl.unwatch()};
   }, {
     label: `${club.name} · ${t.name} (watching)`,
     watch: true,
@@ -639,13 +607,12 @@ function lobbyHtml(online, chat, form, canSend, who = true) {
 }
 
 // The lobby on the page of the club you run: its online list made here
-// from who's connected (an always-on club's room says, in its view).
+// from who's connected (the club's room says, in its view).
 function hostLobbyHtml() {
   const remote = isRemote();
-  const ids = new Set(remote ? own().view?.online || [] : server?.online || []);
-  const list = onlineList(club, ids, !remote && hostOnline);
+  const list = onlineList(club, new Set(remote ? own().view?.online || [] : []), false);
   const chat = (club.lobby || []).filter(x => Date.now() - x.at < LOBBY_MAX_AGE_MS);
-  return lobbyHtml(list, chat, 'host', remote ? own().online : !!hostNet, false);
+  return lobbyHtml(list, chat, 'host', remote && own().online, false);
 }
 
 // The open help requests, for the host: who, when, from which table, with
@@ -1212,11 +1179,7 @@ function closeClub(b) {
     render();
     return;
   }
-  if (Object.values(club.members).some(m => m.seat)) { failAt(b, 'People are still at tables. Close the tables first.'); return; }
   if (!confirm(`Close ${club.name}? Its members and records are deleted from this browser.`)) return;
-  server = null;
-  hostNet?.close();
-  hostNet = null;
   club = null;
   verifier = null;
   try { localStorage.removeItem(CLUB_KEY); localStorage.removeItem(SENDERS_KEY); } catch {}
@@ -1224,20 +1187,16 @@ function closeClub(b) {
 }
 
 // Moves this browser's club to the server as an always-on club (#98): same
-// code, so members' links keep working, and they follow it there.
+// code, so members' links keep working, and they follow it there. A club
+// kept here doesn't run here (#580): anyone it last had at a table gets
+// those chips back first, as when a club restarts.
 async function moveToAlwaysOn(b) {
   if (owner.record) { failAt(b, 'This browser already runs an always-on club; one per browser for now.'); return; }
-  if (Object.values(club.members).some(m => m.seat)) { failAt(b, 'People are still at tables. Close the tables first, or wait until everyone has left them.'); return; }
   if (!confirm(`Move ${club.name} to ducy’s server? It then stays open with this page closed, and you run it from here as its owner. Members don’t need to do anything.`)) return;
+  if (cashOutEveryone(club, Date.now(), new Set()).length) saveClub();
   const data = JSON.parse(JSON.stringify(club)), senders = verifier.toJSON();
-  // The relay takes the club only once no tab hosts it.
-  hostNet?.close();
-  hostNet = null;
-  hostOnline = false;
-  server = null;
   note = 'Moving your club to the server…';
   render();
-  await new Promise(r => setTimeout(r, 800));
   try {
     await owner.moveHere(data, senders);
     try { localStorage.removeItem(CLUB_KEY); localStorage.removeItem(SENDERS_KEY); } catch {}
@@ -1246,7 +1205,6 @@ async function moveToAlwaysOn(b) {
     note = 'Your club now runs on the server: it stays open with this page closed.';
   } catch (e) {
     note = `The club didn’t move: ${e.message}`;
-    startHosting();
   }
   render();
 }
@@ -2274,31 +2232,32 @@ let navOpen = false, notesOpen = false;
 function hostHtml() {
   if (!club && isRemote()) return `<section class="cl-card"><h2>${esc(owner.record.name)}</h2><p class="pl-meta">Connecting…</p></section>`;
   if (!club) return '';
+  if (!isRemote()) return movePageHtml();
   const at = managerPage(location.hash) || {page: 'overview', member: ''};
   // An older address (#clubs/players …) shows under its page's own.
   const want = ph(at.page, at.member, at);
   if (location.hash.startsWith('#clubs') && location.hash.slice(1) !== want) history.replaceState(null, '', `${location.pathname}${location.search}#${want}`);
   let h = `<div class="mg-shell${navOpen ? ' nav-open' : ''}${notesOpen ? ' notes-open' : ''}">`;
   h += sideHtml(at.page);
-  h += `<section class="mg-page">${connNoteHtml()}${backupNagHtml()}${pageHtml(at)}</section>`;
+  h += `<section class="mg-page">${backupNagHtml()}${pageHtml(at)}</section>`;
   h += notesHtml();
   return h + '<div class="mg-scrim" data-cl="mg-close"></div></div>';
 }
 
-// A club run in this tab, when it isn't reaching its players. An always-on
-// club says how it's connected in the top bar (liveHtml).
-function connNoteHtml() {
-  if (isRemote()) return '';
-  if (!hostNet) return '<p class="pl-desc pl-neterr">This tab isn’t hosting the club. <button class="btn-small" data-cl="reconnect">Reconnect</button></p>';
-  if (!hostOnline || !hostNet.healthy()) return '<p class="pl-desc pl-neterr">The tables are paused until the connection is back.</p>';
-  return '';
+// A club kept in this browser from before clubs ran on ducy's server: it
+// doesn't run in a tab any more (#580), so it can only move there, or go.
+function movePageHtml() {
+  let h = `<section class="cl-card cl-move"><h2>${esc(club.name)}</h2><p class="pl-desc">Clubs run on ducy’s server now.</p>`;
+  return h + '<div class="pl-actions"><button class="btn-small primary" data-cl="move-always">Move to ducy’s server</button><button class="btn-small" data-cl="close">Delete club</button></div></section>';
 }
 
-// Live, or how the club's connection is doing, in the top bar.
+// Live, or how the club's connection is doing, in the top bar; nothing for
+// a club that doesn't run (movePageHtml).
 function liveHtml() {
   const remote = isRemote();
-  const on = remote ? own().online : hostOnline && !!hostNet?.healthy();
-  const text = on ? 'Live' : remote ? (own().connected ? CONN.reconnecting : CONN.off) : hostNet ? CONN.reconnecting : CONN.off;
+  if (!remote) return '';
+  const on = own().online;
+  const text = on ? 'Live' : own().connected ? CONN.reconnecting : CONN.off;
   let h = `<span class="mg-live${on ? ' on' : ''}" title="${text}">${text}</span>`;
   if (remote && !own().connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
   return h;
@@ -3518,7 +3477,6 @@ async function onClickIn(e) {
   else if (act === 'attach') attachAlwaysOn(root.querySelector('#cl-attach')?.value);
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
-  else if (act === 'reconnect') { note = ''; startHosting(); render(); }
   else if (act === 'reconnect-owner') { note = ''; owner.start(); render(); }
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
@@ -3745,9 +3703,6 @@ function onKey(e) {
 // isn't there. So the connections close when the page is hidden for good and
 // reopen if it comes back.
 function disconnectAll() {
-  hostNet?.close();
-  hostNet = null;
-  hostOnline = false;
   owner?.stop();
   for (const n of playerNets.values()) n.net?.close();
   playerNets.clear();
@@ -3757,10 +3712,7 @@ function reconnectAll() {
   if (!me) return;
   // The club you run, on the club manager only; there, too, the clubs you
   // help run (their staff views come over your member connection).
-  if (mode === 'manage') {
-    startHosting();
-    owner?.start();
-  }
+  if (mode === 'manage') owner?.start();
   for (const m of memberships) if (mode === 'play' || helps(m)) connectMembership(m);
   render();
 }
@@ -3769,19 +3721,8 @@ function reconnectAll() {
 // tab can host, but any tab can show the club): show what it saved.
 function onStorage(e) {
   if (e.key === CLUB_KEY) {
-    const fresh = load(CLUB_KEY, null);
-    if (server && fresh?.code === club?.code) {
-      // The same club, changed in another tab: update it in place, so this
-      // tab's server (which holds these objects) carries on with it.
-      for (const k of Object.keys(club)) delete club[k];
-      Object.assign(club, fresh);
-      verifier.senders = new Verifier(load(SENDERS_KEY, {})).senders;
-    } else {
-      club = fresh;
-      verifier = new Verifier(load(SENDERS_KEY, {}));
-      server = null;
-    }
-    if (!club) { hostNet?.close(); hostNet = null; hostOnline = false; }
+    club = load(CLUB_KEY, null);
+    verifier = new Verifier(load(SENDERS_KEY, {}));
   } else if (e.key === MEMBERSHIPS_KEY) {
     const saved = load(MEMBERSHIPS_KEY, []);
     // Keep this tab's connection state; take the other tab's data.
