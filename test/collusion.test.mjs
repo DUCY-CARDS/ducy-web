@@ -216,8 +216,10 @@ test('too few hands together: no flag', () => {
   assert.deepEqual(collusionReport(recs).flagged, []);
 });
 
-test('the seat and location hook (#581) adds nothing yet', () => {
+test('the seat and location flags (#581): none without records that carry them', () => {
   assert.deepEqual(proximityFlags('a', 'b'), []);
+  // Honest play with no such flags in its records: none added (test/proximity.test.mjs has the rest).
+  assert.ok(!collusionReport(play({hands: 300, seed: 3})).flagged.some(e => e.flags.some(f => ['near', 'network', 'vpn', 'fake'].includes(f.kind))));
 });
 
 test('the check reads the club’s kept hands for the last week only', async () => {

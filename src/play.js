@@ -33,6 +33,7 @@ import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { fairPlayer } from './fair-check.js';
+import { seatFlagsText } from './club-fair-play.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
@@ -2882,6 +2883,15 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   startClock();
 }
 let watching = false;
+// A club table's seat flags (#581): {seat: [kind]}, the table's seat
+// numbers (a view's seat i is the table's (view.seat + i) mod seats).
+let seatFlags = {};
+function seatFlagHtml(s, i) {
+  const n = s.seats?.length || 0;
+  if (!n || !Object.keys(seatFlags).length) return '';
+  const text = seatFlagsText(seatFlags[(num(s.seat) + i) % n]);
+  return text ? `<i class="pl-flag">${esc(text)}</i>` : '';
+}
 let seatToolsHook = null; // joinTableVia's seatTools
 let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
@@ -2959,12 +2969,16 @@ function startGuest(code) {
   seated = true;
   state = null;
   lastView = null;
+  seatFlags = {};
   raiseTo = 0;
   foldQueued = false;
 }
 
 function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
+  // A club table's seat flags from the relay (#581): {seat: [kind]}, by the
+  // table's own seat numbers.
+  if (m.type === 'seat_flags') { seatFlags = m.seats && typeof m.seats === 'object' ? m.seats : {}; render(); return; }
   // A fair deal at a friends table (#136, #462): this page's part of the
   // host's round.
   if (m.type === 'fair' && joinedByCode) {
@@ -3589,7 +3603,7 @@ function renderTable() {
     }
     if (seat.sitting_out) {
       const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
-      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${seatFlagHtml(s, i)}</div><div class="pl-note">${why}</div></div>`;
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
@@ -3601,7 +3615,7 @@ function renderTable() {
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
     const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b>${questChip(i)}<span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b>${questChip(i)}<span>${c(seat.stack)}</span>${seatFlagHtml(s, i)}${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.

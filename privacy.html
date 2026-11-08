@@ -37,6 +37,7 @@
           <tr><td>Hands at club tables</td><td>Actions, results and finished hands’ cards</td><td>Replays, history and disputes</td></tr>
           <tr><td>All cards of club hands</td><td>Every player’s cards in each hand, folded ones too, with player IDs</td><td>To check for cheating automatically. Nobody at the club, its owner included, can see them. The owner sees only the check’s findings: counts and hand numbers</td></tr>
           <tr><td>How club hands were played</td><td>When each action came, whether your tab was in view, and your connection at each hand: a scrambled IP address, network, rough location and browser type</td><td>To check for cheating automatically. Nobody at the club, its owner included, can see them</td></tr>
+          <tr><td>Location and network checks</td><td>At a club table, your browser’s location and its accuracy if you allow it, your time zone, and whether your network is a VPN or shared with others at the table</td><td>To flag players who may be sitting together or hiding where they are. Your location is kept only while you’re connected. Others at the table and the club’s owner see only the flags, such as “within 100 m” or “VPN”, never where you are</td></tr>
           <tr><td>Club chat and help requests</td><td>What you write in a club’s lobby or asks of its staff</td><td>To deliver it to the club</td></tr>
           <tr><td>Connection data</td><td>IP address, browser type, time of request</td><td>To deliver messages and stop abuse</td></tr>
           <tr><td>Error reports</td><td>The error, page, site version, browser and device type</td><td>To find and fix bugs</td></tr>
@@ -54,9 +55,9 @@
       <table>
         <thead><tr><th>Who</th><th>What they can see</th></tr></thead>
         <tbody>
-          <tr><td>Other players at your table</td><td>Your name, avatar, actions, chat and any cards you show, but not cards you fold</td></tr>
+          <tr><td>Other players at your table</td><td>Your name, avatar, actions, chat and any cards you show, but not cards you fold. At a club table, flags on your seat such as “within 100 m”, “VPN” or “location not shared”</td></tr>
           <tr><td>A friends table’s host</td><td>The table runs in the host’s browser, so a host who looks for it can see the cards at that table</td></tr>
-          <tr><td>Club owners, managers and agents</td><td>Members’ balances, chip history and activity, as their role allows. The owner also sees the cheating check’s findings about players</td></tr>
+          <tr><td>Club owners, managers and agents</td><td>Members’ balances, chip history and activity, as their role allows. The owner also sees the cheating check’s findings about players, and the location and network flags in the club’s hands</td></tr>
           <tr><td>Ducy’s admins</td><td>Anything held on our servers, including club data, lobby chat and finished hands’ cards, at any time and without notice</td></tr>
           <tr><td>Cloudflare</td><td>Runs our relay and clubs, so it processes connection data and club data</td></tr>
           <tr><td>HostRocket</td><td>Hosts the website and club backups, and sees connection data</td></tr>

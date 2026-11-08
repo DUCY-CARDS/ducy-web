@@ -49,7 +49,8 @@ RewriteRule ^ - [E=ducy_safari15:1]
   Header set X-Ducy-Safari15 "%{ducy_safari15}e"
   Header set X-Content-Type-Options "nosniff"
   Header set Referrer-Policy "strict-origin-when-cross-origin"
-  Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+  # Geolocation for this site only: club tables ask for it (#581).
+  Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(self), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
   Header set Strict-Transport-Security "max-age=31536000"
 </IfModule>
 

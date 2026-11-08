@@ -26,7 +26,9 @@
 // timeout or anything else, null), away (their page said it was hidden or
 // out of focus while they decided: true, false or null), board, board2,
 // pot, showdown, pots (who won what), deal: {seed, list, reveals, order}
-// or null}. `order` is the player IDs in the order the deal gave out cards.
+// or null}, prox (the seat and location flags as it finished, #581,
+// proximity.js tableSignals: [{kind, ids, why?}], never a location). `order`
+// is the player IDs in the order the deal gave out cards.
 
 import { handRecord } from '../../src/hand-replay.js';
 import { fairCheck } from '../../wasm/ducy_wasm.js';
@@ -40,7 +42,7 @@ const dayOf = at => Math.floor(at / DAY_MS);
 
 // The full record of a hand from the club's table (club-host.js onFullHand,
 // with {club, table, tableName, game}), at `now`.
-export function fullRecord({view, players, cards, deal, timing, conns, club, table, tableName, game}, now = Date.now()) {
+export function fullRecord({view, players, cards, deal, timing, conns, prox, club, table, tableName, game}, now = Date.now()) {
   const rec = handRecord({club, table, tableName, game, view, who: 'ducy'}, now);
   const idAt = seat => players.find(p => p.seat === seat)?.client_id || null;
   const cardsAt = seat => cards?.seats?.find(s => s.seat === seat)?.cards || null;
@@ -64,6 +66,7 @@ export function fullRecord({view, players, cards, deal, timing, conns, club, tab
     away: rec.events.map((_, i) => at(timing?.away, i)),
     board: rec.board, board2: rec.board2 || [], pot: rec.pot, showdown: rec.showdown, pots: view.pots || [],
     deal: deal ? {seed: deal.seed, list: deal.list, reveals: deal.reveals, order: deal.order} : null,
+    prox: Array.isArray(prox) ? prox : [],
   };
 }
 
