@@ -225,6 +225,8 @@ function playTiles(d) {
   h += '</span></a>';
   h += `<a class="v3-tile v3-tile-red" href="#practice"><span class="v3-tile-name">Play the Regulars</span>${miniTable(['doug_poker', 'milk_king', 'phil_bigmouth', 'nik_airbag', 'jen_silly'])}</a>`;
   h += '</div>';
+  // The beta (#564): friends, clubs and the Regulars, nothing more.
+  if (BETA) return h;
   // The heads-up challenge: one Regular at a time, up the ladder.
   h += '<a class="v3-tile v3-tile-cream v3-tile-wide" href="#ladder"><span class="v3-tile-text"><span class="v3-tile-name">Heads-up challenge</span></span>';
   h += `<span class="v3-rungs" aria-label="Rung ${d.rung} of ${d.rungs}">`;
@@ -235,7 +237,7 @@ function playTiles(d) {
   for (const g of GTO_GAMES) h += `<a class="v3-btn-red" href="#${g.hash}">${g.name}</a>`;
   h += '</span></div>';
   // Quest (#299), also at the top: $1,000 to $1,000,000 across the card rooms.
-  if (!BETA) h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll Quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
+  h += '<a class="v3-tile v3-tile-dark v3-tile-wide" href="#quest"><span class="v3-tile-text"><span class="v3-tile-name">Bankroll Quest</span><b>Turn $1,000 into $1,000,000 at the card rooms</b></span></a>';
   return h;
 }
 
@@ -248,7 +250,7 @@ function lobbyPage(d) {
 // The beta's front page: straight to a game.
 function betaPage(d) {
   let h = '<div class="v3-page v3-landing">';
-  h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}<img class="v3-peek" src="${avatarUrl('gto')}" alt=""></div>`;
+  h += `<section class="v3-hero"><div class="v3-hero-art">${bigSpade()}</div>`;
   h += '<div class="v3-hero-text"><span class="v3-word">DUCY</span><h1>Pull up a chair.</h1></div></section>';
   return h + playTiles(d) + PLAY_MONEY + '</div>';
 }

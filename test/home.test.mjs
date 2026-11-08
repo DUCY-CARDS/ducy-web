@@ -39,14 +39,14 @@ test('hub data counts mastered skills and the ladder rung', () => {
   assert.equal(d.rung, 7);
 });
 
-test('the beta opens on hosting, joining, clubs and bots, with no Study or Quest', () => {
+test('the beta opens on friends, clubs and the Regulars, and nothing else (#564)', () => {
   const h = hubHtml('home', hubData(store()));
   assert.match(h, /Pull up a chair\./);
   assert.match(h, /Game or club code/);
   const links = [...h.matchAll(/href="(#[a-z0-9-]+)"/g)].map(m => m[1]);
-  assert.deepEqual(links, ['#host', '#clubs', '#practice', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo5', '#gto-plo6']);
+  assert.deepEqual(links, ['#host', '#clubs', '#practice']);
   assert.match(h, /Chips are play money with no cash value/);
-  assert.doesNotMatch(h, /Study|Quest|training/i);
+  assert.doesNotMatch(h, /Study|Quest|training|Heads-up challenge|Ducybot/i);
 });
 
 test('the full landing page moved to #welcome, with Study, Play and Quest', () => {
@@ -62,7 +62,7 @@ test('each hub links where it should', () => {
   // After the spade home and any way back.
   assert.deepEqual(links('study'), ['#', '#equity', '#trainer', '#challenge', '#charts']);
   assert.deepEqual(links('challenge'), ['#', '#study', '#codedoug', '#gto-plo4', '#gto-plo5', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#host', '#clubs', '#practice', '#ladder', '#codedoug', '#gto-plo4', '#gto-plo5', '#gto-plo6']);
+  assert.deepEqual(links('lobby'), ['#', '#host', '#clubs', '#practice']);
   assert.equal(HUBS.length, 5);
 });
 
@@ -93,10 +93,9 @@ test('the Study page shows progress', () => {
   assert.match(h, /--pct:11%/);
 });
 
-test('the Play page shows the heads-up challenge and your rung', () => {
+test('the Play page: a code box, and no heads-up challenge in the beta (#564)', () => {
   const h = hubHtml('lobby', {mastered: 3, skills: 28, rung: 5, rungs: 20});
-  assert.match(h, /Heads-up challenge/);
-  assert.match(h, /Rung 5 of 20/);
+  assert.doesNotMatch(h, /Heads-up challenge|Rung 5 of 20/);
   // Enter a code (#393): one box for a game or a club, with room for a word back.
   assert.match(h, /Game or club code/);
   assert.match(h, /data-v3note[^>]*hidden/);

@@ -34,13 +34,25 @@ async function playOutAHand(page) {
   await expect(over).toBeVisible();
 }
 
-test('the front page offers hosting, joining, clubs and bots, and nothing else', async ({page, watch}) => {
+test('the front page offers friends, clubs and the Regulars, and nothing else', async ({page, watch}) => {
   await watch(page).goto('/');
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
   await expect(page.getByLabel('Game or club code')).toBeVisible();
-  for (const name of ['Start a game', 'Private clubs', 'Play the Regulars', 'Heads-up challenge', 'Omaha 6']) await expect(page.getByRole('link', {name})).toBeVisible();
+  for (const name of ['Start a game', 'Private clubs', 'Play the Regulars']) await expect(page.getByRole('link', {name})).toBeVisible();
   await expect(page.getByText('Chips are play money with no cash value')).toBeVisible();
-  await expect(page.getByRole('link', {name: /Study|Quest/})).toHaveCount(0);
+  await expect(page.getByRole('link', {name: /Study|Quest|Heads-up challenge|Omaha 6/})).toHaveCount(0);
+  await expect(page.getByText('Ducybot')).toHaveCount(0);
+  await fitsTheScreen(page);
+});
+
+test('Private clubs takes a code, with no clubs yet (#564)', async ({page, watch}) => {
+  await watch(page).goto('/');
+  await page.getByRole('link', {name: 'Private clubs'}).click();
+  const code = page.getByLabel('Club code or invite link');
+  await expect(code).toBeVisible();
+  await code.fill('not a code');
+  await page.locator('form[data-clcode] button').click();
+  await expect(page.getByText('That isn’t a code or a link.')).toBeVisible();
   await fitsTheScreen(page);
 });
 

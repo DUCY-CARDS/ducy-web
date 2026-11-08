@@ -68,7 +68,7 @@ export function openSection(t, shortcut) {
   if (t === 'join') renderJoin();
   else if (t === 'host') renderHost();
   else joinRoot.hidden = true;
-  openClubs(el('clubs'), t);
+  openClubs(el('clubs'), t, enterCode);
   openPlay(el('play'), shortcut, t);
 }
 
