@@ -3,7 +3,7 @@ name: Deploy an environment
 # Deploys one commit to staging or sandbox (DEPLOY.md): first the relay
 # (Worker ducy-relay-<environment>, after its tests), then the site, built
 # for that relay, to <environment>.ducy.cards. Called by staging.yml and
-# sandbox.yml. The live site and relay deploy with deploy.yml and relay.yml.
+# sandbox.yml. The live site and relay deploy with deploy.yml, by hand.
 #
 # Uses the repository secrets the live deploys use: CLOUDFLARE_API_TOKEN,
 # CLOUDFLARE_ACCOUNT_ID, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS and
@@ -60,7 +60,7 @@ jobs:
           install "$RUNNER_TEMP/$DIR/wasm-pack" ~/.cargo/bin/
           wasm-pack --version
 
-      # The clubs-only build (#463), as relay.yml builds it.
+      # The clubs-only build (#463), as deploy.yml builds the live relay's.
       - name: Build WASM
         run: |
           cd rust/ducy-wasm

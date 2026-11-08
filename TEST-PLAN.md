@@ -30,9 +30,9 @@ A major release is any of these:
 
 | Level | When | What runs |
 |---|---|---|
-| **Every PR** | Always | CI: unit tests, browser tests, the Rust checks. Nothing merges unless all pass. |
-| **Release** | A major release | Every PR check, then [Manual: main](#manual-main) and [Manual: club manager](#manual-club-manager) on the live site after deploy. |
-| **Turning a beta extra on** | Before it shows on the front page or in the manager | Its row in [Manual: beta extras](#manual-beta-extras), on the live site, plus a browser test added for it. |
+| **Every PR** | Always | CI: unit tests, browser tests, the Rust checks. Nothing merges unless all pass. A merge deploys staging.ducy.cards, not the live site. |
+| **Release** | A major release | Every PR check, then [Manual: main](#manual-main) and [Manual: club manager](#manual-club-manager) on staging, before running Deploy production ([DEPLOY.md](DEPLOY.md)). After the release, M1 on the live site. |
+| **Turning a beta extra on** | Before it shows on the front page or in the manager | Its row in [Manual: beta extras](#manual-beta-extras), on staging, plus a browser test added for it. |
 
 ## Automated
 
@@ -135,7 +135,7 @@ available, the first testers' phones stand in, and the gap is noted in Results.
 
 ## Manual: main
 
-Every step runs on the live site after deploy, in a fresh private window unless it says otherwise. "Two browsers" means two devices, or two private windows in different browsers.
+Every step runs on staging.ducy.cards (its password is in DirectAdmin) before the release, in a fresh private window unless it says otherwise. Staging has its own relay and data, so clubs and players made there never reach the live site. "Two browsers" means two devices, or two private windows in different browsers.
 
 **M1 Front page and the Regulars**
 1. Open `/`. You see Friends, Private clubs and Play the Regulars, with no Beta or play money banners. Nothing scrolls sideways.
@@ -180,8 +180,8 @@ Every step runs on the live site after deploy, in a fresh private window unless 
 3. On an iPhone, with the site installed and then not installed: note whether anything is lost after 7 days without a visit. This takes a week, so record the date it started.
 
 **M8 Error reports**
-1. On the live site, cause an error: open the browser console and run `setTimeout(() => { throw new Error('test plan M8') })`.
-2. In `admin.html`, under Errors, the report shows the build, page and browser, with no cards or names.
+1. On staging, cause an error: open the browser console and run `setTimeout(() => { throw new Error('test plan M8') })`.
+2. In staging's `admin.html` (it needs your admin key in that browser), under Errors, the report shows the build, page and browser, with no cards or names.
 
 **M9 Installable app**
 1. Add to home screen on iPhone and Android. The app opens full screen on the front page.
@@ -237,7 +237,7 @@ Run a row only when that feature is about to be turned on.
 
 ## Results
 
-Add one row per release. Name each device by its row in [Devices](#devices). List the failures as issue numbers. List what wasn't run, and why.
+Add one row per release, named by its tag (`v2026.11.20`) and the staging version it was tested on (the strip at the bottom of staging's pages). Name each device by its row in [Devices](#devices). List the failures as issue numbers. List what wasn't run, and why.
 
 | Date | Release | Who | Devices | Passed | Failed | Not run |
 |---|---|---|---|---|---|---|

@@ -5,7 +5,8 @@
 // never gets in the way: anything going wrong here is ignored.
 
 const REPORT_URL = 'https://ducy-relay.ducy.workers.dev/report';
-const LIVE = ['https://ducy.cards', 'https://www.ducy.cards'];
+// Staging and sandbox report to their own relay (build-site.sh swaps it in).
+const LIVE = ['https://ducy.cards', 'https://www.ducy.cards', 'https://staging.ducy.cards', 'https://sandbox.ducy.cards'];
 const MAX_PER_PAGE = 5;
 const MAX_MESSAGE = 300;
 const STACK_LINES = 8;

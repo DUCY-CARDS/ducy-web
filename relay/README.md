@@ -40,15 +40,17 @@ storage; the dev relay keeps them in memory.
 
 `src/worker.js` is a Worker with one Durable Object per room. The Workers free plan covers it.
 
-**Automatically:** `.github/workflows/relay.yml` deploys the relay whenever a change to `relay/` reaches master, after its tests pass. It needs two repository secrets:
+**Automatically:** the live relay ships with the site in a release
+(`.github/workflows/deploy.yml`, "Deploy production", run by hand), after its
+tests pass. Every push to master deploys the staging relay. Both need two
+repository secrets:
 - `CLOUDFLARE_API_TOKEN`: create it at Cloudflare → My Profile → API Tokens, with the "Edit Cloudflare Workers" template.
 - `CLOUDFLARE_ACCOUNT_ID`: shown on the Workers overview page.
 
-To redeploy without a change, run the workflow from the Actions tab.
-
 Staging and sandbox have relays of their own (`ducy-relay-staging`,
 `ducy-relay-sandbox`, from `[env.staging]` and `[env.sandbox]` in
-`wrangler.toml`): see [DEPLOY.md](../DEPLOY.md).
+`wrangler.toml`): see [DEPLOY.md](../DEPLOY.md), which also has the release
+steps.
 
 **By hand:**
 
