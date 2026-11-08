@@ -12,7 +12,7 @@ import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
 import { passkeys } from './src/passkeys.js';
-import { check as unlockCheck } from './src/unlock.js';
+import { check as unlockCheck, unlockedNow } from './src/unlock.js';
 import { mustProve, newChallenge, proves } from './src/prove.js';
 import { initSync } from '../wasm/ducy_wasm.js';
 
@@ -388,6 +388,14 @@ function guest(ws, room, code, id, queue, isClub, held) {
       if (pong) return ws.send(pong);
       // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
       if (data.length > MAX_MESSAGE && !String(data).includes('"import_club"')) return;
+      // A location reading (#581): from an unlocked connection only, not
+      // counted as activity (unlock.js unlockedNow).
+      if (room.store.has('club') && String(data).startsWith('{"type":"location"')) {
+        let msg;
+        try { msg = JSON.parse(data); } catch { return; }
+        if (unlockedNow(ws.unlock)) inRoom(room, async () => (await clubOf(room, code))?.message({from: id, data: msg}));
+        return;
+      }
       // An always-on club runs here, or someone asks to make this room one,
       // or to move their club here.
       if (room.store.has('club') || String(data).includes('"create_club"') || String(data).includes('"import_club"') || String(data).startsWith('{"type":"unlock"')) {

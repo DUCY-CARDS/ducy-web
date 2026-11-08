@@ -30,4 +30,7 @@ test('the policy states the decisions behind it', () => {
   assert.match(html, /We don’t remove the data we hold about players on request, except where the law requires it/);
   assert.match(html, /play money with no cash value/);
   assert.match(html, /Error reports/);
+  // The location and network checks at club tables (#581).
+  assert.match(html, /<td>Location and network checks<\/td>/);
+  assert.match(html, /Your location is kept only while you’re connected/);
 });

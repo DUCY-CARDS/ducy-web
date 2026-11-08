@@ -150,4 +150,6 @@ test('.htaccess sends the other security headers', () => {
   assert.match(h, /Header set Referrer-Policy "strict-origin-when-cross-origin"/);
   assert.match(h, /Header set Strict-Transport-Security "max-age=31536000"/);
   assert.match(h, /Header set Permissions-Policy "[^"]*camera=\(\)[^"]*microphone=\(\)[^"]*"/);
+  // Club tables ask for the location (#581): this site only.
+  assert.match(h, /Header set Permissions-Policy "[^"]*geolocation=\(self\)[^"]*"/);
 });

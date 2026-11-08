@@ -67,7 +67,8 @@ import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './cl
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { chipCap, clearableKeys, managerNotices, raiseTo } from './club-notices.js';
-import { entryTitle, fairPlayNotices, flagText, flowText, handsText } from './club-fair-play.js';
+import { entryTitle, fairPlayNotices, flagText, flowText, handFlagsText, handsText } from './club-fair-play.js';
+import { watchLocation } from './table-location.js';
 import { chipLines, leftSummary } from './club-member-view.js';
 import { creditRow } from './club-credit.js';
 import { changedSince, formatInfo, isEmpty, MAX_EVENT_TEXT, MAX_INFO_TEXT, nextEvent, sectionName, SECTIONS } from './club-info.js';
@@ -1283,7 +1284,10 @@ function connectMembership(mem) {
       : {type: 'hello', club: mem.code, name: nameIn(mem), since: lastEntry(mem), ledger: 'links', key};
     sendToHost(mem.code, body);
     // Back at a club table after the host (or this page) reconnected.
-    if (seatedAt?.code === mem.code) sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: nameIn(mem)}});
+    if (seatedAt?.code === mem.code) {
+      sendToHost(mem.code, {type: 'table', club: mem.code, table: seatedAt.table, cmd: {type: 'join', name: nameIn(mem)}});
+      tableLocation?.again();
+    }
   };
   const handle = async msg => {
     if (msg?.type === 'host_away' || msg?.type === 'host_gone') {
@@ -1703,6 +1707,9 @@ function handsHtml(code, who, label) {
     h += `<li><span class="pl-meta">${new Date(r.at).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})}</span>`;
     h += `<span>${esc(r.tableName)} #${r.hand}</span><span class="cl-chips">pot ${chips(r.pot)}</span>`;
     h += mine ? `<span class="${mine.net > 0 ? 'cl-up' : mine.net < 0 ? 'cl-down' : 'pl-meta'}">${mine.net > 0 ? '+' : ''}${chips(mine.net)}</span>` : `<span class="pl-meta">${esc(summary(r))}</span>`;
+    // The seat and location flags at the table (#581), the owner's only.
+    const flags = !mine && handFlagsText(r);
+    if (flags) h += `<span class="cl-handflags">${esc(flags)}</span>`;
     h += `<span class="cl-acts"><button class="btn-small" data-cl="replay" data-id="${esc(r.id)}" data-list="${esc(k)}">Replay</button></span></li>`;
   }
   return h + '</ul></div>';
@@ -1786,11 +1793,20 @@ function sitAt(code, table, amount = 0) {
     ask: n => sendToHost(code, {type: 'chip_request', club: code, amount: n, note: '', table: t.name}),
     cancel: () => sendToHost(code, {type: 'cancel_request', club: code}),
   };
+  // The browser's location while seated (#581, table-location.js), to the
+  // club's room on the relay; only over an unlocked connection.
+  stopLocation();
+  if (!demo) {
+    tableLocation = watchLocation(m => {
+      const entry = playerNets.get(code);
+      if (entry?.unlocked) entry.net?.send(m);
+    });
+  }
   joinTableVia(handlers => {
     seatedAt = {code, table, handlers};
     return {
       send: cmd => sendToHost(code, {type: 'table', club: code, table, cmd}),
-      close: () => { if (seatedAt?.table === table) seatedAt = null; },
+      close: () => { if (seatedAt?.table === table) { seatedAt = null; stopLocation(); } },
     };
   }, {
     label: `${mem.name} · ${t.name}`,
@@ -1807,7 +1823,7 @@ function sitAt(code, table, amount = 0) {
       const order = g.order || [];
       return {to: (g.to || []).join(' or '), order: order.map(p => p.name), mine: order.findIndex(p => p.id === me.id) + 1, moving: seatedAt?.reserve?.name || ''};
     },
-    onLeave: why => { seatedAt = null; note = why || ''; location.hash = clubHash(code); },
+    onLeave: why => { seatedAt = null; stopLocation(); note = why || ''; location.hash = clubHash(code); },
     // Each hand you played goes in your hand history (#71), as you saw it.
     onHand: view => {
       if (view.seats[0]?.sitting_out || view.seats[0]?.empty) return;
@@ -1816,6 +1832,12 @@ function sitAt(code, table, amount = 0) {
   });
   if (amount > 0 && !tourney) sendToHost(code, {type: 'table', club: code, table, cmd: {type: 'request_chips', amount}});
   location.hash = 'play';
+}
+
+let tableLocation = null; // watchLocation's, while seated at a club table
+function stopLocation() {
+  tableLocation?.stop();
+  tableLocation = null;
 }
 
 // What member `mem` may bring to a table: their balance and credit (#404;

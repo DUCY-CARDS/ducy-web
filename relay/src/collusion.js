@@ -22,9 +22,11 @@
 //   contest    pots both played (each put chips in by choice), against what
 //              their own rates of playing hands would give
 //   chips      chips that went from one to the other over the window
-// and, once #581 is built, the seat and location signals (proximityFlags).
+// and the seat and location flags the records carry (#581: proximityFlags
+// for pairs, soloFlags for one player).
 // The records also hold signals nothing here reads yet (when each action
-// came, whether the player's tab was in view, each seat's connection);
+// came, whether the player's tab was in view, each seat's connection and
+// its trust level);
 // later checks about one player (#591) add their flags with addFlagged.
 //
 // Every comparison needs enough hands (MIN_*), a big difference (ODDS_RATIO)
@@ -247,6 +249,16 @@ function readHand(rec, t) {
   const ids = seats.map(s => s.id);
   for (const s of seats) t.name.set(s.id, s.name || t.name.get(s.id) || '');
   for (const id of ids) t.hands.set(id, (t.hands.get(id) || 0) + 1);
+  // Seat and location flags (#581) as the hand finished, by kind and who.
+  for (const f of rec.prox || []) {
+    if (!PROX_KINDS.includes(f?.kind) || !Array.isArray(f.ids) || !f.ids.length || !f.ids.every(id => ids.includes(id))) continue;
+    const k = `${f.kind}|${[...f.ids].sort().join('|')}`;
+    if (!t.prox.has(k)) t.prox.set(k, {kind: f.kind, ids: [...f.ids].sort(), n: 0, why: new Set(), hands: []});
+    const p = t.prox.get(k);
+    p.n++;
+    for (const w of f.why || []) p.why.add(String(w));
+    keep(p.hands, ref);
+  }
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
       const p = t.pair(ids[i], ids[j]);
@@ -349,7 +361,7 @@ function readHand(rec, t) {
 function tally(recs) {
   const pairs = new Map(), dirs = new Map();
   const t = {
-    name: new Map(), hands: new Map(), entered: new Map(), net: new Map(), bigLosses: [],
+    name: new Map(), hands: new Map(), entered: new Map(), net: new Map(), bigLosses: [], prox: new Map(),
     pair(a, b) {
       const [x, y] = a < b ? [a, b] : [b, a];
       const k = `${x}|${y}`;
@@ -500,7 +512,8 @@ export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
     flow: Math.round(flowOf(p.a, p.b).chips - flowOf(p.b, p.a).chips),
     flags,
   }));
-  return {at: now, since, hands: recs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)};
+  // And one player's (#581): a VPN, a location that may be faked.
+  return addFlagged({at: now, since, hands: recs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
 }
 
 // The report's `flagged` list, most flags first, at most MAX_PAIRS. Each is
@@ -523,13 +536,44 @@ export function addFlagged(report, more) {
   return {...report, flagged: sortFlagged(list)};
 }
 
-// Seat and location flags (#581): players who always sit together, or play
-// from the same place. Not built yet: when it is, its flags for the pair
-// (a, b) come back from here in the same shape ({kind, who, other, ...};
-// `t`, this run's counts, if it needs them), and the owner's page words
-// them (club-fair-play.js flagText).
-export function proximityFlags(_a, _b, _t) {
-  return [];
+// Seat and location flags (#581, proximity.js), from the hand records:
+// 'near' (within 100 m of each other) and 'network' (the same network) for
+// a pair; 'vpn' and 'fake' (location may be faked) for one player. 'hidden'
+// (location not shared) shows at the table and in the records, not here.
+// Each is a fact the relay saw, not a rate, so one hand is enough: `with`
+// says in how many of the hands together (or played) it was seen.
+const PROX_KINDS = ['near', 'network', 'vpn', 'fake'];
+const PAIR_KINDS = ['near', 'network'];
+
+// The pair (a, b)'s seat and location flags, from this run's counts `t`:
+// [{kind, who: a, other: b, with: {k, n}, hands}].
+export function proximityFlags(a, b, t) {
+  if (!t?.prox) return [];
+  const [x, y] = a < b ? [a, b] : [b, a];
+  const shared = t.pairs.get(`${x}|${y}`)?.shared || 0;
+  const out = [];
+  for (const kind of PAIR_KINDS) {
+    const p = t.prox.get(`${kind}|${x}|${y}`);
+    if (p?.n) out.push({kind, who: a, other: b, with: {k: p.n, n: Math.max(shared, p.n)}, hands: p.hands.slice(-LIMITS.MAX_HANDS_LISTED).map(({table, hand}) => ({table, hand}))});
+  }
+  return out;
+}
+
+// One player's seat and location flags from `t`, as flagged entries
+// ({ids: [id], names, flags: [{kind, who, with: {k, n}, why?, hands}]}).
+function soloFlags(t) {
+  const by = new Map();
+  for (const p of t.prox.values()) {
+    if (PAIR_KINDS.includes(p.kind) || p.ids.length !== 1) continue;
+    const id = p.ids[0];
+    if (!by.has(id)) by.set(id, {ids: [id], names: {[id]: t.name.get(id) || ''}, flags: []});
+    by.get(id).flags.push({
+      kind: p.kind, who: id, with: {k: p.n, n: Math.max(t.hands.get(id) || 0, p.n)},
+      ...(p.why.size ? {why: [...p.why].sort()} : {}),
+      hands: p.hands.slice(-LIMITS.MAX_HANDS_LISTED).map(({table, hand}) => ({table, hand})),
+    });
+  }
+  return [...by.values()];
 }
 
 // The check over the club's kept hands (storage: the club room's), at

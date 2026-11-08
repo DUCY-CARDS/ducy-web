@@ -57,7 +57,7 @@ import { serviceHttp, serviceInRoom } from './service-http.js';
 import { clubCodes, resetRefusal } from './reset.js';
 import { passkeys } from './passkeys.js';
 import { mustProve, newChallenge, proves } from './prove.js';
-import { check as unlockCheck } from './unlock.js';
+import { check as unlockCheck, unlockedNow } from './unlock.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -97,13 +97,19 @@ function allow(ws, rate, burst, now = Date.now()) {
 
 // A member's connection to an always-on club (#582): its IP and user agent
 // (club-room.js hashes them with the club's salt at once and never keeps
-// them as they are) and Cloudflare's network and place for it.
+// them as they are) and Cloudflare's network and place for it. The place's
+// rough coordinates are only for the location checks while connected
+// (#581, proximity.js), never kept. `trust` (#583): how far its client can
+// be believed; every connection is from the website for now. When the app
+// comes, the relay decides its level from what it can check (an attested
+// device), never from what the client says.
 function connOf(req) {
   const cf = req.cf || {};
   return {
     ip: req.headers.get('CF-Connecting-IP') || '', ua: req.headers.get('User-Agent') || '',
     asn: cf.asn ?? null, asOrg: cf.asOrganization ?? null, country: cf.country ?? null, region: cf.region ?? null,
-    city: cf.city ?? null, timezone: cf.timezone ?? null,
+    city: cf.city ?? null, timezone: cf.timezone ?? null, latitude: cf.latitude ?? null, longitude: cf.longitude ?? null,
+    trust: 'website',
   };
 }
 
@@ -370,11 +376,14 @@ export class Room {
   async club(code = null) {
     if (this.clubP) return this.clubP;
     if (!(await this.state.storage.get('club')) && !(code && await this.rebuild(code))) return null;
-    const online = [...new Set(this.state.getWebSockets('guest').filter(g => !this.unproven(g)).map(g => this.guestId(g)))];
+    const proven = this.state.getWebSockets('guest').filter(g => !this.unproven(g));
+    const online = [...new Set(proven.map(g => this.guestId(g)))];
+    // Their connections, for the seat and location signals (#581).
+    const openConns = Object.fromEntries(proven.map(g => [this.guestId(g), g.deserializeAttachment()?.conn]).filter(([, c]) => c));
     loadEngine();
     this.clubP = this.status(code)
       .then(({record}) => openClub({
-        storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, record,
+        storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, openConns, record,
         onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
       onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
@@ -771,6 +780,14 @@ export class Room {
       // An always-on club runs here: it gets the message. Or someone asks
       // to make this room one, or to move their club here.
       const club = await this.club(this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2));
+      // A location reading (#581): from an unlocked connection only, and it
+      // doesn't count as activity (unlock.js unlockedNow).
+      if (club && msg.startsWith('{"type":"location"')) {
+        let m;
+        try { m = JSON.parse(msg); } catch { return; }
+        if (unlockedNow(ws.deserializeAttachment()?.unlock)) await club.message({from: id, data: m});
+        return;
+      }
       if (club || msg.includes('"create_club"') || msg.includes('"import_club"') || msg.startsWith('{"type":"unlock"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }

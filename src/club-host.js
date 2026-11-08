@@ -663,5 +663,9 @@ export function createTableHost({
   // Seats taken: people at the table, and seats held for people coming (#425).
   const seatedCounts = () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.seating.players.length + held(tid)]));
 
-  return {start, close, handle, disconnected, presence, setLink, seatedCounts, watch, removePlayer, keepPlayer, movePlayer, reserve, moveUp, tableOf: id => at.get(id) || null, running: tid => running.has(tid)};
+  return {
+    start, close, handle, disconnected, presence, setLink, seatedCounts, watch, removePlayer, keepPlayer, movePlayer, reserve, moveUp, tableOf: id => at.get(id) || null, running: tid => running.has(tid),
+    // Who sits where at table tid: [{seat, id}].
+    seatsOf: tid => (running.get(tid)?.seating.players || []).map(p => ({seat: p.seat, id: p.client_id})),
+  };
 }

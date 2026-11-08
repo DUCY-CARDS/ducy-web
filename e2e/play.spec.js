@@ -366,6 +366,88 @@ test.describe('a club member', () => {
     expect(novaId).not.toBe(avaId);
     expect(await idOf(nova)).toBe(novaId);
   });
+
+  test('at a club table: players within 100 m are flagged on their seats, one who won’t share says so, and the owner’s hands show it (#581)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    // The owner starts a club with a table open.
+    const {page: owner} = await browserWith(browser, watch);
+    await owner.goto(`/manage.html?relay=${url}#clubs`);
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('[data-cl="wiz-skip"]').click();
+    await owner.locator('[data-cl="wiz-onward"]').click();
+    await owner.locator('form[data-tableform] button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+
+    // Ava and Bo share their location, 40 m apart; Cy doesn't.
+    const AT = {latitude: 30.2672, longitude: -97.7431, accuracy: 15};
+    const join = async (name, geo) => {
+      // In Austin's time zone: a clock that doesn't fit the place is a sign of a faked location.
+      const context = await browser.newContext({timezoneId: 'America/Chicago', ...(geo ? {permissions: ['geolocation'], geolocation: geo} : {})});
+      const page = watch(await context.newPage());
+      await authenticator(page);
+      await page.goto(invite);
+      await page.locator('form[data-joinform] input[name="name"]').fill(name);
+      await page.locator('form[data-joinform] button[type="submit"]').click();
+      await page.locator('[data-cl="pass-enrol"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="approve"]').first().click();
+      await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+      await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+      await page.locator(`[data-ask-amt="${code}"]`).fill('200');
+      await page.locator('[data-cl="ask"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="grant"]').first().click();
+      await expect(page.getByText('Balance 200')).toBeVisible();
+      await page.locator('[data-cl="sit-open"]').first().click();
+      await page.locator('form[data-sitform] button[type="submit"]').click();
+      await expect(page.locator('.pl-felt')).toBeVisible();
+      return page;
+    };
+    const ava = await join('Ava', AT);
+    const bo = await join('Bo', {...AT, latitude: AT.latitude + 0.0003, longitude: AT.longitude + 0.0002});
+    const cy = await join('Cy', null);
+    const players = [ava, bo, cy];
+    // Plays everyone's turns (check or call) until `ok()`.
+    const playUntil = async ok => {
+      for (let i = 0; i < 240 && !(await ok()); i++) {
+        for (const p of players) {
+          const act = p.locator('[data-act="check"], [data-act="call"]').first();
+          if (await act.isVisible()) await act.click().catch(() => {});
+        }
+        await ava.waitForTimeout(250);
+      }
+    };
+    // Someone who sits mid-hand is dealt in from the next one.
+    await playUntil(async () => (await cy.locator('.pl-seat.hero').count()) > 0);
+
+    // Each seat's flags, as each of them sees the table.
+    const flagOf = (page, name) => page.locator('.pl-seat', {has: page.locator('.pl-plate b', {hasText: name})}).locator('.pl-flag');
+    for (const page of [ava, bo, cy]) {
+      await expect(flagOf(page, 'Ava')).toHaveText('within 100 m');
+      await expect(flagOf(page, 'Bo')).toHaveText('within 100 m');
+      await expect(flagOf(page, 'Cy')).toHaveText('location not shared');
+    }
+    // Never a place: no coordinates anywhere on the page.
+    expect(await ava.locator('#app, body').first().innerText()).not.toMatch(/30\.26|97\.74/);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('seat-flags.png'), fullPage: true});
+
+    // A hand with all three played out: the owner's hands show who was flagged.
+    const handNo = async () => Number((await cy.locator('.pl-meta', {hasText: /· hand \d+ ·/}).first().innerText().catch(() => '')).match(/hand (\d+)/)?.[1] || 0);
+    const start = await handNo();
+    await playUntil(async () => (await handNo()) > start);
+    await owner.evaluate(() => { location.hash = 'clubs/history'; });
+    await owner.locator('[data-cl="hands"]').first().click();
+    const flagged = owner.locator('.cl-handflags', {hasText: 'Cy'}).first();
+    await expect(flagged).toContainText(/(Ava and Bo|Bo and Ava): within 100 m/);
+    await expect(flagged).toContainText('Cy: location not shared');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('owner-hand-flags.png'), fullPage: true});
+  });
 });
 
 // Two hands in a member's history, made in the page as a club table makes

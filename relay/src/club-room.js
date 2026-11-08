@@ -26,6 +26,9 @@
 //   fairPlayDue          when the first hand not yet checked was played
 //   conns, connSalt      each player's last few connections, hashed with
 //                        the club's salt (#582): only for the full records
+// Players' locations (#581) are never stored: the latest reading of each
+// connected player is held in memory only (proximity.js), and only the
+// flags from it are kept, in the hand records.
 
 import { checkSignature, createIdentity, exportIdentity, importIdentity, signMessage, Verifier } from '../../src/identity.js';
 import { newClub } from '../../src/club.js';
@@ -36,6 +39,7 @@ import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
 import { checkClub, SCHEDULE } from './collusion.js';
+import { ipNetwork, liveOf, readingOf, tableSignals, takeReading, trustOf } from './proximity.js';
 import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
 // Hands kept for the owner's history (#125); about 1–2 KB each.
@@ -71,16 +75,19 @@ export function clientKind(ua) {
 }
 
 // What's kept of a connection the relay saw (`conn`: {ip, ua, asn, asOrg,
-// country, region, city, timezone}, worker.js connOf), at `now`: the IP and
+// country, region, city, timezone, trust}, worker.js connOf), at `now`: the
+// IP, its network (ipNetwork: a home's devices share it on IPv6) and the
 // user agent hashed with the club's own salt (the same player or device
 // shows as the same value at this club only), Cloudflare's network and
-// place for it, and the client's kind.
+// place for it, the client's kind, and its trust level (#581, #583:
+// 'website' for now).
 export async function connSnapshot(conn, salt, now = Date.now()) {
   const c = conn || {};
   const str = v => (v == null || v === '' ? null : String(v).slice(0, 80));
   return {
     since: now, until: null,
-    ip: await hashed(salt, str(c.ip)), ua: await hashed(salt, str(c.ua)),
+    ip: await hashed(salt, str(c.ip)), ipNet: await hashed(salt, str(ipNetwork(c.ip))), ua: await hashed(salt, str(c.ua)),
+    trust: trustOf(c.trust),
     asn: Number.isFinite(Number(c.asn)) && c.asn !== '' && c.asn != null ? Number(c.asn) : null, asOrg: str(c.asOrg),
     country: str(c.country), region: str(c.region), city: str(c.city), timezone: str(c.timezone),
     client: clientKind(c.ua),
@@ -243,7 +250,9 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // resolves to the club's new record.
 // `onOwnerMoved(from, to)`: the relay vouched the owner onto a new player
 // ID (vouchedMove); the caller updates the registry's record.
-export async function openClub({storage, send, online = [], ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
+// `openConns`: {id: conn} for those in `online`, their connections as the
+// relay saw them (worker.js connOf), for the seat and location signals.
+export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -282,6 +291,10 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
   // it (no hidden cards), under its own key, with an index of {key, at}.
   // Kept for the club's days, and at most MAX_HANDS.
   async function storeHand(rec, {days}) {
+    // The seat and location flags at its table as it finished (#581), for
+    // the owner: who and which flag, never where.
+    const flags = signalsAmong((rec.seats || []).filter(s => s.inHand !== false).map(s => s.id).filter(Boolean)).flags;
+    if (flags.length) rec = {...rec, flags};
     const key = `hand:${String(rec.at || Date.now()).padStart(15, '0')}:${Math.random().toString(36).slice(2, 8)}`;
     const index = (await storage.get('hands')) || [];
     index.push({key, at: rec.at || Date.now()});
@@ -356,20 +369,60 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     later(() => storage.put('connSalt', salt));
   }
   const saveConns = () => later(() => storage.put('conns', structuredClone(conns)));
-  async function noteConn(id, conn) {
+  // `resumed`: a connection already noted, open while the room slept: only
+  // its live state (below) is made again.
+  async function noteConn(id, conn, resumed = false) {
     if (typeof id !== 'string' || !conn || typeof conn !== 'object') return;
     const list = conns[id] || [];
     const now = Date.now();
+    const snap = await connSnapshot(conn, salt, now);
+    live.set(id, liveOf(snap, conn));
+    if (resumed) return;
     for (const c of list) if (c.until == null) c.until = now;
-    list.push(await connSnapshot(conn, salt, now));
+    list.push(snap);
     conns[id] = list.slice(-CONNS_KEPT);
     saveConns();
   }
   function noteClosed(id) {
+    const tid = tableOf(id);
+    if (live.delete(id) && tid) refreshFlags(tid);
     const open = conns[id]?.filter(c => c.until == null);
     if (!open?.length) return;
     for (const c of open) c.until = Date.now();
     saveConns();
+  }
+  // Seat and location signals (#581, proximity.js): each connected
+  // player's live state, their latest location reading among it, in memory
+  // only and dropped when they leave. Nothing about a location is stored;
+  // the flags from it go to the seats at their table, the hand records,
+  // and from those the fair play check.
+  const live = new Map();
+  const flagsSent = new Map(); // table id → the seats' flags last sent, as JSON
+  const signalsAmong = ids => tableSignals(ids.map(id => ({id, live: live.get(id) || null})));
+  // A reading from player `id` (their page sends one when they sit down,
+  // then as it changes and every minute).
+  function onLocation(id, m) {
+    const r = readingOf(m);
+    if (!r || typeof id !== 'string') return;
+    if (!live.has(id)) live.set(id, liveOf());
+    takeReading(live.get(id), r);
+    const tid = tableOf(id);
+    if (tid) refreshFlags(tid, id);
+  }
+  const tableOf = id => club.members[id]?.seat?.table || (club.tables || []).find(t => (server.seatsAt?.(t.id) || []).some(s => s.id === id))?.id || null;
+  // Table `tid`'s seats' flags ({seat: [kind]}, by the engine's seat
+  // numbers) to everyone seated there when they've changed, and to `also`
+  // in any case (they've just sat down, or come back).
+  function refreshFlags(tid, also = null) {
+    const seats = server.seatsAt?.(tid) || [];
+    const sig = signalsAmong(seats.map(s => s.id));
+    const bySeat = Object.fromEntries(seats.filter(s => sig.seats[s.id]).map(s => [s.seat, sig.seats[s.id]]));
+    const json = JSON.stringify(bySeat);
+    const changed = flagsSent.get(tid) !== json;
+    flagsSent.set(tid, json);
+    for (const s of seats) {
+      if ((changed || s.id === also) && server.online.has(s.id)) server.sendTable(s.id, {table: tid, update: {type: 'seat_flags', seats: bySeat}});
+    }
   }
   // When each player was last heard from, for the admin page's People
   // (#401) and the owner's Members (#426): saved at most once a minute
@@ -386,7 +439,11 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
       const start = hand.timing?.start;
       const ids = (hand.players || []).map(p => p.client_id).filter(Boolean);
       const at = Object.fromEntries(ids.map(id => [id, connAt(conns[id], start)]).filter(([, c]) => c));
-      return later(() => keepFullHand(storage, fullRecord({...hand, conns: at}), opts)).then(handKept);
+      // Seat and location flags (#581) as the hand finished; and the
+      // table's seats get theirs again, in case someone sat or left.
+      const prox = signalsAmong(ids).flags;
+      if (hand.table) refreshFlags(hand.table);
+      return later(() => keepFullHand(storage, fullRecord({...hand, conns: at, prox}), opts)).then(handKept);
     },
     checks: () => fairPlay,
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
@@ -436,10 +493,12 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
   server.message = async msg => {
     noteSeen(msg?.from);
     if (msg && 'conn' in msg) {
-      const {conn, ...rest} = msg;
+      const {conn, resumed, ...rest} = msg;
       msg = rest;
-      if (msg.event === 'open') await noteConn(msg.from, conn);
+      if (msg.event === 'open') await noteConn(msg.from, conn, !!resumed);
     }
+    // A location reading (#581): for this file alone, never the club's.
+    if (msg?.data?.type === 'location') { onLocation(msg.from, msg.data); return; }
     if (msg?.event === 'close') noteClosed(msg.from);
     if (msg?.event === 'open' && handoff) send(msg.from, handoff);
     if (msg?.data?.body?.type === 'host_moved') {
@@ -453,7 +512,9 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     return message(msg);
   };
   await server.relayOpen();
-  for (const id of online) await server.message({from: id, event: 'open'});
+  // `openConns`: those connections as the relay saw them, so their live
+  // state (#581) comes back after the room slept.
+  for (const id of online) await server.message({from: id, event: 'open', ...(openConns[id] ? {conn: openConns[id], resumed: true} : {})});
   server.flush = () => saving;
   // The collusion check now (tests; the room runs it on its own), and the
   // one left due when the room last stopped.

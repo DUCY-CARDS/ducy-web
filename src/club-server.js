@@ -837,5 +837,9 @@ export function createClubServer({
     limits: () => limits,
     // Something only the owner's view shows changed (the fair play report).
     ownerChanged: () => sendOwnerView(),
+    // Who sits where at cash table `tid` ([{seat, id}]), and a table update
+    // for member `to`, encrypted to them: the relay's seat flags (#581).
+    seatsAt: tid => tableHost?.seatsOf(tid) || [],
+    sendTable: sendSealed,
   };
 }

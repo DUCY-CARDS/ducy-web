@@ -21,9 +21,40 @@ export function flagText(f, names = {}) {
     case 'dumps': return `${a} lost big pots to ${b} with weak hands: ${n(w.k)} of ${n(w.n)}, against ${n(e.k)} of ${n(e.n)} to others`;
     case 'chips': return `${a} lost ${chipText(f.chips)} to ${b} (${n(f.bb)} big blinds)`;
     case 'contest': return `${a} and ${b} rarely play a pot together: ${n(w.k)} in ${n(w.n)} hands, about ${n(f.expected)} expected`;
-    // Seat and location flags (#581) bring their own words.
+    // Seat and location flags (#581, relay/src/proximity.js).
+    case 'near': return `${a} and ${b} were within 100 m of each other: ${n(w.k)} of ${n(w.n)} hands together`;
+    case 'network': return `${a} and ${b} played on the same network: ${n(w.k)} of ${n(w.n)} hands together`;
+    case 'vpn': return `${a} played through a VPN or hosting network: ${n(w.k)} of ${n(w.n)} hands`;
+    case 'fake': return `${a}’s location may be faked${f.why?.length ? ` (${f.why.map(x => FAKE_WHY[x] || x).join(', ')})` : ''}: ${n(w.k)} of ${n(w.n)} hands`;
     default: return f.text || f.kind;
   }
+}
+
+// Why a location may be faked (proximity.js takeReading).
+const FAKE_WHY = {far: 'far from their network', timezone: 'time zone doesn’t match', accuracy: 'unnatural accuracy', jump: 'impossible jump'};
+
+// The seat flags' words (#581), as the table and the hand records show them.
+export const SEAT_FLAGS = {near: 'within 100 m', network: 'same network', vpn: 'VPN', fake: 'location may be faked', hidden: 'location not shared'};
+const ORDER = Object.keys(SEAT_FLAGS);
+
+// A seat's flags in a line: "within 100 m · VPN". `kinds`: the relay's.
+export function seatFlagsText(kinds) {
+  if (!Array.isArray(kinds)) return '';
+  return [...new Set(kinds)].filter(k => SEAT_FLAGS[k]).sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y)).map(k => SEAT_FLAGS[k]).join(' · ');
+}
+
+// A kept hand's seat flags (`rec.flags`, [{kind, ids}]) by name, for the
+// owner's records: "Ava and Bo: within 100 m; Cy: VPN"; '' for none.
+export function handFlagsText(rec) {
+  const names = Object.fromEntries((rec?.seats || []).filter(s => s.id).map(s => [s.id, s.name || 'Someone']));
+  const by = new Map();
+  for (const f of rec?.flags || []) {
+    if (!SEAT_FLAGS[f?.kind] || !Array.isArray(f.ids)) continue;
+    const who = f.ids.map(id => names[id] || 'Someone').join(' and ');
+    if (!by.has(who)) by.set(who, []);
+    by.get(who).push(f.kind);
+  }
+  return [...by].map(([who, kinds]) => `${who}: ${seatFlagsText(kinds)}`).join('; ');
 }
 
 // Who an entry is about: "Ava and Bo" for a pair, "Ava" for one player.

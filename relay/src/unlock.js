@@ -36,6 +36,12 @@ export function gate(m, u, now = Date.now()) {
   return '';
 }
 
+// Whether a connection with unlock `u` is unlocked now, without counting
+// as activity or checking its session again: for a reading the page sends
+// on its own (a location, #581), which mustn't keep an idle connection
+// unlocked. Such a message from a connection that isn't is dropped quietly.
+export const unlockedNow = (u, now = Date.now()) => !!u && now - u.seen <= IDLE_MS && now - u.checked <= RECHECK_MS;
+
 // Runs the gate for message `m` from player `id`: `u` is the connection's
 // unlock, `session(token)` the relay's check ({id, at, movedFrom} or null).
 // Resolves to {pass, u (the unlock to keep, or null), reply (to send back,
