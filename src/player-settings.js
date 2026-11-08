@@ -16,7 +16,9 @@ import { openBackup } from './club-backup.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
 import { cycleTablePref, setTableAvatar, setTableName, tableAvatar, tableName, tablePrefs } from './play.js';
 import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
-import { keepHands, memberName, renameMember, setKeepHands, hasClubs } from './clubs.js';
+import { keepHands, memberName, recoverWithPasskey, renameMember, setKeepHands, hasClubs } from './clubs.js';
+import { enrol, exportable, fresh, list, prepare, remove, session, status, supported, unlock } from './passkey.js';
+import { demo } from './demo.js';
 import { SPADE_PATH, hubData } from './home.js';
 
 const NOTIFY_KEY = 'ducyNotify';
@@ -54,6 +56,61 @@ export async function openPlayerSettings() {
   try { me = await loadIdentity(); } catch { note = 'This browser can’t keep a player ID (private mode or storage blocked).'; }
   render();
   el.querySelector('[data-ps=close]')?.focus();
+  // Passkeys (#575): a challenge ready for a prompt, and this account's.
+  pkList = null;
+  pkEnrolled = false;
+  if (me && supported() && relayUrl()) {
+    prepare().catch(() => {});
+    // Drawn again only when there's something to add (a redraw would lose a
+    // file being chosen).
+    status(me.id).then(st => { if (!st.enrolled) return; pkEnrolled = true; if (session(me.id)) return showKeys(); render(); }).catch(() => {});
+  }
+}
+
+// ---- passkeys (#575) ----
+
+let pkList = null, pkEnrolled = false, pkBusy = false;
+
+async function showKeys() {
+  pkList = await list(me.id);
+  render();
+}
+
+// A passkey action: 'recover' (sign in with one: the account comes back),
+// 'show' (unlock to see this account's), 'add' (another device's),
+// 'remove' (`id`, a lost device's).
+async function passkeyAct(act, id) {
+  if (pkBusy || !me) return;
+  pkBusy = true;
+  note = '';
+  render();
+  try {
+    if (act === 'recover') {
+      note = 'Signing in…';
+      render();
+      await recoverWithPasskey();
+      note = 'Signed in.';
+    } else if (act === 'show') {
+      await unlock(me);
+      await showKeys();
+    } else if (act === 'add') {
+      if (!fresh(me.id)) await unlock(me);
+      await enrol(me, myName());
+      await showKeys();
+      note = 'Passkey added.';
+    } else if (act === 'remove') {
+      const c = pkList?.find(x => x.credId === id);
+      if (!confirm(`Remove the passkey on ${c?.name || 'that device'}? It can’t unlock your clubs after this.`)) return;
+      await remove(me, id);
+      await showKeys();
+      note = 'Passkey removed.';
+    }
+  } catch (e) {
+    note = e.message;
+  } finally {
+    pkBusy = false;
+    render();
+  }
 }
 
 // Restoring from a backup file chosen elsewhere (the Create a club card,
@@ -119,6 +176,18 @@ function render() {
   h += '<div class="ps-row"><span>Restore from a backup</span><label class="ps-val">Choose file<input type="file" data-ps="file" accept=".json,application/json" hidden></label></div>';
   // Phishing (#436): a page elsewhere asking for the file and its password.
   h += `<p class="ps-hint">${RESTORE_WARNING}</p>`;
+  // Passkeys (#575): bring an account back with one; and, once unlocked,
+  // this account's, each removable (a lost device).
+  if (supported() && !pkEnrolled) h += `<div class="ps-row"><span>Restore with a passkey</span><button type="button" class="ps-val" data-ps="pk-recover"${pkBusy ? ' disabled' : ''}>Sign in</button></div>`;
+  if (pkList) {
+    h += '<div class="ps-row"><span>Passkeys</span><button type="button" class="ps-val" data-ps="pk-add"' + (pkBusy ? ' disabled' : '') + '>Add</button></div><ul class="ps-keys">';
+    for (const c of pkList) {
+      h += `<li><span>${esc(c.name)}${c.current ? ' <span class="pl-meta">(this one)</span>' : ''}<span class="pl-meta"> · added ${esc(new Date(c.at).toLocaleDateString())}</span></span>`;
+      if (pkList.length > 1) h += `<button type="button" class="link-btn" data-ps="pk-remove" data-id="${esc(c.credId)}"${pkBusy ? ' disabled' : ''}>Remove</button>`;
+      h += '</li>';
+    }
+    h += '</ul>';
+  } else if (pkEnrolled) h += `<div class="ps-row"><span>Passkeys</span><button type="button" class="ps-val" data-ps="pk-show"${pkBusy ? ' disabled' : ''}>Unlock</button></div>`;
   // Notifications (#145): only if this browser has them.
   if ('Notification' in window) {
     const denied = Notification.permission === 'denied';
@@ -153,6 +222,7 @@ async function onClick(e) {
   else if (a === 'avatar') { setTableAvatar(b.dataset.id); render(); el.querySelector('.ps-av.on')?.focus(); }
   else if (a === 'pick') { pickAvatar = !pickAvatar; render(); }
   else if (a.startsWith('pref-')) { cycleTablePref(a.slice(5)); render(); }
+  else if (a.startsWith('pk-')) passkeyAct(a.slice(3), b.dataset.id);
   else if (a === 'fourcolor') {
     window.dispatchEvent(new CustomEvent('ducy-setting', {detail: {key: 'fourColor', value: !fourColor()}}));
     render();
@@ -221,7 +291,10 @@ export const BACKUP_SAVED = 'Backup saved, locked with your password. Keep the f
 export async function saveBackup(ident, f) {
   const pw = f.elements.pw.value;
   if (pw !== f.elements.pw2.value) throw new Error('The passwords don’t match.');
-  downloadFile(await exportLockedIdentity(ident, pw), `ducy-identity-${showId(ident.id)}.json`);
+  // With a passkey, exporting the key needs a recent unlock (#575), and a
+  // key this browser keeps unexportable comes from its copy.
+  const key = demo ? ident : await exportable(ident);
+  downloadFile(await exportLockedIdentity(key, pw), `ducy-identity-${showId(ident.id)}.json`);
   markBackedUp(ident.id);
   window.dispatchEvent(new CustomEvent('ducy-backed-up', {detail: {id: ident.id}}));
 }

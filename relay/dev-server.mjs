@@ -11,6 +11,9 @@ import { adminApi, adminsFrom } from './src/admin.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
+import { passkeys } from './src/passkeys.js';
+import { check as unlockCheck } from './src/unlock.js';
+import { mustProve, newChallenge, proves } from './src/prove.js';
 import { initSync } from '../wasm/ducy_wasm.js';
 
 // The engine (#93), from the site's wasm build (../wasm, as the Worker
@@ -78,6 +81,15 @@ function inRoom(room, fn) {
 // CLUB_CREATORS).
 const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
 
+// Passkeys (#575), in memory: pages on ALLOWED_ORIGINS, else local ones.
+const pk = passkeys(storageOf({store: new Map()}), {origins: String(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)});
+
+// The club in `room` as passkeys.js remembers it for player `id`'s recovery.
+const clubFor = (room, id) => {
+  const c = room.store.get('club');
+  return c ? {code: c.code, hostId: c.hostId, name: c.name, owner: c.ownerId === id} : null;
+};
+
 // Backups (#97), as in the Worker, when BACKUP_URL, BACKUP_SECRET and
 // BACKUP_KEY are set in the environment.
 const backups = backupConfig(process.env);
@@ -111,6 +123,8 @@ async function clubOf(room, code) {
     onSaved: () => scheduleBackup(room, code),
     // A backup proved (#395): recorded in the registry, signed for by the owner.
     onProved: owner => reg.proved(code, owner),
+    // The relay vouched the owner onto a new player ID (#575).
+    onOwnerMoved: (from, to) => reg.moveOwner(code, from, to),
     // Deleted by its owner: an ordinary room again; members are let go.
     onDeleted: async () => {
       room.club = null;
@@ -241,6 +255,20 @@ const http = createServer(async (req, res) => {
   }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
   if (svc) return service(req, res, decodeURIComponent(svc[1]));
+  // Passkeys (#575), as in the Worker.
+  const pko = url.pathname.match(/^\/passkey\/([a-z]+)$/);
+  if (pko) {
+    const head = {'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST'};
+    if (req.method === 'OPTIONS') { res.writeHead(204, head); res.end(); return; }
+    let raw = '';
+    for await (const chunk of req) { raw += chunk; if (raw.length > 32 * 1024) break; }
+    let body = null;
+    try { body = JSON.parse(raw); } catch {}
+    const out = req.method === 'POST' ? await pk.http(pko[1], body) : {status: 405, body: {error: 'POST'}};
+    res.writeHead(out.status, head);
+    res.end(JSON.stringify(out.body));
+    return;
+  }
   if (req.url !== '/usage') { res.writeHead(404); res.end('ducy relay'); return; }
   res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': '*'});
   res.end(JSON.stringify(await reg.usage()));
@@ -296,15 +324,40 @@ wss.on('connection', (ws, req) => {
       reg.status(code).then(st => {
         ws.off('message', hold);
         if (st.blocked && id !== st.record?.owner) return ws.close(4003, st.blocked.slice(0, 120));
-        guest(ws, room, code, id, queue, isClub, held);
+        proveFirst(ws, code, id, held, () => guest(ws, room, code, id, queue, isClub, []));
       });
       return;
     }
-    guest(ws, room, code, id, queue, isClub, []);
+    if (mustProve({queue, club: isClub})) proveFirst(ws, code, id, [], () => guest(ws, room, code, id, queue, isClub, []));
+    else guest(ws, room, code, id, queue, isClub, []);
   } else {
     ws.close(4000, 'bad role');
   }
 });
+
+// A club connection proves it holds its player's key before it counts
+// (#577, prove.js): `then()` once it has. Meanwhile it replaces no one;
+// only heartbeats are answered. `held`: messages it sent before this.
+function proveFirst(ws, code, id, held, then) {
+  const challenge = newChallenge();
+  let done = false;
+  const onMsg = async data => {
+    if (done) return;
+    const pong = pingReply(String(data));
+    if (pong) return ws.send(pong);
+    let m;
+    try { m = JSON.parse(data); } catch { return; }
+    if (m?.type !== 'prove') return;
+    if (!(await proves(m, {id, code, challenge}))) return ws.close(4000, 'not proven');
+    done = true;
+    ws.off('message', onMsg);
+    send(ws, {type: 'proven'});
+    then();
+  };
+  ws.on('message', onMsg);
+  send(ws, {type: 'prove', challenge});
+  for (const d of held) onMsg(d);
+}
 
 // A guest's connection, accepted: `held`, any messages it sent meanwhile.
 function guest(ws, room, code, id, queue, isClub, held) {
@@ -337,11 +390,19 @@ function guest(ws, room, code, id, queue, isClub, held) {
       if (data.length > MAX_MESSAGE && !String(data).includes('"import_club"')) return;
       // An always-on club runs here, or someone asks to make this room one,
       // or to move their club here.
-      if (room.store.has('club') || String(data).includes('"create_club"') || String(data).includes('"import_club"')) {
+      if (room.store.has('club') || String(data).includes('"create_club"') || String(data).includes('"import_club"') || String(data).startsWith('{"type":"unlock"')) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
         inRoom(room, async () => {
+          // Only a connection unlocked with the player's passkey acts (#575).
+          const g = await unlockCheck(msg, ws.unlock, id, token => pk.session(token, clubFor(room, id)));
+          ws.unlock = g.u;
           const club = await clubOf(room, code);
+          // The relay vouched for this player as someone who lost their ID:
+          // moved over before they hear they're unlocked.
+          if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
+          if (g.reply) send(ws, g.reply);
+          if (!g.pass) return;
           if (club) return club.message({from: id, data: msg});
           const type = msg?.body?.type;
           if (type !== 'create_club' && type !== 'import_club') return;

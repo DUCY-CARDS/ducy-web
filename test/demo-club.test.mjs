@@ -367,15 +367,12 @@ test('a real club room refuses the demo’s simulate and bot commands', {skip: !
   const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(port)], {stdio: ['ignore', 'pipe', 'inherit']});
   await new Promise(resolve => server.stdout.once('data', resolve));
   try {
-    const open = id => {
-      const ws = new WebSocket(`ws://localhost:${port}/room/GGGG-GGGG?role=guest&id=${id}&queue=1`);
-      const inbox = [], waiting = [];
-      ws.on('message', d => { const m = JSON.parse(d); waiting.length ? waiting.shift()(m) : inbox.push(m); });
-      const next = async type => { for (;;) { const m = inbox.length ? inbox.shift() : await new Promise(r => waiting.push(r)); if (m.type === type || m.body?.type === type) return m; } };
-      return {ws, next, inbox, ready: new Promise(r => ws.on('open', r)), send: o => ws.send(JSON.stringify(o))};
-    };
+    // Club connections prove the player's ID and are unlocked with a passkey (#575, #577).
+    const { relayClient } = await import('./relay-helper.mjs');
+    const rc = relayClient(port);
+    const open = ident => rc.open(`/room/GGGG-GGGG?role=guest&id=${ident.id}&queue=1`, ident);
     const owner = await createIdentity(), ann = await createIdentity();
-    const o = open(owner.id);
+    const o = open(owner);
     await o.ready;
     o.send(await signMessage(owner, {type: 'create_club', club: 'GGGG-GGGG', name: 'Real Club'}));
     const made = await o.next('club_created');
@@ -387,7 +384,7 @@ test('a real club room refuses the demo’s simulate and bot commands', {skip: !
       assert.match((await o.next('owner_result')).body.error, /no host action/, op);
     }
     // A member's request for any of it is no message the club knows.
-    const a = open(ann.id);
+    const a = open(ann);
     await a.ready;
     a.send(await signMessage(ann, {club: 'GGGG-GGGG', type: 'join', invite: made.invite, name: 'Ann'}));
     assert.equal((await a.next('status')).body.status, 'pending');

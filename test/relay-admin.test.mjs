@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
+import { relayClient } from './relay-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { adminFetch, postAdmin, signAdmin, testAdmin } from './admin-helper.mjs';
 
@@ -23,23 +24,12 @@ const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-serv
 await new Promise(resolve => server.stdout.once('data', resolve));
 test.after(() => server.kill());
 
-function open(path) {
-  const ws = new WebSocket(`ws://localhost:${PORT}${path}`);
-  const inbox = [], waiting = [];
-  ws.on('message', d => { const m = JSON.parse(d); waiting.length ? waiting.shift()(m) : inbox.push(m); });
-  const closed = new Promise(resolve => ws.on('close', (code, reason) => resolve({code, reason: String(reason)})));
-  async function next(type) {
-    for (;;) {
-      const m = inbox.length ? inbox.shift() : await new Promise(r => waiting.push(r));
-      if (!type || m.type === type || m.body?.type === type) return m;
-    }
-  }
-  return {
-    ws, closed, next,
-    ready: new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); }),
-    send: obj => ws.send(JSON.stringify(obj)),
-  };
-}
+const relay = relayClient(PORT);
+// `closed` here resolves to {code, reason}.
+const open = (path, ident = null, opts) => {
+  const c = relay.open(path, ident, opts);
+  return {...c, closed: c.closedWith};
+};
 
 const api = adminFetch(PORT, ADMIN.ident);
 // A club change (#401: /admin/club/<code>/set).
@@ -47,7 +37,7 @@ const setClub = (code, change) => api(`/admin/club/${code}/set`, change);
 
 // `who` asks for an always-on club in room `code`: the reply.
 async function create(who, code, name) {
-  const c = open(`/room/${code}?role=guest&id=${who.id}&queue=1`);
+  const c = open(`/room/${code}?role=guest&id=${who.id}&queue=1`, who);
   await c.ready;
   c.send(await signMessage(who, {type: 'create_club', club: code, name}));
   for (;;) {
@@ -104,7 +94,7 @@ test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm
   assert.equal(look.full.tables.filter(t => t.status !== 'closed').length, 3);
 
   // Bob joins and is let in; he says something in the lobby (#401).
-  const b = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`);
+  const b = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`, bob);
   await b.ready;
   b.send(await signMessage(bob, {club: 'TTTT-TTTT', type: 'join', invite: made.invite, name: 'Bob'}));
   await b.next('status');
@@ -144,14 +134,14 @@ test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm
   const gone = await b.closed;
   assert.equal(gone.code, 4003);
   assert.match(gone.reason, /paused/);
-  const again = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`);
+  const again = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`, bob);
   assert.equal((await again.closed).code, 4003);
   // The owner still gets in, to see why.
-  const o2 = open(`/room/TTTT-TTTT?role=guest&id=${ann.id}&queue=1`);
+  const o2 = open(`/room/TTTT-TTTT?role=guest&id=${ann.id}&queue=1`, ann);
   await o2.ready;
   o2.ws.close();
   await setClub('TTTT-TTTT', {suspended: false});
-  const back = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`);
+  const back = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`, bob);
   await back.ready;
   back.ws.close();
 

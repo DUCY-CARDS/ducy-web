@@ -241,7 +241,9 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // `onProved(owner)`: the owner proved a backup works (#395, the
 // backup_proved action); the caller records it in the registry and
 // resolves to the club's new record.
-export async function openClub({storage, send, online = [], ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, timers = null, record = null}) {
+// `onOwnerMoved(from, to)`: the relay vouched the owner onto a new player
+// ID (vouchedMove); the caller updates the registry's record.
+export async function openClub({storage, send, online = [], ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -457,5 +459,22 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
   // one left due when the room last stopped.
   server.checkFairPlay = checkFairPlay;
   if (due != null) scheduleCheck(Math.min(Date.now() + SCHEDULE.QUIET_MS, due + SCHEDULE.EVERY_MS));
+  // The relay vouched (#575, passkeys.js): player `to` signed in with the
+  // passkey of `from`, who lost their player ID, on a device without a
+  // copy of it. Their place in the club moves to `to` (move_member), the
+  // owner's too. Resolves to whether it moved.
+  server.vouchedMove = async (from, to) => {
+    const m = club.members[from];
+    const owner = club.ownerId === from;
+    if (!owner && !(m && (m.status === 'member' || m.status === 'pending'))) return false;
+    try {
+      await server.run('move_member', {id: from, to, vouched: true});
+    } catch (e) {
+      console.warn('club: not moved:', e.message);
+      return false;
+    }
+    if (owner) await onOwnerMoved(from, to);
+    return true;
+  };
   return server;
 }

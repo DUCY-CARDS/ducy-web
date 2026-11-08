@@ -30,9 +30,15 @@ function save(v) {
   return (v ? putTable(...DB_KEY, v) : dropTable(...DB_KEY)).catch(e => console.warn('club: owner record not saved:', e));
 }
 
-export function createOwner({identity, onChange = () => {}, onNote = () => {}}) {
+// `gated` (#575, #577): the relay asks this page to prove the player's ID,
+// then to unlock the connection with a passkey session (`session()`, its
+// token, or '' for none yet). Until it's unlocked nothing is sent to the
+// club. onPass(kind) hears the relay's word: 'unlocked', 'locked' (unlock
+// with the passkey) or 'unlock_again' (a chip command needs a fresh one).
+export function createOwner({identity, onChange = () => {}, onNote = () => {}, gated = false, session = () => '', onPass = () => {}}) {
   let rec = load();
   let net = null, online = false, view = null;
+  let unlocked = !gated, unlockWaits = [];
   let creating = null; // {name, resolve, reject} while asking a room to become the club
   const verifier = new Verifier();
   const waiting = new Map(); // command id → {resolve, reject, timer}
@@ -45,18 +51,51 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
 
   const sendSigned = async body => net?.send(await signMessage(identity, {club: rec?.code || creating?.code, ...body}));
 
+  // The connection is ready for the club: what this page came to do.
+  async function greet(code) {
+    if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code, key: (await keys).pub}));
+    else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
+    else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
+    else await sendSigned({type: 'owner_hello', key: (await keys).pub});
+    onChange();
+  }
+
   function connectTo(code) {
     net?.close();
+    unlocked = !gated;
     net = connect(code, 'guest', identity.id, {
       async onOpen() {
         online = true;
-        if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code, key: (await keys).pub}));
-        else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
-        else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
-        else await sendSigned({type: 'owner_hello', key: (await keys).pub});
+        if (!gated) return greet(code);
+        unlocked = false;
+        const token = session();
+        if (token) net.send({type: 'unlock', token});
+        else onPass('locked');
         onChange();
       },
-      onMessage: m => receive(m).catch(e => console.warn(e)),
+      onMessage: m => {
+        // The passkey unlock (#575).
+        if (gated && m?.type === 'unlocked') {
+          unlocked = true;
+          for (const f of unlockWaits.splice(0)) f.resolve(true);
+          onPass('unlocked');
+          greet(code).catch(e => console.warn(e));
+          return;
+        }
+        if (gated && m?.type === 'locked') {
+          unlocked = false;
+          for (const f of unlockWaits.splice(0)) f.resolve(false);
+          onPass('locked');
+          return;
+        }
+        if (gated && m?.type === 'unlock_again') {
+          // A chip command was dropped: the one waiting for it says why.
+          for (const [id, w] of waiting) { clearTimeout(w.timer); w.reject(new Error('Unlock with your passkey again to move chips.')); waiting.delete(id); }
+          onPass('unlock_again');
+          return;
+        }
+        receive(m).catch(e => console.warn(e));
+      },
       onStatus(s) { online = !s; onChange(); },
       onFail(reason) {
         net = null;
@@ -66,7 +105,7 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
         onNote(reason);
         onChange();
       },
-    }, {queue: true, persistent: true});
+    }, {queue: true, persistent: true, ...(gated ? {prove: challenge => signMessage(identity, {type: 'prove', room: code, challenge})} : {})});
   }
 
   async function receive(m) {
@@ -196,8 +235,21 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}}) 
         connectTo(club.code);
       });
     },
+    // Unlocks the connection with passkey session `token` (#575). Resolves
+    // to whether the relay took it.
+    unlock(token) {
+      if (!net || !gated) return Promise.resolve(true);
+      return new Promise(resolve => {
+        const w = {resolve};
+        unlockWaits.push(w);
+        setTimeout(() => { const i = unlockWaits.indexOf(w); if (i >= 0) { unlockWaits.splice(i, 1); resolve(false); } }, 8000);
+        net.send({type: 'unlock', token});
+      });
+    },
+    get unlocked() { return unlocked; },
     run(op, args = {}) {
       if (!net || !online) return Promise.reject(new Error('Not connected to the club right now; try again in a moment.'));
+      if (!unlocked) return Promise.reject(new Error('Unlock with your passkey first.'));
       const id = ++nextId;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => { waiting.delete(id); reject(new Error('The club didn’t answer; try again.')); }, RESULT_MS);

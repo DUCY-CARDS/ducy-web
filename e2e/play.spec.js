@@ -120,10 +120,36 @@ test('a friend joins a hosted game by its code', async ({browser, watch}) => {
   await fitsTheScreen(guest);
 });
 
-test('starting a club without permission is refused, and says who to give ducy', async ({page, watch}) => {
+// A virtual passkey authenticator for `page` (Chromium's, over CDP): built
+// in, with user verification, and with PRF unless `prf` is false. WebKit
+// has none, so the club tests that need a passkey run in Chromium.
+async function authenticator(page, {prf = true} = {}) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('WebAuthn.enable', {enableUI: false});
+  const {authenticatorId} = await cdp.send('WebAuthn.addVirtualAuthenticator', {options: {
+    protocol: 'ctap2', ctap2Version: 'ctap2_1', transport: 'internal', hasResidentKey: true,
+    hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true, hasPrf: prf,
+  }});
+  return {
+    credentials: async () => (await cdp.send('WebAuthn.getCredentials', {authenticatorId})).credentials,
+    // A passkey synced from another device.
+    add: credential => cdp.send('WebAuthn.addCredential', {authenticatorId, credential}),
+    // No passkeys: a prompt then fails, as when it's cancelled. (Chrome's
+    // virtual authenticator keeps failing once user verification has, so
+    // that isn't how.) Passkeys added back have no PRF.
+    clear: () => cdp.send('WebAuthn.clearCredentials', {authenticatorId}),
+  };
+}
+const needsPasskeys = browserName => test.skip(browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
+
+test('starting a club without permission is refused, and says who to give ducy', async ({page, watch, browserName}) => {
+  needsPasskeys(browserName);
+  await authenticator(page);
   await watch(page).goto(`/manage.html?relay=${RELAY}#clubs`);
   await page.locator('#cl-clubname').fill('Night Owls');
   await page.locator('[data-cl="create"]').click();
+  // Clubs need a passkey first (#575).
+  await page.locator('[data-cl="pass-enrol"]').click();
   await expect(page.getByText(/takes permission from ducy/)).toBeVisible();
   await expect(page.locator('code.cl-id')).toBeVisible();
   await fitsTheScreen(page);
@@ -150,29 +176,56 @@ test.describe('a club member', () => {
   });
   test.afterAll(() => relay?.kill());
 
-  test('is asked to back up until they have, and the backup brings them back into the club on another browser (#562)', async ({browser, watch, browserName}, info) => {
-    const open = async () => watch(await (await browser.newContext({acceptDownloads: true})).newPage());
-    // The owner starts a club, skipping its own backup, and copies the invite link.
-    const owner = await open();
+  // A new browser, with a passkey authenticator.
+  const browserWith = async (browser, watch, opts) => {
+    const page = watch(await (await browser.newContext({acceptDownloads: true})).newPage());
+    return {page, auth: await authenticator(page, opts)};
+  };
+  // The owner starts a club (making a passkey first), skipping its own
+  // backup; Ava asks to join (making hers) and is let in, and her club page
+  // opens.
+  async function clubWithAva(browser, watch, info = null) {
+    const {page: owner} = await browserWith(browser, watch);
     await owner.goto(`/manage.html?relay=${url}#clubs`);
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
+    await expect(owner.getByText('Set up a passkey')).toBeVisible();
+    await owner.locator('[data-cl="pass-enrol"]').click();
     await owner.locator('[data-cl="wiz-skip"]').click();
     await owner.locator('[data-cl="wiz-onward"]').click();
     await owner.locator('[data-cl="wiz-invite"]').click();
     const invite = await owner.locator('#cl-link').inputValue();
     expect(invite).toContain('club=');
 
-    // Ava asks to join, and is let in.
-    const ava = await open();
+    const {page: ava, auth} = await browserWith(browser, watch);
     await ava.goto(invite);
     await ava.locator('form[data-joinform] input[name="name"]').fill('Ava');
     await ava.locator('form[data-joinform] button[type="submit"]').click();
+    // Clubs need a passkey (#575): her request goes once she has one.
+    await expect(ava.getByText('Set up a passkey')).toBeVisible();
+    await fitsTheScreen(ava);
+    if (info) await ava.screenshot({path: info.outputPath('enrol.png'), fullPage: true});
+    await ava.locator('[data-cl="pass-enrol"]').click();
     await owner.locator('[data-cl="wiz-done"]').click();
     await owner.evaluate(() => { location.hash = 'clubs/requests'; });
     await owner.locator('[data-cl="approve"]').first().click();
     const code = new URL(invite).searchParams.get('club');
     await ava.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    return {owner, ava, auth, invite, code};
+  }
+  const closeYou = page => page.locator('#pset .cl-replay-head [data-ps=close]').click();
+  const idOf = async page => {
+    await page.locator('[data-pt=player]').first().click();
+    await expect(page.locator('#pset .pl-pid')).not.toHaveText('…');
+    const id = (await page.locator('#pset .pl-pid').innerText()).trim();
+    await closeYou(page);
+    return id;
+  };
+
+  test('is asked to back up until they have, and the backup brings them back into the club on another browser (#562)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, ava, auth, invite, code} = await clubWithAva(browser, watch, info);
 
     // Her club page asks her to back up.
     const card = ava.locator('.cl-backup');
@@ -181,15 +234,13 @@ test.describe('a club member', () => {
     // On an iPhone, outside the Home Screen app, how to keep Safari from clearing it.
     await expect(card.getByText(/Add to Home Screen/)).toHaveCount(info.project.name === 'webkit-phone' ? 1 : 0);
     await fitsTheScreen(ava);
-    // Screenshots in Chromium only: Playwright's WebKit adds a stylesheet to
-    // take one, which the site's CSP refuses, and logs.
-    if (browserName === 'chromium') await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
+    await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
     await card.getByRole('button', {name: 'Download'}).click();
     const pw = 'otter-lantern-quietly-42';
     await card.locator('[name=pw]').fill(pw);
     await card.locator('[name=pw2]').fill(pw);
     await fitsTheScreen(ava);
-    if (browserName === 'chromium') await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
+    await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
     const [download] = await Promise.all([ava.waitForEvent('download'), card.getByRole('button', {name: 'Save backup'}).click()]);
     const file = info.outputPath('ava-backup.json');
     await download.saveAs(file);
@@ -204,9 +255,11 @@ test.describe('a club member', () => {
     await expect(ava.locator('#pset .pl-pid')).not.toHaveText('…');
     const avaId = (await ava.locator('#pset .pl-pid').innerText()).trim();
 
-    // On another browser: restore the file, open the invite link, and she's
-    // in with the same player ID, no new request.
-    const again = await open();
+    // On another browser, where her passkey has synced: restore the file,
+    // open the invite link, unlock, and she's in with the same player ID,
+    // no new request.
+    const {page: again, auth: againAuth} = await browserWith(browser, watch);
+    for (const c of await auth.credentials()) await againAuth.add(c);
     again.on('dialog', d => d.accept());
     await again.goto(`/?relay=${url}#clubs`);
     await again.locator('[data-pt=player]').first().click();
@@ -216,12 +269,10 @@ test.describe('a club member', () => {
     await again.locator('#pset [name=pw]').fill(pw);
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
     await again.waitForEvent('load');
-    // Settled after the reload, so leaving doesn't cut a download short.
-    await expect(again.getByRole('heading', {name: 'Private clubs'})).toBeVisible();
-    await again.waitForLoadState('networkidle');
     await again.goto(invite);
     await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
     await again.locator('form[data-joinform] button[type="submit"]').click();
+    await again.locator('[data-cl="pass-unlock"]').click();
     await again.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
     await expect(again.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
     await expect(again.locator('.cl-backup')).toHaveCount(0);
@@ -229,6 +280,88 @@ test.describe('a club member', () => {
     await expect(again.locator('#pset .pl-pid')).toHaveText(avaId);
     await owner.evaluate(() => { location.hash = 'clubs/requests'; });
     await expect(owner.locator('[data-cl="approve"]')).toHaveCount(0);
+  });
+
+  test('unlocks with a passkey, needs it again for chips, and gets the account back with it (#575)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, ava, auth, code} = await clubWithAva(browser, watch);
+    const avaId = await idOf(ava);
+    const ask = async n => {
+      await ava.locator(`[data-ask-amt="${code}"]`).fill(String(n));
+      await ava.locator('[data-cl="ask"]').click();
+    };
+    // Just unlocked: asking for chips goes straight out; the owner gives them.
+    await ask(50);
+    await expect(ava.getByText(/You asked for 50/)).toBeVisible();
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await owner.locator('[data-cl="grant"]').first().click();
+    await expect(ava.getByText('Balance 50')).toBeVisible();
+
+    // The browser clears ducy's data. Her passkey brings the same account back (PRF).
+    await ava.evaluate(() => new Promise(r => { localStorage.clear(); sessionStorage.clear(); const q = indexedDB.deleteDatabase('ducy'); q.onsuccess = q.onerror = q.onblocked = r; }));
+    await ava.goto(`/?relay=${url}#clubs`);
+    await ava.locator('[data-pt=player]').first().click();
+    await expect(ava.locator('#pset .pl-pid')).not.toHaveText(avaId);
+    await ava.locator('#pset [data-ps="pk-recover"]').click();
+    await ava.waitForEvent('load');
+    await ava.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await expect(ava.getByText('Balance 50')).toBeVisible();
+    expect(await idOf(ava)).toBe(avaId);
+    // The key is unexportable here now, and a backup still works, from the copy.
+    await ava.locator('[data-pt=player]').first().click();
+    await ava.locator('#pset [data-ps="backup"]').click();
+    await ava.locator('#pset [name=pw]').fill('otter-lantern-quietly-42');
+    await ava.locator('#pset [name=pw2]').fill('otter-lantern-quietly-42');
+    const [download] = await Promise.all([ava.waitForEvent('download'), ava.locator('#pset [data-psform="backup"] button[type=submit]').click()]);
+    expect(await download.failure()).toBeNull();
+    // Her passkeys, by device and date.
+    await expect(ava.locator('#pset .ps-keys li')).toHaveCount(1);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('passkeys.png'), fullPage: true});
+    await closeYou(ava);
+
+    // A new visit: locked until the passkey is used. With no passkey to
+    // answer (the prompt cancelled), it stays locked. (Taken out and put
+    // back as they were: its count must be the latest, or the relay takes
+    // it for a copy.)
+    const without = async () => { const c = await auth.credentials(); await auth.clear(); return c; };
+    await ava.evaluate(() => sessionStorage.clear());
+    await ava.reload();
+    await expect(ava.getByText('Unlock your clubs')).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('unlock.png'), fullPage: true});
+    let creds = await without();
+    await ava.locator('[data-cl="pass-unlock"]').click();
+    await expect(ava.getByText('Not unlocked.')).toBeVisible();
+    for (const c of creds) await auth.add(c);
+    await ava.locator('[data-cl="pass-unlock"]').click();
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+
+    // Chips more than 5 minutes after the unlock: the passkey first. Refused, nothing goes.
+    await ava.evaluate(() => { const s = JSON.parse(sessionStorage.ducyPasskey); s.at -= 6 * 60_000; sessionStorage.ducyPasskey = JSON.stringify(s); });
+    creds = await without();
+    await ask(20);
+    await expect(ava.getByText('Not unlocked.')).toBeVisible();
+    await expect(ava.getByText(/You asked for 20/)).toHaveCount(0);
+    for (const c of creds) await auth.add(c);
+    await ask(20);
+    await expect(ava.getByText(/You asked for 20/)).toBeVisible();
+
+    // A device whose passkeys have no PRF: the relay vouches, and the club
+    // moves her onto that device's own player ID, chips and all.
+    const {page: nova, auth: novaAuth} = await browserWith(browser, watch, {prf: false});
+    for (const c of await auth.credentials()) await novaAuth.add(c);
+    await nova.goto(`/?relay=${url}#clubs`);
+    await nova.locator('[data-pt=player]').first().click();
+    await expect(nova.locator('#pset .pl-pid')).not.toHaveText('…');
+    const novaId = (await nova.locator('#pset .pl-pid').innerText()).trim();
+    await nova.locator('#pset [data-ps="pk-recover"]').click();
+    await expect(nova.locator('#pset').getByText('Signed in.')).toBeVisible();
+    await closeYou(nova);
+    await nova.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await expect(nova.getByText('Balance 50')).toBeVisible();
+    expect(novaId).not.toBe(avaId);
+    expect(await idOf(nova)).toBe(novaId);
   });
 });
 
