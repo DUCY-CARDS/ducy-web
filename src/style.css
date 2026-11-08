@@ -2573,6 +2573,13 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .cl-left-net { font: 400 34px var(--font-display); }
 .cl-left .cl-down, .mg-card .cl-down, .cl-sitform .cl-down { color: #b0391f; }
 .cl-left .cl-up { color: #2f7a43; }
+/* Back up your account (#562): a member's club page until they have. */
+.cl-backup .cl-backup-text { margin: 0; font-size: 14px; }
+.cl-backup .pl-idform { margin: 0; }
+.cl-backup .pl-idform .pl-desc, .cl-backup .pl-idform label { color: inherit; }
+.cl-backup .pl-idform .pl-desc { font-size: 14px; margin: 0; }
+.cl-backup .pl-idform label { flex-direction: column; align-items: stretch; gap: 4px; font-weight: 600; }
+.cl-backup .pl-text { width: 100%; font-size: 16px; padding: 8px 10px; background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
 .cl-settled { margin: 0; padding: 10px 14px; border-radius: 12px; background: #2f6b3d; color: #e3f4de; font-weight: 600; }
 .cl-tcard .cl-sitform { flex-basis: 100%; box-shadow: none; padding: 10px 0 0; background: none; color: inherit; }
 .cl-home-chips.owes { background: #c9472f; color: #fff4e8; }

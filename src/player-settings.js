@@ -10,7 +10,7 @@
 // of it uses the restored ID.
 
 import {
-  backupNeedsPassword, exportLockedIdentity, loadIdentity, MIN_NEW_PASSWORD, saveIdentity, showId,
+  backupNeedsPassword, exportLockedIdentity, loadIdentity, markBackedUp, MIN_NEW_PASSWORD, saveIdentity, showId,
 } from './identity.js';
 import { openBackup } from './club-backup.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
@@ -127,11 +127,7 @@ function render() {
   }
   h += '</section></div>';
   if (idForm?.kind === 'backup') {
-    h += '<form class="pl-idform" data-psform="backup">';
-    h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
-    h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
-    h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
-    h += '<div class="pl-actions"><button class="btn-small primary" type="submit">Save backup</button><button class="btn-small" type="button" data-ps="cancel">Cancel</button></div></form>';
+    h += backupFormHtml('data-psform="backup"', 'data-ps="cancel"');
   } else if (idForm?.kind === 'restore') {
     h += '<form class="pl-idform" data-psform="restore">';
     h += `<p class="pl-desc">This backup of player ID ${esc(showId(idForm.id))} is locked. Enter its password.</p>`;
@@ -187,11 +183,8 @@ function onSubmit(e) {
     render();
     return;
   }
-  const pw = f.elements.pw.value;
-  if (f.dataset.psform === 'backup') {
-    if (pw !== f.elements.pw2.value) { note = 'The passwords don’t match.'; render(); return; }
-    backup(pw);
-  } else if (idForm?.kind === 'restore') restore(idForm.text, pw);
+  if (f.dataset.psform === 'backup') backup(f);
+  else if (idForm?.kind === 'restore') restore(idForm.text, f.elements.pw.value);
 }
 
 // Hands the browser `text` as a file to save (JSON unless `type` says).
@@ -210,13 +203,36 @@ export const RESTORE_CLUB_KEY = 'ducyRestoreClub';
 // By every place a backup is restored (#436).
 export const RESTORE_WARNING = 'Only restore your backup on ducy.cards.';
 
-// Saves a backup file locked with `password`.
-async function backup(password) {
+// The backup form (a password, twice), here and on a club member's Back up
+// card (clubs.js, #562): `form` and `cancel` are its and Cancel's attributes.
+export function backupFormHtml(form, cancel) {
+  let h = `<form class="pl-idform" ${form}>`;
+  h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
+  h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
+  h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
+  return h + `<div class="pl-actions"><button class="btn-small primary" type="submit">Save backup</button><button class="btn-small" type="button" ${cancel}>Cancel</button></div></form>`;
+}
+
+export const BACKUP_SAVED = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
+
+// Downloads a backup of `ident` from backup form `f` (backupFormHtml),
+// locked with its password, and records that this ID has one (#562).
+// Throws, in words for the player, why not.
+export async function saveBackup(ident, f) {
+  const pw = f.elements.pw.value;
+  if (pw !== f.elements.pw2.value) throw new Error('The passwords don’t match.');
+  downloadFile(await exportLockedIdentity(ident, pw), `ducy-identity-${showId(ident.id)}.json`);
+  markBackedUp(ident.id);
+  window.dispatchEvent(new CustomEvent('ducy-backed-up', {detail: {id: ident.id}}));
+}
+
+// Saves a backup file from the backup form `f`.
+async function backup(f) {
   if (!me) return;
   try {
-    downloadFile(await exportLockedIdentity(me, password), `ducy-identity-${showId(me.id)}.json`);
+    await saveBackup(me, f);
     idForm = null;
-    note = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
+    note = BACKUP_SAVED;
   } catch (e) {
     note = e.message;
   }
@@ -244,6 +260,8 @@ async function restore(text, password) {
     const {ident, club: c} = await openBackup(text, password);
     if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
     await saveIdentity(ident);
+    // Restored from a backup: this ID has one (#562).
+    markBackedUp(ident.id);
     idForm = null;
     let clubNote = '';
     if (c) {

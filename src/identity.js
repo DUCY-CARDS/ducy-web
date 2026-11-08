@@ -220,6 +220,44 @@ export class Verifier {
   }
 }
 
+// ---- keeping it (#562) ----
+
+// Which player IDs this browser has saved a backup of (or restored from
+// one), so a club member is asked to back up only until they have.
+const BACKED_UP_KEY = 'ducyBackedUp';
+const backedUpIds = store => { try { const v = JSON.parse(store.getItem(BACKED_UP_KEY)); return Array.isArray(v) ? v : []; } catch { return []; } };
+export const isBackedUp = (id, store = globalThis.localStorage) => !!id && !!store && backedUpIds(store).includes(id);
+export function markBackedUp(id, store = globalThis.localStorage) {
+  if (!id || !store || isBackedUp(id, store)) return;
+  try { store.setItem(BACKED_UP_KEY, JSON.stringify([...backedUpIds(store), id])); } catch {}
+}
+
+// Asks the browser to keep ducy's data (the player ID in IndexedDB) instead
+// of clearing it when space runs low or the site goes unvisited. Once a page;
+// a refusal, or a browser without it, is ignored. Resolves when asked.
+const keepAsked = new WeakMap();
+export function keepStorage(nav = globalThis.navigator) {
+  if (!nav) return Promise.resolve();
+  if (!keepAsked.has(nav)) {
+    keepAsked.set(nav, (async () => {
+      try {
+        const s = nav.storage;
+        if (!s?.persist || (await s.persisted?.())) return;
+        await s.persist();
+      } catch {}
+    })());
+  }
+  return keepAsked.get(nav);
+}
+
+// Whether this is an iPhone or iPad browser tab rather than the app added to
+// the Home Screen: Safari clears a tab's data after 7 days without a visit.
+export function safariMayClear(nav = globalThis.navigator) {
+  if (!nav) return false;
+  const ios = /iPhone|iPad|iPod/.test(nav.userAgent || '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
+  return ios && nav.standalone !== true;
+}
+
 // ---- storage (browser only) ----
 
 const DB = 'ducy', STORE = 'identity', KEY = 'me';

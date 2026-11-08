@@ -22,10 +22,10 @@
 //   ducyClubs         clubs this browser has asked to join
 //   ducyClubName      the display name sent with join requests
 
-import { loadIdentity, MIN_NEW_PASSWORD, showId, signMessage, Verifier } from './identity.js';
+import { isBackedUp, keepStorage, loadIdentity, markBackedUp, MIN_NEW_PASSWORD, safariMayClear, showId, signMessage, Verifier } from './identity.js';
 import { clubBackupText, proveClubBackup } from './club-backup.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
+import { BACKUP_SAVED, backupFormHtml, downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY, saveBackup } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -1136,6 +1136,13 @@ function onSubmitIn(e) {
   if (bf) { e.preventDefault(); submitBackup(bf); return; }
   const prf = e.target.closest('form[data-clform="prove"]');
   if (prf) { e.preventDefault(); submitProof(prf); return; }
+  // A member's Back up card (#562): Player settings' backup.
+  const mbf = e.target.closest('form[data-clform="member-backup"]');
+  if (mbf) {
+    e.preventDefault();
+    saveBackup(me, mbf).then(() => { memberBackup = {saved: true}; render(); }, err => { memberBackup = {form: true, note: err.message}; render(); });
+    return;
+  }
   const sf = e.target.closest('form[data-clform="service"]');
   if (sf) {
     e.preventDefault();
@@ -1285,6 +1292,8 @@ function connectMembership(mem) {
     const hadLedger = mem.ledger;
     const hadTables = mem.tables ? new Set(mem.tables.map(t => t.id)) : null;
     if (await playerReceive(mem, msg)) {
+      // In a club, maybe with chips: ask the browser to keep this player ID (#562).
+      if (mem.status === 'member') keepStorage();
       if (before !== 'member' && mem.status === 'member') {
         justJoined.add(mem.code);
         // Approved: say so wherever you are (#185).
@@ -1387,6 +1396,8 @@ function joinFromInvite(name) {
   // The first name given is this browser's; another one is for this club
   // only (#185).
   if (!myName()) { try { localStorage.setItem(NAME_KEY, n); } catch {} }
+  // Joining a club: ask the browser to keep this player ID (#562).
+  keepStorage();
   let mem = memberships.find(m => m.code === invite.code);
   if (mem) {
     mem.invite = invite.invite;
@@ -1820,7 +1831,7 @@ function render() {
   const searchKept = search && document.activeElement === search && {start: search.selectionStart, end: search.selectionEnd};
   // A backup's passwords, or the file chosen to prove it (#395): the form
   // itself is kept, since a chosen file can't be put back.
-  const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"]');
+  const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"], form[data-clform="member-backup"]');
   const clFocus = clForm?.contains(document.activeElement) && document.activeElement;
   // A promotion being set up (#544), kept the same way: what's picked and
   // ticked too. Its kind redraws it, and that one's new.
@@ -2210,6 +2221,8 @@ async function backupClub(password) {
   const code = myClubCode(), name = club?.name || owner?.record?.name || '';
   downloadFile(await clubBackupText(me, password, {code, name}), `ducy-club-${code}.json`);
   setHostNote('backedUp', Date.now());
+  // It's a backup of the owner's player ID too (#562).
+  markBackedUp(me.id);
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -2876,6 +2889,7 @@ function memberHomeHtml(m, manage = '') {
   if (m.credit) h += `<span class="cl-home-chips">Credit limit ${chips(m.credit)}</span>`;
   h += '</div>';
   h += leftPanelHtml(m);
+  h += memberBackupHtml();
   if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
   if (m.error) h += `<p class="pl-desc pl-neterr cl-err">${esc(m.error)}</p>`;
   // No backup of the club proved yet (#395): it may not last.
@@ -2943,6 +2957,27 @@ function memberHomeHtml(m, manage = '') {
   h += clubNameHtml(m);
   h += `<button class="link-btn cl-forget" data-cl="forget" data-code="${code}">Forget this club</button>`;
   return h + '</aside></div>';
+}
+
+// Back up your account (#562): on a member's club page until this player ID
+// has a backup (Player settings' backup, saved here or there). Not in a demo
+// (#406), whose people are made up.
+let memberBackup = null; // null, {form: true, note?} or {saved: true}
+function memberBackupHtml() {
+  if (demo || !me || (isBackedUp(me.id) && !memberBackup?.saved)) return '';
+  if (memberBackup?.saved) {
+    return `<section class="cl-left cl-backup" role="status"><b class="cl-left-title">Backed up ✓</b><p class="cl-backup-text">${esc(BACKUP_SAVED)}</p><button class="btn-small primary" data-cl="member-backup-done">Done</button></section>`;
+  }
+  let h = '<section class="cl-left cl-backup"><b class="cl-left-title">Back up your account</b>';
+  h += '<p class="cl-backup-text">Your account lives only in this browser. A backup gets it back on a new phone, or if the browser clears it.</p>';
+  // iPhone Safari clears a site's data after 7 days without a visit, unless
+  // it's on the Home Screen.
+  if (safariMayClear()) h += '<p class="cl-backup-text">In Safari, tap Share, then Add to Home Screen, so Safari doesn’t clear it.</p>';
+  if (memberBackup?.form) {
+    h += backupFormHtml('data-clform="member-backup"', 'data-cl="member-backup-cancel"');
+    if (memberBackup.note) h += `<p class="cl-backup-text cl-down">${esc(memberBackup.note)}</p>`;
+  } else h += '<button class="btn-small primary" data-cl="member-backup">Download</button>';
+  return h + '</section>';
 }
 
 // A balance or result: "−120", never "-120".
@@ -3383,6 +3418,9 @@ async function onClickIn(e) {
   else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
+  // A member's Back up card (#562).
+  else if (act === 'member-backup') { memberBackup = {form: true}; render(); root.querySelector('form[data-clform="member-backup"] [name=pw]')?.focus(); }
+  else if (act === 'member-backup-cancel' || act === 'member-backup-done') { memberBackup = null; render(); }
   else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
   else if (act === 'sit-cancel') { sitForm = ''; sitAmount = 0; render(); }
   // Grouped tables (#501): the answer to "We're starting a new table. Join?".
@@ -3755,6 +3793,8 @@ export function startClubs() {
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     // Back online after sleep or a network change: reconnect what dropped.
     window.addEventListener('online', () => reconnectAll());
+    // A backup saved in Player settings: no more Back up card (#562).
+    window.addEventListener('ducy-backed-up', () => render());
     club = load(CLUB_KEY, null);
     if (club) { ensureChips(club); ensureTables(club); }
     verifier = new Verifier(load(SENDERS_KEY, {}));
