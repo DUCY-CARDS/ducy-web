@@ -181,16 +181,15 @@ test.describe('a club member', () => {
     // On an iPhone, outside the Home Screen app, how to keep Safari from clearing it.
     await expect(card.getByText(/Add to Home Screen/)).toHaveCount(info.project.name === 'webkit-phone' ? 1 : 0);
     await fitsTheScreen(ava);
-    await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
-    // Saving the file and restoring it run in Chromium: in Playwright's
-    // WebKit the download logs CSP stylesheet errors (not yet understood).
-    if (browserName === 'webkit') return;
+    // Screenshots in Chromium only: Playwright's WebKit adds a stylesheet to
+    // take one, which the site's CSP refuses, and logs.
+    if (browserName === 'chromium') await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
     await card.getByRole('button', {name: 'Download'}).click();
     const pw = 'otter-lantern-quietly-42';
     await card.locator('[name=pw]').fill(pw);
     await card.locator('[name=pw2]').fill(pw);
     await fitsTheScreen(ava);
-    await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
+    if (browserName === 'chromium') await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
     const [download] = await Promise.all([ava.waitForEvent('download'), card.getByRole('button', {name: 'Save backup'}).click()]);
     const file = info.outputPath('ava-backup.json');
     await download.saveAs(file);
@@ -217,6 +216,9 @@ test.describe('a club member', () => {
     await again.locator('#pset [name=pw]').fill(pw);
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
     await again.waitForEvent('load');
+    // Settled after the reload, so leaving doesn't cut a download short.
+    await expect(again.getByRole('heading', {name: 'Private clubs'})).toBeVisible();
+    await again.waitForLoadState('networkidle');
     await again.goto(invite);
     await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
     await again.locator('form[data-joinform] button[type="submit"]').click();
