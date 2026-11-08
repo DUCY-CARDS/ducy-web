@@ -163,7 +163,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 3. Play to a winner. Blinds rise on schedule, and the payouts match the payout table.
 
 **M5 Connections**
-1. During M3, reload the guest. They return to their seat with their chips.
+1. During M3, reload the guest. They return to their seat with their chips. At a club table (M6), the same, and a second tab of the same player takes over from the first, which says so.
 2. Turn the guest's network off for 30 seconds, then back on. They return, and weren't folded while away.
 3. Reload the host. The table resumes, and the hand in progress is intact.
 4. Close the guest's tab for good. After the timeout the seat empties, and the chips are kept in the standings.
@@ -186,6 +186,18 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 **M9 Installable app**
 1. Add to home screen on iPhone and Android. The app opens full screen on the front page.
 2. The installed app still runs M1 and M3.
+
+**M10 Passkeys** (#575; on a real iPhone with iCloud Keychain, a real Android phone with Google Password Manager, and desktop Chrome; once more on iPhone with a third-party passkey manager such as 1Password if one is to hand)
+1. Enrol: in a fresh browser, open a club's invite link and ask to join. Before the request goes, "Set up a passkey" shows. Continue: the device asks for Face ID, a fingerprint or the screen lock, and the request then reaches the owner.
+2. Unlock: close the tab and come back. "Unlock your clubs" shows; Use passkey opens the club. Within the same tab nothing asks again, until 4 hours without using a club.
+3. Chips: ask for chips more than 5 minutes after unlocking. The passkey is asked for first. As the owner, give chips more than 5 minutes after unlocking: the same.
+4. Refusal: cancel the passkey prompt. The club stays locked and says "Not unlocked."; nothing is sent.
+5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open Private clubs → Restore with a passkey (or the You page → Restore with a passkey → Sign in). The same player ID comes back (compare it on the You page), with the same clubs and balances, and no new join request.
+6. Recovery without PRF: on a device whose passkey manager doesn't support PRF (iPhone before iOS 18, some third-party managers), do step 5. The device keeps its own player ID; the clubs list the member under it, with the same name and balance, and the owner's activity log says "Moved … to a new ID (ducy vouched)". Note which devices took which path.
+7. A second device's own passkey: on the recovered device, You → Passkeys → Add. Both passkeys list, with their device and date.
+8. A lost device: from the other device, You → Passkeys → Remove the first one. On the first device, the next unlock is refused, and a club page it had open stops working within 5 minutes.
+9. Backups: with a passkey, You → Back up this device asks for the passkey before the file downloads, and the file restores (M7).
+10. Staging and live: a passkey made on staging.ducy.cards is offered on ducy.cards too (same `ducy.cards` relying party) but the live relay doesn't know it, so it's refused there: expected.
 
 ## Manual: club manager
 

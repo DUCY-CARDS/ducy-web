@@ -3,8 +3,10 @@
 // uses an installed Chrome instead of Playwright's Chromium.
 import { defineConfig, devices } from '@playwright/test';
 
-export const SITE_PORT = 4173;
-export const RELAY_PORT = 8788;
+// E2E_PORT moves both, so two checkouts can run their tests at once.
+const shift = Number(process.env.E2E_PORT || 0);
+export const SITE_PORT = 4173 + shift;
+export const RELAY_PORT = 8788 + shift;
 const channel = process.env.E2E_CHANNEL;
 
 export default defineConfig({

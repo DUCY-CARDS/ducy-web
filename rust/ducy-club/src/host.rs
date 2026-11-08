@@ -16,8 +16,8 @@ use crate::book::{AccountTo, Book};
 use crate::groups::MustMove;
 use crate::money::{CLUB, EntryKind};
 use crate::promos::{PromoState, Promos};
-use crate::rules::{RuleError, refuse};
-use crate::tourneys::{PayoutTable, Series, Tourney, Tourneys};
+use crate::rules::{RuleError, Status, refuse};
+use crate::tourneys::{PayoutTable, Series, Tourney, TourneyStatus, Tourneys};
 
 /// The whole club the host keeps, as ducy-web's JSON.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -128,6 +128,22 @@ fn text(v: &Value, k: &str) -> String {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
+    }
+}
+
+/// Every `from` in `v` made `to`: strings that are it, and keys that are
+/// it. Player IDs are 8 Base58 characters, nothing else in a club is one.
+fn rename_id(v: &mut Value, from: &str, to: &str) {
+    match v {
+        Value::String(s) if s == from => *s = to.into(),
+        Value::Array(a) => a.iter_mut().for_each(|x| rename_id(x, from, to)),
+        Value::Object(o) => {
+            if let Some(x) = o.remove(from) {
+                o.insert(to.into(), x);
+            }
+            o.values_mut().for_each(|x| rename_id(x, from, to));
+        }
+        _ => {}
     }
 }
 
@@ -251,6 +267,73 @@ impl ClubState {
         Ok(())
     }
 
+    /// Moves `from`'s place in the club to player ID `to` (#575): someone
+    /// who lost their ID, on a new one. Everything that was theirs becomes
+    /// `to`'s: their member record (name, role, balance), their ledger
+    /// entries and links (so the ledger still adds up), their requests and
+    /// places on lists; `from` is left nowhere in the club, so it can't act
+    /// there again. Refused while `from` is at a table or in a running
+    /// tournament (they stand up first), when `to` is already a member, and
+    /// for the club's own IDs. The owner moves only when ducy's relay
+    /// vouched for them (`vouched`: a passkey sign-in on a device without a
+    /// copy of their key).
+    fn move_member(
+        &mut self,
+        from: &str,
+        to: &str,
+        vouched: bool,
+        now: u64,
+        out: &mut Outcome,
+    ) -> Result<(), RuleError> {
+        let club = &self.book.club;
+        if to.is_empty() || from == to {
+            return refuse("Pick another player ID.");
+        }
+        if club.host_id == from || club.host_id == to || club.owner_id.as_deref() == Some(to) {
+            return refuse("That’s one of the club’s own IDs.");
+        }
+        let owner = club.owner_id.as_deref() == Some(from);
+        if owner && !vouched {
+            return refuse("Only ducy can move the owner, after a passkey sign-in.");
+        }
+        let member = club
+            .members
+            .get(from)
+            .filter(|m| m.is(Status::Member) || m.is(Status::Pending));
+        if !owner && member.is_none() {
+            return refuse("They aren’t in the club.");
+        }
+        let name = member.map_or_else(|| "the owner".to_string(), |m| m.name.clone());
+        if member.is_some_and(|m| m.seat_table().is_some()) {
+            return refuse(format!("{name} is at a table: they stand up first."));
+        }
+        let playing = self.tourneys.iter().any(|t| {
+            t.status == TourneyStatus::Running && t.entries.iter().any(|e| e.member == from)
+        });
+        if playing {
+            return refuse(format!("{name} is in a running tournament: it ends first."));
+        }
+        if club.members.get(to).is_some_and(|m| m.is(Status::Member)) {
+            return refuse("That player ID is already a member.");
+        }
+        // Whatever `to` had here (a request to join) gives way.
+        self.book.club.members.remove(to);
+        let mut v = serde_json::to_value(&*self).map_err(|e| RuleError(e.to_string()))?;
+        rename_id(&mut v, from, to);
+        *self = serde_json::from_value(v).map_err(|e| RuleError(e.to_string()))?;
+        let by = self.actor();
+        let how = if vouched { " (ducy vouched)" } else { "" };
+        self.book
+            .log_action(&by, &format!("Moved {name} to a new ID{how}"), now, None);
+        if !owner {
+            out.account(to, Some(0));
+            out.tables_to.push(to.into());
+            out.help_to.push(to.into());
+        }
+        out.tell.push(Tell::Lobby);
+        Ok(())
+    }
+
     /// Pays a promotion award the rules marked paid: up the winner's path.
     fn pay_award(&mut self, id: &str, now: u64, out: &mut Outcome) -> Result<(), RuleError> {
         let Some(i) = self.promos.awards.iter().position(|a| a.id == id) else {
@@ -305,6 +388,11 @@ impl ClubState {
                 out.tell.push(Tell::Lobby);
             }
             "remove" => self.remove(&id, now, &mut out)?,
+            // Someone who lost their player ID, on a new one (#575).
+            "move_member" => {
+                let vouched = args.get("vouched").and_then(Value::as_bool) == Some(true);
+                self.move_member(&id, &text(args, "to"), vouched, now, &mut out)?;
+            }
             "revoke_invite" => self.book.club.revoke_invite(rng),
             // Chips given stay within the daily cap; every move is logged,
             // and a big one is a notice to the owner (#576).
@@ -776,6 +864,80 @@ mod tests {
                 .0
                 .contains("no host action nope")
         );
+    }
+
+    #[test]
+    fn a_member_moves_to_a_new_id_with_everything_theirs() {
+        let mut c = club(&["ann", "bob"]);
+        c.book.club.owner_id = Some("OWNER".into());
+        run(&mut c, "give", json!({"id": "ann", "amount": 500})).unwrap();
+        run(&mut c, "take", json!({"id": "ann", "amount": 120})).unwrap();
+        run(&mut c, "give", json!({"id": "bob", "amount": 50})).unwrap();
+        c.book.club.members.get_mut("ann").unwrap().agent = Some("yes".into());
+        // The new device had asked to join: that request gives way.
+        c.book.club.members.insert(
+            "NEWANN".into(),
+            serde_json::from_value(json!({"id": "NEWANN", "name": "Annie", "status": "pending"}))
+                .unwrap(),
+        );
+        let entries = c.book.money.ledger().len();
+        let o = run(
+            &mut c,
+            "move_member",
+            json!({"id": "ann", "to": "NEWANN", "vouched": true}),
+        )
+        .unwrap();
+        let m = &c.book.club.members["NEWANN"];
+        assert_eq!(
+            (m.id.as_str(), m.name.as_str(), m.status),
+            ("NEWANN", "Ann", Status::Member)
+        );
+        assert_eq!(m.agent.as_deref(), Some("yes"));
+        assert!(!c.book.club.members.contains_key("ann"));
+        assert_eq!(c.book.balance("NEWANN"), 380);
+        assert_eq!(c.book.balance("bob"), 50);
+        assert_eq!(c.book.money.ledger().len(), entries);
+        assert!(c.book.money.ledger().iter().all(|e| e.member != "ann"));
+        assert_eq!(c.book.money.audit(), Vec::<String>::new());
+        assert!(
+            c.book.log.last().unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .contains("Moved Ann to a new ID (ducy vouched)")
+        );
+        assert_eq!(o.accounts[0].id, "NEWANN");
+        // The old ID is nowhere: it can't act here, nor be moved again.
+        assert!(!serde_json::to_string(&c).unwrap().contains("\"ann\""));
+        assert!(run(&mut c, "move_member", json!({"id": "ann", "to": "X"})).is_err());
+    }
+
+    #[test]
+    fn a_move_is_refused_at_a_table_onto_a_member_and_for_the_club_s_ids() {
+        let mut c = club(&["ann", "bob"]);
+        c.book.club.owner_id = Some("OWNER".into());
+        let why = |c: &mut ClubState, args: Value| run(c, "move_member", args).unwrap_err().0;
+        assert!(why(&mut c, json!({"id": "ann", "to": "bob"})).contains("already a member"));
+        assert!(why(&mut c, json!({"id": "ann", "to": "OWNER"})).contains("club’s own"));
+        assert!(why(&mut c, json!({"id": "ann", "to": "HOST"})).contains("club’s own"));
+        assert!(why(&mut c, json!({"id": "ann", "to": "ann"})).contains("another"));
+        assert!(why(&mut c, json!({"id": "eve", "to": "NEW"})).contains("aren’t in"));
+        // The owner only when ducy vouched.
+        assert!(why(&mut c, json!({"id": "OWNER", "to": "NEW"})).contains("Only ducy"));
+        c.book
+            .club
+            .members
+            .get_mut("ann")
+            .unwrap()
+            .other
+            .insert("seat".into(), json!({"table": "t1", "seat": 0}));
+        assert!(why(&mut c, json!({"id": "ann", "to": "NEW"})).contains("stand up first"));
+        run(
+            &mut c,
+            "move_member",
+            json!({"id": "OWNER", "to": "NEWOWNER", "vouched": true}),
+        )
+        .unwrap();
+        assert_eq!(c.book.club.owner_id.as_deref(), Some("NEWOWNER"));
     }
 
     #[test]

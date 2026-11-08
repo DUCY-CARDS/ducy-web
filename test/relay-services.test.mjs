@@ -13,6 +13,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
+import { relayClient } from './relay-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
@@ -27,29 +28,19 @@ test.after(() => server.kill());
 const cli = (args, env = {}) => promisify(execFile)(process.execPath, [CLI, ...args], {env: {...process.env, ...env}})
   .then(r => ({code: 0, out: r.stdout, err: r.stderr}), e => ({code: e.code, out: e.stdout, err: e.stderr}));
 
-function open(path) {
-  const ws = new WebSocket(`ws://localhost:${PORT}${path}`);
-  const inbox = [], waiting = [];
-  ws.on('message', d => { const m = JSON.parse(d); waiting.length ? waiting.shift()(m) : inbox.push(m); });
-  async function next(type) {
-    for (;;) {
-      const m = inbox.length ? inbox.shift() : await new Promise(r => waiting.push(r));
-      if (!type || m.type === type || m.body?.type === type) return m;
-    }
-  }
-  return {ws, next, ready: new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); }), send: obj => ws.send(JSON.stringify(obj))};
-}
+const relay = relayClient(PORT);
+const open = (path, ident = null, opts) => relay.open(path, ident, opts);
 
 test('a service made with its command line gives chips through the relay, until revoked', {skip: !haveWasm && 'no wasm build'}, async () => {
   const code = 'SRVC-RXAY';
   const owner = await createIdentity(), ann = await createIdentity();
 
   // The owner makes an always-on club; Ann joins.
-  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`);
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
   o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Rewards Club'}));
   const made = await o.next('club_created');
-  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`);
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
   await a.ready;
   a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
   await a.next('status');

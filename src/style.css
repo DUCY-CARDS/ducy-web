@@ -2013,6 +2013,9 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .ps-opts { display: flex; gap: 4px; }
 .ps-row .pl-pid { font-size: 13px; }
 .ps-hint { margin: -4px 0 10px; font-size: 13px; color: var(--fg-muted); }
+/* This account's passkeys (#575), each removable. */
+.ps-keys { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.ps-keys li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 @media (max-width: 640px) { .ps-sections { grid-template-columns: minmax(0, 1fr); } .ps-me { width: 72px; height: 72px; } }
 
 /* Private clubs (clubs.js, V3 #225): a card per club, then Join a club and
@@ -2577,8 +2580,13 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .cl-left-net { font: 400 34px var(--font-display); }
 .cl-left .cl-down, .mg-card .cl-down, .cl-sitform .cl-down { color: #b0391f; }
 .cl-left .cl-up { color: #2f7a43; }
-/* Back up your account (#562): a member's club page until they have. */
-.cl-backup .cl-backup-text { margin: 0; font-size: 14px; }
+/* Back up your account (#562): a member's club page until they have. The
+   passkey card (#575) in place of a club page until it's set up or used. */
+.cl-backup .cl-backup-text, .cl-pass .cl-backup-text { margin: 0; font-size: 14px; }
+.cl-pass { margin: 16px 0; }
+.cl-pass .cl-down { color: #b0391f; }
+.cl-pass-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.cl-pass .link-btn { color: #8f2e1b; }
 .cl-backup .pl-idform { margin: 0; }
 .cl-backup .pl-idform .pl-desc, .cl-backup .pl-idform label { color: inherit; }
 .cl-backup .pl-idform .pl-desc { font-size: 14px; margin: 0; }

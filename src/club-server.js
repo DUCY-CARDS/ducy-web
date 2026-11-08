@@ -185,6 +185,9 @@ export function createClubServer({
       const op = String(body.op), args = body.args && typeof body.args === 'object' ? body.args : {};
       try {
         if (from !== club.ownerId) throw new Error('Only the club’s owner can do that.');
+        // Moving someone to a new player ID is the relay's, after a passkey
+        // sign-in (#575, club-room.js vouchedMove), never a command.
+        if (op === 'move_member') throw new Error('Only ducy moves someone to a new ID.');
         value = (await run(op, args)) ?? null;
       } catch (e) { error = e.message || String(e); }
       // Results are plain data (e.g. the list of hands, #125).

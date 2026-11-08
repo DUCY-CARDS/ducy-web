@@ -16,7 +16,7 @@ import { startMoney } from './club-money.js';
 
 // The commands the club host runs.
 export const HOSTED = new Set([
-  'approve', 'decline', 'remove', 'revoke_invite', 'give', 'take', 'grant', 'deny', 'set_credit', 'raise_credit',
+  'approve', 'decline', 'remove', 'move_member', 'revoke_invite', 'give', 'take', 'grant', 'deny', 'set_credit', 'raise_credit',
   'offer_agent', 'revoke_agent', 'assign_agent', 'help_answer', 'settings', 'set_info', 'set_payout',
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
@@ -25,7 +25,8 @@ export const HOSTED = new Set([
 ]);
 
 // The club's fields a command may change.
-const WRITES = ['invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise'];
+// (ownerId and lobby: a member moved to a new player ID, #575.)
+const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 

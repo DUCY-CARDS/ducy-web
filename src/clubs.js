@@ -43,6 +43,8 @@ import { LOBBY_MAX_AGE_MS, onlineList } from './club-lobby.js';
 import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
+import * as pk from './passkey.js';
+import { CHIP_OPS } from './chip-moves.js';
 import { accountOf, playersOf } from './club-agents.js';
 import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
@@ -279,6 +281,9 @@ async function hostAct(op, args) {
   failed = null;
   if (key) { busy.add(key); render(); }
   let ok = true;
+  // Moving chips needs a recent passkey unlock (#575).
+  const no = isRemote() && CHIP_OPS.has(op) ? await freshPass() : '';
+  if (no) { busy.delete(key); failAt(key, no); return false; }
   try {
     if (!isRemote()) throw new Error('Move the club to ducy’s server first.');
     await own().run(op, args);
@@ -303,6 +308,13 @@ const loadEngine = () => (pageEngine ||= import('../wasm/ducy_wasm.js').then(w =
 async function createClub(name) {
   const n = String(name || '').trim();
   if (!n) { note = 'Give your club a name.'; render(); return; }
+  // Not without the passkey (#575): made or used first, then this again.
+  if (!demo && !pk.session(me.id)) {
+    pendingCreate = n;
+    await refreshPass();
+    if (pass.state !== 'open' && pass.state !== 'unknown') return;
+    pendingCreate = null;
+  }
   note = 'Setting up your club on the server…';
   alwaysFailed = null;
   render();
@@ -1257,8 +1269,11 @@ function connectMembership(mem) {
   if (playerNets.has(mem.code)) return;
   // keys: this connection's key pair for encrypted table updates (e2e.js);
   // aes: the key shared with the host, for the host key in aesFor.
-  const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve(), inbox: Promise.resolve(), keys: newKeyPair(), aes: null, aesFor: ''};
+  const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve(), inbox: Promise.resolve(), keys: newKeyPair(), aes: null, aesFor: '', unlocked: false};
   playerNets.set(mem.code, entry);
+  // Once the connection is unlocked with the player's passkey (#575): a
+  // demo's needs none.
+  entry.greet = () => greet();
   const greet = async () => {
     // Never ask to join without a name: the host would see a nameless player.
     if (mem.status === 'new' && !nameIn(mem)) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
@@ -1277,8 +1292,10 @@ function connectMembership(mem) {
       render();
       return;
     }
-    if (msg?.type === 'host_back') { entry.hostHere = true; greet(); render(); return; }
+    if (msg?.type === 'host_back') { entry.hostHere = true; if (entry.unlocked || demo) greet(); render(); return; }
     if (msg?.type === 'queue_full') return;
+    // The passkey unlock (#575): unlocked, refused, or chips need a fresh one.
+    if (passMessage(entry, msg)) return;
     // A club table's update for this player: only ones encrypted with the
     // key shared with the host count. Anything else (the relay can send
     // whatever it likes) is ignored.
@@ -1373,7 +1390,9 @@ function connectMembership(mem) {
     }
   };
   entry.net = connect(mem.code, 'guest', me.id, {
-    onOpen() { entry.online = true; entry.hostHere = true; entry.blocked = ''; mem.error = ''; greet(); render(); },
+    // Proven (the relay asked this page to sign for the player's ID, #577);
+    // then the unlock, then the greeting.
+    onOpen() { entry.online = true; entry.hostHere = true; entry.blocked = ''; mem.error = ''; if (demo) greet(); else sendUnlock(entry); render(); },
     // One message at a time, in order: a new host key must be in place
     // before the encrypted updates after it.
     onMessage(msg) { entry.inbox = entry.inbox.then(() => handle(msg)).catch(e => console.warn(e)); },
@@ -1388,7 +1407,172 @@ function connectMembership(mem) {
       mem.error = /No table/.test(reason) ? 'The club isn’t reachable, and this relay can’t hold your request. Try again later.' : reason;
       render();
     },
-  }, {queue: true, persistent: true});
+  }, {queue: true, persistent: true, prove: proveFor(mem.code)});
+}
+
+// ---- passkeys (#575) and proving the player's ID (#577) ----
+
+// Signs the relay's challenge for room `code` with the player's key.
+const proveFor = code => challenge => signMessage(me, {type: 'prove', room: code, challenge});
+
+// Where this player is with their passkey: 'open' (unlocked, or not
+// needed: no clubs yet, a demo), 'none' (they have none: make one),
+// 'locked' (unlock), 'unsupported' (this browser can't), or 'unknown'
+// (the relay can't be asked). `note`: what went wrong last.
+let pass = {state: 'open', note: '', busy: false};
+let pendingCreate = null; // a club name to create once unlocked
+// Whether this browser's player needs their passkey here: in a club, or
+// running one.
+const needsPass = () => !demo && !!me && (memberships.length > 0 || !!owner?.record || !!pendingCreate);
+
+async function refreshPass() {
+  if (!needsPass()) { pass.state = 'open'; return; }
+  if (!pk.supported()) { pass.state = 'unsupported'; render(); return; }
+  pk.prepare().catch(() => {});
+  try {
+    const st = await pk.status(me.id);
+    pass.state = !st.enrolled ? 'none' : pk.session(me.id) ? 'open' : 'locked';
+  } catch {
+    pass.state = 'unknown';
+  }
+  render();
+}
+
+// The card in place of a club page until the passkey is set up or used.
+function passGateHtml() {
+  if (!needsPass() || pass.state === 'open' || pass.state === 'unknown') return '';
+  const busy = pass.busy ? ' disabled' : '';
+  const err = pass.note ? `<p class="cl-backup-text cl-down">${esc(pass.note)}</p>` : '';
+  if (pass.state === 'unsupported') return '<section class="cl-left cl-pass"><b class="cl-left-title">Passkeys needed</b><p class="cl-backup-text">Clubs need a passkey, and this browser can’t make one. Try Safari, Chrome or Edge.</p></section>';
+  if (pass.state === 'locked') return `<section class="cl-left cl-pass"><b class="cl-left-title">Unlock your clubs</b>${err}<button class="btn-small primary" data-cl="pass-unlock"${busy}>Use passkey</button></section>`;
+  let h = '<section class="cl-left cl-pass"><b class="cl-left-title">Set up a passkey</b>';
+  // Why (the one place the stakes need saying): it's what keeps the account.
+  h += '<p class="cl-backup-text">Clubs need one. It keeps anyone else using this device out of your clubs, and gets your account back on a new phone.</p>';
+  h += err;
+  return h + `<span class="cl-pass-acts"><button class="btn-small primary" data-cl="pass-enrol"${busy}>Continue</button><button class="link-btn" data-cl="pass-recover"${busy}>I have a passkey</button></span></section>`;
+}
+
+// Sends this tab's session to connection `entry` (a membership's), if there
+// is one; the relay answers 'unlocked' (then the greeting) or 'locked'.
+function sendUnlock(entry) {
+  entry.unlocked = false;
+  const s = pk.session(me.id);
+  if (s) entry.net?.send({type: 'unlock', token: s.token});
+  else refreshPass();
+}
+
+// The relay's word on a connection's unlock. True if `msg` was one.
+function passMessage(entry, msg) {
+  if (msg?.type === 'unlocked') {
+    entry.unlocked = true;
+    pk.touch();
+    for (const f of entry.waiting || []) f(true);
+    entry.waiting = [];
+    entry.greet?.();
+    render();
+    return true;
+  }
+  if (msg?.type === 'locked') {
+    entry.unlocked = false;
+    for (const f of entry.waiting || []) f(false);
+    entry.waiting = [];
+    pk.forget();
+    refreshPass();
+    return true;
+  }
+  if (msg?.type === 'unlock_again') {
+    pass.note = 'Unlock with your passkey again to move chips.';
+    render();
+    return true;
+  }
+  return false;
+}
+
+// Every club connection, unlocked with the session just started. Resolves
+// once they've all said so (or a few seconds have passed).
+function unlockAll() {
+  const s = pk.session(me.id);
+  if (!s) return Promise.resolve();
+  const waits = [];
+  for (const entry of playerNets.values()) {
+    if (!entry.net) continue;
+    waits.push(new Promise(res => { (entry.waiting ||= []).push(res); setTimeout(() => res(false), 8000); }));
+    entry.net.send({type: 'unlock', token: s.token});
+  }
+  if (owner?.connected) waits.push(owner.unlock(s.token).catch(() => false));
+  return Promise.all(waits);
+}
+
+// After a passkey made or used: open, and everything carries on.
+async function unlocked() {
+  pass = {state: 'open', note: '', busy: false};
+  render();
+  await unlockAll();
+  if (pendingCreate) { const n = pendingCreate; pendingCreate = null; createClub(n); }
+  render();
+}
+
+// A passkey action from the gate card, with what went wrong shown on it.
+async function passAct(act) {
+  if (pass.busy) return;
+  pass.busy = true;
+  pass.note = '';
+  render();
+  try {
+    if (act === 'enrol') await pk.enrol(me, myName());
+    else if (act === 'unlock') await pk.unlock(me);
+    else { await recoverAccount(); pass.busy = false; return; }
+    await unlocked();
+  } catch (e) {
+    pass.busy = false;
+    pass.note = e.message;
+    // Signing in from a page without the card: said at the top.
+    if (!passGateHtml()) note = e.message;
+    // Someone else's passkey, or the relay forgot this one: look again.
+    pk.status(me.id, true).then(st => { if (st.enrolled && pass.state === 'none') pass.state = 'locked'; render(); }).catch(() => {});
+    render();
+  }
+}
+
+// Recovery on this device with a passkey (#575): the clubs the account
+// was in come back. With a copy of the key it opened, that's the old player
+// ID, and the page reloads with it; else the relay vouched for this one.
+async function recoverAccount() {
+  const r = await pk.recover();
+  for (const [code, c] of Object.entries(r.clubs || {})) {
+    if (c.owner) {
+      // The club manager reopens it (as a club backup's restore does).
+      try { localStorage.setItem(RESTORE_CLUB_KEY, JSON.stringify({code, name: c.name})); } catch {}
+      continue;
+    }
+    if (memberships.some(m => m.code === code) || !c.hostId) continue;
+    // A member already (or moved over on unlock): they say hello, no request.
+    memberships.push({...newMembership({code, hostId: c.hostId, invite: '', name: c.name}), status: 'member'});
+  }
+  saveMemberships();
+  if (r.id !== me.id) { location.reload(); return; }
+  for (const m of memberships) connectMembership(m);
+  await unlocked();
+  // Their own club, on the club manager: open it now.
+  const ownClub = Object.entries(r.clubs || {}).find(([, c]) => c.owner);
+  if (ownClub && mode === 'manage' && !isRemote() && !club) {
+    try { localStorage.removeItem(RESTORE_CLUB_KEY); } catch {}
+    await attachAlwaysOn(ownClub[0]);
+  }
+}
+
+// Moving chips needs an unlock from the last few minutes (#575): asked for
+// now if it's older, so the command isn't refused. Resolves to '' when it
+// may go ahead, else why not.
+async function freshPass() {
+  if (demo || pk.fresh(me.id)) return '';
+  try {
+    await pk.unlock(me);
+    await unlockAll();
+    return '';
+  } catch (e) {
+    return e.message || 'Not unlocked.';
+  }
 }
 
 function joinFromInvite(name) {
@@ -1797,7 +1981,15 @@ function render() {
   const payFocus = root.querySelector('form[data-paytable]')?.contains(document.activeElement) ? document.activeElement.name : '';
   // Whatever else had the focus gets it back after the redraw (#544).
   const focusKey = root.contains(document.activeElement) ? ctlKey(document.activeElement) : focusLater;
+  // And the chips being asked for, and why (a passkey prompt or a message
+  // from the club can redraw the page mid-way, #575).
+  const askKept = [...root.querySelectorAll('[data-ask-amt], [data-ask-note]')].map(i => [i.dataset.askAmt ? `amt|${i.dataset.askAmt}` : `note|${i.dataset.askNote}`, i.value]);
   root.innerHTML = h;
+  for (const [k, v] of askKept) {
+    const [kind, code] = k.split('|');
+    const i = root.querySelector(kind === 'amt' ? `[data-ask-amt="${CSS.escape(code)}"]` : `[data-ask-note="${CSS.escape(code)}"]`);
+    if (i && v) i.value = v;
+  }
   if (payFocus) root.querySelector(`form[data-paytable] [name="${payFocus}"]`)?.focus({preventScroll: true});
   const clFresh = clForm && root.querySelector(`form[data-clform="${clForm.dataset.clform}"]`);
   if (clFresh) { clFresh.replaceWith(clForm); if (clFocus) clFocus.focus({preventScroll: true}); }
@@ -1869,6 +2061,9 @@ function viewHtml() {
   // Bots, Ladder and Start a game (Train and Play, #209) have nothing of the
   // clubs.
   if (view === 'play' || view === 'ladder' || view === 'quest' || view === 'host') return '';
+  // Clubs need the passkey first (#575).
+  const gate = passGateHtml();
+  if (gate) return msg + gate + footHtml();
   if (view === 'join') {
     const h = requestsHtml();
     return h || msg ? msg + h : '';
@@ -1897,6 +2092,9 @@ function runHereHtml() {
 // The club manager (manage.html): the club you run, a club you're an agent
 // of, or the list of both with starting a club.
 function managerHtml() {
+  // Clubs need the passkey first (#575).
+  const gate = passGateHtml();
+  if (gate) return gate + footHtml();
   const own = club || isRemote();
   if (own && wizard?.code === myClubCode()) return wizardHtml();
   const at = shownClub();
@@ -2071,6 +2269,8 @@ function createHtml() {
   // device. Not in a demo (#406), which starts empty.
   // A real button (#544), which opens the hidden file picker.
   if (!demo) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="restore-pick">Restore from backup</button><input type="file" data-clrestore accept=".json,application/json" hidden></span>';
+  // Or with a passkey (#575).
+  if (!demo && pk.supported()) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="pass-recover">Restore with a passkey</button></span>';
   return h + '</section>';
 }
 
@@ -2175,7 +2375,9 @@ let serviceForm = null, serviceNote = '';
 // browser. It counts once proved (submitProof).
 async function backupClub(password) {
   const code = myClubCode(), name = club?.name || owner?.record?.name || '';
-  downloadFile(await clubBackupText(me, password, {code, name}), `ducy-club-${code}.json`);
+  // Exporting the key needs a recent passkey unlock (#575).
+  const ident = demo ? me : await pk.exportable(me);
+  downloadFile(await clubBackupText(ident, password, {code, name}), `ducy-club-${code}.json`);
   setHostNote('backedUp', Date.now());
   // It's a backup of the owner's player ID too (#562).
   markBackedUp(me.id);
@@ -3243,9 +3445,12 @@ function memberTablesHtml(m, hostHere) {
 
 let agentForm = null; // {code, kind: 'give' | 'take' | 'grant', id}
 
-function agentCmd(code, cmd) {
+async function agentCmd(code, cmd) {
   const mem = memberships.find(m => m.code === code);
   if (mem) mem.adminNote = '';
+  // An agent's commands move chips: a recent passkey unlock (#575).
+  const no = await freshPass();
+  if (no) { note = no; render(); return; }
   sendToHost(code, {type: 'agent_cmd', club: code, cmd});
 }
 
@@ -3406,6 +3611,8 @@ async function onClickIn(e) {
   else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
+  // Passkeys (#575): make one, unlock, or bring an account back with one.
+  else if (act === 'pass-enrol' || act === 'pass-unlock' || act === 'pass-recover') passAct(act.slice(5));
   // A member's Back up card (#562).
   else if (act === 'member-backup') { memberBackup = {form: true}; render(); root.querySelector('form[data-clform="member-backup"] [name=pw]')?.focus(); }
   else if (act === 'member-backup-cancel' || act === 'member-backup-done') { memberBackup = null; render(); }
@@ -3658,6 +3865,9 @@ async function onClickIn(e) {
     const amount = parseChips(root.querySelector(`[data-ask-amt="${code}"]`)?.value);
     const why = root.querySelector(`[data-ask-note="${code}"]`)?.value || '';
     if (!Number.isSafeInteger(amount) || amount <= 0) { failAt(b, 'Enter an amount above 0, like 50 or 12.50.'); return; }
+    // Asking for chips needs a recent passkey unlock (#575).
+    const no = await freshPass();
+    if (no) { failAt(b, no); return; }
     sendToHost(code, {type: 'chip_request', club: code, amount, note: why});
   } else if (act === 'cancel-ask') {
     const code = b.dataset.code;
@@ -3799,6 +4009,16 @@ export function startClubs() {
       identity: me,
       onChange: () => { if (isRemote()) club = owner.club; render(); },
       onNote: t => { note = t; render(); },
+      // Its connection proves the player's ID and is unlocked with their
+      // passkey (#575, #577), except in a demo.
+      gated: !demo,
+      session: () => pk.session(me.id)?.token || '',
+      onPass: kind => {
+        if (kind === 'unlocked') { pk.touch(); return; }
+        if (kind === 'locked') pk.forget();
+        if (kind === 'unlock_again') pass.note = 'Unlock with your passkey again to move chips.';
+        refreshPass();
+      },
     });
     // Finds the always-on club's record, from IndexedDB if need be, and
     // (on the club manager) connects to it.
@@ -3811,6 +4031,8 @@ export function startClubs() {
       if (!isRemote() && !club && restored.code) await attachAlwaysOn(restored.code);
     }
     reconnectAll();
+    // Clubs need the passkey (#575): made, or this visit's unlock.
+    refreshPass();
   })());
 }
 
@@ -4075,6 +4297,13 @@ export async function joinClub(inv, name) {
 // The name this browser joins clubs as, and changing it (Player settings,
 // #144): each club's host is told.
 export const memberName = () => myName();
+
+// Brings an account back with a passkey (#575), from Player settings.
+export async function recoverWithPasskey() {
+  await startClubs();
+  if (!me) throw new Error('This browser can’t keep a player ID.');
+  await recoverAccount();
+}
 export function renameMember(n) {
   if (!started) { try { localStorage.setItem(NAME_KEY, String(n || '').trim().slice(0, MAX_PLAYER_NAME)); } catch {} return; }
   setName(n);

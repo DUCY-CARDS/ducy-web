@@ -122,7 +122,14 @@ export function clientId() {
 // never gives up reconnecting (a host keeps its table through an outage).
 export const PING_MS = 5_000, SILENT_MS = 12_000;
 
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, retryInUse = false, inUse = 'That table code is in use.', heartbeat = false, persistent = false} = {}) {
+// With `prove(challenge)` (a club connection, #577), the relay first asks
+// the page to prove it holds the player's key: prove signs the challenge
+// (identity.js signMessage of {type: 'prove', room, challenge}), and
+// onOpen comes once the relay says it's proven. Until then the connection
+// is no one, so it can't knock off the player's other one.
+// Coming back to the page (a phone waking the tab) checks the connection at
+// once: a dead one reconnects straight away, a silent one is replaced.
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, retryInUse = false, inUse = 'That table code is in use.', heartbeat = false, persistent = false, prove = null} = {}) {
   if (localRelay) return localRelay.connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth});
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
   let heard = 0, pongs = false, healthy = false, beat = null;
@@ -137,11 +144,13 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
       check();
     }, PING_MS);
   }
+  const opened = () => { tries = 0; onStatus(''); onOpen(); check(); };
   const open = () => {
-    ws = new WebSocket(url);
+    const sock = ws = new WebSocket(url);
     // onOpen first: it may reset what was known before the health change.
-    ws.onopen = () => { tries = 0; heard = Date.now(); onStatus(''); onOpen(); check(); };
+    ws.onopen = () => { heard = Date.now(); if (!prove) opened(); };
     ws.onmessage = e => {
+      if (sock !== ws) return;
       heard = Date.now();
       // Joined once something comes through: the relay opens a socket for a
       // code with no table behind it before closing it with 4004, which then
@@ -150,10 +159,18 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
       let m;
       try { m = JSON.parse(e.data); } catch (err) { console.warn(err); return; }
       if (m?.type === 'pong') { pongs = true; check(); return; }
+      // Proving this page holds the player's key (#577).
+      if (prove && m?.type === 'prove') {
+        Promise.resolve(prove(String(m.challenge || ''))).then(env => { if (sock === ws && sock.readyState === 1) sock.send(JSON.stringify({type: 'prove', env})); }, err => console.warn('relay: not proven:', err));
+        return;
+      }
+      if (prove && m?.type === 'proven') { opened(); return; }
       check();
       try { onMessage(m); } catch (err) { console.warn(err); }
     };
     ws.onclose = e => {
+      // An old socket, replaced after the page woke: nothing to do.
+      if (sock !== ws) return;
       check();
       if (closed) return;
       // 4009: a newer connection with the same id took over, from another tab
@@ -190,10 +207,36 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
       retry = setTimeout(open, 1000 * 2 ** tries++);
     };
   };
+  // The page is back in front (a phone woke the tab): a socket that's gone
+  // reconnects now, not at the end of its backoff; one that's open but
+  // silent (a phone can keep a dead one open) is checked with a ping and
+  // replaced if nothing answers.
+  const wake = () => {
+    if (closed || document.visibilityState !== 'visible') return;
+    if (!ws || ws.readyState > 1) {
+      if (!retry) return;
+      clearTimeout(retry);
+      retry = null;
+      tries = 0;
+      open();
+      return;
+    }
+    if (ws.readyState !== 1) return;
+    const sock = ws, before = heard;
+    sock.send(JSON.stringify({type: 'ping', t: Date.now()}));
+    setTimeout(() => {
+      if (closed || sock !== ws || heard !== before || sock.readyState !== 1) return;
+      ws = null;
+      sock.close();
+      onStatus('Reconnecting…');
+      open();
+    }, 4000);
+  };
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake);
   open();
   return {
     send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
-    close() { closed = true; clearTimeout(retry); clearInterval(beat); if (ws) ws.close(1000); },
+    close() { closed = true; clearTimeout(retry); clearInterval(beat); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake); if (ws) ws.close(1000); },
     healthy: () => healthy,
   };
 }

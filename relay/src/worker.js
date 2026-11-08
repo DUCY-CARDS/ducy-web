@@ -55,6 +55,9 @@ import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } fr
 import { pingReply } from './ping.js';
 import { serviceHttp, serviceInRoom } from './service-http.js';
 import { clubCodes, resetRefusal } from './reset.js';
+import { passkeys } from './passkeys.js';
+import { mustProve, newChallenge, proves } from './prove.js';
+import { check as unlockCheck } from './unlock.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -81,7 +84,9 @@ const HOST_RATE = 200, HOST_BURST = 500;
 
 // A token bucket kept on the socket itself, so it survives hibernation.
 function allow(ws, rate, burst, now = Date.now()) {
-  const b = ws.deserializeAttachment() || {tokens: burst, at: now};
+  // The socket also keeps its proof (#577) and unlock (#575).
+  const b = ws.deserializeAttachment() || {};
+  if (b.tokens == null) { b.tokens = burst; b.at = now; }
   b.tokens = Math.min(burst, b.tokens + ((now - b.at) / 1000) * rate);
   b.at = now;
   if (b.tokens < 1) return false;
@@ -221,6 +226,19 @@ async function route(req, env) {
     const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
     return new Response(res.body, {headers});
   }
+  // Passkeys (#575, passkeys.js): from the site's pages, to the registry.
+  const pko = url.pathname.match(/^\/passkey\/([a-z]+)$/);
+  if (pko) {
+    const origin = req.headers.get('Origin');
+    const ok = !allowed.length || allowed.includes(origin);
+    const cors = ok && origin ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST', vary: 'Origin'} : {};
+    if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
+    if (req.method !== 'POST' || !ok) return Response.json({error: 'forbidden'}, {status: 403, headers: cors});
+    const raw = await req.text();
+    if (raw.length > 32 * 1024) return Response.json({error: 'too big'}, {status: 413, headers: cors});
+    const res = await registryOf(env).fetch(`https://registry/passkey/${pko[1]}`, {method: 'POST', body: raw});
+    return new Response(res.body, {status: res.status, headers: {'content-type': 'application/json', ...cors}});
+  }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
   if (svc) {
     const code = decodeURIComponent(svc[1]);
@@ -245,6 +263,8 @@ export class Registry {
     this.state = state;
     this.env = env;
     this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(env));
+    // Passkeys (#575): pages on ALLOWED_ORIGINS only.
+    this.pk = passkeys({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {origins: (env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)});
   }
 
   async alarm() {
@@ -271,6 +291,16 @@ export class Registry {
       return Response.json({ok: true});
     }
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
+    // Passkeys (#575): a page's request, through the Worker; a room's check
+    // of a connection's session.
+    const pko = path.match(/^\/passkey\/([a-z]+)$/);
+    if (pko) {
+      loadEngine();
+      const out = await this.pk.http(pko[1], body);
+      return Response.json(out.body, {status: out.status});
+    }
+    if (path === '/passkey-session') return Response.json({session: await this.pk.session(String(body.token || ''), body.club || null)});
+    if (path === '/passkey-owner') { await this.reg.moveOwner(String(body.code), String(body.from), String(body.to)); return Response.json({ok: true}); }
     if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
       if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {temporary: body.temporary !== false}));
@@ -340,7 +370,7 @@ export class Room {
   async club(code = null) {
     if (this.clubP) return this.clubP;
     if (!(await this.state.storage.get('club')) && !(code && await this.rebuild(code))) return null;
-    const online = [...new Set(this.state.getWebSockets('guest').map(g => this.guestId(g)))];
+    const online = [...new Set(this.state.getWebSockets('guest').filter(g => !this.unproven(g)).map(g => this.guestId(g)))];
     loadEngine();
     this.clubP = this.status(code)
       .then(({record}) => openClub({
@@ -355,6 +385,10 @@ export class Room {
           return (await this.status(c, true)).record;
         },
         timers: this.tableTimers(),
+        onOwnerMoved: async (from, to) => {
+          await this.registry('/passkey-owner', {code: await this.clubCode(), from, to});
+          await this.status(null, true);
+        },
       }))
       .catch(e => { this.clubP = null; throw e; });
     return this.clubP;
@@ -514,7 +548,7 @@ export class Room {
 
   toGuest(to, data) {
     const out = JSON.stringify(data);
-    for (const g of this.state.getWebSockets('g:' + to)) { try { g.send(out); } catch {} }
+    for (const g of this.guests(to)) { try { g.send(out); } catch {} }
   }
 
   // A guest alone in an empty room asks to make it an always-on club.
@@ -608,6 +642,7 @@ export class Room {
       if (club) return refuse(4001, 'this club runs on the relay');
       this.state.acceptWebSocket(server, ['host']);
       for (const g of this.state.getWebSockets('guest')) {
+        if (this.unproven(g)) continue;
         server.send(JSON.stringify({from: this.guestId(g), event: 'open'}));
         g.send(JSON.stringify({type: 'host_back'}));
       }
@@ -621,18 +656,65 @@ export class Room {
         if (st.blocked && id !== st.record?.owner) return refuse(4003, st.blocked.slice(0, 120));
         this.noteActive(code);
       }
-      for (const old of this.state.getWebSockets('g:' + id)) old.close(4009, 'replaced');
+      // A club connection proves it holds the player's key first (#577,
+      // prove.js): until then it replaces no one, and only an older
+      // unproven one of the same ID goes.
+      const proving = mustProve({queue, club});
+      for (const old of this.state.getWebSockets('g:' + id)) {
+        if (!proving || this.unproven(old)) old.close(4009, 'replaced');
+      }
       if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
       const tags = ['guest', 'g:' + id, 'c:' + code];
       this.state.acceptWebSocket(server, queue ? [...tags, 'queue'] : tags);
-      // The club keeps a hashed snapshot of the connection for ducy's checks (#582).
-      if (club) await club.message({from: id, event: 'open', conn: connOf(req)});
-      else if (host) host.send(JSON.stringify({from: id, event: 'open'}));
-      else server.send(JSON.stringify({type: 'host_away'}));
+      if (proving) {
+        const challenge = newChallenge();
+        // The club keeps a hashed snapshot of the connection for ducy's
+        // checks (#582): kept on the socket until it's proven.
+        server.serializeAttachment({proof: challenge, conn: connOf(req)});
+        server.send(JSON.stringify({type: 'prove', challenge}));
+      } else await this.arrived(server, id, connOf(req));
     } else {
       return refuse(4000, 'bad role');
     }
     return new Response(null, {status: 101, webSocket: client});
+  }
+
+  // A club connection that hasn't proved its player ID yet (#577).
+  unproven(ws) {
+    return !!ws.deserializeAttachment()?.proof;
+  }
+
+  // The guest connections of player `id` that count: proven, or not asked.
+  guests(id) {
+    return this.state.getWebSockets('g:' + id).filter(g => !this.unproven(g));
+  }
+
+  // Guest `ws` (player `id`) counts from now: the club or the host hears
+  // they're here, or they hear the host is away.
+  async arrived(ws, id, conn = ws.deserializeAttachment()?.conn) {
+    const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
+    const club = await this.club(code);
+    const host = this.host();
+    if (club) await club.message({from: id, event: 'open', conn});
+    else if (host) host.send(JSON.stringify({from: id, event: 'open'}));
+    else ws.send(JSON.stringify({type: 'host_away'}));
+  }
+
+  // A proof from unproven connection `ws` (#577): it counts, replacing any
+  // other connection of the same player. Anything else is dropped.
+  async proving(ws, id, msg) {
+    let m;
+    try { m = JSON.parse(msg); } catch { return; }
+    const a = ws.deserializeAttachment() || {};
+    const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
+    if (!(await proves(m, {id, code, challenge: a.proof}))) {
+      if (m?.type === 'prove') ws.close(4000, 'not proven');
+      return;
+    }
+    ws.serializeAttachment({...(ws.deserializeAttachment() || {}), proof: null});
+    for (const old of this.state.getWebSockets('g:' + id)) if (old !== ws) old.close(4009, 'replaced');
+    ws.send(JSON.stringify({type: 'proven'}));
+    await this.arrived(ws, id);
   }
 
   // Someone connected to the club: its last-active time in the registry,
@@ -682,13 +764,28 @@ export class Room {
     const pong = pingReply(msg);
     if (pong) { ws.send(pong); return; }
     const id = this.guestId(ws);
+    // Checking a proof checks a signature, with the engine (after
+    // hibernation the Worker may have started again without it).
+    if (id && this.unproven(ws)) { loadEngine(); await this.proving(ws, id, msg); return; }
     if (id) {
       // An always-on club runs here: it gets the message. Or someone asks
       // to make this room one, or to move their club here.
       const club = await this.club(this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2));
-      if (club || msg.includes('"create_club"') || msg.includes('"import_club"')) {
+      if (club || msg.includes('"create_club"') || msg.includes('"import_club"') || msg.startsWith('{"type":"unlock"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }
+        // Only a connection unlocked with the player's passkey acts (#575).
+        // The unlock is kept on the socket, so it lasts through hibernation.
+        const a = ws.deserializeAttachment() || {};
+        const c = await this.state.storage.get('club');
+        const about = c ? {code: c.code, hostId: c.hostId, name: c.name, owner: c.ownerId === id} : null;
+        const g = await unlockCheck(m, a.unlock || null, id, token => this.registry('/passkey-session', {token, club: about}).then(r => r.session));
+        ws.serializeAttachment({...(ws.deserializeAttachment() || {}), unlock: g.u});
+        // The relay vouched for this player as someone who lost their ID:
+        // moved over before they hear they're unlocked.
+        if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
+        if (g.reply) ws.send(JSON.stringify(g.reply));
+        if (!g.pass) return;
         if (club) await club.message({from: id, data: m});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
         else if (m?.body?.type === 'import_club') await this.importHere(ws, id, m);
@@ -709,7 +806,7 @@ export class Room {
     try { m = JSON.parse(msg); } catch { return; }
     if (m && typeof m.to === 'string') {
       const out = JSON.stringify(m.data);
-      for (const g of this.state.getWebSockets('g:' + m.to)) g.send(out);
+      for (const g of this.guests(m.to)) g.send(out);
     } else if (m && Number.isSafeInteger(m.ack)) {
       await this.state.storage.delete('q:' + String(m.ack).padStart(12, '0'));
     }
@@ -727,8 +824,10 @@ export class Room {
   gone(ws) {
     const id = this.guestId(ws);
     if (id) {
+      // One that never proved its ID (#577) was never there.
+      if (this.unproven(ws)) return;
       // A newer connection with the same id took over: not a disconnect.
-      if (this.state.getWebSockets('g:' + id).some(g => g !== ws)) return;
+      if (this.guests(id).some(g => g !== ws)) return;
       if (this.clubP) { this.clubP.then(c => c.message({from: id, event: 'close'})).catch(e => console.warn(e)); return; }
       this.host()?.send(JSON.stringify({from: id, event: 'close'}));
     } else if (this.state.getTags(ws).includes('host') && !this.host(ws)) {

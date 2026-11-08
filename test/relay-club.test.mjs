@@ -9,7 +9,10 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
+import { relayClient, softPasskey } from './relay-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
+import { passkeys, rpIdFor } from '../relay/src/passkeys.js';
+import { check as unlockCheck, movesChips } from '../relay/src/unlock.js';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
 const PORT = 19000 + Math.floor(Math.random() * 1000);
@@ -17,29 +20,13 @@ const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-serv
 await new Promise(resolve => server.stdout.once('data', resolve));
 test.after(() => server.kill());
 
-function open(path) {
-  const ws = new WebSocket(`ws://localhost:${PORT}${path}`);
-  const inbox = [], waiting = [];
-  ws.on('message', d => { const m = JSON.parse(d); waiting.length ? waiting.shift()(m) : inbox.push(m); });
-  const closed = new Promise(resolve => ws.on('close', code => resolve(code)));
-  // The next message whose type (or signed body's type) is `type`.
-  async function next(type) {
-    for (;;) {
-      const m = inbox.length ? inbox.shift() : await new Promise(r => waiting.push(r));
-      if (!type || m.type === type || m.body?.type === type) return m;
-    }
-  }
-  return {
-    ws, closed, next,
-    ready: new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); }),
-    send: obj => ws.send(JSON.stringify(obj)),
-  };
-}
+const relay = relayClient(PORT);
+const open = (path, ident = null, opts) => relay.open(path, ident, opts);
 
 test('a room becomes an always-on club: members join and the owner runs it, with no host', {skip: !haveWasm && 'no wasm build'}, async () => {
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'CCCC-CCCC';
-  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`);
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
   o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Night Owls'}));
   const made = await o.next('club_created');
@@ -50,7 +37,7 @@ test('a room becomes an always-on club: members join and the owner runs it, with
   assert.equal(await h.closed, 4001);
 
   // Ann asks to join; the owner approves and gives her chips.
-  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`);
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
   await a.ready;
   a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
   const pending = await a.next('status');
@@ -75,8 +62,8 @@ test('a room becomes an always-on club: members join and the owner runs it, with
   a.ws.close();
 
   // A second room can't be claimed by someone who isn't alone in it.
-  const b = open(`/room/DDDD-DDDD?role=guest&id=${ann.id}&queue=1`);
-  const c = open(`/room/DDDD-DDDD?role=guest&id=${owner.id}&queue=1`);
+  const b = open(`/room/DDDD-DDDD?role=guest&id=${ann.id}&queue=1`, ann);
+  const c = open(`/room/DDDD-DDDD?role=guest&id=${owner.id}&queue=1`, owner);
   await Promise.all([b.ready, c.ready]);
   b.send(await signMessage(ann, {type: 'create_club', club: 'DDDD-DDDD', name: 'Mine'}));
   assert.match((await b.next('club_error')).reason, /in use/);
@@ -90,13 +77,13 @@ test('what a code is: a club tells its name only when it takes requests by code 
   assert.deepEqual((await look('FFFF-FFFF')).body, {kind: 'none'}, 'no club, and no game open (#566)');
   assert.equal((await look('nope')).status, 400);
 
-  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`);
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
   o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Code Night'}));
   const made = await o.next('club_created');
   // Off by default: a club, and nothing more.
   assert.deepEqual((await look(code)).body, {kind: 'club', ask: false});
-  const b = open(`/room/${code}?role=guest&id=${bob.id}&queue=1`);
+  const b = open(`/room/${code}?role=guest&id=${bob.id}&queue=1`, bob);
   await b.ready;
   b.send(await signMessage(bob, {club: code, type: 'join', invite: '', name: 'Bob'}));
   const refused = await b.next('status');
@@ -130,4 +117,206 @@ test('a game hosted in a tab, cash game or one-off tournament, is a game to the 
   h.send({to: 'g1', data: {type: 'tourney_room'}});
   assert.equal((await g.next('tourney_room')).type, 'tourney_room');
   h.ws.close(); g.ws.close();
+});
+
+// ---- passkeys (#575) ----
+
+// The relay's passkeys over storage of their own, on a clock the test moves.
+function memoryPasskeys(origins = []) {
+  const m = new Map();
+  const clock = {t: 1_000_000};
+  const pk = passkeys({get: async k => structuredClone(m.get(k)), put: async (k, v) => { m.set(k, structuredClone(v)); }, delete: async k => { m.delete(k); }}, {origins, now: () => clock.t});
+  return {pk, clock};
+}
+const enrolEnv = async (pk, ident, p, extra = {}) => signMessage(ident, {type: 'passkey_enrol', challenge: (await pk.challenge()).challenge, credId: p.credId, spki: p.spki, alg: p.alg, name: 'Phone', ...extra});
+
+test('a passkey is attached by its player only, and its sign-ins are checked', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {pk, clock} = memoryPasskeys();
+  const ann = await createIdentity(), eve = await createIdentity();
+  const p = await softPasskey();
+  // Signed by someone else, or with a made-up challenge: refused.
+  const forged = await enrolEnv(pk, eve, p);
+  forged.from = ann.id;
+  await assert.rejects(pk.enrol(forged), /signed/);
+  await assert.rejects(pk.enrol(await signMessage(ann, {type: 'passkey_enrol', challenge: 'nope', credId: p.credId, spki: p.spki, alg: -7})), /too long/);
+  const made = await pk.enrol(await enrolEnv(pk, ann, p));
+  assert.ok(made.token);
+  assert.deepEqual(await pk.status(ann.id), {enrolled: true, creds: [p.credId], movedTo: null});
+
+  // A good sign-in starts a session the rooms accept.
+  const ok = await pk.unlock(await p.sign((await pk.challenge()).challenge));
+  assert.equal(ok.id, ann.id);
+  assert.equal((await pk.session(ok.token)).id, ann.id);
+  // Bad ones: the same challenge again, not verified, another site, a wrong
+  // signature, a made-up challenge, and a stale one.
+  const c1 = (await pk.challenge()).challenge;
+  const once = await p.sign(c1);
+  await pk.unlock(once);
+  await assert.rejects(pk.unlock(once), /challenge/);
+  await assert.rejects(pk.unlock(await p.sign((await pk.challenge()).challenge, {flags: 0x01})), /not verified/);
+  await assert.rejects(pk.unlock(await p.sign((await pk.challenge()).challenge, {origin: 'https://evil.example'})), /not from ducy/);
+  await assert.rejects(pk.unlock(await p.sign((await pk.challenge()).challenge, {rpId: 'evil.example'})), /wrong site/);
+  const other = await softPasskey();
+  await assert.rejects(pk.unlock({...(await other.sign((await pk.challenge()).challenge)), credId: p.credId}), /bad signature/);
+  await assert.rejects(pk.unlock(await p.sign('made-up')), /challenge/);
+  const old = (await pk.challenge()).challenge;
+  clock.t += 6 * 60_000;
+  await assert.rejects(pk.unlock(await p.sign(old)), /challenge/);
+  // A passkey no one attached.
+  await assert.rejects(pk.unlock(await other.sign((await pk.challenge()).challenge)), /isn’t known/);
+
+  // A second passkey needs a fresh session; a stale one won't do.
+  const p2 = await softPasskey();
+  await assert.rejects(pk.enrol(await enrolEnv(pk, ann, p2)), /Unlock/);
+  await assert.rejects(pk.enrol(await enrolEnv(pk, ann, p2, {token: ok.token})), /Unlock/);
+  const s = await pk.unlock(await p.sign((await pk.challenge()).challenge));
+  await pk.enrol(await enrolEnv(pk, ann, p2, {token: s.token}));
+  assert.equal((await pk.list(s.token)).creds.length, 2);
+
+  // A lost device: its passkey removed, its sign-ins and sessions refused.
+  const lost = await pk.unlock(await p2.sign((await pk.challenge()).challenge));
+  await pk.remove(s.token, p2.credId);
+  assert.equal(await pk.session(lost.token), null);
+  await assert.rejects(pk.unlock(await p2.sign((await pk.challenge()).challenge)), /isn’t known/);
+  await assert.rejects(pk.remove(s.token, p.credId), /only passkey/);
+  // Sessions end after 4 hours unused.
+  clock.t += 4 * 3600e3 + 1;
+  assert.equal(await pk.session(s.token), null);
+});
+
+test('only pages of the relay’s site count; ducy.cards passkeys work on its subdomains', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {pk} = memoryPasskeys(['https://staging.ducy.cards']);
+  const ann = await createIdentity(), p = await softPasskey();
+  await pk.enrol(await enrolEnv(pk, ann, p));
+  const v = await pk.unlock(await p.sign((await pk.challenge()).challenge, {origin: 'https://staging.ducy.cards', rpId: 'ducy.cards'}));
+  assert.equal(v.id, ann.id);
+  await assert.rejects(pk.unlock(await p.sign((await pk.challenge()).challenge, {origin: 'http://localhost:4173'})), /not from ducy/);
+  assert.equal(rpIdFor('https://ducy.cards'), 'ducy.cards');
+  assert.equal(rpIdFor('https://staging.ducy.cards'), 'ducy.cards');
+  assert.equal(rpIdFor('http://localhost:4173'), 'localhost');
+});
+
+test('without PRF the relay vouches: the new device’s ID takes over, and the old one can’t come back', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {pk} = memoryPasskeys();
+  const old = await createIdentity(), fresh = await createIdentity();
+  const p = await softPasskey();
+  await pk.enrol(await enrolEnv(pk, old, p));
+  const s = await pk.unlock(await p.sign((await pk.challenge()).challenge));
+  await pk.session(s.token, {code: 'CLUB-1234', hostId: 'H', name: 'Night Owls', owner: false});
+  const v = await pk.vouch(await signMessage(fresh, {type: 'passkey_vouch', challenge: (await pk.challenge()).challenge, token: s.token}));
+  assert.deepEqual([v.from, v.to], [old.id, fresh.id]);
+  const after = await pk.session(s.token);
+  assert.deepEqual([after.id, after.movedFrom], [fresh.id, old.id]);
+  const again = await pk.unlock(await p.sign((await pk.challenge()).challenge));
+  assert.equal(again.id, fresh.id);
+  assert.deepEqual(Object.keys(again.clubs), ['CLUB-1234'], 'their clubs came with them');
+  assert.equal((await pk.status(old.id)).movedTo, fresh.id);
+  await assert.rejects(pk.enrol(await enrolEnv(pk, old, await softPasskey())), /moved/);
+});
+
+test('a club connection acts only once unlocked; chips need a recent unlock', async () => {
+  const live = {id: 'ann', at: 0, movedFrom: null};
+  const session = async t => (t === 'good' ? {...live} : null);
+  const t0 = 1_000_000;
+  // Nothing yet: refused.
+  let g = await unlockCheck({body: {type: 'hello'}}, null, 'ann', session, t0);
+  assert.equal(g.pass, false);
+  assert.equal(g.reply.type, 'locked');
+  // A bad token, or someone else's: refused.
+  assert.equal((await unlockCheck({type: 'unlock', token: 'bad'}, null, 'ann', session, t0)).reply.type, 'locked');
+  assert.equal((await unlockCheck({type: 'unlock', token: 'good'}, null, 'bob', session, t0)).reply.type, 'locked');
+  // Unlocked: it acts, and may move chips while the sign-in is recent.
+  live.at = t0;
+  g = await unlockCheck({type: 'unlock', token: 'good'}, null, 'ann', session, t0);
+  assert.equal(g.reply.type, 'unlocked');
+  let u = g.u;
+  g = await unlockCheck({body: {type: 'chip_request', amount: 5}}, u, 'ann', session, t0 + 60_000);
+  assert.equal(g.pass, true);
+  u = g.u;
+  // Later: play goes on, chips need the passkey again.
+  g = await unlockCheck({body: {type: 'hello'}}, u, 'ann', session, t0 + 4 * 60_000);
+  assert.equal(g.pass, true);
+  u = g.u;
+  g = await unlockCheck({body: {type: 'owner_cmd', op: 'give', args: {}}}, u, 'ann', session, t0 + 6 * 60_000);
+  assert.equal(g.reply.type, 'unlock_again');
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'settings'}}), false);
+  assert.equal(movesChips({body: {type: 'agent_cmd'}}), true);
+  // Idle 4 hours: locked again.
+  g = await unlockCheck({body: {type: 'hello'}}, u, 'ann', session, t0 + 5 * 3600e3);
+  assert.equal(g.reply.type, 'locked');
+  // The session ended (its passkey removed): locked at the next check.
+  const gone = async () => null;
+  g = await unlockCheck({body: {type: 'hello'}}, {...u, checked: t0}, 'ann', gone, t0 + 6 * 60_000);
+  assert.equal(g.reply.type, 'locked');
+});
+
+test('the relay refuses a club connection that isn’t unlocked', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const owner = await createIdentity(), ann = await createIdentity();
+  const code = 'PPPP-PPPP';
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Locked Night'}));
+  const made = await o.next('club_created');
+  // Ann proves her ID but has no passkey session: nothing she sends counts.
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann, {unlock: false});
+  await a.ready;
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  assert.equal((await a.next('locked')).type, 'locked');
+  a.send({type: 'unlock', token: 'made-up'});
+  assert.equal((await a.next('locked')).type, 'locked');
+  // The owner's session doesn't unlock Ann's connection.
+  a.send({type: 'unlock', token: await relay.session(owner)});
+  assert.equal((await a.next('locked')).type, 'locked');
+  // Her own does.
+  a.send({type: 'unlock', token: await relay.session(ann)});
+  assert.equal((await a.next('unlocked')).type, 'unlocked');
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  assert.equal((await a.next('status')).body.status, 'pending');
+  o.ws.close(); a.ws.close();
+});
+
+test('the relay vouches: a member who lost their ID is moved to their new one, chips and all', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const owner = await createIdentity(), ann = await createIdentity(), annNew = await createIdentity();
+  const code = 'VVVV-VVVV';
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Vouch Night'}));
+  const made = await o.next('club_created');
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a.ready;
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  await a.next('status');
+  o.send(await signMessage(owner, {club: code, type: 'owner_hello'}));
+  await o.next('owner_view');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1}));
+  await o.next('owner_result');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'give', args: {id: ann.id, amount: 700}, id: 2}));
+  await o.next('owner_result');
+  a.ws.close();
+
+  // Ann's phone is gone. On a new one (no PRF), she signs in with her passkey.
+  const p = await relay.passkeyOf(ann);
+  const s = await relay.post('unlock', await p.sign(await relay.challenge()));
+  const v = await relay.post('vouch', {env: await signMessage(annNew, {type: 'passkey_vouch', challenge: await relay.challenge(), token: s.body.token})});
+  assert.equal(v.status, 200, v.body.error);
+  // Her new ID's connection unlocks with that session: the club moves her.
+  const n = open(`/room/${code}?role=guest&id=${annNew.id}&queue=1`, annNew, {unlock: false});
+  await n.ready;
+  n.send({type: 'unlock', token: s.body.token});
+  await n.next('unlocked');
+  n.send(await signMessage(annNew, {club: code, type: 'hello', ledger: 'links'}));
+  const acc = await n.next('account');
+  assert.equal(acc.body.balance, 700);
+  o.send(await signMessage(owner, {club: code, type: 'owner_hello'}));
+  let view;
+  do view = await o.next('owner_view'); while (!view.body.data.members[annNew.id]);
+  assert.equal(view.body.data.members[annNew.id].name, 'Ann');
+  assert.equal(view.body.data.members[ann.id], undefined);
+  assert.ok(view.body.data.log.some(l => /Moved Ann to a new ID \(ducy vouched\)/.test(l.text)));
+  // The old ID can't unlock any more.
+  const old = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann, {unlock: false});
+  await old.ready;
+  old.send({type: 'unlock', token: s.body.token});
+  assert.equal((await old.next('locked')).type, 'locked');
+  o.ws.close(); n.ws.close(); old.ws.close();
 });

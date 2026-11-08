@@ -203,6 +203,16 @@ export function registry(storage, limits) {
     // `limits` (default the free ones).
     grant: (id, {note = '', maxClubs = 0, limits: l = null} = {}, now = Date.now()) =>
       op({op: 'grant', id: String(id), note: String(note), maxClubs: Number.isSafeInteger(maxClubs) && maxClubs > 0 ? maxClubs : 0, limits: l}, now),
+    // The relay vouched that `to` is the owner of club `code`, `from`, on a
+    // new device (#575): the club's record, and any permission, follow.
+    async moveOwner(code, from, to) {
+      const clubs = (await storage.get('clubs')) || {};
+      if (clubs[code]?.owner !== from) return;
+      clubs[code].owner = to;
+      await storage.put('clubs', clubs);
+      const grants = (await storage.get('grants')) || {};
+      if (grants[from] && !grants[to]) { grants[to] = grants[from]; await storage.put('grants', grants); }
+    },
     // Takes permission away; their clubs carry on until suspended.
     revoke: id => op({op: 'revoke', id: String(id)}),
     // Changes a club: {suspended, limits, plan ('trial' | 'club'), expires
