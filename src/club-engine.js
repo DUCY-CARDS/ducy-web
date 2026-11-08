@@ -4,7 +4,8 @@
 // Worker, where an always-on club runs (#93). Ops:
 //   runnerCreate(id, config) | runnerRestore(id, json, config) → whether it
 //     could | runnerEvent(id, event) → the runner's step (the time is
-//     added) | runnerSave(id) → JSON | runnerDrop(id)
+//     added) | runnerSave(id) → JSON | runnerCards(id) → every seat's
+//     hole cards (an always-on club's full record, #580) | runnerDrop(id)
 // config = {seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs,
 // sitOutMs}, and the runner's own options (open, link, active, idleMs, askMs).
 //
@@ -23,7 +24,7 @@
 
 import * as ducy from '../wasm/ducy_wasm.js';
 
-const wrapTable = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), free: () => t.free()});
+const wrapTable = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), holeCards: () => t.holeCards(), free: () => t.free()});
 const wrapTourney = t => ({event: (ev, at) => t.event(ev, at), save: at => t.save(at), tableView: table => t.tableView(table), free: () => t.free()});
 
 // `ClubTable`: ducy's, or one the demo's relay makes {create, restore}.
@@ -73,6 +74,10 @@ export function clubEngine(ClubTable = ducy.ClubTable) {
     },
     // The table as JSON for resuming it after a restart (#107).
     runnerSave: id => runners.get(id)?.save(Date.now()) ?? null,
+    // Every seat's hole cards in the hand at the table, folded ones too
+    // ({hand, seats: [{seat, cards}]}), for an always-on club's full record
+    // of it (#580). Never sent to anyone.
+    runnerCards: id => runners.get(id)?.holeCards() ?? null,
     runnerDrop: id => { runners.get(id)?.free(); return runners.delete(id); },
     // A tournament (#81): every table of it, for remote players. `config` =
     // {game, tableSize, startingStack, levels: [{sb, bb, ante}], paid, seed},

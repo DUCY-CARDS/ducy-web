@@ -17,7 +17,13 @@
 //   transport      {send(to, data), ack(n)}: the relay connection
 //   onChange()     something the host's view shows changed
 //   onPlay()       a hand is in play at one of its tables (usage, #421)
-//   storeHand(rec, {days})  a finished hand, for the host's history (#71)
+//   storeHand(rec, {days})  a finished hand, for the host's history (#71):
+//                  as the host saw it, cards only once shown down
+//   fullHand(hand, {days})  only an always-on club's room (#580): a finished
+//                  hand with every seat's cards, folded ones too, and its
+//                  deal (club-host.js onFullHand, plus {club, table,
+//                  tableName, game}), for ducy's own checks. Never for anyone
+//                  at the club to see.
 //   engine         {call, store} for the tables (club-host.js); defaults to
 //                  the page's worker and IndexedDB
 //   hostKeyPair    the host's key pair for encrypted table updates (e2e.js);
@@ -70,7 +76,7 @@ import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
 export function createClubServer({
-  identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, engine = {},
+  identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, fullHand = null, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
   lastSeen = () => ({}),
 }) {
@@ -366,9 +372,15 @@ export function createClubServer({
       onHand: (tid, view, players) => {
         const t = tableById(club, tid);
         const rec = handRecord({club: club.code, table: tid, tableName: t?.name || '', game: t?.game || '', view, who: 'host'});
+        // Who played each seat, by player ID (#580).
+        rec.seats = rec.seats.map(s => ({...s, id: players.find(p => p.seat === s.i)?.client_id || null}));
         storeHand(rec, {days: club.keepDays ?? HOST_KEEP_DAYS});
         promoHand(rec, players);
       },
+      ...(fullHand ? {onFullHand: (tid, hand) => {
+        const t = tableById(club, tid);
+        fullHand({...hand, club: club.code, table: tid, tableName: t?.name || '', game: t?.game || ''}, {days: club.keepDays ?? HOST_KEEP_DAYS});
+      }} : {}),
       ...engine,
     });
     tableHost.setLink(linkOk);

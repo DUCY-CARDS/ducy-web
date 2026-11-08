@@ -4,8 +4,8 @@
 //! Bytes cross as lowercase hex.
 
 use ducy_host::runner::{
-    ASK_MS, Action, Event, HostCommand, IDLE_MS, NEXT_HAND_MS, PlayerCommand, RunnerConfig,
-    RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
+    ASK_MS, Action, Event, FairResult, HostCommand, IDLE_MS, NEXT_HAND_MS, PlayerCommand,
+    RunnerConfig, RunnerUpdate, SeedPicker, Step, TableResult, TableRunner,
 };
 use ducy_host::{Command, HostSnapshot, TableHost};
 use ducy_play::fair_deal::{Bytes32, Reveal};
@@ -209,6 +209,23 @@ impl ClubTable {
         serde_json::to_string(&self.runner.snapshot(now as u64)).map_err(err)
     }
 
+    /// Every seat's hole cards in the hand at the table (the last one, once
+    /// it's over), folded ones too: {hand, seats: [{seat, cards}]}, by seat.
+    /// Only for an always-on club's own record of the hand (#580), which no
+    /// one at the club can read: never send it to anyone.
+    #[wasm_bindgen(js_name = holeCards)]
+    pub fn hole_cards(&self) -> Result<JsValue, JsError> {
+        let t = self.runner.host().table();
+        let seats: Vec<Value> = (0..t.num_seats())
+            .filter(|&s| t.hand_index(s).is_some())
+            .filter_map(|s| {
+                let cards = t.view(s).seats.first()?.cards.clone()?;
+                Some(json!({"seat": s, "cards": cards}))
+            })
+            .collect();
+        to_js(&json!({"hand": t.hand_number(), "seats": seats}))
+    }
+
     /// Deals each hand from `pick`'s seed when it gives one, in place of the
     /// fair-deal round (ducy-web's demo club): `pick({state, players})`, the
     /// table about to deal, returns a seed in hex or nothing. Null stops it.
@@ -361,6 +378,11 @@ fn step_json(step: &Step, host: &TableHost) -> Result<Value, JsError> {
                     Ok(r) => json!({"type": "engine", "res": r}),
                     Err(e) => return Some(Err(e)),
                 },
+                // A hand's deal, for the host's side only (#580).
+                Action::Send {
+                    to,
+                    update: RunnerUpdate::FairResult(f),
+                } => dealt_json(to, f),
                 Action::Send { to, update } => {
                     json!({"type": "send", "to": to, "update": update_json(update)?})
                 }
@@ -415,6 +437,19 @@ fn list_json(list: &[(String, Bytes32)]) -> Value {
     list.iter()
         .map(|(id, c)| json!({"id": id, "c": hex(c)}))
         .collect()
+}
+
+/// A fair-dealt hand's deal, as the runner would have told member `to`:
+/// {type: 'dealt', to, hand, game, dealt, index (where `to`'s cards are in
+/// the deal), seed, list, reveals}. It never goes to a player (see
+/// `update_json`): an always-on club keeps it in the hand's full record
+/// (#580), so ducy can check the deal.
+fn dealt_json(to: &str, f: &FairResult) -> Value {
+    json!({
+        "type": "dealt", "to": to, "hand": f.hand, "game": f.game, "dealt": f.dealt, "index": f.index,
+        "seed": hex(&f.seed), "list": list_json(&f.list),
+        "reveals": f.reveals.iter().map(|(id, r)| json!({"id": id, "value": hex(&r.value), "nonce": hex(&r.nonce)})).collect::<Vec<_>>(),
+    })
 }
 
 /// A runner's message for a member, or None for one that never goes to a
