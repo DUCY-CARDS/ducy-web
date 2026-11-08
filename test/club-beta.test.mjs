@@ -8,7 +8,11 @@ import { newDraft, hostTourneysHtml } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
 test('the unfinished features are off', () => {
-  assert.deepEqual([...OFF].sort(), ['agents', 'balances', 'credit', 'promos', 'rake', 'services']);
+  assert.deepEqual([...OFF].sort(), ['balances', 'credit', 'promos', 'rake', 'services']);
+});
+
+test('agents are on: the owner can make one', () => {
+  assert.ok(!OFF.has('agents'));
 });
 
 test('their pages leave the sidebar, and their addresses still parse', () => {
