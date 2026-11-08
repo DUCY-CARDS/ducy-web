@@ -1,5 +1,6 @@
 // The owner's fair play page (#582): the relay's collusion check
-// (relay/src/collusion.js) in plain words. Its report comes with the
+// (relay/src/collusion.js) and its check for play too close to ducy's GTO
+// model (#591, relay/src/assist.js) in plain words. Its report comes with the
 // owner's view of the club (club-server.js, `checks`): players, and pairs
 // of players, whose play stands out, with counts and hand numbers, never
 // cards. A flag means "look into it", not proof.
@@ -7,6 +8,12 @@
 import { chipText } from './chip-format.js';
 
 const n = x => Number(x || 0).toLocaleString();
+// A share as a whole percent: pct(0.91) or pct(91, 100), "91%".
+const pct = (k, of = 1) => `${of ? Math.round((100 * Number(k || 0)) / of) : 0}%`;
+// "the club's average is 58%", or, with no one else to compare, the
+// solver's own rate on the same decisions.
+const clubAvg = f => (f.club == null ? 'no club average yet' : `the club’s average is ${pct(f.club)}`);
+const clubOr = (f, solver) => (f.club != null ? clubAvg(f) : `${solver}: ${pct(f.solver)}`);
 
 // A flag in a line: "Ava rarely bets or raises against Bo: 2 of 40 hands
 // heads-up, against 31 of 90 with others". `names`: {id: name}.
@@ -27,6 +34,15 @@ export function flagText(f, names = {}) {
     case 'network': return `${a} and ${b} played on the same network: ${n(w.k)} of ${n(w.n)} hands together`;
     case 'vpn': return `${a} played through a VPN or hosting network: ${n(w.k)} of ${n(w.n)} hands`;
     case 'fake': return `${a}’s location may be faked${f.why?.length ? ` (${f.why.map(x => FAKE_WHY[x] || x).join(', ')})` : ''}: ${n(w.k)} of ${n(w.n)} hands`;
+    // Play too close to ducy's GTO model (#591, relay/src/assist.js).
+    case 'gto-top': return `${a} matched the solver’s top play in ${pct(w.k, w.n)} of ${n(w.n)} preflop decisions; ${clubOr(f, 'the solver itself')}`;
+    case 'gto-off': return `${a} made ${n(w.k)} plays the solver never makes in ${n(w.n)} preflop decisions (${pct(w.k, w.n)}); ${clubAvg(f)}`;
+    case 'gto-mix': return `${a} took the less common play in close spots ${pct(w.k, w.n)} of ${n(w.n)} times, as the solver would (${pct(f.solver)}); ${clubAvg(f)}`;
+    case 'gto-sizes': return `${a} raised the solver’s exact size ${pct(w.k, w.n)} of ${n(w.n)} times; ${clubAvg(f)}`;
+    case 'gto-pace': return `${a} took as long on clear decisions as harder ones: ${f.clear} s and ${f.hard} s${f.club ? `; the club: ${f.club.clear} s and ${f.club.hard} s` : ''}`;
+    case 'gto-even': return `${a} took ${f.median} s give or take ${f.spread} s over ${n(f.n)} decisions`;
+    case 'gto-away': return `${a}’s tab was hidden while deciding ${pct(w.k, w.n)} of ${n(w.n)} times; ${clubAvg(f)}`;
+    case 'gto-jump': return `${a}’s top-play rate jumped from ${pct(f.before.top, f.before.n)} (${n(f.before.n)} decisions) to ${pct(f.after.top, f.after.n)} (${n(f.after.n)}); plays the solver never makes: ${n(f.before.off)}, then ${n(f.after.off)}`;
     default: return f.text || f.kind;
   }
 }
