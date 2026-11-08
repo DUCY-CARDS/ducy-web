@@ -4,7 +4,7 @@
 |---|---|---|---|
 | Site | ducy.cards | staging.ducy.cards | sandbox.ducy.cards |
 | Relay (Worker) | `ducy-relay` | `ducy-relay-staging` | `ducy-relay-sandbox` |
-| Deploys | every push to master (`deploy.yml`, `relay.yml`) | every push to master (`staging.yml`) | by hand, any branch (`sandbox.yml`) |
+| Deploys | a release, by hand, after approval (`deploy.yml`) | every push to master (`staging.yml`) | by hand, any branch (`sandbox.yml`) |
 | Data | kept, backed up | kept, no backups | wiped Mondays and on request |
 | Password | no | yes | yes |
 
@@ -18,8 +18,39 @@ so testers get a separate player ID on each.
   pinned ducy commit, relay and model pins. Staging and sandbox pages also
   show a strip at the bottom left, e.g. "Staging · 6221c90d-7cfc4679".
 - **The relay:** `GET /version` answers its environment and commit.
-- **GitHub:** the repo's Environments page lists the last deploy to staging
-  and sandbox.
+- **GitHub:** the repo's Environments page lists the last deploy to each
+  environment; Releases lists each release's tag and its PRs.
+
+## Releasing to ducy.cards
+
+Merging to master deploys staging only. The live site and relay change only
+in a release: **Deploy production** (`deploy.yml`), which ships both from one
+commit in one run.
+
+1. Check the release on staging.ducy.cards ([TEST-PLAN.md](TEST-PLAN.md)).
+2. Actions → **Deploy production** → Run workflow, with **ref** empty.
+3. Approve the run (the `production` environment needs your review).
+4. The run builds and tests, deploys the relay, then the site and the bot
+   models, then tags the commit `vYYYY.MM.DD` (`vYYYY.MM.DD.2`, `.3` for
+   later releases that day) and makes a GitHub release with notes from the
+   PRs since the last one.
+
+If the commit already has a release tag, it's redeployed under that tag
+and no new one is made.
+
+**Rolling back:** run **Deploy production** with **ref** set to an earlier
+tag, e.g. `v2026.11.20`. It redeploys that tag's site and relay and makes no
+new tag. The site keeps its last 5 release folders, so pages still open keep
+working. The bot models aren't rolled back: a model already published stays
+the one `gto/*current.json` points at.
+
+**Hotfix:**
+1. Branch from the live tag: `git switch -c hotfix/<name> v2026.11.20`, fix,
+   push.
+2. Deploy the branch to the sandbox (below) and check it there.
+3. Run **Deploy production** with **ref** set to the branch. It's tagged and
+   released as for master.
+4. Merge the fix into master as usual.
 
 ## Staging and sandbox
 
@@ -42,7 +73,7 @@ own `.htaccess` sets its own policy (naming its relay) and rewrite rules,
 which replace the live site's.
 
 **Bot models:** staging and sandbox share the live site's `gto/` through a
-symlink, `gto -> ../gto`. A new model pin reaches them when the live deploy
+symlink, `gto -> ../gto`. A new model pin reaches them when a release
 publishes it.
 
 ## Deploying the sandbox
