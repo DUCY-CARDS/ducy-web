@@ -10,6 +10,9 @@ import {
 } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 import { pickHtml, readPick } from '../src/amount-picks.js';
+import { OFF } from '../src/club-beta.js';
+
+OFF.clear();  // Rake stays tested while the beta hides it (#560).
 
 const NOW = 1_000_000_000;
 const structure = [{sb: 25, bb: 50, ante: 0, minutes: 10}, {break: true, minutes: 5}, {sb: 50, bb: 100, ante: 10, minutes: 10}];

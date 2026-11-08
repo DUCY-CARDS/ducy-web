@@ -2,6 +2,7 @@
 // address of each page (#clubs/<page>, a member's #clubs/member/<id>), and
 // the older addresses (the club home's tabs, #225) that still open them.
 
+import { OFF } from './club-beta.js';
 import { FILTERS, SORTS } from './club-overview.js';
 
 export const NAV = [
@@ -13,6 +14,12 @@ export const NAV = [
 
 export const PAGES = NAV.flatMap(g => g.pages.map(([id]) => id));
 export const pageTitle = id => NAV.flatMap(g => g.pages).find(([p]) => p === id)?.[1] || '';
+
+// The pages the beta leaves out (club-beta.js): not in the sidebar, and their
+// addresses open Overview.
+const PAGE_FEATURE = {promos: 'promos', settle: 'balances'};
+export const pageOff = id => OFF.has(PAGE_FEATURE[id]);
+export const shownNav = () => NAV.map(g => ({...g, pages: g.pages.filter(([id]) => !pageOff(id))}));
 
 // Addresses from before #398, and the page each now opens.
 export const OLD_PAGES = {

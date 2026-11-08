@@ -170,7 +170,7 @@ let genericPlayers = false;
 const GTO_MANIFEST = new URL('gto/current.json', document.baseURI).href;
 // The name every GTO bot plays under (ducy-wasm seats them as it too).
 const BOT_NAME = 'Ducybot';
-const GTO = {id: 'gto', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up No-limit Hold’em at 100 big blinds.'};
+const GTO = {id: 'gto', name: BOT_NAME, description: 'Trained for heads-up No-limit Hold’em at 100 big blinds.'};
 let gtoAvailable = false;
 let gtoReady = false;
 // The PLO GTO bots, for heads-up PLO4, PLO5 and PLO6 the same way, keyed by game:
@@ -178,17 +178,17 @@ let gtoReady = false;
 // offered when it's there and the engine can play it.
 const GTO_PLOS = {
   plo4: {
-    bot: {id: 'gto-plo', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up pot-limit Omaha at 100 big blinds.'},
+    bot: {id: 'gto-plo', name: BOT_NAME, description: 'Trained for heads-up pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 4', manifest: new URL('gto/plo-current.json', document.baseURI).href,
     supported: 'gtoPloSupported', load: 'loadGtoPlo', available: false, ready: false,
   },
   plo5: {
-    bot: {id: 'gto-plo5', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up five-card pot-limit Omaha at 100 big blinds.'},
+    bot: {id: 'gto-plo5', name: BOT_NAME, description: 'Trained for heads-up five-card pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 5', manifest: new URL('gto/plo5-current.json', document.baseURI).href,
     supported: 'gtoPlo5Supported', load: 'loadGtoPlo5', available: false, ready: false,
   },
   plo6: {
-    bot: {id: 'gto-plo6', name: BOT_NAME, description: 'Plays a near game-theory-optimal strategy, trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
+    bot: {id: 'gto-plo6', name: BOT_NAME, description: 'Trained for heads-up six-card pot-limit Omaha at 100 big blinds.'},
     label: 'Omaha 6', manifest: new URL('gto/plo6-current.json', document.baseURI).href,
     supported: 'gtoPlo6Supported', load: 'loadGtoPlo6', available: false, ready: false,
   },
