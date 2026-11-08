@@ -2147,6 +2147,7 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .sg-invite-title { font-family: var(--font-display); font-size: 24px; color: var(--fg-strong); }
 .sg-code { font-family: var(--font-display); font-size: 28px; letter-spacing: 0.08em; color: var(--fg-muted); background: var(--bg); border: 2px dashed var(--border); border-radius: 12px; padding: 12px 16px; text-align: center; }
 .sg-note { font-size: 14px; }
+.sg-link { margin: 0; overflow-wrap: anywhere; user-select: all; }
 /* A one-off tournament (#394): its form's blind levels scroll sideways on a
    phone; its page is the same cream card, the code beside it. */
 .pz-editor { overflow-x: auto; max-width: 100%; }

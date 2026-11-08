@@ -35,7 +35,7 @@ const field = (label, body) => `<div class="sg-field"><span class="sg-label">${l
 // (tourney-structure-ui.js); `lead`: Start a game's fields that come first
 // (your name, the first time, and the kind of game); `levelsOpen`: the blind
 // levels shown.
-export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Friday night tournament', levelsOpen = false, code = ''} = {}) {
+export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Friday night tournament', levelsOpen = false, code = '', link = '', copied = false} = {}) {
   let h = '<div class="sg-wrap"><div class="sg-form pz-form" data-tzform>' + lead;
   h += field('Game', `<div class="sg-chips">${GAMES.filter(g => !g.bomb).map(g => chip(f.game === g.id, 'data-tzgame', g.id, esc(gameName(g.id)))).join('')}</div>`);
   h += field('Starting stack', `<div class="sg-nums"><input class="pl-text" type="number" name="stack" min="20" step="1" value="${esc(f.stack)}" data-tzstack></div>`);
@@ -56,7 +56,9 @@ export function setupHtml(f, editor, {lead = '', note = '', placeholder = 'Frida
   h += '<button class="tr-start sg-open" type="button" data-tz="open">Open the lobby</button></div>';
   h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
   // The lobby's code, ready to share (#566); it works once the lobby is open.
-  h += `<div class="sg-code">${esc(code) || '····-····'}</div><p class="sg-note">They enter it on Play once the lobby is open. Players register there (you too, if you’re playing), and you start when everyone is in.</p></aside></div>`;
+  h += `<div class="sg-code">${esc(code) || '····-····'}</div><p class="sg-note">They enter it on Play, or open the link, once the lobby is open. Players register there (you too, if you’re playing), and you start when everyone is in.</p>`;
+  if (link) h += `<p class="pl-meta sg-link">${esc(link)}</p><div class="pl-actions"><button class="btn-small primary" type="button" data-tz="copy-setup">${copied ? 'Copied' : 'Copy link'}</button></div>`;
+  h += '</aside></div>';
   return h;
 }
 
