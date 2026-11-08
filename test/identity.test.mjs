@@ -5,8 +5,58 @@ import assert from 'node:assert/strict';
 import './wasm.mjs';
 import {
   ID_LENGTH, Verifier, backupNeedsPassword, canonical, checkSignature, createIdentity, exportIdentity, exportLockedIdentity,
-  importIdentity, isPlayerId, MIN_NEW_PASSWORD, MIN_PASSWORD, parseShownId, passwordProblem, playerIdFor, fromB64url, showId, signMessage,
+  importIdentity, isBackedUp, isPlayerId, keepStorage, markBackedUp, MIN_NEW_PASSWORD, MIN_PASSWORD, parseShownId, passwordProblem,
+  playerIdFor, fromB64url, safariMayClear, showId, signMessage,
 } from '../src/identity.js';
+
+// A localStorage stand-in.
+const memoryStore = () => {
+  const m = new Map();
+  return {getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v))};
+};
+
+test('a backup is recorded per player ID (#562)', () => {
+  const s = memoryStore();
+  assert.equal(isBackedUp('AAAAAAAA', s), false);
+  markBackedUp('AAAAAAAA', s);
+  markBackedUp('AAAAAAAA', s);
+  assert.equal(isBackedUp('AAAAAAAA', s), true);
+  assert.equal(isBackedUp('BBBBBBBB', s), false);
+  assert.deepEqual(JSON.parse(s.getItem('ducyBackedUp')), ['AAAAAAAA']);
+  // Nothing to record it in, or a damaged record: not backed up, no error.
+  assert.equal(isBackedUp('AAAAAAAA', null), false);
+  s.setItem('ducyBackedUp', '{oops');
+  assert.equal(isBackedUp('AAAAAAAA', s), false);
+  markBackedUp('BBBBBBBB', s);
+  assert.equal(isBackedUp('BBBBBBBB', s), true);
+});
+
+test('the browser is asked once to keep the data, and a refusal or no support is ignored (#562)', async () => {
+  let asked = 0;
+  const nav = {storage: {persisted: async () => false, persist: async () => { asked++; return false; }}};
+  await keepStorage(nav);
+  await keepStorage(nav);
+  assert.equal(asked, 1);
+  // Already kept: not asked again.
+  const kept = {storage: {persisted: async () => true, persist: async () => { throw new Error('asked'); }}};
+  await keepStorage(kept);
+  // Throwing, or missing: nothing happens.
+  await keepStorage({storage: {persist: () => Promise.reject(new Error('no'))}});
+  await keepStorage({});
+  await keepStorage(null);
+});
+
+test('only an iPhone or iPad browser tab, not the Home Screen app, may have its data cleared by Safari (#562)', () => {
+  const iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  assert.equal(safariMayClear({userAgent: iphone}), true);
+  assert.equal(safariMayClear({userAgent: iphone, standalone: false}), true);
+  assert.equal(safariMayClear({userAgent: iphone, standalone: true}), false);
+  // An iPad says it's a Mac, with a touch screen.
+  assert.equal(safariMayClear({userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 5}), true);
+  assert.equal(safariMayClear({userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 0}), false);
+  assert.equal(safariMayClear({userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7)'}), false);
+  assert.equal(safariMayClear(undefined), false);
+});
 
 test('a new identity has an 8-character Base58 ID derived from its key', async () => {
   const me = await createIdentity();

@@ -1,6 +1,8 @@
 // What the beta offers, in real browsers (#553): the front page, bots, a game
 // with friends, and clubs. Every test fails on an uncaught error, on anything
 // logged as an error, and on a page wider than the screen.
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test as base, expect } from '@playwright/test';
 import { RELAY_PORT } from './playwright.config.js';
 
@@ -125,6 +127,101 @@ test('starting a club without permission is refused, and says who to give ducy',
   await expect(page.getByText(/takes permission from ducy/)).toBeVisible();
   await expect(page.locator('code.cl-id')).toBeVisible();
   await fitsTheScreen(page);
+});
+
+// A relay of its own that lets anyone start a trial club, for a whole club
+// flow; one per worker, so the browsers' runs don't share it.
+async function trialRelay(port) {
+  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, TRIALS: ''}});
+  for (let i = 0; i < 100; i++) {
+    if (await fetch(`http://localhost:${port}/code/ZZZZ-ZZZZ`).then(() => true, () => false)) return relay;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  relay.kill();
+  throw new Error('the trial relay didn’t start');
+}
+
+test.describe('a club member', () => {
+  let relay, url;
+  test.beforeAll(async ({}, info) => {
+    const port = RELAY_PORT + 10 + info.parallelIndex;
+    relay = await trialRelay(port);
+    url = `ws://localhost:${port}`;
+  });
+  test.afterAll(() => relay?.kill());
+
+  test('is asked to back up until they have, and the backup brings them back into the club on another browser (#562)', async ({browser, watch}, info) => {
+    const open = async () => watch(await (await browser.newContext({acceptDownloads: true})).newPage());
+    // The owner starts a club, skipping its own backup, and copies the invite link.
+    const owner = await open();
+    await owner.goto(`/manage.html?relay=${url}#clubs`);
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="wiz-skip"]').click();
+    await owner.locator('[data-cl="wiz-onward"]').click();
+    await owner.locator('[data-cl="wiz-invite"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    expect(invite).toContain('club=');
+
+    // Ava asks to join, and is let in.
+    const ava = await open();
+    await ava.goto(invite);
+    await ava.locator('form[data-joinform] input[name="name"]').fill('Ava');
+    await ava.locator('form[data-joinform] button[type="submit"]').click();
+    await owner.locator('[data-cl="wiz-done"]').click();
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await owner.locator('[data-cl="approve"]').first().click();
+    const code = new URL(invite).searchParams.get('club');
+    await ava.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+
+    // Her club page asks her to back up.
+    const card = ava.locator('.cl-backup');
+    await expect(card.getByText('Back up your account')).toBeVisible();
+    await expect(card.getByText(/lives only in this browser/)).toBeVisible();
+    // On an iPhone, outside the Home Screen app, how to keep Safari from clearing it.
+    await expect(card.getByText(/Add to Home Screen/)).toHaveCount(info.project.name === 'webkit-phone' ? 1 : 0);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
+    await card.getByRole('button', {name: 'Download'}).click();
+    const pw = 'otter-lantern-quietly-42';
+    await card.locator('[name=pw]').fill(pw);
+    await card.locator('[name=pw2]').fill(pw);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
+    const [download] = await Promise.all([ava.waitForEvent('download'), card.getByRole('button', {name: 'Save backup'}).click()]);
+    const file = info.outputPath('ava-backup.json');
+    await download.saveAs(file);
+    await expect(card.getByText('Backed up ✓')).toBeVisible();
+    await card.getByRole('button', {name: 'Done'}).click();
+    await expect(card).toHaveCount(0);
+    // And not again, after a reload.
+    await ava.reload();
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(ava.locator('.cl-backup')).toHaveCount(0);
+    await ava.locator('[data-pt=player]').first().click();
+    const avaId = (await ava.locator('#pset .pl-pid').innerText()).trim();
+
+    // On another browser: restore the file, open the invite link, and she's
+    // in with the same player ID, no new request.
+    const again = await open();
+    again.on('dialog', d => d.accept());
+    await again.goto(`/?relay=${url}#clubs`);
+    await again.locator('[data-pt=player]').first().click();
+    await again.locator('#pset input[data-ps="file"]').setInputFiles(file);
+    await again.locator('#pset [name=pw]').fill(pw);
+    await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
+    await again.waitForEvent('load');
+    await again.goto(invite);
+    await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
+    await again.locator('form[data-joinform] button[type="submit"]').click();
+    await again.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await expect(again.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(again.locator('.cl-backup')).toHaveCount(0);
+    await again.locator('[data-pt=player]').first().click();
+    await expect(again.locator('#pset .pl-pid')).toHaveText(avaId);
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await expect(owner.locator('[data-cl="approve"]')).toHaveCount(0);
+  });
 });
 
 test('a demo club opens, and its main pages draw', async ({page, watch}) => {
