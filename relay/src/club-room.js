@@ -17,6 +17,8 @@
 //   memberPubs           members' public keys for those, {id: pub}
 //   table:<id>           a table saved mid-hand (club-host.js)
 //   hands, hand:<…>      finished hands, as the host saw them (#125)
+//   fullHands, full:<…>  finished hands with every seat's cards, for ducy's
+//                        own checks (#580): only hand-records.js reads them
 //   seen                 when each player was last heard from, {id: ms} (#401)
 
 import { checkSignature, createIdentity, exportIdentity, importIdentity, signMessage, Verifier } from '../../src/identity.js';
@@ -26,6 +28,7 @@ import { createClubServer } from '../../src/club-server.js';
 import { clubEngine } from '../../src/club-engine.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
+import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
 
 // Hands kept for the owner's history (#125); about 1–2 KB each.
 const MAX_HANDS = 500;
@@ -208,6 +211,7 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     const hands = ((await storage.get('hands')) || []).map(h => h.key);
     const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', 'seen', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
     for (const k of keys) await storage.delete(k);
+    await dropFullHands(storage);
     await onDeleted();
   }
   // The host's hand history (#71, #125): each finished hand as the host sees
@@ -250,6 +254,8 @@ export async function openClub({storage, send, online = [], ClubTable, onUsage =
     onPlay: playing,
     extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
     storeHand,
+    // Every seat's cards, kept apart for ducy's checks (hand-records.js).
+    fullHand: (hand, opts) => later(() => keepFullHand(storage, fullRecord(hand), opts)),
     persist: () => later(() => Promise.all([storage.put('club', club), storage.put('verifier', verifier.toJSON())])).then(() => onSaved()),
     transport: {send, ack() {}},
     engine: {

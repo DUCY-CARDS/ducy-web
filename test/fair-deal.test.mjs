@@ -20,7 +20,9 @@ import { createTableHost } from '../src/club-host.js';
 import { fairPlayer } from '../src/fair-check.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { newKeyPair, open as openBox, sharedKey } from '../src/e2e.js';
-import { createClub, openClub } from '../relay/src/club-room.js';
+import { adminView, createClub, openClub } from '../relay/src/club-room.js';
+import { checkDeal, dropFullHands, fullHands, keepFullHand } from '../relay/src/hand-records.js';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(what, fn, ms = 90_000) {
@@ -45,6 +47,7 @@ function watchedTables(seeds) {
       return step;
     },
     save: at => t.save(at),
+    holeCards: () => t.holeCards(),
     free: () => t.free(),
   };
   return {
@@ -202,8 +205,91 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   for (const p of players) for (const s of seeds) assert.ok(!JSON.stringify(p.wire).includes(s));
   for (const p of players) assert.ok(p.got.some(u => u.type === 'fair' && u.step === 'reveal'), `${p.name} helped make the seeds`);
 
+  // The room keeps each hand's full record (#580): every seat's player and
+  // cards, folded ones too, matching what each was dealt.
+  await server.flush();
+  const full = await fullHands(storage);
+  assert.ok(full.length >= 3, `${full.length} full records`);
+  const ids = new Set(players.map(p => p.ident.id));
+  const sorted = c => [...c].sort().join(' ');
+  let foldedKept = 0;
+  for (const rec of full) {
+    for (const k of ['id', 'at', 'table', 'hand', 'seats', 'actions', 'board', 'pots', 'deal']) assert.ok(k in rec, k);
+    assert.equal(rec.table, tid);
+    for (const s of rec.seats) {
+      assert.ok(ids.has(s.id), 'each seat by player ID');
+      assert.equal(s.cards?.length, 2, 'each seat’s cards');
+      // What that player was dealt, as their own page saw it.
+      const p = people[s.id];
+      const theirs = p.got.find(u => u.type === 'state' && Number(u.view.hand_number) === rec.hand && u.view.seats[0].cards)?.view.seats[0].cards;
+      if (theirs) assert.equal(sorted(s.cards), sorted(theirs), `${p.name}'s cards in hand ${rec.hand}`);
+      if (s.folded) foldedKept++;
+    }
+    // ducy's check of the deal: the seed, the commitments, each seat's
+    // cards and the order they were dealt in.
+    const c = checkDeal(rec);
+    assert.ok(c.ok, `hand ${rec.hand}: ${c.why}`);
+    // Anyone whose value wasn't used is named (someone who sat down after
+    // the round began, here).
+    for (const id of c.missing) assert.ok(rec.seats.some(s => s.id === id));
+  }
+  assert.ok(full.some(r => checkDeal(r).missing.length === 0), 'once everyone is in, every player’s value is used');
+  assert.ok(foldedKept > 0, 'folded hands are in the full record');
+  // A deal that doesn't match the cards fails the check.
+  const bad = structuredClone(full[0]);
+  [bad.seats[0].cards, bad.seats[1].cards] = [bad.seats[1].cards, bad.seats[0].cards];
+  assert.equal(checkDeal(bad).ok, false, 'swapped cards');
+  const reordered = structuredClone(full[0]);
+  reordered.deal.order.reverse();
+  assert.equal(checkDeal(reordered).ok, false, 'another dealing order');
+
+  // The owner's history and the admin view show what a player saw: no
+  // folded cards. The owner's has player IDs.
+  const folded = new Set(full.flatMap(r => r.seats.filter(s => s.folded).map(s => `${r.hand}|${sorted(s.cards)}`)));
+  const shown = recs => recs.flatMap(r => r.seats.filter(s => s.cards?.length).map(s => `${r.hand}|${sorted(s.cards)}`));
+  const history = await server.run('hands', {limit: 100});
+  assert.ok(history.length >= 3);
+  for (const r of history) for (const s of r.seats.filter(x => x.inHand)) assert.ok(ids.has(s.id), 'the owner’s history has player IDs');
+  for (const x of shown(history)) assert.ok(!folded.has(x), 'no folded cards in the owner’s history');
+  const admin = await adminView(storage, 'full', {reveal: true});
+  assert.ok(admin.hands.length >= 3);
+  for (const x of shown(admin.hands || [])) assert.ok(!folded.has(x), 'no folded cards in the admin view');
+  assert.ok(!JSON.stringify(admin).includes('"deal"'), 'no deals in the admin view');
+
   await ownerSays('close_table', {table: tid});
   await server.flush();
+});
+
+test('full hand records are kept for the club’s days, then dropped, and all go with the club', async () => {
+  const store = new Map();
+  const storage = {get: async k => structuredClone(store.get(k)), put: async (k, v) => { store.set(k, structuredClone(v)); }, delete: async k => { store.delete(k); }};
+  const day = 864e5, now = 100 * day;
+  for (const ago of [9, 8, 2, 1, 0]) await keepFullHand(storage, {id: `h${ago}`, at: now - ago * day}, {days: 30}, now);
+  assert.deepEqual((await fullHands(storage)).map(r => r.id), ['h9', 'h8', 'h2', 'h1', 'h0']);
+  assert.deepEqual((await fullHands(storage, {since: now - 2 * day})).map(r => r.id), ['h2', 'h1', 'h0']);
+  // The club keeps a week now: what's older goes with the next hand.
+  await keepFullHand(storage, {id: 'new', at: now}, {days: 7}, now);
+  assert.deepEqual((await fullHands(storage)).map(r => r.id), ['h2', 'h1', 'h0', 'new']);
+  assert.equal([...store.keys()].filter(k => k.startsWith('full:')).length, 4);
+  await dropFullHands(storage);
+  assert.deepEqual([...store.keys()], []);
+});
+
+test('only the relay’s hand-records.js reads full hand records, and nothing sends them (#580)', () => {
+  const files = [
+    ...readdirSync(new URL('../src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `src/${f}`),
+    ...readdirSync(new URL('../relay/src/', import.meta.url)).filter(f => f.endsWith('.js')).map(f => `relay/src/${f}`),
+    'relay/dev-server.mjs',
+  ];
+  const text = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+  // Their storage keys.
+  assert.deepEqual(files.filter(f => /['"`](?:full:|fullHands['"`])/.test(text(f))), ['relay/src/hand-records.js']);
+  // The module: only the club's room loads it, to keep and drop records.
+  assert.deepEqual(files.filter(f => /hand-records\.js['"]/.test(text(f))), ['relay/src/club-room.js']);
+  const imported = text('relay/src/club-room.js').match(/import \{([^}]*)\} from '\.\/hand-records\.js'/)[1].split(',').map(s => s.trim()).sort();
+  assert.deepEqual(imported, ['dropFullHands', 'fullRecord', 'keepFullHand']);
+  // The engine's every-seat cards: only the club's room asks for them.
+  assert.deepEqual(files.filter(f => /runnerCards|\.holeCards\(/.test(text(f))), ['src/club-engine.js', 'src/club-host.js']);
 });
 
 test('at a friends table, no guest gets a seed or anyone else’s folded cards, the host’s included', async () => {

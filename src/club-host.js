@@ -16,6 +16,12 @@
 //   tablesChanged()     seat counts or tables changed: tell members
 //   onHand(table, view, players) a hand finished (the host's view: no hidden
 //                       cards; players: [{seat, client_id}], who sat where)
+//   onFullHand(table, {view, players, cards, deal})  only where the club
+//                       keeps full records of its hands (its room on the
+//                       relay, #580): the same, with every seat's hole cards,
+//                       folded ones too ({hand, seats: [{seat, cards}]}), and
+//                       the hand's fair deal ({seed, list, reveals, order}, or
+//                       null). Never for anyone at the club to see.
 //   online(id)          whether a member is connected to the relay
 //   onPlay()            a hand is in play at a table (for usage, #421)
 //
@@ -75,7 +81,7 @@ export const browserTimers = {set: (fn, ms) => setTimeout(fn, ms), clear: h => c
 // Seats freed or taken call tablesChanged, which also gives free seats to
 // the games' waitlists and moves must-move players up (club-server.js, #518).
 export function createTableHost({
-  club, save, sendTable, chipsChanged, tablesChanged, onHand, online = () => true, onPlay = () => {},
+  club, save, sendTable, chipsChanged, tablesChanged, onHand, onFullHand = null, online = () => true, onPlay = () => {},
   call = workerCall, store = {get: getTable, put: putTable, drop: dropTable}, timers = browserTimers,
   idleMs = IDLE_MS, askMs = ASK_MS, holdMs = HOLD_MS, nextHandMs,
 }) {
@@ -134,6 +140,10 @@ export function createTableHost({
     r.stopped = step.stopped;
     r.paused = step.paused;
     if (dealingNow(tid)) save();
+    // A hand that finished in this step, for its full record (#580): its
+    // cards are taken now, while the table still holds it, and its deal
+    // comes later in the same step.
+    let full = null;
     for (const a of step.actions) {
       if (!running.has(tid)) return;
       if (a.type === 'engine') {
@@ -141,9 +151,19 @@ export function createTableHost({
         // a crash the table is never behind what anyone was shown (#107).
         const t = after(tid, a.res);
         if (!t) continue;
+        if (r.finished && onFullHand) {
+          full = {...r.finished, cards: await call('runnerCards', tid), deal: null};
+        }
+        r.finished = null;
         await persist(tid, a.res);
         send(tid, a.res);
-        if (t.status === 'closing' && !r.seating.players.length) { drop(tid); return; }
+        if (t.status === 'closing' && !r.seating.players.length) { drop(tid); if (full) fullHand(tid, full); return; }
+      } else if (a.type === 'dealt') {
+        // Where each player's cards were in the deal: the order it dealt in.
+        if (full && Number(a.hand) === Number(full.view.hand_number)) {
+          full.deal ||= {seed: a.seed, list: a.list, reveals: a.reveals, game: a.game, order: Array(Number(a.dealt) || 0).fill(null)};
+          full.deal.order[Number(a.index)] = a.to;
+        }
       } else if (a.type === 'send') {
         sendTable(a.to, {type: 'table', table: tid, update: a.update});
       } else if (a.type === 'active') {
@@ -154,11 +174,19 @@ export function createTableHost({
         if (p) standIdle(tid, p);
       }
     }
+    if (full) fullHand(tid, full);
     timers.clear(r.wakeT);
     r.wakeT = null;
     if (step.wake != null) {
       r.wakeT = timers.set(() => { r.wakeT = null; run(tid, {type: 'wake'}); }, Math.max(0, step.wake - Date.now()));
     }
+  }
+
+  // A finished hand's full record, to the club's room (#580): only the
+  // cards of that hand.
+  function fullHand(tid, full) {
+    if (Number(full.cards?.hand) !== Number(full.view.hand_number)) return;
+    try { onFullHand(tid, full); } catch (e) { console.warn(`table ${tid}: hand not recorded:`, e); }
   }
 
   // Saves the table (#107) when its state changed, so a hand in progress
@@ -219,8 +247,12 @@ export function createTableHost({
       holdMs,
     });
     if (step.onPlay) onPlay();
-    // A hand just finished: for the host's hand history (#71).
-    if (step.onHand) onHand?.(tid, res.state, r.seating.players);
+    // A hand just finished: for the host's hand history (#71), and its full
+    // record (apply, #580).
+    if (step.onHand) {
+      onHand?.(tid, res.state, r.seating.players);
+      r.finished = {view: res.state, players: r.seating.players.map(p => ({seat: p.seat, client_id: p.client_id}))};
+    }
     if (dealingNow(tid)) step.save = true;
     carry(tid, r, step);
     // A seat free in the group: the player below moves up (#501).
