@@ -2251,11 +2251,13 @@ function movePageHtml() {
   return h + '<div class="pl-actions"><button class="btn-small primary" data-cl="move-always">Move to ducy’s server</button><button class="btn-small" data-cl="close">Delete club</button></div></section>';
 }
 
-// Live, or how the club's connection is doing, in the top bar.
+// Live, or how the club's connection is doing, in the top bar; nothing for
+// a club that doesn't run (movePageHtml).
 function liveHtml() {
   const remote = isRemote();
-  const on = remote && own().online;
-  const text = on ? 'Live' : remote && own().connected ? CONN.reconnecting : CONN.off;
+  if (!remote) return '';
+  const on = own().online;
+  const text = on ? 'Live' : own().connected ? CONN.reconnecting : CONN.off;
   let h = `<span class="mg-live${on ? ' on' : ''}" title="${text}">${text}</span>`;
   if (remote && !own().connected) h += '<button class="btn-small" data-cl="reconnect-owner">Reconnect</button>';
   return h;
