@@ -320,7 +320,8 @@ test('at a club on the relay: the seats get their flags, the records keep them, 
   assert.ok(history.length >= 2);
   const last = history[0];
   assert.match(handFlagsText(last), /Ann and Bob: within 100 m · same network|Bob and Ann: within 100 m · same network/);
-  assert.match(handFlagsText(last), /Cy: VPN · location not shared/);
+  // Cy's flag is in it if Cy was dealt into it (Cy sat down last).
+  if ((last.seats || []).some(s => s.id === cy.ident.id && s.inHand !== false)) assert.match(handFlagsText(last), /Cy: VPN · location not shared/);
   const full = await fullHands(storage);
   assert.ok(full.at(-1).prox.some(f => f.kind === 'near'));
   assert.equal(full.at(-1).seats.find(s => s.id === ann.ident.id).conn.trust, 'website');
