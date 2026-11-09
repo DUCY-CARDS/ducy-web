@@ -166,11 +166,39 @@ function chancesAt(me, board, deads, opts, seed) {
 // Every spot that counts in records `recs`: [{who, partner, fits (chose
 // the answer knowing the partner's cards gives), ref: {table, hand, at}}].
 // `opts`: {betTop, bluffWeight, turnSamples, minMove}.
+//
+// A hand's spots never change, and the check reads up to a month of hands
+// every few hours, so they're remembered by the record's id while the
+// room's code stays loaded (at most CACHE_MAX hands, oldest out first):
+// each run works out only the hands that are new to it. What's remembered
+// holds no cards.
+const CACHE_MAX = 60_000;
+const cache = new Map();
+let cacheFor = '';
 export function partnerSpots(recs, opts) {
+  const key = JSON.stringify(opts);
+  if (key !== cacheFor) { cache.clear(); cacheFor = key; }
   const out = [];
   for (const rec of recs) {
+    let spots = rec.id ? cache.get(rec.id) : null;
+    if (!spots) {
+      spots = spotsOf(rec, opts);
+      if (rec.id) {
+        cache.set(rec.id, spots);
+        if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+      }
+    }
+    out.push(...spots);
+  }
+  return out;
+}
+
+// The spots that count in one hand's record `rec`.
+function spotsOf(rec, opts) {
+  const out = [];
+  {
     const seats = (rec.seats || []).filter(s => s.id && s.cards?.length === 2 && s.cards.every(c => cardId(c) >= 0));
-    if (seats.length < 3 || seats.length !== (rec.seats || []).length) continue;
+    if (seats.length < 3 || seats.length !== (rec.seats || []).length) return out;
     const bySeat = new Map(seats.map(s => [s.seat, s]));
     const folded = new Set(), board = [], street = new Map();
     let pot = 0, facing = 0, bettor = null;

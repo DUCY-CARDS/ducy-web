@@ -99,7 +99,8 @@ function play({hands, seed, pair = null, fold = false, dump = 0, start = 1_000_0
     act('award', winner, {pot: 0, amount: pot});
     const dealt = board.slice(0, Math.max(0, ...actions.filter(e => e.type === 'board').map(e => ({flop: 3, turn: 4, river: 5})[e.street])));
     recs.push({
-      id: `T:${h}`, at: start + h * 60_000, club: 'TEST-CLUB', table: 't1', tableName: 'Main', game: 'nlhe', hand: h, sb: 1, bb: 2, button,
+      // Unique per made-up game: the partner's-cards check remembers hands by id.
+      id: `T:${seed}:${pair}:${fold}:${dump}:${start}:${h}`, at: start + h * 60_000, club: 'TEST-CLUB', table: 't1', tableName: 'Main', game: 'nlhe', hand: h, sb: 1, bb: 2, button,
       seats: NAMES.map((name, i) => ({seat: i, id: `id-${name}`, name, cards: cards[i], folded: folded.has(i), net: (i === winner ? pot : 0) - put[i], won: i === winner ? pot : 0, stackEnd: 200})),
       actions, board: dealt, board2: [], pot, showdown: live.length > 1, pots: [], deal: null,
     });
@@ -222,7 +223,7 @@ test('the seat and location flags (#581): none without records that carry them',
   assert.ok(!collusionReport(play({hands: 300, seed: 3})).flagged.some(e => e.flags.some(f => ['near', 'network', 'vpn', 'fake'].includes(f.kind))));
 });
 
-test('the check reads the club’s kept hands for the last week only', async () => {
+test('the check reads the club’s kept hands for the last week; the partner’s-cards check, all of them up to 30 days', async () => {
   const store = new Map();
   const storage = {get: async k => structuredClone(store.get(k)), put: async (k, v) => { store.set(k, structuredClone(v)); }, delete: async k => { store.delete(k); }};
   const day = 864e5, now = 400 * day;
@@ -233,6 +234,10 @@ test('the check reads the club’s kept hands for the last week only', async () 
   const week = await checkClub(storage, {now, days: 30});
   assert.equal(week.since, now - 7 * day);
   assert.ok(week.hands > 600 && week.hands < 800, `${week.hands} hands in the week`);
+  // The partner's-cards check (#600) reads all two weeks kept.
+  assert.equal(week.partnerSince, now - 30 * day);
+  assert.equal(week.partnerHands, 1400);
   const day1 = await checkClub(storage, {now, days: 1});
   assert.ok(day1.hands < 120, 'a club keeping hands a day: just that day');
+  assert.equal(day1.partnerHands, day1.hands, 'and the partner’s-cards check that day too');
 });

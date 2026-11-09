@@ -98,6 +98,9 @@ export const LIMITS = {
   PARTNER_BLUFF_WEIGHT: 0.15,
   // River cards tried for a turn spot.
   PARTNER_TURN_SAMPLES: 4,
+  // The hands it reads: everything the club keeps (Rules, Keep hands), up
+  // to this many days. A week rarely holds enough spots.
+  PARTNER_WINDOW_DAYS: 30,
   // How much better the partner's cards must fit than everyone else's, in
   // odds. Lower than ODDS_RATIO: who the partner is has nothing to do with
   // the cards dealt, so other players' cards are a clean control, and a cheat
@@ -437,7 +440,9 @@ const odds = (k, n) => (k + 0.5) / (n - k + 0.5);
 // players, compared, flagged: [{ids: [a, b], names, shared, contested,
 // flow, flags: [{kind, who, other, with: {k, n}, elsewhere: {k, n}, hands:
 // [{table, hand}]}]}]}, the flagged pairs only, most flags first. No cards.
-export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
+// `partnerRecs`: the records for the partner's-cards check (#600), which
+// needs more hands than a week holds; `recs` if not given.
+export function collusionReport(recs, {now = Date.now(), since = 0, partnerRecs = recs, partnerSince = since} = {}) {
   const t = tally(recs);
   const L = LIMITS;
   const tests = [];
@@ -510,7 +515,7 @@ export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
     }
   }
 
-  tests.push(...partnerTests(recs, t, lastRefs));
+  tests.push(...partnerTests(partnerRecs, t, lastRefs));
 
   // Bonferroni: each comparison's share of the run's false-alarm chance.
   const cut = L.FAMILY_ALPHA / Math.max(1, tests.length);
@@ -539,7 +544,7 @@ export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
     flags,
   }));
   // And one player's (#581): a VPN, a location that may be faked.
-  return addFlagged({at: now, since, hands: recs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
+  return addFlagged({at: now, since, hands: recs.length, partnerSince, partnerHands: partnerRecs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
 }
 
 // Playing as if a partner's cards were known (#600): for each player and
@@ -555,6 +560,8 @@ export const partnerOpts = () => ({
 function partnerTests(recs, t, lastRefs) {
   const L = LIMITS;
   const spots = partnerSpots(recs, partnerOpts());
+  // Names for players seen only in the longer window.
+  for (const rec of recs) for (const s of rec.seats || []) if (s.id && !t.name.get(s.id)) t.name.set(s.id, s.name || '');
   const by = new Map();
   for (const s of spots) {
     if (!by.has(s.who)) by.set(s.who, new Map());
@@ -642,8 +649,12 @@ function soloFlags(t) {
 
 // The check over the club's kept hands (storage: the club room's), at
 // `now`, for the last WINDOW_DAYS (or `days`, the club's Keep hands, if
-// fewer).
+// fewer); the partner's-cards check over everything kept, up to
+// PARTNER_WINDOW_DAYS.
 export async function checkClub(storage, {now = Date.now(), days = LIMITS.WINDOW_DAYS} = {}) {
-  const since = now - Math.min(LIMITS.WINDOW_DAYS, Math.max(1, Number(days) || 1)) * 864e5;
-  return collusionReport(await fullHands(storage, {since}), {now, since});
+  const keep = Math.max(1, Number(days) || 1);
+  const since = now - Math.min(LIMITS.WINDOW_DAYS, keep) * 864e5;
+  const partnerSince = now - Math.min(LIMITS.PARTNER_WINDOW_DAYS, keep) * 864e5;
+  const all = await fullHands(storage, {since: Math.min(since, partnerSince)});
+  return collusionReport(all.filter(r => r.at >= since), {now, since, partnerRecs: all.filter(r => r.at >= partnerSince), partnerSince});
 }
