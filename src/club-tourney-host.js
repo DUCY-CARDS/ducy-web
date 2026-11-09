@@ -209,6 +209,8 @@ export function createTourneyHost({
     observe(tid, res);
     const step = tourneyHost(club(), tid, 'result', {res, clock: {level: r.level, onBreak: r.onBreak, stepEndsAt: r.stepEndsAt}});
     if (step.live) r.live = step.live;
+    // Who sits where, by table, for the relay's seat flags (#581).
+    if (Array.isArray(res.standings)) r.at = res.standings.filter(s => s.at && s.id).map(s => ({table: s.at.table, seat: s.at.seat, id: s.id}));
     if (step.onPlay) onPlay();
     carry(tid, step);
     return step.counts;
@@ -245,5 +247,7 @@ export function createTourneyHost({
     cancel: (tid, why = 'the manager cancelled it') => abandon(tid, why),
     live: () => Object.fromEntries([...running].map(([tid, r]) => [tid, r.live])),
     running: tid => running.has(tid),
+    // Who sits where at tournament tid's tables: [{table, seat, id}].
+    seatsOf: tid => running.get(tid)?.at || [],
   };
 }

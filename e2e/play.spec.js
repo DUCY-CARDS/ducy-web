@@ -369,6 +369,8 @@ test.describe('a club member', () => {
 
   test('at a club table: players within 100 m are flagged on their seats, one who won’t share says so, and the owner’s hands show it (#581)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
+    // Three members and an owner, and hands to play: longer than most.
+    test.setTimeout(240_000);
     // The owner starts a club with a table open.
     const {page: owner} = await browserWith(browser, watch);
     await owner.goto(`/manage.html?relay=${url}#clubs`);
@@ -424,17 +426,29 @@ test.describe('a club member', () => {
     // Someone who sits mid-hand is dealt in from the next one.
     await playUntil(async () => (await cy.locator('.pl-seat.hero').count()) > 0);
 
-    // Each seat's flags, as each of them sees the table.
-    const flagOf = (page, name) => page.locator('.pl-seat', {has: page.locator('.pl-plate b', {hasText: name})}).locator('.pl-flag');
-    for (const page of [ava, bo, cy]) {
-      await expect(flagOf(page, 'Ava')).toHaveText('within 100 m');
-      await expect(flagOf(page, 'Bo')).toHaveText('within 100 m');
-      await expect(flagOf(page, 'Cy')).toHaveText('location not shared');
-    }
-    // Never a place: no coordinates anywhere on the page.
-    expect(await ava.locator('#app, body').first().innerText()).not.toMatch(/30\.26|97\.74/);
-    await fitsTheScreen(ava);
-    await ava.screenshot({path: info.outputPath('seat-flags.png'), fullPage: true});
+    // Each seat's icons, as each of them sees the table. Cy sees Ava and Bo
+    // as group A; Ava and Bo, who are in it, never see it. Cy's red flag
+    // (location not shared) shows to everyone, Cy included.
+    const seatOf = (page, name) => page.locator('.pl-seat', {has: page.locator('.pl-plate b', {hasText: name})});
+    const badge = (page, name) => seatOf(page, name).locator('.pl-mark.l');
+    const flag = (page, name) => seatOf(page, name).locator('.pl-mark.r.red');
+    await expect(badge(cy, 'Ava')).toHaveText('A');
+    await expect(badge(cy, 'Bo')).toHaveText('A');
+    for (const page of [ava, bo, cy]) await expect(flag(page, 'Cy')).toBeVisible();
+    for (const page of [ava, bo]) await expect(page.locator('.pl-mark.l')).toHaveCount(0);
+    await expect(cy.locator('.pl-mark.r')).toHaveCount(1);
+    // Tapped: what it means, in words; never a place.
+    await badge(cy, 'Ava').click();
+    await expect(cy.locator('.pl-fpop')).toHaveText('Within 100 m of Bo');
+    await fitsTheScreen(cy);
+    await cy.screenshot({path: info.outputPath('seat-icons-cy.png'), fullPage: true});
+    await flag(ava, 'Cy').click();
+    await expect(ava.locator('.pl-fpop')).toHaveText('Location not shared');
+    await ava.screenshot({path: info.outputPath('seat-icons-ava.png'), fullPage: true});
+    // Any other tap closes it.
+    await ava.locator('.pl-meta', {hasText: /· hand \d+ ·/}).first().click();
+    await expect(ava.locator('.pl-fpop')).toHaveCount(0);
+    for (const page of [ava, cy]) expect(await page.locator('body').innerText()).not.toMatch(/30\.26|97\.74/);
 
     // A hand with all three played out: the owner's hands show who was flagged.
     const handNo = async () => Number((await cy.locator('.pl-meta', {hasText: /· hand \d+ ·/}).first().innerText().catch(() => '')).match(/hand (\d+)/)?.[1] || 0);

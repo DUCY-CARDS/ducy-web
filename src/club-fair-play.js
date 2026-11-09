@@ -35,7 +35,43 @@ export function flagText(f, names = {}) {
 const FAKE_WHY = {far: 'far from their network', timezone: 'time zone doesn’t match', accuracy: 'unnatural accuracy', jump: 'impossible jump'};
 
 // The seat flags' words (#581), as the table and the hand records show them.
-export const SEAT_FLAGS = {near: 'within 100 m', network: 'same network', vpn: 'VPN', fake: 'location may be faked', hidden: 'location not shared'};
+export const SEAT_FLAGS = {near: 'within 100 m', network: 'same network', vpn: 'VPN', relay: 'private relay', fake: 'location may be faked', hidden: 'location not shared'};
+
+// A seat_flags update from the relay, checked: {seats: {seat: [kind]},
+// groups: [{letter, seats: [seat], links: [{kind, seats: [a, b]}]}]}.
+export function readSeatFlags(m) {
+  const seats = {};
+  for (const [k, v] of Object.entries(m?.seats && typeof m.seats === 'object' ? m.seats : {})) {
+    if (Array.isArray(v)) seats[Number(k)] = v.filter(x => SEAT_FLAGS[x]);
+  }
+  const pair = l => Array.isArray(l?.seats) && l.seats.length === 2 && ['near', 'network'].includes(l.kind);
+  const groups = (Array.isArray(m?.groups) ? m.groups : []).filter(g => Array.isArray(g?.seats)).slice(0, 26).map(g => ({
+    letter: String(g.letter || '?').slice(0, 1), seats: g.seats.map(Number), links: (g.links || []).filter(pair).map(l => ({kind: l.kind, seats: l.seats.map(Number)})),
+  }));
+  return {seats, groups};
+}
+
+// What table seat `at` shows (#581): its group's badge ({letter, index},
+// the colour by index) or null, its flag ('red' for location not shared,
+// a VPN or a location that may be faked; 'grey' for a private relay; or
+// null), and the words for both: "Within 100 m of Bo", "Same network as
+// Ava", "Location not shared"... `nameAt(seat)`: who sits there.
+export function seatMarks(flags, at, nameAt = () => 'someone') {
+  const lines = [];
+  const index = (flags?.groups || []).findIndex(g => g.seats.includes(at));
+  const g = index >= 0 ? flags.groups[index] : null;
+  for (const l of g?.links || []) {
+    if (!l.seats.includes(at)) continue;
+    const other = nameAt(l.seats.find(x => x !== at));
+    lines.push(l.kind === 'near' ? `Within 100 m of ${other}` : `Same network as ${other}`);
+  }
+  const kinds = flags?.seats?.[at] || [];
+  const red = ['hidden', 'vpn', 'fake'].filter(k => kinds.includes(k));
+  for (const k of red) lines.push({hidden: 'Location not shared', vpn: 'VPN', fake: 'Location may be faked'}[k]);
+  if (kinds.includes('relay')) lines.push('Private relay');
+  // The colour goes by the letter, so everyone sees a group alike.
+  return {group: g ? {letter: g.letter, index: Math.max(0, g.letter.charCodeAt(0) - 65)} : null, flag: red.length ? 'red' : kinds.includes('relay') ? 'grey' : null, lines};
+}
 const ORDER = Object.keys(SEAT_FLAGS);
 
 // A seat's flags in a line: "within 100 m · VPN". `kinds`: the relay's.

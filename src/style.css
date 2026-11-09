@@ -1139,9 +1139,41 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 }
 .pl-plate b { font-size: 11px; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 104px; }
 .pl-plate span { font-family: var(--font-data); font-size: 12px; color: var(--fg); }
-/* A club seat's flag from the relay (#581): "within 100 m", "VPN"... */
-.pl-flag { font-style: normal; font-size: 9px; font-weight: 600; line-height: 1.2; color: var(--amber); text-align: center; white-space: nowrap; }
-@media (max-width: 600px) { .pl-flag { font-size: 8px; } }
+/* A club seat's flags from the relay (#581), on the avatar's top corners:
+   a group's letter in its colour on the left (players near each other or
+   on one network), a flag on the right (red: location not shared, a VPN,
+   a location that may be faked; grey: a private relay). Each colour has a
+   letter too, and reads at least 3:1 against the felt and the page. Tapped
+   or hovered, .pl-fpop says what they mean. --avh: half the avatar. */
+.pl-seat { --avh: 28px; }
+.pl-mark {
+  position: absolute; top: -3px; z-index: 3; width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; border: 2px solid #12261c; cursor: pointer;
+  font: 700 10px/1 var(--font-ui); color: #12261c; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+.pl-mark.l { left: calc(50% - var(--avh) - 5px); }
+.pl-mark.r { left: calc(50% + var(--avh) - 13px); }
+.pl-mark.g0 { background: #5aa9ff; }
+.pl-mark.g1 { background: #f5c542; }
+.pl-mark.g2 { background: #c58cff; }
+.pl-mark.g3 { background: #ff9ac1; }
+.pl-mark.g4 { background: #5fe0e6; }
+.pl-mark.g5 { background: #f0f0f0; }
+.pl-mark.red { background: #fff; color: #d62f2f; }
+.pl-mark.grey { background: #9aa59f; color: #2a332e; }
+/* The seat whose words are open sits above bets and the seats near it. */
+.pl-seat:has(.pl-fpop) { z-index: 20; }
+.pl-fpop {
+  position: absolute; top: 18px; left: 50%; transform: translateX(-50%); z-index: 6; min-width: 120px; max-width: 170px;
+  background: #12261c; color: var(--fg-strong); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  font-size: 11px; line-height: 1.35; text-align: left; box-shadow: 0 3px 10px rgba(0,0,0,0.45);
+}
+@media (max-width: 640px) {
+  .pl-seat { --avh: 20px; }
+  .pl-mark { width: 15px; height: 15px; font-size: 8px; border-width: 1.5px; }
+  .pl-mark.r { left: calc(50% + var(--avh) - 11px); }
+  .pl-mark svg { width: 8px; height: 8px; }
+}
 .pl-seat.acting .pl-plate { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-faint), 0 2px 6px rgba(0,0,0,0.2); }
 .pl-seat.folded { opacity: 0.45; }
 .pl-seat.prefold .pl-hole { opacity: 0.45; }
@@ -1349,6 +1381,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
    into each other; yours keeps its size. */
 .pl-felt.crowded .pl-seat:not(.hero) { width: 92px; gap: 2px; }
 .pl-felt.crowded .pl-seat:not(.hero) .pl-av { width: 42px; height: 42px; }
+.pl-felt.crowded .pl-seat:not(.hero) { --avh: 21px; }
 .pl-felt.crowded .pl-seat:not(.hero) .pl-av + .pl-hole { margin-top: -14px; }
 .pl-felt.crowded .pl-seat:not(.hero) .pl-hole .pl-card { width: 26px; height: 37px; font-size: 11px; }
 .pl-felt.crowded .pl-seat:not(.hero) .pl-hole.n4 .pl-card + .pl-card { margin-left: -10px; }
@@ -1367,6 +1400,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
   .pl-felt.crowded { aspect-ratio: 2 / 3; }
   .pl-felt.crowded .pl-seat:not(.hero) { width: 70px; gap: 1px; }
   .pl-felt.crowded .pl-seat:not(.hero) .pl-av { width: 28px; height: 28px; }
+  .pl-felt.crowded .pl-seat:not(.hero) { --avh: 14px; }
   .pl-felt.crowded .pl-seat:not(.hero) .pl-av.none { font-size: 13px; }
   .pl-felt.crowded .pl-seat:not(.hero) .pl-av + .pl-hole { margin-top: -10px; }
   .pl-felt.crowded .pl-seat:not(.hero) .pl-hole .pl-card { width: 20px; height: 28px; font-size: 9px; }

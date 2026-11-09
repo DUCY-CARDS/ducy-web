@@ -78,15 +78,27 @@ const HOSTING_ASNS = new Set([
   209854, // Surfshark
   136787, // PacketHub (NordVPN)
   62371, // Proton
-  13335, // Cloudflare (WARP, iCloud Private Relay)
-  36183, // Akamai (iCloud Private Relay)
-  54113, // Fastly
   62044, 53813, // Zscaler
 ]);
-const HOSTING_WORDS = /\b(hosting|host|cloud|data ?cent(er|re)|datacamp|server|servers|vps|vpn|proxy|colo|colocation|m247|digitalocean|linode|vultr|choopa|hetzner|ovh|amazon|aws|azure|oracle|alibaba|tencent|leaseweb|contabo|scaleway|ionos|private relay|cloudflare|akamai|fastly|zscaler|mullvad|nordvpn|surfshark|expressvpn|proton)\b/i;
+const HOSTING_WORDS = /\b(hosting|host|cloud|data ?cent(er|re)|datacamp|server|servers|vps|vpn|proxy|colo|colocation|m247|digitalocean|linode|vultr|choopa|hetzner|ovh|amazon|aws|azure|oracle|alibaba|tencent|leaseweb|contabo|scaleway|ionos|zscaler|mullvad|nordvpn|surfshark|expressvpn|proton)\b/i;
 
-// Is network (asn, asOrg) a hosting, VPN or proxy network?
+// Consumer privacy relays: iCloud Private Relay (egress through Akamai,
+// Cloudflare and Fastly) and Cloudflare WARP. They hide the address from
+// sites, not where the phone is, so they get a milder flag of their own
+// ('relay'), and not a Fair play one.
+const RELAY_ASNS = new Set([13335, 36183, 54113]);
+const RELAY_WORDS = /\b(private relay|icloud|warp|cloudflare|akamai|fastly)\b/i;
+
+// Is network (asn, asOrg) a consumer privacy relay?
+export function privateRelay(asn, asOrg) {
+  if (asn != null && RELAY_ASNS.has(Number(asn))) return true;
+  return !!asOrg && RELAY_WORDS.test(String(asOrg));
+}
+
+// Is network (asn, asOrg) a hosting, VPN or proxy network? (A privacy
+// relay isn't: privateRelay.)
 export function hostingNetwork(asn, asOrg) {
+  if (privateRelay(asn, asOrg)) return false;
   if (asn != null && HOSTING_ASNS.has(Number(asn))) return true;
   return !!asOrg && HOSTING_WORDS.test(String(asOrg));
 }
@@ -131,7 +143,7 @@ export function liveOf(snap = null, net = null) {
   const s = snap || {};
   const netLoc = net && fin(net.latitude) && fin(net.longitude) ? {lat: Number(net.latitude), lon: Number(net.longitude)} : null;
   return {
-    ip: s.ip || null, ipNet: s.ipNet || null, hosting: hostingNetwork(s.asn, s.asOrg), trust: trustOf(s.trust), netLoc,
+    ip: s.ip || null, ipNet: s.ipNet || null, hosting: hostingNetwork(s.asn, s.asOrg), relay: privateRelay(s.asn, s.asOrg), trust: trustOf(s.trust), netLoc,
     shared: null, loc: null, fake: [], accRun: null,
   };
 }
@@ -179,15 +191,19 @@ export function takeReading(L, r, now = Date.now()) {
 // The signals among players `players` ([{id, live}], `live` from liveOf,
 // or null for someone not connected): {seats: {id: [kind]}, flags: [{kind,
 // ids, why?}]}. Kinds: 'near' (within NEAR_M of each other), 'network' (the
-// same network), 'vpn' (a hosting, VPN or proxy network), 'fake' (location
+// same network), 'vpn' (a hosting, VPN or proxy network), 'relay' (a
+// consumer privacy relay: iCloud Private Relay, WARP), 'fake' (location
 // may be faked; `why`), 'hidden' (connected, location not shared). No
 // location in it.
+const KINDS = ['near', 'network', 'vpn', 'relay', 'fake', 'hidden'];
+const PAIRED = ['near', 'network'];
 export function tableSignals(players) {
   const seats = {}, flags = [];
   const add = (id, kind) => { (seats[id] ||= []).includes(kind) || seats[id].push(kind); };
   const on = (players || []).filter(p => p?.id && p.live);
   for (const {id, live: L} of on) {
     if (L.hosting) { add(id, 'vpn'); flags.push({kind: 'vpn', ids: [id]}); }
+    if (L.relay) { add(id, 'relay'); flags.push({kind: 'relay', ids: [id]}); }
     if (L.fake.length) { add(id, 'fake'); flags.push({kind: 'fake', ids: [id], why: [...L.fake]}); }
     if (L.shared !== true) { add(id, 'hidden'); flags.push({kind: 'hidden', ids: [id]}); }
   }
@@ -205,7 +221,46 @@ export function tableSignals(players) {
       }
     }
   }
-  const order = ['near', 'network', 'vpn', 'fake', 'hidden'];
+  const order = KINDS;
   for (const k of Object.keys(seats)) seats[k].sort((x, y) => order.indexOf(x) - order.indexOf(y));
   return {seats, flags};
+}
+
+// What each player at one table is sent (#581), from the table's seats
+// (`seats`: [{seat, id}], the engine's seat numbers) and their signals
+// (`sig`, tableSignals): forViewer(id) → {seats: {seat: [kind]}, groups:
+// [{letter, seats: [seat], links: [{kind, seats: [a, b]}]}]}.
+// Players linked by 'near' or 'network', directly or through each other,
+// make one group, lettered A, B... by their lowest seat, the same for
+// everyone. A player is never sent a group they're in: knowing where
+// they are, "Bo is within 100 m of you" would tell them where Bo is. So
+// for them the group, and its members' 'near' and 'network', are left
+// out; one-player flags ('vpn', 'relay', 'fake', 'hidden') go to everyone.
+export function seatPayloads(seats, sig) {
+  const seatOf = new Map((seats || []).filter(s => s?.id != null).map(s => [s.id, s.seat]));
+  const root = new Map([...seatOf.keys()].map(id => [id, id]));
+  const find = id => { while (root.get(id) !== id) id = root.get(id); return id; };
+  const links = (sig?.flags || []).filter(f => PAIRED.includes(f.kind) && f.ids.length === 2 && f.ids.every(id => seatOf.has(id)));
+  for (const f of links) root.set(find(f.ids[0]), find(f.ids[1]));
+  const by = new Map();
+  for (const f of links) {
+    const r = find(f.ids[0]);
+    if (!by.has(r)) by.set(r, {ids: new Set(), links: []});
+    const g = by.get(r);
+    f.ids.forEach(id => g.ids.add(id));
+    g.links.push({kind: f.kind, seats: f.ids.map(id => seatOf.get(id)).sort((a, b) => a - b)});
+  }
+  const groups = [...by.values()]
+    .map(g => ({ids: g.ids, seats: [...g.ids].map(id => seatOf.get(id)).sort((a, b) => a - b), links: g.links}))
+    .sort((a, b) => a.seats[0] - b.seats[0])
+    .map((g, i) => ({...g, letter: String.fromCharCode(65 + (i % 26))}));
+  return viewer => {
+    const mine = groups.find(g => g.ids.has(viewer));
+    const out = {};
+    for (const [id, seat] of seatOf) {
+      const kinds = (sig?.seats?.[id] || []).filter(k => !(mine?.ids.has(id) && PAIRED.includes(k)));
+      if (kinds.length) out[seat] = kinds;
+    }
+    return {seats: out, groups: groups.filter(g => g !== mine).map(({letter, seats: ss, links: ls}) => ({letter, seats: ss, links: ls}))};
+  };
 }
