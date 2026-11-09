@@ -20,6 +20,7 @@ export function flagText(f, names = {}) {
     case 'checks': return `${a} checks strong hands against ${b}: ${n(w.k)} of ${n(w.n)} heads-up, against ${n(e.k)} of ${n(e.n)} with others`;
     case 'dumps': return `${a} lost big pots to ${b} with weak hands: ${n(w.k)} of ${n(w.n)}, against ${n(e.k)} of ${n(e.n)} to others`;
     case 'chips': return `${a} lost ${chipText(f.chips)} to ${b} (${n(f.bb)} big blinds)`;
+    case 'partner': return `${a} played as if they knew ${b}’s cards: ${n(w.k)} of ${n(w.n)} spots where it mattered, others ${n(e.k)} of ${n(e.n)}`;
     case 'contest': return `${a} and ${b} rarely play a pot together: ${n(w.k)} in ${n(w.n)} hands, about ${n(f.expected)} expected`;
     // Seat and location flags (#581, relay/src/proximity.js).
     case 'near': return `${a} and ${b} were within 100 m of each other: ${n(w.k)} of ${n(w.n)} hands together`;
