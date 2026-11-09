@@ -13,8 +13,8 @@
 import * as ducy from '../wasm/ducy_wasm.js';
 
 // The club's fields the rules read, and those they change.
-const READS = ['v', 'code', 'name', 'hostId', 'ownerId', 'invite', 'createdAt', 'codeJoin', 'members', 'help', 'lobby', 'info', 'tables', 'sitOutMins', 'stayHands', 'ratholeHours', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'interestTried', 'services', 'serviceRefused'];
-const WRITES = ['invite', 'members', 'help', 'lobby', 'info', 'tables', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'interestTried', 'services', 'serviceRefused'];
+const READS = ['v', 'code', 'name', 'hostId', 'ownerId', 'invite', 'createdAt', 'codeJoin', 'members', 'help', 'lobby', 'info', 'tables', 'sitOutMins', 'stayHands', 'ratholeHours', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'interestTried', 'scheduled', 'services', 'serviceRefused'];
+const WRITES = ['invite', 'members', 'help', 'lobby', 'info', 'tables', 'waitlist', 'groups', 'lists', 'menu', 'interest', 'interestTried', 'scheduled', 'services', 'serviceRefused'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 
@@ -33,6 +33,8 @@ function apply(club, out) {
   if (!('menu' in out)) delete club.menu;
   if (!('interest' in out)) delete club.interest;
   if (!('interestTried' in out)) delete club.interestTried;
+  // And scheduled games (#599).
+  if (!('scheduled' in out)) delete club.scheduled;
   for (const k of WRITES) {
     if (!(k in out)) continue;
     if (k === 'members') merge(club.members ??= {}, out.members);

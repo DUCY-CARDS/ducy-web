@@ -2898,6 +2898,21 @@ body.pl-seated .psec[data-tab="quest"] .clubs { display: none; }
 .cl-menu-head { margin: 18px 0 6px; font: 400 18px var(--font-display); color: var(--fg-strong); }
 .cl-join-min { display: inline-flex; gap: 6px; align-items: center; }
 .cl-join-min .pl-text { width: auto; }
+/* Scheduled games (#599): a member's Upcoming, the owner's Scheduled. */
+.cl-sched-acts { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.cl-sched-owner { margin: 16px 0; }
+.cl-sched-owner .mg-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cl-sched-owner h3 { margin: 0; }
+.cl-sched-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
+.cl-sched-list > li { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.cl-sched-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cl-sched-row > span:first-child { display: flex; flex-direction: column; }
+.cl-sched-roster { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.cl-sched-roster h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.cl-sched-roster ul { margin: 0; padding: 0; list-style: none; font-size: 13px; overflow-wrap: anywhere; }
+.cl-schedform .tf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.cl-schedform label { display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 600px) { .cl-sched-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .cl-offer { display: flex; align-items: center; gap: 12px; background: #b23d26; color: #fff4e8; border-radius: 14px; padding: 12px 16px; margin-bottom: 10px; box-shadow: 0 4px 0 #5e1d10; }
 .cl-offer > span:first-child { flex: 1; display: flex; flex-direction: column; }
 .cl-offer .pl-meta { color: #fff4e8; }

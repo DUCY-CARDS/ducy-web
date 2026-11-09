@@ -156,9 +156,10 @@ test('starting a club without permission is refused, and says who to give ducy',
 });
 
 // A relay of its own that lets anyone start a trial club, for a whole club
-// flow; one per worker, so the browsers' runs don't share it.
+// flow; one per worker, so the browsers' runs don't share it. Its clock
+// moves on when a test says (RELAY_TEST_CLOCK, #599).
 async function trialRelay(port) {
-  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, TRIALS: ''}});
+  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, TRIALS: '', RELAY_TEST_CLOCK: '1'}});
   for (let i = 0; i < 100; i++) {
     if (await fetch(`http://localhost:${port}/code/ZZZZ-ZZZZ`).then(() => true, () => false)) return relay;
     await new Promise(r => setTimeout(r, 100));
@@ -524,6 +525,59 @@ test.describe('a club member', () => {
     await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
     await expect(owner.locator('.mg-stat', {hasText: 'Vault'})).toContainText('1,000');
     expect(code).toBeTruthy();
+  });
+
+  test('signs up for a scheduled game, checks in when check-in opens, and is seated at the start (#599)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, ava} = await clubWithAva(browser, watch);
+    const http = url.replace('ws:', 'http:');
+    // The relay's clock, moved on by `ahead`; the pages' clocks with it.
+    const clock = async (ms = 0) => (await (await fetch(`${http}/test/clock?ahead=${ms}`, {method: 'POST'})).json()).now;
+    for (const p of [owner, ava]) await p.clock.install({time: await clock()});
+    const ahead = async ms => {
+      const now = await clock(ms);
+      for (const p of [owner, ava]) await p.clock.setSystemTime(now);
+    };
+
+    // The owner offers Hold'em, then schedules it for two hours on, in
+    // their own time zone, check-in an hour before.
+    await owner.evaluate(() => { location.hash = 'clubs/cash'; });
+    await owner.locator('[data-cl="offer-game"]').click();
+    await owner.locator('form[data-tableform] button[type="submit"]').click();
+    await owner.locator('[data-cl="sched-new"]').click();
+    const form = owner.locator('form[data-schedform]');
+    const at = await owner.evaluate(t => { const d = new Date(Math.ceil(t / 60e3) * 60e3); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); }, (await clock()) + 2 * 3600e3);
+    await form.locator('[name=at]').fill(at);
+    await form.locator('[name=players]').fill('6');
+    await fitsTheScreen(owner);
+    await form.locator('button[type="submit"]').click();
+    await expect(form).toHaveCount(0);
+    const row = owner.locator('.cl-sched-list > li').first();
+    await expect(row.locator('.pl-meta').first()).toHaveText(/^\w{3} \d{1,2}:\d{2} [AP]M \w+/);
+
+    // Ava sees it under Upcoming, in her own time, and signs up.
+    const up = ava.locator('.cl-sched li').first();
+    await expect(up.locator('.cl-when')).toHaveText(/^\w{3} \d{1,2}:\d{2} [AP]M \w+/);
+    await up.getByRole('button', {name: 'Sign up'}).click();
+    await expect(up.getByText(/You’re in · Check-in in/)).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('upcoming.png'), fullPage: true});
+
+    // An hour and a minute on: check-in opens, and she checks in.
+    await ahead(61 * 60e3);
+    await up.getByRole('button', {name: 'Check in'}).click();
+    await expect(up.getByText(/Checked in/)).toBeVisible();
+    await expect(row.getByText('Checked in')).toBeVisible();
+
+    // The start, with one of the two it needs checked in: the owner is
+    // asked, and starts it short. Ava's seat is hers to buy in to.
+    await ahead(60 * 60e3);
+    await expect(row.getByText(/Too few checked in/)).toBeVisible();
+    await row.getByRole('button', {name: 'Start short'}).click();
+    await expect(row.getByText(/Started/)).toBeVisible();
+    await expect(ava.locator('form[data-sitform]')).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('seated.png'), fullPage: true});
   });
 });
 

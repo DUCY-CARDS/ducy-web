@@ -77,6 +77,10 @@ import {
   askInterest, backOnList, extendInterest, finishInterest, interestAnswer, joinList, lapseLists, leaveList, listsFor, nextListDue,
   offerSeats, wantsInterest,
 } from './club-lists.js';
+import {
+  cancelScheduled, editScheduled, nextScheduledDue, schedCheckIn, schedLeave, schedSignUp, scheduledDue, scheduledFor, scheduleGame,
+  startScheduled,
+} from './club-scheduled.js';
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
@@ -433,6 +437,79 @@ export function createClubServer({
     for (const g of club.groups || []) if (g.ask) armAsk(g.id);
     for (const k of Object.keys(club.interest || {})) armAsk(`interest:${k}`);
     armLists();
+    // Scheduled games: check-in or a start due while the club slept, now.
+    scheduledTick();
+  }
+
+  // ---- scheduled games (#599, club-scheduled.js) ----
+  //
+  // Sign-up and check-in come from members (table `sched:<id>`); check-in
+  // opening and the start run on a timer (the room's alarm in an always-on
+  // club, so no one's browser need be open). At the start, tables open and
+  // the seats held for checked-in players are theirs to buy in to.
+  const sendScheduled = id => {
+    if (online.has(id) && club.members[id]?.status === 'member') sendToPlayer({to: id, body: scheduledFor(club, id)});
+  };
+  let hadScheduled = !!club.scheduled?.length;
+  function broadcastScheduled() {
+    if (!hadScheduled && !club.scheduled?.length) return;
+    hadScheduled = !!club.scheduled?.length;
+    for (const id of online) sendScheduled(id);
+  }
+  // What a change means: news sent, tables started (then their players
+  // told), lists changed.
+  async function schedNews(news) {
+    for (const s of news.sends || []) sendToPlayer(s);
+    for (const id of news.listsTo || []) sendLists(id);
+    for (const tid of news.opened || []) {
+      const t = tableById(club, tid);
+      if (t && tableHost) await started(tableHost.start(t));
+    }
+    for (const s of news.afterOpen || []) sendToPlayer(s);
+    if (news.opened?.length) broadcastTables();
+  }
+  let schedTimer = null;
+  function armScheduled() {
+    if (schedTimer != null) promoTimers.clear(schedTimer);
+    schedTimer = null;
+    const due = nextScheduledDue(club);
+    if (due != null) schedTimer = promoTimers.set(scheduledTick, Math.min(Math.max(0, due - Date.now()) + 50, 2 ** 31 - 1));
+  }
+  function scheduledTick() {
+    schedTimer = null;
+    if (club.scheduled?.length) {
+      const before = JSON.stringify(club.scheduled);
+      let news = null;
+      try { news = scheduledDue(club, limits?.tables ?? null); } catch (e) { console.warn('club: scheduled games:', e); }
+      if (JSON.stringify(club.scheduled ?? null) !== before) {
+        changed();
+        broadcastScheduled();
+      }
+      if (news) schedNews(news).catch(e => console.warn('club: scheduled games:', e));
+    }
+    armScheduled();
+  }
+  // Member `from`'s sign_up, leave or check_in for scheduled game `id`.
+  function schedCmd(from, id, type) {
+    try {
+      const op = {sign_up: schedSignUp, leave: schedLeave, check_in: schedCheckIn}[type];
+      if (!op) return;
+      const news = op(club, id, from);
+      changed();
+      schedNews(news);
+    } catch (e) {
+      sendToPlayer({to: from, body: {type: 'sched', club: club.code, kind: 'refused', id, reason: e.message}});
+    }
+    broadcastScheduled();
+  }
+  // The owner's: the change, then everyone hears, and the timer moves.
+  function ownerScheduled(fn) {
+    const news = fn();
+    changed();
+    hadScheduled = true;
+    broadcastScheduled();
+    armScheduled();
+    return news;
   }
 
   // ---- waitlists (#518, club-lists.js) ----
@@ -633,6 +710,8 @@ export function createClubServer({
       if (r.table.cmd?.type === 'group_answer') answered(msg.from, String(r.table.cmd.group ?? ''), r.table.cmd.yes === true);
       // A game's waitlist (#518), sent as table `list:<key>`.
       else if (r.table.id.startsWith('list:')) listCmd(msg.from, r.table.id.slice(5), String(r.table.cmd?.type ?? ''), r.table.cmd?.min ?? null);
+      // A scheduled game (#599), sent as table `sched:<id>`.
+      else if (r.table.id.startsWith('sched:')) schedCmd(msg.from, r.table.id.slice(6), String(r.table.cmd?.type ?? ''));
       else if (r.table.cmd?.type === 'join' && !memberKeys.has(msg.from)) {
         sendToPlayer({to: msg.from, body: {type: 'table_error', club: club.code, table: r.table.id, reason: 'This page couldn’t set up encryption with the club. Reload and try again.'}});
       } else if (r.table.id.startsWith('tourney:')) {
@@ -664,6 +743,8 @@ export function createClubServer({
       if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});
       // The waitlists they're on (#518).
       if (tableHost) sendLists(msg.from);
+      // Scheduled games (#599).
+      if (club.scheduled?.length) sendScheduled(msg.from);
       sendToPlayer({to: msg.from, body: tourneysBody(club, tourneyLive())});
       if (club.promos?.list?.length) sendToPlayer({to: msg.from, body: promosBody(club)});
       if (club.info) sendToPlayer({to: msg.from, body: infoBody(club)});
@@ -755,6 +836,11 @@ export function createClubServer({
       await tableHost?.keepPlayer(table, String(id));
       changed();
     },
+    // Scheduled games (#599): set up, changed, cancelled, or started short.
+    schedule_game: ({game}) => ownerScheduled(() => scheduleGame(club, game || {})).id,
+    edit_scheduled: ({id, game}) => { schedNews(ownerScheduled(() => editScheduled(club, String(id), game || {}))); },
+    cancel_scheduled: ({id}) => { schedNews(ownerScheduled(() => cancelScheduled(club, String(id)))); },
+    start_scheduled: async ({id}) => { await schedNews(ownerScheduled(() => startScheduled(club, String(id), limits?.tables ?? null))); },
     // Moving players is never the manager's (#518): the waitlists and must
     // move seat and move them.
     close_table: ({table}) => {

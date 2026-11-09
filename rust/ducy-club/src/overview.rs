@@ -393,6 +393,19 @@ impl ClubState {
                 "seated": num(seated.get(&t.id)), "at": stopped,
             }));
         }
+        // A scheduled game's start with too few checked in (#599): start
+        // short, or cancel.
+        let club = &self.book.club;
+        for g in club
+            .scheduled
+            .iter()
+            .filter(|g| g.status == crate::scheduled::SchedStatus::Short)
+        {
+            out.push(json!({
+                "key": format!("short:{}", g.id), "kind": "short", "id": g.id, "name": club.scheduled_name(g),
+                "checkedIn": g.line_up().0.len(), "min": g.min_players, "note": g.note, "at": g.start_at,
+            }));
+        }
         out.retain(|n| {
             !cleared
                 .iter()

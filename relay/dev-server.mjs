@@ -23,6 +23,25 @@ import { initSync } from '../wasm/ducy_wasm.js';
 // its rules.
 initSync({module: readFileSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url))});
 
+// RELAY_TEST_CLOCK=1, for browser tests only (#599): a clock POST
+// /test/clock?ahead=<ms> moves on, and the clubs' timers run by it, so a
+// scheduled game's check-in and start come within a test.
+const TEST_CLOCK = process.env.RELAY_TEST_CLOCK === '1';
+let testTimers = null;
+if (TEST_CLOCK) {
+  const realNow = Date.now.bind(Date);
+  let ahead = 0;
+  Date.now = () => realNow() + ahead;
+  testTimers = {list: new Map(), n: 0, move: ms => { ahead += ms; }};
+  setInterval(() => {
+    for (const [h, t] of [...testTimers.list]) if (t.at <= Date.now()) { testTimers.list.delete(h); try { t.fn(); } catch (e) { console.warn(e); } }
+  }, 50).unref();
+}
+const clubTimers = () => (testTimers ? {
+  set: (fn, ms) => { const h = ++testTimers.n; testTimers.list.set(h, {fn, at: Date.now() + Math.max(0, Number(ms) || 0)}); return h; },
+  clear: h => { testTimers.list.delete(h); },
+} : null);
+
 // Table codes use capitals and digits with no I, L, O, 0 or 1 (play-net.js).
 const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
@@ -121,6 +140,7 @@ async function clubOf(room, code) {
     send: (to, data) => { const g = room.guests.get(to); if (g) send(g.ws, data); },
     online: [...room.guests.keys()],
     record,
+    timers: clubTimers(),
     onUsage: (minutes, at) => reg.used(minutes, at ?? Date.now(), code),
     onHand: ids => usage.note({kind: 'clubHand', code, ids}),
     onSaved: () => scheduleBackup(room, code),
@@ -295,6 +315,12 @@ async function service(req, res, code) {
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/admin/')) return admin(req, res, url);
+  if (TEST_CLOCK && url.pathname === '/test/clock' && req.method === 'POST') {
+    testTimers.move(Math.max(0, Number(url.searchParams.get('ahead')) || 0));
+    res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': '*'});
+    res.end(JSON.stringify({now: Date.now()}));
+    return;
+  }
   // A page's error report (#552), as in the Worker.
   if (url.pathname === '/report' && req.method === 'POST') {
     let raw = '';
