@@ -395,10 +395,11 @@ export function showDemoList() {
 
 function drawOver() {
   dialog('demo-over', '<section class="cl-card"><h2 id="demo-over-h">Demo over</h2><div class="pl-actions">'
-    + '<button type="button" class="tr-start" data-demo-own>Create your own club</button>'
-    + '<button type="button" class="btn-small" data-demo-again>New demo</button></div></section>', (e, el) => {
-    if (e.target.closest('[data-demo-own]')) { el.remove(); go(managerUrl('clubs')); }
-    else if (e.target.closest('[data-demo-again]')) { el.remove(); showDemoList(); }
+    + '<button type="button" class="tr-start" data-demo-again>New demo</button>'
+    + '<button type="button" class="btn-small" data-demo-close>Close</button></div></section>', (e, el) => {
+    // No way from here to starting a club (#611).
+    if (e.target.closest('[data-demo-again]')) { el.remove(); showDemoList(); }
+    else if (e.target.closest('[data-demo-close]') || e.target === el) el.remove();
   });
 }
 

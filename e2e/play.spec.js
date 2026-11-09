@@ -40,7 +40,9 @@ test('the front page offers friends, clubs and the Regulars, and nothing else', 
   await watch(page).goto('/');
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
   await expect(page.getByLabel('Game or club code')).toBeVisible();
-  for (const name of ['Start a game', 'Private clubs', 'Play the Regulars']) await expect(page.getByRole('link', {name})).toBeVisible();
+  for (const name of ['Start a game', 'Play the Regulars']) await expect(page.getByRole('link', {name})).toBeVisible();
+  // No clubs yet: no clubs tile, and no page of them (#611).
+  await expect(page.getByText(/Private clubs|Start a club|Create your own club/)).toHaveCount(0);
   await expect(page.getByText(/play money|Still in development/i)).toHaveCount(0);
   await expect(page.getByRole('link', {name: /Study|Quest|Heads-up challenge|Omaha 6/})).toHaveCount(0);
   await expect(page.getByText('Ducybot')).toHaveCount(0);
@@ -68,14 +70,46 @@ test('a private game shows its code before it opens, and opens with it (#566)', 
   await expect(page.getByText(/can’t reach the relay/)).toHaveCount(0, {timeout: 10_000});
 });
 
-test('Private clubs takes a code, with no clubs yet (#564)', async ({page, watch}) => {
-  await watch(page).goto('/');
-  await page.getByRole('link', {name: 'Private clubs'}).click();
-  const code = page.getByLabel('Club code or invite link');
-  await expect(code).toBeVisible();
-  await code.fill('not a code');
-  await page.locator('form[data-clcode] button').click();
-  await expect(page.getByText('That isn’t a code or a link.')).toBeVisible();
+test('with no clubs, the front page takes a club code, and #clubs is the front page (#564, #611)', async ({page, watch}) => {
+  await watch(page).goto('/#clubs');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
+  await page.getByLabel('Game or club code').fill('not a code');
+  await page.locator('form[data-v3join] button[type=submit]').click();
+  await expect(page.getByText('That isn’t a code or a link.', {exact: false})).toBeVisible();
+  await fitsTheScreen(page);
+});
+
+// Clubs in this browser (as storage keeps them), before the page loads.
+const withClubs = (page, clubs) => page.addInitScript(c => { if (!sessionStorage.seeded) { localStorage.setItem('ducyClubs', JSON.stringify(c)); sessionStorage.seeded = '1'; } }, clubs);
+const OWLS = {code: 'ABCD-EFGH', name: 'Night Owls', status: 'member', hostId: 'x', balance: 0};
+const SUNDAY = {code: 'JKMN-PQRS', name: 'Sunday Game', status: 'member', hostId: 'y', balance: 0};
+
+test('one club: the front page opens it, under Play (#611)', async ({page, watch}) => {
+  await withClubs(page, [OWLS]);
+  await watch(page).goto(`/?relay=${RELAY}`);
+  await expect(page.getByText(/Private clubs/)).toHaveCount(0);
+  await fitsTheScreen(page);
+  await page.getByRole('link', {name: /Night Owls/}).click();
+  await expect(page).toHaveURL(/#clubs\/c\/ABCD-EFGH$/);
+  await expect(page.locator('#sub-tabs .v3-crumbs')).toHaveText(/^Play\s*›\s*Night Owls$/);
+});
+
+test('several clubs: the front page lists them, and #clubs goes there (#611)', async ({page, watch}) => {
+  await withClubs(page, [OWLS, SUNDAY]);
+  await watch(page).goto(`/?relay=${RELAY}#clubs`);
+  await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
+  await expect(page.locator('.v3-clubs a')).toHaveText([/Night Owls/, /Sunday Game/]);
+  await fitsTheScreen(page);
+  await page.locator('.v3-clubs a', {hasText: 'Sunday Game'}).click();
+  await expect(page).toHaveURL(/#clubs\/c\/JKMN-PQRS$/);
+});
+
+test('the club manager offers no way to start a club (#611)', async ({page, watch}) => {
+  await watch(page).goto('/manage.html#clubs');
+  await expect(page.locator('[data-cl="demo"]')).toBeVisible();
+  await expect(page.getByText(/Start a club|Create your own club/)).toHaveCount(0);
+  await expect(page.locator('#cl-clubname')).toHaveCount(0);
   await fitsTheScreen(page);
 });
 
@@ -145,7 +179,8 @@ const needsPasskeys = browserName => test.skip(browserName !== 'chromium', 'only
 test('starting a club without permission is refused, and says who to give ducy', async ({page, watch, browserName}) => {
   needsPasskeys(browserName);
   await authenticator(page);
-  await watch(page).goto(`/manage.html?relay=${RELAY}#clubs`);
+  // Linked from nowhere (#611): the address only.
+  await watch(page).goto(`/manage.html?relay=${RELAY}#clubs/new`);
   await page.locator('#cl-clubname').fill('Night Owls');
   await page.locator('[data-cl="create"]').click();
   // Clubs need a passkey first (#575).
@@ -187,7 +222,7 @@ test.describe('a club member', () => {
   // opens.
   async function clubWithAva(browser, watch, info = null) {
     const {page: owner} = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs`);
+    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await expect(owner.getByText('Set up a passkey')).toBeVisible();
@@ -262,7 +297,8 @@ test.describe('a club member', () => {
     const {page: again, auth: againAuth} = await browserWith(browser, watch);
     for (const c of await auth.credentials()) await againAuth.add(c);
     again.on('dialog', d => d.accept());
-    await again.goto(`/?relay=${url}#clubs`);
+    // A page with the gear (the front page has none).
+    await again.goto(`/?relay=${url}#join`);
     await again.locator('[data-pt=player]').first().click();
     // Once its player ID has loaded: the dialog draws again then.
     await expect(again.locator('#pset .pl-pid')).not.toHaveText('…');
@@ -271,7 +307,7 @@ test.describe('a club member', () => {
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
     await again.waitForEvent('load');
     // Settled after the reload, so leaving doesn't cut a download short.
-    await expect(again.getByRole('heading', {name: 'Private clubs'})).toBeVisible();
+    await expect(again.getByRole('heading', {name: 'Join a game'})).toBeVisible();
     await again.waitForLoadState('networkidle');
     await again.goto(invite);
     await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
@@ -303,7 +339,7 @@ test.describe('a club member', () => {
 
     // The browser clears ducy's data. Her passkey brings the same account back (PRF).
     await ava.evaluate(() => new Promise(r => { localStorage.clear(); sessionStorage.clear(); const q = indexedDB.deleteDatabase('ducy'); q.onsuccess = q.onerror = q.onblocked = r; }));
-    await ava.goto(`/?relay=${url}#clubs`);
+    await ava.goto(`/?relay=${url}#join`);
     await ava.locator('[data-pt=player]').first().click();
     await expect(ava.locator('#pset .pl-pid')).not.toHaveText(avaId);
     await ava.locator('#pset [data-ps="pk-recover"]').click();
@@ -355,7 +391,7 @@ test.describe('a club member', () => {
     // moves her onto that device's own player ID, chips and all.
     const {page: nova, auth: novaAuth} = await browserWith(browser, watch, {prf: false});
     for (const c of await auth.credentials()) await novaAuth.add(c);
-    await nova.goto(`/?relay=${url}#clubs`);
+    await nova.goto(`/?relay=${url}#join`);
     await nova.locator('[data-pt=player]').first().click();
     await expect(nova.locator('#pset .pl-pid')).not.toHaveText('…');
     const novaId = (await nova.locator('#pset .pl-pid').innerText()).trim();
@@ -374,7 +410,7 @@ test.describe('a club member', () => {
     test.setTimeout(240_000);
     // The owner starts a club with a table open.
     const {page: owner} = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs`);
+    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();

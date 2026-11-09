@@ -12,7 +12,8 @@ import { openTrainer, closeTrainer, trainerOpen } from './trainer.js';
 import { openCharts, closeCharts, chartsOpen } from './charts.js';
 import { closeSection, enterCode, openSection, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
-import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub } from './home.js';
+import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub, refreshHubClubs } from './home.js';
+import { onClubsChange, yourClubs } from './clubs.js';
 
 const ST = [
   {ch:'♠', c:'s', cl:'bl'},
@@ -1836,7 +1837,7 @@ function setMode(mode, shortcut) {
   else closeCharts();
   if (hub) {
     setTitleSection(HUB_TITLES[mode]);
-    openHub(document.getElementById('v3'), mode, enterCode);
+    openHub(document.getElementById('v3'), mode, enterCode, yourClubs());
   } else closeHub();
   // The playing section titles and shows its own breadcrumb.
   if (!section && !hub) { setTitleSection(trainer ? 'Pre-flop ranges' : charts ? 'Pre-flop charts' : 'Equity'); showNav(mode); }
@@ -1861,6 +1862,11 @@ function hashMode() {
   // all is the landing page.
   const h = location.hash.slice(1).split('/')[0];
   if (!h) return 'home';
+  // No page of clubs (#611): they're on the front page.
+  if (/^#clubs\/?$/.test(location.hash)) {
+    history.replaceState(null, '', location.pathname + location.search);
+    return 'home';
+  }
   if (h === 'practice') return 'play';
   return h === 'trainer' || h === 'charts' || h === 'equity' || HUBS.includes(h) || TABS.includes(h) ? h : '';
 }
@@ -1898,6 +1904,8 @@ try {
 
 // Clubs connect now, whichever page is open, so requests arrive live (#145).
 startBackground();
+// The front page lists your clubs (#611) as they change.
+onClubsChange(() => refreshHubClubs(yourClubs()));
 
 // The notices can be closed (#144). One stays closed until its text
 // changes: what's remembered is a fingerprint of the text closed.

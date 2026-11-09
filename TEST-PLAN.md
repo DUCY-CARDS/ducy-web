@@ -19,7 +19,7 @@ A major release is any of these:
 
 | Part | Pages | Who uses it |
 |---|---|---|
-| **Main** | `/`: the front page (Friends, Private clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
+| **Main** | `/`: the front page (Friends, your clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
 | **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
 | **Club manager** | `manage.html`: Overview, Tables, Tournaments, Requests, Members, a member's page, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
 | **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
@@ -45,8 +45,11 @@ A major release is any of these:
 
 | Test | Part |
 |---|---|
-| Front page offers Friends, Private clubs and the Regulars, and nothing else | Main |
-| Private clubs takes a code, with no clubs yet | Main |
+| Front page offers Friends and the Regulars, and nothing else, with no clubs | Main |
+| With no clubs, the front page takes a club code, and `#clubs` is the front page | Main |
+| One club: the front page opens it, under Play | Main |
+| Several clubs: the front page lists them, and `#clubs` goes there | Main |
+| The club manager offers no way to start a club | Club manager |
 | A hand against the Regulars plays to its end, with no grades | Main |
 | A friend joins a hosted game by its code | Main |
 | Starting a club without permission is refused | Club manager |
@@ -142,13 +145,13 @@ available, the first testers' phones stand in, and the gap is noted in Results.
 Every step runs on staging.ducy.cards (its password is in DirectAdmin) before the release, in a fresh private window unless it says otherwise. Staging has its own relay and data, so clubs and players made there never reach the live site. "Two browsers" means two devices, or two private windows in different browsers.
 
 **M1 Front page and the Regulars**
-1. Open `/`. You see Friends, Private clubs and Play the Regulars, with no Beta or play money banners. Nothing scrolls sideways.
+1. Open `/`. You see Friends and Play the Regulars (and your clubs, once you have any), with no Beta or play money banners. Nothing scrolls sideways. `/#clubs` shows the front page.
 2. Tap each tile. It opens its page, and Back returns to the front page.
 3. Play the Regulars: sit down and play five hands. You get no grades and no hand review.
 4. Open the gear: change your name and avatar, then reload. Both are kept.
 5. Open Privacy from the footer. It reads, and the wordmark goes back home.
 
-**M2 The code box** (front page, and again under Private clubs)
+**M2 The code box** (front page)
 1. Enter `hello`. You're told it isn't a code.
 2. Enter a well-formed code with no game, such as `ZZZZ-ZZZZ`. You're told there's no game or club with that code, without going to another page.
 3. Enter a live game's code (from M3). It goes to that game's join page.
@@ -176,7 +179,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 1. Open the owner's invite link in a fresh browser and ask to join.
 2. Once let in, ask for chips. When the owner gives them, the balance shows.
 3. Sit at the club's table and play five hands with another member. Stand up: the balance is right.
-4. Private clubs on the front page lists the club, and it opens.
+4. The front page's club tile has the club's name, and opens it; its breadcrumb is Play › the club. Join a second club: the front page lists both, and each opens.
 
 **M7 Identity**
 1. Save a backup from player settings.
@@ -196,7 +199,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Unlock: close the tab and come back. "Unlock your clubs" shows; Use passkey opens the club. Within the same tab nothing asks again, until 4 hours without using a club.
 3. Chips: ask for chips more than 5 minutes after unlocking. The passkey is asked for first. As the owner, give chips more than 5 minutes after unlocking: the same.
 4. Refusal: cancel the passkey prompt. The club stays locked and says "Not unlocked."; nothing is sent.
-5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open Private clubs → Restore with a passkey (or the You page → Restore with a passkey → Sign in). The same player ID comes back (compare it on the You page), with the same clubs and balances, and no new join request.
+5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open the You page → Restore with a passkey → Sign in. The same player ID comes back (compare it on the You page), with the same clubs and balances, and no new join request.
 6. Recovery without PRF: on a device whose passkey manager doesn't support PRF (iPhone before iOS 18, some third-party managers), do step 5. The device keeps its own player ID; the clubs list the member under it, with the same name and balance, and the owner's activity log says "Moved … to a new ID (ducy vouched)". Note which devices took which path.
 7. A second device's own passkey: on the recovered device, You → Passkeys → Add. Both passkeys list, with their device and date.
 8. A lost device: from the other device, You → Passkeys → Remove the first one. On the first device, the next unlock is refused, and a club page it had open stops working within 5 minutes.
@@ -206,7 +209,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 ## Manual: club manager
 
 **C1 Starting a club**
-1. Without a grant, `manage.html` refuses to start a club and shows your ID.
+1. Nothing in the player app or the club manager links to starting a club. Without a grant, `manage.html#clubs/new` (by address only) refuses to start a club and shows your ID.
 2. Grant that ID on admin.ducy.cards (Staging → Clubs). Starting the club now works, and its owner is asked to prove a backup.
 
 **C2 Pages**

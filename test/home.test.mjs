@@ -44,9 +44,45 @@ test('the beta opens on friends, clubs and the Regulars, and nothing else (#564)
   assert.match(h, /Pull up a chair\./);
   assert.match(h, /Game or club code/);
   const links = [...h.matchAll(/href="(#[a-z0-9-]+)"/g)].map(m => m[1]);
-  assert.deepEqual(links, ['#host', '#clubs', '#practice']);
+  assert.deepEqual(links, ['#host', '#practice']);
   assert.doesNotMatch(h, /Study|Quest|training|Heads-up challenge|Ducybot|play money/i);
   assert.doesNotMatch(h, />[^<]*\bBeta\b/, 'no Beta notice (#566)');
+});
+
+// Your clubs are on the front page, with no page of them (#611).
+const NIGHT = {name: 'Night Owls', href: '#clubs/c/ABCD-EFGH', who: 'Member'};
+const MINE = {name: 'Back Room', href: 'manage.html#clubs/own', who: 'You run it'};
+test('with no clubs, the front page has no clubs tile: its code box joins one (#611)', () => {
+  const h = hubHtml('home', {...hubData(store()), clubs: []});
+  assert.doesNotMatch(h, /v3-clubs|href="#clubs|>Clubs<|Private clubs/);
+  assert.match(h, /Game or club code/);
+});
+
+test('with one club, its tile opens the club (#611)', () => {
+  const h = hubHtml('home', {...hubData(store()), clubs: [NIGHT]});
+  assert.match(h, /<a class="v3-tile v3-tile-cream" href="#clubs\/c\/ABCD-EFGH">.*Night Owls/);
+  assert.doesNotMatch(h, /href="#clubs"|Private clubs|Start a club|Create your own/);
+});
+
+test('with several clubs, the front page lists them, each opening its page (#611)', () => {
+  for (const hub of ['home', 'lobby']) {
+    const h = hubHtml(hub, {...hubData(store()), clubs: [MINE, NIGHT]});
+    assert.match(h, /<span class="v3-tile-name">Clubs<\/span>/, hub);
+    const links = [...h.matchAll(/<li><a href="([^"]+)">/g)].map(m => m[1]);
+    assert.deepEqual(links, ['manage.html#clubs/own', '#clubs/c/ABCD-EFGH'], hub);
+    assert.match(h, /You run it/);
+    assert.doesNotMatch(h, /href="#clubs"|Private clubs|Start a club|Create your own/, hub);
+  }
+});
+
+test('club names are escaped on the front page', () => {
+  const h = hubHtml('home', {...hubData(store()), clubs: [{...NIGHT, name: '<b>x</b>'}, NIGHT]});
+  assert.match(h, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.doesNotMatch(h, /<b>x<\/b>/);
+});
+
+test('a club page\'s breadcrumb is under Play, called Clubs until its name arrives (#611)', () => {
+  assert.deepEqual(crumbFor('clubs'), [{href: '#lobby', label: 'Play'}, {href: null, label: 'Clubs'}]);
 });
 
 test('the full landing page moved to #welcome, with Study, Play and Quest', () => {
@@ -62,7 +98,7 @@ test('each hub links where it should', () => {
   // After the spade home and any way back.
   assert.deepEqual(links('study'), ['#', '#equity', '#trainer', '#challenge', '#charts']);
   assert.deepEqual(links('challenge'), ['#', '#study', '#codedoug', '#gto-plo4', '#gto-plo5', '#gto-plo6']);
-  assert.deepEqual(links('lobby'), ['#', '#host', '#clubs', '#practice']);
+  assert.deepEqual(links('lobby'), ['#', '#host', '#practice']);
   assert.equal(HUBS.length, 5);
 });
 

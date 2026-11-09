@@ -6,8 +6,7 @@
 //   #join   Join (Play): what a link or Play's Enter a code (#393) asks to
 //           join, a table or a club, and your club requests
 //   #host   Start a game (Play): a table for friends
-//   #clubs  Clubs: the club you run or help run (on the club manager), and
-//           the clubs you're in
+//   #clubs/… a club's page (#611: the clubs are listed on the front page)
 // Train's other tabs are main.js's: Drills (#trainer) and Equity.
 // play.js and clubs.js each draw their part of every tab (their `view`);
 // this file draws the tabs, the Join form, and the badges (#145): the count
@@ -30,8 +29,8 @@ import { crumbFor, sideOf, sideSwitch } from './home.js';
 import './private-tourney-room.js';
 
 export const TABS = ['play', 'ladder', 'quest', 'join', 'host', 'clubs'];
-// Each tab's window title (#195): "Private clubs · DUCY".
-const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll Quest', join: 'Join a game', host: 'Start a game', clubs: 'Private clubs'};
+// Each tab's window title (#195): "Clubs · DUCY".
+const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll Quest', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
 
 let tab = null; // the tab showing, or null when the section is closed
 let seenSeats = 0; // open seats the last time Clubs was looked at
@@ -68,7 +67,7 @@ export function openSection(t, shortcut) {
   if (t === 'join') renderJoin();
   else if (t === 'host') renderHost();
   else joinRoot.hidden = true;
-  openClubs(el('clubs'), t, enterCode);
+  openClubs(el('clubs'), t);
   openPlay(el('play'), shortcut, t);
 }
 
@@ -107,9 +106,9 @@ function renderTabs() {
   const nav = el('sub-tabs');
   if (!nav) return;
   const crumbs = crumbFor(page || 'equity', page === 'play' ? tableGroup() : null);
-  // A club's page (#225): Play › Private clubs › its name.
+  // A club's page (#225, #611): Play › its name.
   const inClub = page === 'clubs' && clubCrumb();
-  if (inClub) crumbs.splice(-1, 1, {...crumbs.at(-1), href: '#clubs'}, {label: inClub});
+  if (inClub) crumbs.splice(-1, 1, {href: null, label: inClub});
   let h = '<span class="v3-crumbs">';
   crumbs.forEach((c, i) => {
     if (i) h += '<span class="v3-crumb-sep" aria-hidden="true">›</span>';
