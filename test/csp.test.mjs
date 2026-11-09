@@ -11,8 +11,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
-const APPS = ['index.html', 'manage.html', 'admin.html'];
+// admin.html is the admin site's page (#601, build-admin.sh), with its own
+// policy in admin.htaccess.
+const SITE_APPS = ['index.html', 'manage.html'];
+const APPS = [...SITE_APPS, 'admin.html'];
 // The privacy policy has no script (#554), so it opens on any browser.
+const SITE_PAGES = [...SITE_APPS, 'privacy.html'];
 const PAGES = [...APPS, 'privacy.html'];
 const LOCAL = ['ws://localhost:*', 'http://localhost:*'];
 const ENV = 'ducy_safari15';
@@ -115,14 +119,29 @@ test('each source page carries the header’s policy, less frame-ancestors, plus
   const h = header();
   delete h['frame-ancestors'];
   h['connect-src'] = [...h['connect-src'], ...LOCAL];
-  for (const page of PAGES) assert.deepEqual(meta(page), h, page);
+  for (const page of SITE_PAGES) assert.deepEqual(meta(page), h, page);
+});
+
+test('the admin site: its page carries admin.htaccess’s policy, less frame-ancestors, plus a local relay', () => {
+  const lines = [...read('admin.htaccess').matchAll(/^\s*Header set Content-Security-Policy "([^"]+)"/gm)];
+  assert.equal(lines.length, 1);
+  const p = parse(lines[0][1]);
+  assert.deepEqual(p['script-src'], ["'self'", "'wasm-unsafe-eval'"]);
+  assert.deepEqual(p['frame-ancestors'], ["'none'"]);
+  assert.deepEqual(p['object-src'], ["'none'"]);
+  // Each environment's relay and site, nothing else.
+  assert.deepEqual(p['connect-src'], ["'self'", ...['', '-staging', '-sandbox'].map(e => `https://ducy-relay${e}.ducy.workers.dev`), 'https://ducy.cards', 'https://staging.ducy.cards', 'https://sandbox.ducy.cards']);
+  delete p['frame-ancestors'];
+  p['connect-src'] = [...p['connect-src'], ...LOCAL];
+  assert.deepEqual(meta('admin.html'), p);
+  assert.match(read('scripts/build-admin.sh'), /\/<meta http-equiv="Content-Security-Policy"\/d/);
 });
 
 test('build-site.sh takes the policy out of the site’s pages and checks it has', () => {
   const b = read('scripts/build-site.sh');
   assert.match(b, /\/<meta http-equiv="Content-Security-Policy"\/d/, 'deletes the meta tag');
   assert.match(b, /still has a policy of its own/, 'fails the build if a page keeps one');
-  assert.equal(b.split('"${NO_META[@]}"').length - 1, PAGES.length, 'for every page');
+  assert.equal(b.split('"${NO_META[@]}"').length - 1, SITE_PAGES.length, 'for every page');
 });
 
 test('every page with a script loads the update screen first, as a file', () => {

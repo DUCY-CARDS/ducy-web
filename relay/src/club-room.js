@@ -248,6 +248,8 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // backup.js).
 // `timers`: {set(fn, ms), clear(handle)} for the tables' clocks (#135); the
 // Worker backs it with the room's alarm, the local relay uses plain timers.
+// `onHand(ids)`: a hand finished, with these players in it (counted for the
+// admin site, #601).
 // `record`: the club's record in the registry (registry.js, #265), for its
 // plan and limits; server.setRecord(record) when the super admin changes it.
 // `onProved(owner)`: the owner proved a backup works (#395, the
@@ -257,7 +259,7 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // ID (vouchedMove); the caller updates the registry's record.
 // `openConns`: {id: conn} for those in `online`, their connections as the
 // relay saw them (worker.js connOf), for the seat and location signals.
-export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
+export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -296,6 +298,9 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
   // it (no hidden cards), under its own key, with an index of {key, at}.
   // Kept for the club's days, and at most MAX_HANDS.
   async function storeHand(rec, {days}) {
+    // Counted for the admin site (#601): who sat in, for leaving out hands
+    // only the admins played.
+    Promise.resolve().then(() => onHand((rec.seats || []).filter(s => s.inHand !== false).map(s => s.id).filter(Boolean))).catch(e => console.warn('club: hand not counted:', e));
     // The seat and location flags at its table as it finished (#581), for
     // the owner: who and which flag, never where.
     const flags = signalsAmong((rec.seats || []).filter(s => s.inHand !== false).map(s => s.id).filter(Boolean)).flags;

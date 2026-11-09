@@ -205,3 +205,58 @@ test('only signed requests from a listed key get in', async () => {
   assert.equal(again.status, 401);
   assert.match(again.body.error, /already received/);
 });
+
+// Usage counts (#601): a friends game, its players and hands, a club's
+// players, the admins left out; and what's live now.
+test('usage: games, players, hands, now; the admins not counted', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const today = async () => (await api('/admin/stats')).body.days.at(-1);
+  const before = await today();
+  assert.equal((await api('/admin/stats')).body.days.length, 30);
+
+  // A friends game: the host and one player, one hand.
+  const host = open('/room/GGGG-HHHH?role=host');
+  await host.ready;
+  const guest = open('/room/GGGG-HHHH?role=guest&id=tab-1');
+  await guest.ready;
+  await host.next();
+  host.send({stat: 'hand'});
+  host.send({stat: 'hand'}); // too soon after the last: not counted again
+  // Carl's club, and the admin in it.
+  const carl = await createIdentity();
+  const {c: cc, m} = await create(carl, 'WWWW-WWWW', 'Carl’s');
+  assert.equal(m.type, 'club_created');
+  cc.send(await signMessage(carl, {club: 'WWWW-WWWW', type: 'owner_hello'}));
+  await cc.next('owner_view');
+  const adm = open(`/room/WWWW-WWWW?role=guest&id=${ADMIN.ident.id}&queue=1`, ADMIN.ident);
+  await adm.ready;
+  await new Promise(r => setTimeout(r, 200));
+
+  const st = (await api('/admin/stats')).body;
+  const after = st.days.at(-1);
+  assert.equal(after.games - before.games, 1);
+  assert.equal(after.hands - before.hands, 1);
+  assert.equal(after.clubHands, before.clubHands);
+  assert.equal(after.active - before.active, 1, 'Carl, not the admin');
+  assert.equal(after.newPlayers - before.newPlayers, 1);
+  assert.ok(after.clubsActive >= 1);
+  assert.ok(after.playersPerGame >= 1);
+  assert.ok(st.now.games >= 1);
+  assert.ok(st.now.players >= 3, 'the game\'s two and Carl');
+  assert.ok(st.now.rooms >= 2);
+
+  // The host reloads: the same game.
+  host.ws.close();
+  await new Promise(r => setTimeout(r, 100));
+  const back = open('/room/GGGG-HHHH?role=host');
+  await back.ready;
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal((await today()).games, after.games);
+  for (const s of [back, guest, cc, adm]) s.ws.close();
+
+  // No Cloudflare token here: nothing to show.
+  assert.deepEqual((await api('/admin/cloudflare')).body, {enabled: false});
+  // Only signed requests from a listed key.
+  const eve = await createIdentity();
+  assert.equal((await adminFetch(PORT, eve)('/admin/stats')).status, 403);
+  assert.equal((await fetch(`http://localhost:${PORT}/admin/stats`, {method: 'POST', body: '{}'})).status, 401);
+});

@@ -14,6 +14,8 @@ import { serviceHttp, serviceInRoom } from './src/service-http.js';
 import { passkeys } from './src/passkeys.js';
 import { check as unlockCheck, unlockedNow } from './src/unlock.js';
 import { mustProve, newChallenge, proves } from './src/prove.js';
+import { stats } from './src/stats.js';
+import { cfAnalytics } from './src/cf-analytics.js';
 import { initSync } from '../wasm/ducy_wasm.js';
 
 // The engine (#93), from the site's wasm build (../wasm, as the Worker
@@ -120,6 +122,7 @@ async function clubOf(room, code) {
     online: [...room.guests.keys()],
     record,
     onUsage: (minutes, at) => reg.used(minutes, at ?? Date.now(), code),
+    onHand: ids => usage.note({kind: 'clubHand', code, ids}),
     onSaved: () => scheduleBackup(room, code),
     // A backup proved (#395): recorded in the registry, signed for by the owner.
     onProved: owner => reg.proved(code, owner),
@@ -170,6 +173,61 @@ function enqueue(room, from, raw) {
 // the Worker bundles it; ADMINS_FILE (for tests) names another file.
 const ADMINS = adminsFrom(JSON.parse(readFileSync(process.env.ADMINS_FILE || new URL('../admins.json', import.meta.url), 'utf8')));
 
+// Usage counts (#601), as the Worker's registry keeps them (stats.js).
+// RELAY_STATS_AHEAD_MS, for tests: count as if that much later.
+const usage = stats(storageOf({store: new Map()}), {admins: new Set(ADMINS.keys())});
+const STATS_AHEAD_MS = Number(process.env.RELAY_STATS_AHEAD_MS || 0);
+const statNow = () => Date.now() + STATS_AHEAD_MS;
+const GAME_GAP_MS = 10 * 60_000;
+
+// A host connected (#601): a new friends game, unless the last one's host
+// is back within GAME_GAP_MS. Players already waiting join it.
+// code → {guests, endedAt}: kept when the room goes, for a host coming back.
+const games = new Map();
+function gameHosted(code, room) {
+  const now = Date.now();
+  const g = games.get(code);
+  if (!g || (g.endedAt && now - g.endedAt > GAME_GAP_MS)) {
+    games.set(code, {guests: new Set(), endedAt: null});
+    usage.note({kind: 'game'}, statNow());
+  } else g.endedAt = null;
+  for (const gid of room.guests.keys()) gameGuest(code, gid);
+}
+function gameGuest(code, id) {
+  const g = games.get(code);
+  if (!g || g.endedAt || g.guests.has(id) || g.guests.size >= 64) return;
+  g.guests.add(id);
+  usage.note({kind: 'gamePlayer'}, statNow());
+}
+function gameEnded(code) {
+  const g = games.get(code);
+  if (g && !g.endedAt) g.endedAt = Date.now();
+}
+// A player in a club: counted once a day per room.
+function notePlayer(room, id, code) {
+  const day = new Date(statNow()).toISOString().slice(0, 10);
+  if (room.notedDay !== day) { room.notedDay = day; room.noted = new Set(); }
+  if (room.noted.has(id)) return;
+  room.noted.add(id);
+  usage.note({kind: 'player', id, code}, statNow());
+}
+// What's live now, for the admin site.
+async function liveNow() {
+  const out = {rooms: 0, players: 0, games: 0, clubTables: 0};
+  for (const [code, room] of rooms) {
+    if (room.store.has('club')) {
+      const online = [...room.guests.keys()].filter(id => !ADMINS.has(id)).length;
+      if (online) { out.rooms++; out.players += online; }
+      if (room.club) out.clubTables += (await (await clubOf(room, code)).adminInfo()).tables.filter(t => t.running).length;
+    } else if (room.host) {
+      out.rooms++;
+      out.games++;
+      out.players += 1 + room.guests.size;
+    }
+  }
+  return out;
+}
+
 // The super admin's API (#265, #401), as in the Worker (admin.js).
 async function admin(req, res, url) {
   const out = (v, status = 200) => {
@@ -187,6 +245,8 @@ async function admin(req, res, url) {
     log: entry => reg.adminLog(entry),
     logList: () => reg.adminLogList(),
     errors: () => reg.errors(),
+    stats: async () => ({days: await usage.days(30, statNow()), now: await liveNow()}),
+    cloudflare: () => cfAnalytics(process.env),
     list: () => reg.list(),
     grant: (id, body) => reg.grant(id, body),
     revoke: id => reg.revoke(id),
@@ -291,6 +351,8 @@ wss.on('connection', (ws, req) => {
     // Guests waiting in queue mode, then whatever they left while the host was away.
     for (const [gid, g] of room.guests) { send(ws, {from: gid, event: 'open'}); send(g.ws, {type: 'host_back'}); }
     for (const q of room.queued) send(ws, {from: q.from, data: q.data, queued: q.n});
+    gameHosted(code, room);
+    let handStatAt = 0;
     ws.on('message', data => {
       if (!allow(ws, HOST_RATE, HOST_BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
@@ -299,10 +361,16 @@ wss.on('connection', (ws, req) => {
       try { msg = JSON.parse(data); } catch { return; }
       if (msg && typeof msg.to === 'string') { const g = room.guests.get(msg.to); if (g) send(g.ws, msg.data); }
       else if (msg && Number.isSafeInteger(msg.ack)) room.queued = room.queued.filter(q => q.n !== msg.ack);
+      // A hand finished at the host's table (#601): counted, never forwarded.
+      else if (msg?.stat === 'hand' && Date.now() - handStatAt >= 3000) {
+        handStatAt = Date.now();
+        usage.note({kind: 'hand'}, statNow());
+      }
     });
     ws.on('close', () => {
       if (room.host !== ws) return;
       room.host = null;
+      gameEnded(code);
       for (const [gid, g] of room.guests) {
         send(g.ws, {type: 'host_gone'});
         if (!g.queue) { g.ws.close(4002, 'the host left'); room.guests.delete(gid); }
@@ -366,9 +434,13 @@ function guest(ws, room, code, id, queue, isClub, held) {
     room.guests.delete(id);
     if (room.guests.size >= MAX_GUESTS) return ws.close(4029, 'the room is full');
     room.guests.set(id, {ws, queue});
-    if (isClub) inRoom(room, async () => (await clubOf(room, code)).message({from: id, event: 'open'}));
-    else if (room.host) send(room.host, {from: id, event: 'open'});
-    else {
+    if (isClub) {
+      notePlayer(room, id, code);
+      inRoom(room, async () => (await clubOf(room, code)).message({from: id, event: 'open'}));
+    } else if (room.host) {
+      send(room.host, {from: id, event: 'open'});
+      gameGuest(code, id);
+    } else {
       send(ws, {type: 'host_away'});
       // A club whose storage was lost comes back from its backup (#97), with
       // whatever was queued meanwhile.
@@ -411,6 +483,9 @@ function guest(ws, room, code, id, queue, isClub, held) {
           if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
           if (g.reply) send(ws, g.reply);
           if (!g.pass) return;
+          // Counted as active (#601), as well as on connecting: the player
+          // who just made the club connected before it was one.
+          if (club) notePlayer(room, id, code);
           // With the passkey it was unlocked with (#589: refills).
           if (club) return club.message({from: id, data: msg, device: ws.unlock?.device || ''});
           const type = msg?.body?.type;

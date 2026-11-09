@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' wss://ducy-relay.ducy.workers.dev https://ducy-relay.ducy.workers.dev ws://localhost:* http://localhost:*; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ducy-relay.ducy.workers.dev https://ducy-relay-staging.ducy.workers.dev https://ducy-relay-sandbox.ducy.workers.dev https://ducy.cards https://staging.ducy.cards https://sandbox.ducy.cards ws://localhost:* http://localhost:*; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="robots" content="noindex, nofollow">
   <title>ducy admin</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -14,22 +14,17 @@
 <main>
   <header class="row">
     <h1>ducy admin</h1>
-    <nav class="row" id="nav" hidden>
-      <button data-go="clubs">Clubs</button>
-      <button data-go="people">People</button>
-      <button data-go="log">Admin log</button>
-      <button data-go="errors">Errors</button>
-    </nav>
+    <div class="seg" id="envs" role="group" aria-label="Environment"></div>
+    <span id="me" class="muted"></span>
   </header>
-
-  <section>
-    <div class="row">
-      <label>Relay <input id="relay" size="34"></label>
-      <button class="primary" id="load">Load</button>
-      <span id="me" class="muted"></span>
-    </div>
-    <p id="status" class="muted"></p>
-  </section>
+  <nav class="row" id="nav" hidden>
+    <button data-go="overview">Overview</button>
+    <button data-go="clubs">Clubs</button>
+    <button data-go="people">People</button>
+    <button data-go="log">Admin log</button>
+    <button data-go="errors">Errors</button>
+  </nav>
+  <p id="status" class="muted"></p>
 
   <section id="not-admin" hidden>
     <h2>Not on the admin list</h2>
@@ -40,6 +35,12 @@
     <h3>admins.json entry</h3>
     <pre id="na-entry"></pre>
     <button id="na-copy">Copy</button>
+    <h3>Use your admin key</h3>
+    <div class="row">
+      <input type="file" id="na-file" accept=".json,application/json" aria-label="Backup file">
+      <input type="password" id="na-pass" placeholder="Password" autocomplete="current-password" aria-label="Password">
+      <button class="primary" id="na-restore">Restore</button>
+    </div>
   </section>
 
   <div id="view"></div>

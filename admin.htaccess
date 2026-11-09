@@ -1,0 +1,25 @@
+# The admin site, admin.ducy.cards (#601): scripts/build-admin.sh copies this
+# as the site's .htaccess, and scripts/deploy-admin.sh puts the folder's
+# password protection (DirectAdmin's Auth lines) at its top.
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+AddType application/wasm .wasm
+
+<IfModule mod_headers.c>
+  # Revalidate on every load, so a deploy never mixes old and new files.
+  <FilesMatch "\.(html|js|css|wasm|json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  # The source page (admin.html) carries the same policy in a <meta> tag
+  # for local testing; build-admin.sh takes it out. Keep them in step.
+  # Connections: this site, each environment's relay, and each site's
+  # version.json.
+  Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ducy-relay.ducy.workers.dev https://ducy-relay-staging.ducy.workers.dev https://ducy-relay-sandbox.ducy.workers.dev https://ducy.cards https://staging.ducy.cards https://sandbox.ducy.cards; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "no-referrer"
+  Header set Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()"
+  Header set Strict-Transport-Security "max-age=31536000"
+  Header set X-Robots-Tag "noindex, nofollow"
+</IfModule>

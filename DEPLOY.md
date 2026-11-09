@@ -12,6 +12,10 @@ Each relay is its own Worker, so its own Durable Objects: staging and
 sandbox clubs never touch live ones. Each site has its own browser storage,
 so testers get a separate player ID on each.
 
+The admin site, **admin.ducy.cards**, is one site for all three: it reads
+each relay's admin API (signed with a key in `admins.json`) and each site's
+`version.json`. See [The admin site](#the-admin-site).
+
 ## What's running where
 
 - **The site:** `/version.json`: environment, release folder, site commit,
@@ -33,7 +37,7 @@ commit in one run.
 4. The run builds and tests, deploys the relay, then the site and the bot
    models, then tags the commit `vYYYY.MM.DD` (`vYYYY.MM.DD.2`, `.3` for
    later releases that day) and makes a GitHub release with notes from the
-   PRs since the last one.
+   PRs since the last one. Last, it deploys the admin site (below).
 
 If the commit already has a release tag, it's redeployed under that tag
 and no new one is made.
@@ -97,3 +101,55 @@ queued messages, which expire in 7 days anyway. The relay answers `/reset`
 only where `RESETTABLE = "on"` (the sandbox alone) and with a `RESET_TOKEN`
 secret; the workflow sets a fresh random token for each run and replaces it
 afterwards.
+
+## The admin site
+
+admin.ducy.cards (#601): usage and relay numbers for live, staging and
+sandbox, and the club admin that used to be `admin.html` (which now
+redirects there). Built by `scripts/build-admin.sh` from `admin.html`,
+`src/admin*.js` and `admin.htaccess`.
+
+**Deploys** with each release, as the last step of **Deploy production**:
+`scripts/deploy-admin.sh` uploads it to `SSH_DEPLOY_TARGET/admin`, the
+subdomain's folder. The live deploy (`scripts/deploy.sh`) leaves that folder
+alone, as it does `staging/` and `sandbox/`.
+
+**Two locks:**
+1. **The folder's password** (DirectAdmin). As for staging, the deploy
+   copies the folder's Auth lines into the new `.htaccess`. With no folder,
+   the step is skipped with a warning saying what to create, and the rest of
+   the release is unaffected. With a folder but no Auth lines, the step fails
+   and uploads nothing: the site never goes up open.
+2. **An admin key.** Every request to a relay is signed; each relay answers
+   only keys in its `admins.json`. The site has its own browser storage, so
+   bring your key over once: on "Not on the admin list", restore your
+   identity backup file (You → Back up this device, on ducy.cards).
+
+Each relay allows the site's origin for its admin API only (`ADMIN_ORIGINS`
+in `relay/wrangler.toml`). Each site's `.htaccess` lets the admin site read
+its `version.json`; on staging and sandbox that works once you've signed in
+to that site in the same browser (else the site shows "Sign in").
+
+**Usage counts** (`relay/src/stats.js`): each relay's registry keeps totals
+per day for 90 days: active and new players, friends games and players per
+game, hands, clubs active and club hands. The admins' own player IDs aren't
+counted. Active players come from a per-day set of salted hashes of player
+IDs, deleted once the day is counted; new players from a Bloom filter of the
+same hashes. Counts only: no list of who played, no IPs, no places.
+
+**Cloudflare's numbers** (optional): requests, errors, CPU time and Durable
+Object requests per day, read by each relay from Cloudflare's analytics API
+and shown only when that relay has both secrets:
+
+```sh
+cd relay
+npx wrangler secret put CF_ANALYTICS_TOKEN            # live
+npx wrangler secret put CF_ACCOUNT_ID
+npx wrangler secret put CF_ANALYTICS_TOKEN --env staging
+npx wrangler secret put CF_ACCOUNT_ID --env staging
+npx wrangler secret put CF_ANALYTICS_TOKEN --env sandbox
+npx wrangler secret put CF_ACCOUNT_ID --env sandbox
+```
+
+The token needs only **Account → Account Analytics → Read**. It stays in the
+Worker; the page never sees it.

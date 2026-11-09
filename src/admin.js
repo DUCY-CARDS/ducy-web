@@ -1,19 +1,26 @@
-// The super admin's page (admin.html, #265, #401). Every request to the
-// relay's /admin API is signed with this browser's identity (identity.js);
-// the relay lets in only the keys listed in admins.json. Someone not on the
-// list is shown their player ID and key to add.
+// The admin site (admin.ducy.cards, #601; before it admin.html, #265, #401).
+// It reads each environment's relay: live, staging and sandbox (ENVS), one
+// at a time, picked at the top. Every request to a relay's /admin API is
+// signed with this browser's identity (identity.js); each relay lets in
+// only the keys listed in its admins.json. Someone not on the list is shown
+// their player ID and key to add, or restores their admin key's backup.
 //
-// Views, by the page's hash: #clubs (usage, permission, the club list),
-// #club=<code> (everything the club stores, read-only), #people,
-// #person=<id> (their activity in every club), #log (the admin log), #errors
-// (what pages reported going wrong, #552).
+// Views, by the page's hash: #overview (the default: versions everywhere,
+// what's live now, the last 30 days as small charts or a table, and
+// Cloudflare's numbers when the relay has its token), #clubs (usage,
+// permission, the club list), #club=<code> (everything the club stores,
+// read-only), #people, #person=<id> (their activity in every club), #log
+// (the admin log), #errors (what pages reported going wrong, #552).
 // A club's lobby chat and finished hands' cards stay hidden until "Show
 // chats and cards"; each use goes in the admin log.
+//
+// ?relay=<url> (local testing) reads that relay alone, as "Local".
 
 import init from '../wasm/ducy_wasm.js';
-import { loadIdentity, showId, signMessage } from './identity.js';
+import { importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
 import { chipText } from './chip-format.js';
 import { ago as agoText } from './time-ago.js';
+import { chartHtml, fmt, wire } from './admin-charts.js';
 
 // ducy's engine first: signing (the JSON a request is signed over) and
 // player IDs use it (identity.js, #460).
@@ -23,7 +30,14 @@ try {
   console.error('WASM init failed:', e);
 }
 
-const DEFAULT_RELAY = 'https://ducy-relay.ducy.workers.dev';
+// Each environment's relay and site (DEPLOY.md).
+const ENVS = [
+  {key: 'live', label: 'Live', relay: 'https://ducy-relay.ducy.workers.dev', site: 'https://ducy.cards'},
+  {key: 'staging', label: 'Staging', relay: 'https://ducy-relay-staging.ducy.workers.dev', site: 'https://staging.ducy.cards'},
+  {key: 'sandbox', label: 'Sandbox', relay: 'https://ducy-relay-sandbox.ducy.workers.dev', site: 'https://sandbox.ducy.cards'},
+];
+const localRelay = new URLSearchParams(location.search).get('relay');
+const envs = localRelay ? [{key: 'local', label: 'Local', relay: localRelay.replace(/^ws/, 'http').replace(/\/$/, ''), site: location.origin}] : ENVS;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const ago = t => (t ? agoText(t) : '—');
@@ -39,13 +53,15 @@ const tr = cells => `<tr>${cells.map(c => (c && typeof c === 'object' ? `<td cla
 const num = v => ({n: v});
 
 let me = null;
-try { $('relay').value = localStorage.getItem('ducyAdminRelay') || DEFAULT_RELAY; } catch { $('relay').value = DEFAULT_RELAY; }
-const base = () => $('relay').value.trim().replace(/^ws/, 'http').replace(/\/$/, '');
+const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+const recall = k => { try { return localStorage.getItem(k); } catch { return null; } };
+let env = envs.find(e => e.key === recall('ducyAdminEnv')) || envs[0];
+const base = () => env.relay;
 
 // A signed request (#401): {type: 'admin', path, data}, as relay/src/admin.js checks it.
 async function api(path, data = {}) {
-  const env = await signMessage(me, {type: 'admin', path, data});
-  const r = await fetch(base() + path, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(env)});
+  const signed = await signMessage(me, {type: 'admin', path, data});
+  const r = await fetch(base() + path, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(signed)});
   const out = await r.json().catch(() => ({error: `HTTP ${r.status}`}));
   if (r.status === 403 && out.pub) notAdmin();
   if (!r.ok || out.error) throw new Error(out.error || `HTTP ${r.status}`);
@@ -71,38 +87,116 @@ let usage = null;
 function route() {
   const h = location.hash.slice(1);
   const [k, v] = h.split('=');
-  return {view: ['club', 'person', 'people', 'log', 'errors'].includes(k) ? k : 'clubs', arg: v ? decodeURIComponent(v) : ''};
+  return {view: ['clubs', 'club', 'person', 'people', 'log', 'errors'].includes(k) ? k : 'overview', arg: v ? decodeURIComponent(v) : ''};
 }
 
+function drawEnvs() {
+  $('envs').innerHTML = envs.map(e => `<button data-env="${esc(e.key)}"${e === env ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${esc(e.label)}</button>`).join('');
+}
+
+let showing = 0; // the latest show(), so an older answer arriving late is dropped
 async function show() {
   const {view, arg} = route();
-  for (const b of document.querySelectorAll('nav button')) b.toggleAttribute('aria-current', b.dataset.go === view || (view === 'club' && b.dataset.go === 'clubs') || (view === 'person' && b.dataset.go === 'people'));
+  const mine = ++showing;
+  for (const b of document.querySelectorAll('nav button')) {
+    if (b.dataset.go === view || (view === 'club' && b.dataset.go === 'clubs') || (view === 'person' && b.dataset.go === 'people')) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
   say('Loading…');
+  $('view').classList.add('stale');
   try {
-    if (view === 'clubs') {
+    let html;
+    if (view === 'overview') html = await overviewHtml();
+    else if (view === 'clubs') {
       data = await api('/admin/clubs');
       usage = await fetch(base() + '/usage').then(r => r.json()).catch(() => null);
-      $('view').innerHTML = clubsHtml();
+      html = clubsHtml();
     } else if (view === 'club') {
-      $('view').innerHTML = clubHtml(await api(`/admin/club/${encodeURIComponent(arg)}`, {reveal: revealed.has(arg)}), arg);
+      html = clubHtml(await api(`/admin/club/${encodeURIComponent(arg)}`, {reveal: revealed.has(arg)}), arg);
     } else if (view === 'people') {
-      $('view').innerHTML = peopleHtml((await api('/admin/people')).people);
+      html = peopleHtml((await api('/admin/people')).people);
     } else if (view === 'person') {
-      $('view').innerHTML = personHtml(await api('/admin/person', {id: arg}));
+      html = personHtml(await api('/admin/person', {id: arg}));
     } else if (view === 'errors') {
-      $('view').innerHTML = errorsHtml((await api('/admin/errors')).errors);
+      html = errorsHtml((await api('/admin/errors')).errors);
     } else {
-      $('view').innerHTML = logHtml((await api('/admin/log')).log);
+      html = logHtml((await api('/admin/log')).log);
     }
+    if (mine !== showing) return false;
+    $('view').innerHTML = html;
+    $('view').classList.remove('stale');
     $('nav').hidden = false;
     $('not-admin').hidden = true;
-    say(`Loaded at ${new Date().toLocaleTimeString()}.`, 'ok');
+    say(`${env.label} · ${new Date().toLocaleTimeString()}`, 'muted');
     return true;
   } catch (e) {
+    if (mine !== showing) return false;
     $('view').innerHTML = '';
+    $('view').classList.remove('stale');
     say(e.message, 'err');
     return false;
   }
+}
+
+// ---- overview (#601) ----
+
+const METRICS = [
+  ['active', 'Active players'], ['newPlayers', 'New players'], ['games', 'Friends games'],
+  ['playersPerGame', 'Players per game', 1], ['hands', 'Hands'], ['clubsActive', 'Clubs active'], ['clubHands', 'Club hands'],
+];
+const CF_METRICS = [
+  ['requests', 'Requests'], ['errors', 'Errors'], ['cpuP50', 'CPU time, median (ms)', 2], ['cpuP99', 'CPU time, 99th percentile (ms)', 1], ['doRequests', 'Durable Object requests'],
+];
+let asTable = recall('ducyAdminTable') === '1';
+
+// Each environment's site (/version.json) and relay (/version). A
+// password-protected site answers only once you've signed in to it in this
+// browser (its .htaccess allows the admin site to read version.json).
+async function versions() {
+  const get = (url, opts) => fetch(url, {cache: 'no-store', ...opts}).then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))));
+  return Promise.all(envs.map(async e => ({
+    env: e,
+    site: await get(`${e.site}/version.json`, {credentials: 'include'}).catch(() => null),
+    relay: await get(`${e.relay}/version`).catch(() => null),
+  })));
+}
+
+const short = c => (c ? String(c).slice(0, 8) : '');
+
+function versionsHtml(rows) {
+  return `<section><h2>Versions</h2>${table(['', 'Site', 'Site commit', 'Relay commit', 'Built'], rows.map(r => tr([
+    `<b>${esc(r.env.label)}</b>`,
+    r.site ? `<code>${esc(r.site.version)}</code>` : `<a href="${esc(r.env.site)}/version.json" target="_blank" rel="noopener">Sign in</a>`,
+    r.site ? `<code>${esc(short(r.site.commit))}</code>` : '—',
+    r.relay ? `<code>${esc(short(r.relay.commit) || '—')}</code>${r.site?.commit && r.relay.commit && r.site.commit !== r.relay.commit ? ' <span class="warn">≠ site</span>' : ''}` : '<span class="err">No answer</span>',
+    r.site?.built ? when(Date.parse(r.site.built)) : '—',
+  ])))}</section>`;
+}
+
+const tile = (label, value) => `<div class="tile"><span class="tile-label">${esc(label)}</span><span class="tile-value">${esc(fmt(value))}</span></div>`;
+
+function dailyHtml(title, rows, metrics) {
+  const days = rows.map(d => d.day);
+  if (asTable) {
+    return `<section><h2>${esc(title)}</h2>${table(['Day', ...metrics.map(([, label]) => `#${label}`)], [...rows].reverse().map(d => tr([esc(d.day), ...metrics.map(([k, , digits]) => num(esc(fmt(d[k], digits || 0))))])))}</section>`;
+  }
+  return `<section><h2>${esc(title)}</h2><div class="charts">${metrics.map(([k, label, digits]) => chartHtml({key: k, label, days, values: rows.map(d => d[k]), digits: digits || 0})).join('')}</div></section>`;
+}
+
+async function overviewHtml() {
+  const [vers, st, cf] = await Promise.all([versions(), api('/admin/stats'), api('/admin/cloudflare').catch(e => ({enabled: true, days: [], errors: [e.message]}))]);
+  let h = versionsHtml(vers);
+  const n = st.now || {};
+  h += `<section><h2>Now</h2><div class="tiles">${tile('Live rooms', n.rooms)}${tile('Players connected', n.players)}${tile('Friends games', n.games)}${tile('Club tables', n.clubTables)}</div></section>`;
+  h += `<div class="row"><div class="seg" role="group" aria-label="View"><button data-view="charts" aria-pressed="${!asTable}">Charts</button><button data-view="table" aria-pressed="${asTable}">Table</button></div></div>`;
+  h += dailyHtml('Last 30 days', st.days || [], METRICS);
+  if (cf?.enabled) {
+    // CPU time comes in microseconds.
+    const rows = (cf.days || []).map(d => ({...d, cpuP50: d.cpuP50 == null ? null : d.cpuP50 / 1000, cpuP99: d.cpuP99 == null ? null : d.cpuP99 / 1000}));
+    h += (cf.errors || []).map(e => `<p class="err">${esc(e)}</p>`).join('');
+    if (rows.length) h += dailyHtml('Cloudflare', rows, CF_METRICS);
+  }
+  return h;
 }
 
 function clubsHtml() {
@@ -309,10 +403,21 @@ async function act(fn, done) {
 document.addEventListener('click', async e => {
   const b = e.target.closest('button');
   if (!b) return;
-  if (b.id === 'load') {
-    try { localStorage.setItem('ducyAdminRelay', $('relay').value.trim()); } catch {}
+  if (b.dataset.env) {
+    env = envs.find(x => x.key === b.dataset.env) || env;
+    remember('ducyAdminEnv', env.key);
+    drawEnvs();
+    // A club or person belongs to one relay: back to its list.
+    const {view} = route();
+    if (view === 'club' || view === 'person') { location.hash = view === 'club' ? 'clubs' : 'people'; return; }
     return show();
   }
+  if (b.dataset.view) {
+    asTable = b.dataset.view === 'table';
+    remember('ducyAdminTable', asTable ? '1' : '0');
+    return show();
+  }
+  if (b.id === 'na-restore') return restore();
   if (b.id === 'na-copy') return navigator.clipboard?.writeText($('na-entry').textContent).then(() => say('Copied.', 'ok'), () => {});
   if (b.dataset.go) { location.hash = b.dataset.go; return; }
   if (b.dataset.club) { location.hash = `club=${encodeURIComponent(b.dataset.club)}`; return; }
@@ -375,9 +480,28 @@ document.addEventListener('input', e => {
 // Leaving a club hides its chats and cards again: each showing is logged.
 window.addEventListener('hashchange', () => { revealed.clear(); ledgerFilter.member = ledgerFilter.kind = ''; show(); });
 
+// The admin key's backup file (#601): this site has its own browser
+// storage, so a key made on ducy.cards is brought here from its backup.
+async function restore() {
+  const file = $('na-file').files?.[0];
+  if (!file) { say('Choose the backup file.', 'err'); return; }
+  try {
+    const ident = await importIdentity(await file.text(), $('na-pass').value);
+    await saveIdentity(ident);
+    me = ident;
+    $('na-pass').value = '';
+    $('me').textContent = showId(me.id);
+    await show();
+  } catch (e) {
+    say(e.message, 'err');
+  }
+}
+
+wire($('view'));
+drawEnvs();
 try {
   me = await loadIdentity();
-  $('me').textContent = `You: ${showId(me.id)}`;
+  $('me').textContent = showId(me.id);
   show();
 } catch (e) {
   say(`No identity in this browser: ${e.message}`, 'err');

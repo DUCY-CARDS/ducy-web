@@ -22,7 +22,7 @@ A major release is any of these:
 | **Main** | `/`: the front page (Friends, Private clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
 | **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
 | **Club manager** | `manage.html`: Overview, Tables, Tournaments, Requests, Members, a member's page, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
-| **Admin** | `admin.html`: grants, club info, error reports | ducy's admins |
+| **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
 
 `sim.html` isn't published (`scripts/build-site.sh` doesn't ship it).
 
@@ -119,6 +119,9 @@ here and a browser test.
 |---|---|---|
 | Signed admin requests; non-admins refused | `relay-admin.test`, `admin-api.test` | A1 |
 | Grants, club info, error reports | `admin-api.test`, `error-report.test` | A1, M8 |
+| Usage counts per day, admins left out; what's live now | `stats.test`, `relay-admin.test` | A2 |
+| Cloudflare's numbers, only with the relay's token | `stats.test` | A3 |
+| The admin site: build, password kept on deploy, never uploaded open, live deploy leaves it alone; `admin.html` redirects; charts | `admin-site.test`, `csp.test` | A1, A4 |
 
 ## Devices
 
@@ -182,7 +185,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **M8 Error reports**
 1. On staging, cause an error: open the browser console and run `setTimeout(() => { throw new Error('test plan M8') })`.
-2. In staging's `admin.html` (it needs your admin key in that browser), under Errors, the report shows the build, page and browser, with no cards or names.
+2. On admin.ducy.cards, Staging → Errors, the report shows the build, page and browser, with no cards or names.
 
 **M9 Installable app**
 1. Add to home screen on iPhone and Android. The app opens full screen on the front page.
@@ -204,7 +207,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **C1 Starting a club**
 1. Without a grant, `manage.html` refuses to start a club and shows your ID.
-2. Grant that ID in `admin.html`. Starting the club now works, and its owner is asked to prove a backup.
+2. Grant that ID on admin.ducy.cards (Staging → Clubs). Starting the club now works, and its owner is asked to prove a backup.
 
 **C2 Pages**
 1. Visit every sidebar page at desktop and phone width. Each draws, with no empty page or dead menu item.
@@ -247,9 +250,25 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 ## Manual: admin
 
-**A1**
-1. `admin.html` as an admin: grants, club info and error reports load.
-2. As someone who isn't an admin: the page refuses cleanly, and nothing in the player app links to it.
+On admin.ducy.cards, after the release (the admin site deploys with each release).
+
+**A1 Access**
+1. Opening admin.ducy.cards asks for the DirectAdmin password first.
+2. In a fresh browser, it shows "Not on the admin list". Restore your admin key's backup file there: the Overview loads.
+3. Switch Live, Staging and Sandbox: each loads, and Clubs, People, Admin log and Errors show that environment's.
+4. Grants, club info and error reports work as before.
+5. Someone who isn't an admin is refused cleanly, and nothing in the player app links to the admin site. `ducy.cards/admin.html` goes to admin.ducy.cards.
+
+**A2 Usage**
+1. On Staging, play three hands of a friends game with two browsers, and connect to a club as a member.
+2. The Overview's last day shows one more friends game, its players, three more hands, and the member as an active player (your own admin ID isn't counted). Now shows the game and the member while they're connected.
+3. Charts and Table show the same numbers, in light and dark mode.
+
+**A3 Cloudflare** (only once `CF_ANALYTICS_TOKEN` is set on a relay)
+1. The Overview shows a Cloudflare section for that relay, with requests, errors, CPU time and Durable Object requests; the others show none.
+
+**A4 Versions**
+1. Versions lists each site's release and each relay's commit. A password-protected site shows "Sign in" until you sign in to it in this browser; after that, its release shows.
 
 ## Manual: beta extras
 

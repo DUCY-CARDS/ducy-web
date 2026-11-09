@@ -115,6 +115,15 @@ jobs:
           DUCY_SHA="$(echo "${{ steps.ducy.outputs.rev }}" | cut -c1-8)"
           scripts/build-site.sh "${SHA::8}-${DUCY_SHA}" _site
 
+      # The admin site (admin.ducy.cards, #601), from the same release and
+      # the site's WASM, before the relay's build replaces it.
+      - name: Build the admin site
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          DUCY_SHA="$(echo "${{ steps.ducy.outputs.rev }}" | cut -c1-8)"
+          scripts/build-admin.sh "${SHA::8}-${DUCY_SHA}" _admin
+
       # The relay: the clubs-only build (#463), which never runs the bot
       # tables or the GTO bots, so the Worker loads less and starts faster.
       # The site is already built, so wasm/ can take it.
@@ -132,7 +141,7 @@ jobs:
       - name: Relay tests
         run: |
           npm ci --prefix relay
-          node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/admin-api.test.mjs test/registry.test.mjs test/club-room.test.mjs test/relay-reset.test.mjs
+          node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/admin-api.test.mjs test/registry.test.mjs test/club-room.test.mjs test/relay-reset.test.mjs test/stats.test.mjs
 
       - name: Deploy the relay
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
@@ -211,3 +220,10 @@ jobs:
           git tag "$TAG" "$SHA"
           git push origin "refs/tags/$TAG"
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes
+
+      # Last, so nothing above waits on it. Into the admin.ducy.cards
+      # subdomain's folder, keeping its password protection: skipped with a
+      # warning while the folder doesn't exist, and failed (never uploaded
+      # open) while it has no password (scripts/deploy-admin.sh).
+      - name: Deploy the admin site
+        run: scripts/deploy-admin.sh _admin "${{ secrets.SSH_DEPLOY_TARGET }}/admin"

@@ -9,9 +9,10 @@
 #      Stale root files, like the old unversioned src/ and wasm/, are deleted
 #      only after that. gto/ (the GTO bot's model, published separately with
 #      scripts/upload-gto.sh), ducy-backup/ (always-on club backups, set up
-#      by hand: relay/hostrocket/README.md), and staging/ and sandbox/ (the
-#      staging.ducy.cards and sandbox.ducy.cards subdomains' sites, which
-#      DirectAdmin keeps inside this folder) are left alone.
+#      by hand: relay/hostrocket/README.md), and staging/, sandbox/ and
+#      admin/ (the staging.ducy.cards, sandbox.ducy.cards and
+#      admin.ducy.cards subdomains' sites, which DirectAdmin keeps inside
+#      this folder) are left alone.
 #   3. Delete all but the newest KEEP releases, leaving recent ones for pages
 #      that are still loading. Uses rsync only, so it works with a key that
 #      can't run shell commands.
@@ -30,7 +31,7 @@ echo "== 1/3 upload release folder"
 rsync -avz "$SITE/v/" "$TARGET/v/"
 
 echo "== 2/3 swap in root files"
-rsync -avz --delete-after --exclude '/v/' --exclude '/gto/' --exclude '/ducy-backup/' --exclude '/staging/' --exclude '/sandbox/' "$SITE/" "$TARGET/"
+rsync -avz --delete-after --exclude '/v/' --exclude '/gto/' --exclude '/ducy-backup/' --exclude '/staging/' --exclude '/sandbox/' --exclude '/admin/' "$SITE/" "$TARGET/"
 
 echo "== 3/3 prune old releases (keeping $KEEP)"
 # --list-only lines look like: "drwxr-xr-x  4,096 2026/10/01 23:53:47 name".
