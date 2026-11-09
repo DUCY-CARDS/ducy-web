@@ -245,7 +245,7 @@ export function accountBody(club, id, since = 0) {
   return {
     type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null, answer: m?.answer || null,
     credit: creditOf(m), available: available(m),
-    vault: {vault: m?.vault || 0, wait: v?.wait || VAULT_WAITS[0], shorter: v?.shorter || null, outs: v?.outs || []},
+    vault: {vault: m?.vault || 0, wait: v?.wait || VAULT_WAITS[0], shorter: v?.shorter || null, outs: v?.outs || [], taken: v?.taken || null},
     ledger: 'links', entries: entriesOf(club, id, since),
   };
 }

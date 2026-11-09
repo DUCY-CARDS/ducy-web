@@ -42,6 +42,8 @@ function run(club, op, now) {
   const part = {
     code: club.code, hostId: club.hostId, ownerId: club.ownerId, ratholeHours: club.ratholeHours, members: club.members, money: club.money,
     chips: club.chips, requestLog: club.requestLog || [], log: club.log || [],
+    // Members' vault settings (#579): an agent's take back can reach a player's vault.
+    vaults: club.vaults || {},
   };
   const r = ducy.clubBook(JSON.stringify(part), op, now);
   if (!r.ok) {
@@ -55,6 +57,8 @@ function run(club, op, now) {
     Object.assign(club.chips ??= {}, r.club.chips);
     club.requestLog = r.club.requestLog;
     club.log = r.club.log;
+    if (r.club.vaults && Object.keys(r.club.vaults).length) club.vaults = r.club.vaults;
+    else delete club.vaults;
   }
   return r.value;
 }

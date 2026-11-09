@@ -3128,6 +3128,7 @@ function memberHomeHtml(m, manage = '') {
   if (m.credit) h += `<span class="cl-home-chips">Credit limit ${chips(m.credit)}</span>`;
   if (m.vault?.vault) h += `<span class="cl-home-chips">Vault ${chips(m.vault.vault)}</span>`;
   h += '</div>';
+  if (vaultTakenRecently(m.vault)) h += `<p class="cl-side-note cl-vault-taken" role="status">${esc(vaultTakenText(m.vault.taken))}</p>`;
   h += leftPanelHtml(m);
   h += memberBackupHtml();
   if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
@@ -3260,8 +3261,13 @@ function vaultHtml(m) {
   h += `<div class="pl-row"><span class="pl-label">Wait to take out</span><div class="pl-opts">${VAULT_WAITS.map(w => `<button class="cc-btn${v.wait === w ? ' on' : ''}" data-cl="vault-wait" data-code="${code}" data-wait="${w}" aria-pressed="${v.wait === w}"${off}>${VAULT_WAIT_TEXT[w]}</button>`).join('')}</div></div>`;
   if (v.shorter) h += `<p class="pl-meta">${VAULT_WAIT_TEXT[v.shorter.to]} from ${esc(capWhen(v.shorter.applies))}</p>`;
   if (m.vaultNote) h += `<p class="pl-desc pl-neterr cl-err" role="alert">${esc(m.vaultNote)}</p>`;
+  if (vaultTakenRecently(v)) h += `<p class="pl-meta cl-vault-taken">${esc(vaultTakenText(v.taken))}</p>`;
   return h + '</section>';
 }
+
+// Their agent took chips back from their vault (#579): said for a week.
+const vaultTakenRecently = v => !!v?.taken && Date.now() - v.taken.at < 7 * 864e5;
+const vaultTakenText = t => `Your agent took ${chips(t.amount)} back from your vault ${ago(t.at)}.`;
 
 // A member's vault command (#579), from control `el`: taking out and the
 // wait need a passkey unlock from the last few minutes.
@@ -3621,6 +3627,8 @@ function agentHtml(m, hostHere, {page = false} = {}) {
     h += '<ul class="cl-list">';
     for (const x of a.players) {
       h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${signed(x.balance)}</span>`;
+      // Their vault (#579): its chips, which a take back can reach after the balance.
+      if (x.vault) h += `<span class="pl-meta">vault ${chips(x.vault)}</span>`;
       // At a table (#428): which, and their stack there.
       if (x.seated) h += `<span class="cl-at">${esc(x.table || 'At a table')}${x.stack != null ? ` · ${chips(x.stack)}` : ''}</span>`;
       // How they've done at the tables (#190).
