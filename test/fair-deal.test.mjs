@@ -350,6 +350,16 @@ test('only the relay’s hand-records.js reads full hand records, and nothing se
   assert.deepEqual(imports('relay/src/club-room.js'), ['dropFullHands', 'fullRecord', 'keepFullHand']);
   assert.deepEqual(imports('relay/src/collusion.js'), ['fullHands']);
   assert.deepEqual(imports('relay/src/fair-play.js'), ['fullHands']);
+  // The one way cards leave the club's room (#615): postflop.js gives the
+  // hands it scores (seats, cards, stacks, actions, board) to ducy's judge,
+  // over the relay's own Durable Object binding, and only there; the judge
+  // keeps nothing and has no address of its own.
+  assert.deepEqual(files.filter(f => /judgeInput\(/.test(text(f))), ['relay/src/postflop.js']);
+  assert.equal((text('relay/src/postflop.js').match(/\.fetch\(/g) || []).length, 1);
+  assert.match(text('relay/src/postflop.js'), /stub\.fetch\('https:\/\/judge\/score'/);
+  const judge = text('relay/judge/judge.js');
+  assert.ok(!/storage|\.put\(|caches/.test(judge));
+  assert.match(text('relay/judge/wrangler.toml'), /^workers_dev = false$/m);
   // The engine's every-seat cards: only the club's room asks for them.
   assert.deepEqual(files.filter(f => /runnerCards|\.holeCards\(/.test(text(f))), ['src/club-engine.js', 'src/club-host.js']);
 });

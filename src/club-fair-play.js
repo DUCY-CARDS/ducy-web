@@ -43,6 +43,10 @@ export function flagText(f, names = {}) {
     case 'gto-even': return `${a} took ${f.median} s give or take ${f.spread} s over ${n(f.n)} decisions`;
     case 'gto-away': return `${a}’s tab was hidden while deciding ${pct(w.k, w.n)} of ${n(w.n)} times; ${clubAvg(f)}`;
     case 'gto-jump': return `${a}’s top-play rate jumped from ${pct(f.before.top, f.before.n)} (${n(f.before.n)} decisions) to ${pct(f.after.top, f.after.n)} (${n(f.after.n)}); plays the solver never makes: ${n(f.before.off)}, then ${n(f.after.off)}`;
+    // After the flop, against ducy's heads-up models (#615, relay/src/postflop.js).
+    case 'gto-post-top': return `${a} matched the solver’s top play in ${pct(w.k, w.n)} of ${n(w.n)} decisions after the flop; ${clubOr(f, 'the solver itself')}`;
+    case 'gto-post-off': return `${a} made ${n(w.k)} plays the solver rarely makes in ${n(w.n)} decisions after the flop (${pct(w.k, w.n)}); ${clubAvg(f)}`;
+    case 'gto-post-loss': return `${a} gave up ${f.bb} big blinds per 100 decisions after the flop by the solver’s values, over ${n(f.n)}; ${f.club == null ? 'no club average yet' : `the club’s average is ${f.club}`}`;
     default: return f.text || f.kind;
   }
 }

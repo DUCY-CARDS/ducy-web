@@ -68,6 +68,7 @@ import { mustProve, newChallenge, proves } from './prove.js';
 import { check as unlockCheck, unlockedNow } from './unlock.js';
 import { LIVE_STALE_MS, liveGames, stats } from './stats.js';
 import { cfAnalytics } from './cf-analytics.js';
+import { judgeVia } from './postflop.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -447,6 +448,8 @@ export class Room {
     this.clubP = this.status(code)
       .then(({record}) => openClub({
         storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, openConns, record,
+        // The postflop fair play check's scoring (#615), in ducy's judge Worker.
+        judge: judgeVia(this.env.JUDGE),
         onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
         onHand: ids => this.clubCode().then(c => this.registry('/stat', {kind: 'clubHand', code: c, ids})),
         // Each fair play run's summary, for the admin site (#612).

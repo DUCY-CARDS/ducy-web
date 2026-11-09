@@ -1,0 +1,44 @@
+# ducy's judge (#615): scores club players' decisions after the flop with
+# ducy's GTO models, for the relay's postflop fair play check. Only the relay
+# reaches it, through its Durable Object binding (JUDGE in ../wrangler.toml):
+# deploy this first. Its wasm is rust/ducy-judge's, copied to wasm/ (judge.js).
+name = "ducy-judge"
+main = "judge.js"
+compatibility_date = "2026-09-01"
+# No address of its own: the relay's binding is the way in.
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Judge"]
+
+[vars]
+# Where the models are: the live site's gto/ folder (staging's is password
+# protected, so every environment reads the live one).
+MODELS = "https://ducy.cards/gto/"
+
+[env.staging]
+name = "ducy-judge-staging"
+workers_dev = false
+
+[[env.staging.durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+
+[env.staging.vars]
+MODELS = "https://ducy.cards/gto/"
+
+[env.sandbox]
+name = "ducy-judge-sandbox"
+workers_dev = false
+
+[[env.sandbox.durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+
+[env.sandbox.vars]
+MODELS = "https://ducy.cards/gto/"

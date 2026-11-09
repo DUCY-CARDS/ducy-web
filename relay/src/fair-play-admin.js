@@ -14,11 +14,14 @@
 
 import { LIMITS as C } from './collusion.js';
 import { LIMITS as A } from './assist.js';
+import { LIMITS as P } from './postflop.js';
 
 // The thresholds the checks flag at, for the admin page to compare with.
 export const THRESHOLDS = Object.freeze({
   windowDays: C.WINDOW_DAYS, minShared: C.MIN_SHARED, odds: C.ODDS_RATIO, partnerOdds: C.PARTNER_ODDS_RATIO, flowBB: C.FLOW_BB,
   minDecisions: A.MIN_DECISIONS, offRate: A.OFF_RATE, topSlack: A.TOP_SLACK, paceRatio: A.PACE_RATIO, evenSpread: A.EVEN_SPREAD, awayRate: A.AWAY_RATE,
+  // After the flop (postflop.js, #615).
+  pfMinDecisions: P.MIN_DECISIONS, pfOffRate: P.OFF_RATE, pfTopSlack: P.TOP_SLACK, pfLossRate: P.LOSS_RATE,
 });
 
 // How long the weekly summaries are kept.
@@ -70,11 +73,14 @@ export function seatCounts(recs) {
 // records `recs` it read (for the seat flags), at `now`:
 // {at, since, hands, decisions, flags, players: [{id, name, hands, flags
 // (the kinds flagged about them, or a pair they're in), a (assist.js briefStats, or null), p
-// ({vpn, relay, fake, hidden}: hands with each)}], pairs, club: {assist,
-// pairs, p: {hands, vpn, relay, fake, hidden}}}.
-export function adminSummary({report, pairStats = {pairs: [], club: {}}, assistStats = {players: [], club: null}, recs = [], now = Date.now()}) {
+// ({vpn, relay, fake, hidden}: hands with each), pf (after the flop,
+// postflop.js: {n, top, exp, off, valued, lost}, or null)}], pairs, club:
+// {assist, pairs, p: {hands, vpn, relay, fake, hidden}}, postflop (the
+// report's counts, #615)}. `postflopStats`: postflop.js postflopRun's.
+export function adminSummary({report, pairStats = {pairs: [], club: {}}, assistStats = {players: [], club: null}, postflopStats = {players: []}, recs = [], now = Date.now()}) {
   const seats = seatCounts(recs);
   const assist = new Map((assistStats.players || []).map(({id, name, ...a}) => [id, {name, a}]));
+  const pf = new Map((postflopStats?.players || []).map(({id, name, ...s}) => [id, {name, s}]));
   const flagsOf = new Map();
   for (const e of report.flagged || []) {
     for (const f of e.flags || []) {
@@ -84,14 +90,15 @@ export function adminSummary({report, pairStats = {pairs: [], club: {}}, assistS
       }
     }
   }
-  const ids = new Set([...Object.keys(seats), ...assist.keys()]);
+  const ids = new Set([...Object.keys(seats), ...assist.keys(), ...pf.keys()]);
   const players = [...ids].map(id => {
     const s = seats[id] || {hands: 0, vpn: 0, relay: 0, fake: 0, hidden: 0};
     return {
-      id, name: s.name || assist.get(id)?.name || '', hands: s.hands,
+      id, name: s.name || assist.get(id)?.name || pf.get(id)?.name || '', hands: s.hands,
       flags: [...(flagsOf.get(id) || [])].sort(),
       a: assist.get(id)?.a || null,
       p: {vpn: s.vpn, relay: s.relay, fake: s.fake, hidden: s.hidden},
+      pf: pf.get(id)?.s || null,
     };
   }).sort((x, y) => y.flags.length - x.flags.length || y.hands - x.hands).slice(0, MAX_PLAYERS);
   const club = {assist: assistStats.club || null, pairs: pairStats.club || {}, p: {hands: 0, vpn: 0, relay: 0, fake: 0, hidden: 0}};
@@ -100,6 +107,7 @@ export function adminSummary({report, pairStats = {pairs: [], club: {}}, assistS
     at: report.at ?? now, since: report.since ?? null, hands: report.hands ?? recs.length,
     decisions: report.assist?.decisions ?? 0,
     flags: report.flagged || [], players, pairs: pairStats.pairs || [], club,
+    postflop: report.postflop || null,
   });
 }
 
@@ -120,7 +128,7 @@ export function fitSummary(summary, max = MAX_CHARS) {
 }
 
 // A player's line in the weekly summary.
-const weekRow = p => ({name: p.name, hands: p.hands, flags: p.flags, a: p.a, p: p.p});
+const weekRow = p => ({name: p.name, hands: p.hands, flags: p.flags, a: p.a, p: p.p, pf: p.pf ?? null});
 
 // The registry's side (`storage`: {get, put, delete}, the registry's):
 //   fp:<code>          the club's latest summary, with `code`

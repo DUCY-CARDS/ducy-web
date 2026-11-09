@@ -4,6 +4,7 @@
 |---|---|---|---|
 | Site | ducy.cards | staging.ducy.cards | sandbox.ducy.cards |
 | Relay (Worker) | `ducy-relay` | `ducy-relay-staging` | `ducy-relay-sandbox` |
+| Judge (Worker, #615) | `ducy-judge` | `ducy-judge-staging` | `ducy-judge-sandbox` |
 | Deploys | a release, by hand, after approval (`deploy.yml`) | every push to master (`staging.yml`) | by hand, any branch (`sandbox.yml`) |
 | Data | kept, backed up | kept, no backups | wiped Mondays and on request |
 | Password | no | yes | yes |
@@ -59,8 +60,10 @@ the one `gto/*current.json` points at.
 ## Staging and sandbox
 
 `deploy-env.yml` deploys one commit:
-1. **The relay**, after its tests: `wrangler deploy --env <environment>`
-   (`relay/wrangler.toml`), then checks `/version` reports the commit.
+1. **The relay**, after its tests. First the judge
+   (`relay/judge/wrangler.toml`), whose Durable Object the relay binds to,
+   then `wrangler deploy --env <environment>` (`relay/wrangler.toml`), then
+   checks that `/version` reports the commit.
 2. **The site**, built for that relay (`DUCY_ENV` and `RELAY_HOST` in
    `scripts/build-site.sh`), into the subdomain's folder:
    `scripts/deploy-env.sh` uploads it to `SSH_DEPLOY_TARGET/<environment>`.

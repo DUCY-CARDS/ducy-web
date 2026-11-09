@@ -24,6 +24,8 @@
 //   fairPlay             the latest fair play check's report (#582, #591): counts
 //                        and hand numbers, no cards; the owner sees it
 //   fairPlayDue          when the first hand not yet checked was played
+//   pfCursor, pfDays, pf:<…>  hands scored after the flop by ducy's judge
+//                        (postflop.js, #615): numbers by player, no cards
 //   conns, connSalt      each player's last few connections, hashed with
 //                        the club's salt (#582): only for the full records
 // Players' locations (#581) are never stored: the latest reading of each
@@ -41,6 +43,7 @@ import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
 import { SCHEDULE } from './collusion.js';
 import { fairPlayRun } from './fair-play.js';
+import { dropScores } from './postflop.js';
 import { ipNetwork, liveOf, readingOf, seatPayloads, tableSignals, takeReading, trustOf } from './proximity.js';
 import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
@@ -263,7 +266,9 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // `onFairPlay(summary)`: a fair play run finished; its summary for ducy's
 // admin (fair-play-admin.js adminSummary, #612), which the caller sends to
 // the registry. No cards in it.
-export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, onFairPlay = () => {}, timers = null, record = null}) {
+// `judge`: scores hands after the flop for the fair play check (postflop.js
+// judgeVia, #615); null leaves that part off.
+export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, onFairPlay = () => {}, timers = null, record = null, judge = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -296,6 +301,7 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     const keys = ['club', 'identity', 'hostKey', 'verifier', 'memberPubs', 'handoff', 'playingSince', 'hands', 'seen', 'fairPlay', 'fairPlayDue', 'conns', 'connSalt', ...hands, ...(club.tables || []).map(t => `table:${t.id}`)];
     for (const k of keys) await storage.delete(k);
     await dropFullHands(storage);
+    await dropScores(storage);
     await onDeleted();
   }
   // The host's hand history (#71, #125): each finished hand as the host sees
@@ -349,7 +355,7 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     checkT = null;
     checking ||= (async () => {
       const before = kept;
-      const {report, summary} = await fairPlayRun(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
+      const {report, summary} = await fairPlayRun(storage, {days: club.keepDays ?? HOST_KEEP_DAYS, judge});
       if (deleted) return report;
       // To ducy's admin (#612), by way of the registry: a failure only
       // means the admin sees the run before this one until the next.
