@@ -35,6 +35,7 @@ import { newClub } from '../../src/club.js';
 import { ensureTables } from '../../src/club-tables.js';
 import { createClubServer } from '../../src/club-server.js';
 import { clubEngine } from '../../src/club-engine.js';
+import { command } from '../../src/club-commands.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
@@ -129,6 +130,8 @@ export async function createClub(storage, env, code, claim = async () => {}) {
   club.ownerId = env.from;
   club.alwaysOn = true;
   ensureTables(club);
+  // Its owner's float (#589), filled from their vault, in the ledger.
+  command(club, 'vault_settle');
   const hostKey = await newKeyPair({keep: true});
   await storage.put('identity', await exportIdentity(identity));
   await storage.put('hostKey', await keyPairToJSON(hostKey));
@@ -154,6 +157,8 @@ export async function importClub(storage, env, code, claim = async () => {}) {
   const identity = await createIdentity();
   const club = {...body.data, hostId: identity.id, ownerId: env.from, alwaysOn: true};
   ensureTables(club);
+  // Its daily chip cap becomes the owner's float (#589).
+  command(club, 'vault_settle');
   const hostKey = await newKeyPair({keep: true});
   await storage.put('identity', await exportIdentity(identity));
   await storage.put('hostKey', await keyPairToJSON(hostKey));

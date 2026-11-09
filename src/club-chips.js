@@ -13,9 +13,11 @@
 // their own links, signed, so the member keeps a copy that proves their
 // balance.
 //
-// Conservation: issued − reclaimed = the club's links + all table stacks +
-// the buy-ins tournaments hold (club-tourneys.js). Promotion prizes
-// (club-promos.js) are issued, and voided ones reclaimed.
+// Conservation: issued − reclaimed = the club's links + members' vaults
+// (#579) + all table stacks + the buy-ins tournaments hold
+// (club-tourneys.js). Promotion prizes (club-promos.js) are issued, and
+// voided ones reclaimed. The owner gives from their float (#589), refilled
+// from their vault; its moves are in the ledger too, as the member 'float'.
 //
 // Amounts are whole hundredths, shown divided by 100 (chip-format.js).
 //
@@ -36,6 +38,9 @@ import { overview } from './club-overview.js';
 export const MAX_CHIPS = 1e12;
 export const DEFAULT_RATHOLE_HOURS = 2;
 export const MAX_NOTE = 80;
+// The waits a member can pick for taking chips out of their vault (#579),
+// as ducy-play's vault has them.
+export const VAULT_WAITS = [864e5, 3 * 864e5, 7 * 864e5];
 
 // Adds the chip fields to a club (new, or saved before #67).
 export function ensureChips(club) {
@@ -234,9 +239,13 @@ export function totals(club) {
 export function accountBody(club, id, since = 0) {
   ensureChips(club);
   const m = club.members[id];
+  // Their vault (#579): its chips, the wait, and what they've asked to take
+  // out, theirs alone.
+  const v = club.vaults?.[id];
   return {
     type: 'account', club: club.code, balance: m?.balance || 0, request: m?.request || null, answer: m?.answer || null,
     credit: creditOf(m), available: available(m),
+    vault: {vault: m?.vault || 0, wait: v?.wait || VAULT_WAITS[0], shorter: v?.shorter || null, outs: v?.outs || []},
     ledger: 'links', entries: entriesOf(club, id, since),
   };
 }

@@ -104,12 +104,12 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   assert.ok(storage.keys().includes('identity') && storage.keys().includes('hostKey'));
 });
 
-test('the daily chip cap (#576): gives stop at it, a raise waits, and a restart changes neither', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('the float (#589): gives stop at it, a refill and a raise wait, and a restart changes neither', {skip: !haveWasm && 'no wasm build'}, async () => {
   await engine();
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'CAPS-TEST';
-  const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Capped'}), code);
+  const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Floated'}), code);
   let box = inbox(hostId);
   let server = await openClub({storage, send: box.send, online: [owner.id]});
   const say = async (who, body) => server.message({from: who.id, data: await signMessage(who, {club: code, ...body})});
@@ -122,24 +122,37 @@ test('the daily chip cap (#576): gives stop at it, a raise waits, and a restart 
     return (await box.bodies(owner.id, 'owner_result')).find(r => r.id === n);
   };
   await cmd('approve', {id: ann.id});
-  assert.equal((await cmd('chip_cap', {amount: 100_000})).error, '');
+  // A new club's float: the default, filled as it starts.
+  assert.equal(server.club.float.size, 200_000);
+  assert.equal(server.club.money.float, 200_000);
+  assert.equal((await cmd('float_size', {amount: 100_000})).error, '');
+  assert.equal(server.club.money.float, 100_000, 'what was over it went back to the vault');
   assert.equal((await cmd('give', {id: ann.id, amount: 60_000})).error, '');
-  assert.equal((await cmd('give', {id: ann.id, amount: 50_000})).error, 'That’s over the daily chip cap: 400 left today.');
-  assert.equal((await cmd('chip_cap', {amount: 500_000})).error, '');
-  assert.equal(server.club.capRaise.to, 500_000, 'a raise waits');
+  assert.equal((await cmd('give', {id: ann.id, amount: 50_000})).error, 'That’s more than the float: 400 left. Refill it.');
+  assert.equal((await cmd('float_size', {amount: 500_000})).error, '');
+  assert.equal(server.club.float.raise.to, 500_000, 'a raise waits');
+  assert.equal((await cmd('refill')).error, '');
+  assert.equal((await cmd('give', {id: ann.id, amount: 60_000})).error, '');
+  assert.deepEqual((await cmd('refill')).value, {waiting: true, applies: server.club.float.wait.at + 864e5}, 'a second refill waits');
 
-  // The room restarts: what was given, and the raise waiting, still count.
+  // The room restarts: the float, the raise and the refill waiting are as they were.
   await server.flush();
   box = inbox(hostId);
   server = await openClub({storage, send: box.send, online: [owner.id]});
-  assert.equal(server.club.chipCap, 100_000);
-  assert.equal(server.club.capRaise.to, 500_000);
-  assert.match((await cmd('give', {id: ann.id, amount: 50_000})).error, /400 left today/);
-  // The owner hears of the cap set lower, and of a give over a full buy-in.
+  assert.equal(server.club.float.size, 100_000);
+  assert.equal(server.club.float.raise.to, 500_000);
+  assert.ok(server.club.float.wait);
+  assert.match((await cmd('give', {id: ann.id, amount: 50_000})).error, /400 left/);
+  // The owner hears of the float set lower, the refill, and a give over a full buy-in.
   const notes = server.club.log.filter(l => l.notice).map(l => l.text);
-  assert.deepEqual(notes, ['Daily chip cap set to 1,000', 'Gave Ann 600']);
-  assert.equal((await cmd('cancel_cap_raise')).error, '');
-  assert.equal(server.club.capRaise, undefined);
+  assert.deepEqual(notes, ['Float set to 1,000', 'Gave Ann 600', 'Refilled the float: +600', 'Gave Ann 600']);
+  assert.equal((await cmd('cancel_float_raise')).error, '');
+  assert.equal(server.club.float.raise, undefined);
+  assert.equal((await cmd('cancel_refill')).error, '');
+  assert.equal(server.club.float.wait, undefined);
+  // The books add up.
+  const {totals} = await import('../src/club-chips.js');
+  assert.ok(totals(server.club).conserved);
 });
 
 test('a browser-run club moves to its room (#98): balances kept, members follow the handoff', {skip: !haveWasm && 'no wasm build'}, async () => {

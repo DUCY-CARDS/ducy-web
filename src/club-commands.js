@@ -21,12 +21,16 @@ export const HOSTED = new Set([
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
   'new_tourney', 'edit_tourney', 'edit_series', 'stop_series', 'cancel_tourney', 'set_must_move', 'list_remove', 'offer_game', 'remove_offer',
-  'chip_cap', 'cancel_cap_raise',
+  // The owner's float (#589); settling what the float and members' vaults
+  // have due. (A member's own vault command, member_vault, isn't here: it
+  // comes only from their signed message, club-server.js.)
+  'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise', 'vault_settle',
 ]);
 
 // The club's fields a command may change.
-// (ownerId and lobby: a member moved to a new player ID, #575.)
-const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise'];
+// (ownerId and lobby: a member moved to a new player ID, #575. chipCap and
+// capRaise: the daily cap the float replaced, #589, dropped once read.)
+const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise', 'float', 'vaults'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 

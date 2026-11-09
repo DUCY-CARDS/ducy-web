@@ -44,7 +44,9 @@ test('a room becomes an always-on club: members join and the owner runs it, with
   assert.equal(pending.from, made.hostId, 'signed by the club');
   assert.equal(pending.body.status, 'pending');
   o.send(await signMessage(owner, {club: code, type: 'owner_hello'}));
-  const view = await o.next('owner_view');
+  // (A view from before she asked may come first: the lobby's, as it opened.)
+  let view;
+  do view = await o.next('owner_view'); while (!view.body.data.members[ann.id]);
   assert.equal(view.body.data.members[ann.id].status, 'pending');
   o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1}));
   assert.equal((await o.next('owner_result')).body.error, '');
@@ -230,6 +232,7 @@ test('a club connection acts only once unlocked; chips need a recent unlock', as
   g = await unlockCheck({type: 'unlock', token: 'good'}, null, 'ann', session, t0);
   assert.equal(g.reply.type, 'unlocked');
   let u = g.u;
+  assert.equal(u.device, '', 'which passkey, when the relay says (#589)');
   g = await unlockCheck({body: {type: 'chip_request', amount: 5}}, u, 'ann', session, t0 + 60_000);
   assert.equal(g.pass, true);
   u = g.u;
@@ -241,6 +244,14 @@ test('a club connection acts only once unlocked; chips need a recent unlock', as
   assert.equal(g.reply.type, 'unlock_again');
   assert.equal(movesChips({body: {type: 'owner_cmd', op: 'settings'}}), false);
   assert.equal(movesChips({body: {type: 'agent_cmd'}}), true);
+  // The float (#589) and a member's vault (#579): taking chips out and the
+  // wait need it; putting chips in and cancelling don't.
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'refill'}}), true);
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'approve_refill'}}), true);
+  assert.equal(movesChips({body: {type: 'vault', op: 'out'}}), true);
+  assert.equal(movesChips({body: {type: 'vault', op: 'wait'}}), true);
+  assert.equal(movesChips({body: {type: 'vault', op: 'in'}}), false);
+  assert.equal(movesChips({body: {type: 'vault', op: 'cancel'}}), false);
   // Idle 4 hours: locked again.
   g = await unlockCheck({body: {type: 'hello'}}, u, 'ann', session, t0 + 5 * 3600e3);
   assert.equal(g.reply.type, 'locked');
@@ -319,4 +330,61 @@ test('the relay vouches: a member who lost their ID is moved to their new one, c
   old.send({type: 'unlock', token: s.body.token});
   assert.equal((await old.next('locked')).type, 'locked');
   o.ws.close(); n.ws.close(); old.ws.close();
+});
+
+test('the float (#589): a second refill in a day waits, unless approved with another device’s passkey', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const owner = await createIdentity(), ann = await createIdentity();
+  const code = 'FFFF-FFFF';
+  let o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Float Night'}));
+  const made = await o.next('club_created');
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a.ready;
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  await a.next('status');
+  let n = 0;
+  const cmd = async (conn, op, args = {}) => {
+    conn.send(await signMessage(owner, {club: code, type: 'owner_cmd', op, args, id: ++n}));
+    for (;;) { const r = await conn.next('owner_result'); if (r.body.id === n) return r.body; }
+  };
+  await cmd(o, 'approve', {id: ann.id});
+  // A new club's float: 2,000 chips, all given.
+  assert.equal((await cmd(o, 'give', {id: ann.id, amount: 200_000})).error, '');
+  assert.equal((await cmd(o, 'give', {id: ann.id, amount: 100})).error, 'The float is empty. Refill it.');
+  // The first refill in a day: at once.
+  assert.deepEqual((await cmd(o, 'refill')).value, {added: 200_000});
+  assert.equal((await cmd(o, 'give', {id: ann.id, amount: 50_000})).error, '');
+  // The next one waits; this device can't approve it, whatever its page says.
+  assert.equal((await cmd(o, 'refill')).value.waiting, true);
+  assert.match((await cmd(o, 'approve_refill', {device: 'another'})).error, /another of your devices/);
+  // From another device, with its own passkey: it goes ahead.
+  const second = await relay.addPasskey(owner);
+  o.ws.close();
+  await o.closed;
+  o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner, {passkey: second});
+  await o.ready;
+  const r = await cmd(o, 'approve_refill');
+  assert.equal(r.error, '');
+  assert.deepEqual(r.value, {added: 50_000});
+
+  // Ann's vault (#579): in at once; out after her wait, which the owner
+  // doesn't see.
+  a.send(await signMessage(ann, {club: code, type: 'vault', op: 'in', amount: 100_000}));
+  let acc;
+  do acc = await a.next('account'); while (acc.body.vault?.vault !== 100_000);
+  assert.equal(acc.body.balance, 150_000);
+  a.send(await signMessage(ann, {club: code, type: 'vault', op: 'out', amount: 30_000}));
+  assert.equal((await a.next('vault_result')).body.error, '');
+  do acc = await a.next('account'); while (!acc.body.vault?.outs?.length);
+  assert.equal(acc.body.vault.outs[0].amount, 30_000);
+  o.send(await signMessage(owner, {club: code, type: 'owner_hello'}));
+  // (Views from before her vault may be waiting first.)
+  let view;
+  do view = await o.next('owner_view'); while (view.body.data.members[ann.id].vault == null);
+  assert.equal(view.body.data.members[ann.id].vault, 100_000, 'the owner sees her vault');
+  assert.equal(view.body.data.vaults, undefined, 'but not what she asked to take out');
+  // The owner can't run her vault for her.
+  assert.match((await cmd(o, 'member_vault', {id: ann.id, op: 'out', amount: 1})).error, /no host action/);
+  o.ws.close(); a.ws.close();
 });

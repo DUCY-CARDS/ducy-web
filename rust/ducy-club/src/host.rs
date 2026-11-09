@@ -88,6 +88,9 @@ pub struct Outcome {
     pub stop_tourneys: Vec<String>,
     /// Members whose waitlists changed: send them theirs.
     pub lists_to: Vec<String>,
+    /// When the float or a member's vault next has something due (#579,
+    /// #589): settle then (`vault_settle`).
+    pub next_vault: Option<u64>,
 }
 
 impl Outcome {
@@ -251,6 +254,10 @@ impl ClubState {
         if let Some(m) = self.book.club.members.get_mut(id) {
             m.other.insert("request".into(), Value::Null);
         }
+        // Their vault stays theirs (#579): only what they asked to take out goes.
+        if let Some(v) = self.book.club.vaults.get_mut(id) {
+            v.outs.clear();
+        }
         // Always a notice to the owner (#576).
         let mut text = format!("Removed {}", self.name(id));
         if bal > 0 {
@@ -358,8 +365,27 @@ impl ClubState {
     }
 
     /// Runs a manager's command `op` with its arguments; what it did, or
-    /// why it can't be done.
+    /// why it can't be done. Whatever the float and members' vaults have
+    /// due is settled first (#579, #589).
     pub fn run(
+        &mut self,
+        op: &str,
+        args: &Value,
+        now: u64,
+        rng: &mut StdRng,
+    ) -> Result<Outcome, RuleError> {
+        let settled = self.book.settle_vault(now);
+        let mut out = self.run_op(op, args, now, rng)?;
+        for id in settled {
+            if !out.accounts.iter().any(|a| a.id == id) {
+                self.account_latest(&id, &mut out);
+            }
+        }
+        out.next_vault = self.book.next_vault_due();
+        Ok(out)
+    }
+
+    fn run_op(
         &mut self,
         op: &str,
         args: &Value,
@@ -369,8 +395,6 @@ impl ClubState {
         let mut out = Outcome::default();
         let id = text(args, "id");
         let actor = self.actor();
-        // A raise of the chip cap whose day is up applies (#576).
-        self.book.settle_cap(now);
         match op {
             "approve" | "decline" => {
                 let reply = if op == "approve" {
@@ -394,13 +418,14 @@ impl ClubState {
                 self.move_member(&id, &text(args, "to"), vouched, now, &mut out)?;
             }
             "revoke_invite" => self.book.club.revoke_invite(rng),
-            // Chips given stay within the daily cap; every move is logged,
-            // and a big one is a notice to the owner (#576).
+            // Chips given come out of the owner's float (#589), and taken
+            // back go to their vault; every move is logged, and a big one is
+            // a notice to the owner (#576).
             "give" | "take" => {
                 let amt = num(args, "amount");
                 let note = text(args, "note");
                 let e = if op == "give" {
-                    self.book.issue_capped(&id, amt, &note, now)?
+                    self.book.give_float(&id, amt, &note, now)?
                 } else {
                     self.book.reclaim(&id, amt, &note, now)?
                 };
@@ -428,9 +453,23 @@ impl ClubState {
                 self.book.log_move(&line, moved, now);
                 out.account(&id, Some(e.n - 1));
             }
-            // The daily chip cap (#576): lower at once, higher after a day.
-            "chip_cap" => self.book.set_chip_cap(num(args, "amount"), now)?,
-            "cancel_cap_raise" => self.book.cancel_cap_raise(now)?,
+            // The owner's float (#589): refilled from their vault, at once
+            // the first time in a day, else after a day or approved with a
+            // passkey from another device (`device`: the relay's word, never
+            // the page's); its size lower at once, higher after a day.
+            "refill" => out.value = self.book.refill(&text(args, "device"), now)?,
+            "approve_refill" => out.value = self.book.approve_refill(&text(args, "device"), now)?,
+            "cancel_refill" => self.book.cancel_refill(now)?,
+            "float_size" => self.book.set_float_size(num(args, "amount"), now)?,
+            "cancel_float_raise" => self.book.cancel_float_raise(now)?,
+            // Settling what's due happens before every command: this is it alone.
+            "vault_settle" => {}
+            // A member's own vault (#579): only ever from their signed
+            // message, never the owner's command (club-server.js).
+            "member_vault" => {
+                self.book.member_vault(&id, args, now)?;
+                self.account_latest(&id, &mut out);
+            }
             "deny" => {
                 self.book
                     .decline_request(&id, &text(args, "note"), "", now)?;
@@ -843,15 +882,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.book.balance("ann"), 500);
+        // Entry 1 is the float it was given from (#589), set up first.
         assert_eq!(
             o.accounts,
             vec![AccountTo {
                 id: "ann".into(),
-                since: Some(0)
+                since: Some(1)
             }]
         );
         let o = run(&mut c, "take", json!({"id": "ann", "amount": 200})).unwrap();
-        assert_eq!(o.accounts[0].since, Some(1));
+        assert_eq!(o.accounts[0].since, Some(3));
         assert!(
             run(&mut c, "give", json!({"id": "ann", "amount": 0}))
                 .unwrap_err()
@@ -1004,6 +1044,8 @@ mod tests {
         assert_eq!(
             lines,
             vec![
+                // The club's first command gave it its float (#589).
+                "The daily chip cap is now a float of 2,000, holding 2,000",
                 "Added the payout table Main",
                 "Renamed the payout table Main to Big",
                 "Deleted the payout table Big"

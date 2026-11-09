@@ -171,7 +171,7 @@ impl ClubState {
         let (entry, line) = if op == "give" {
             let e = self
                 .book
-                .issue_capped(&member, Some(amount as i64), &note, now)
+                .give_float(&member, Some(amount as i64), &note, now)
                 .map_err(|e| refusal(409, e))?;
             (
                 e,
@@ -283,6 +283,8 @@ mod tests {
             [
                 "Added the service Rewards",
                 "Added 100 to Rewards’s budget",
+                // Its give came from the float (#589), set up first.
+                "The daily chip cap is now a float of 2,000, holding 2,000",
                 "Rewards (service) gave Ann 25: league",
                 "Rewards (service) took back 5 from Ann",
                 "Revoked the service Rewards",

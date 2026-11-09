@@ -65,18 +65,30 @@ export function relayClient(port) {
     passkeysOf.set(ident.id, p);
     return p;
   }
-  // A session for `ident`: a sign-in with their passkey.
-  async function session(ident) {
-    const p = await passkeyOf(ident);
+  // A session for `ident`: a sign-in with their passkey (or `p`, another
+  // of theirs).
+  async function session(ident, p = null) {
+    p ||= await passkeyOf(ident);
     const r = await post('unlock', await p.sign(await challenge()));
     if (r.status !== 200) throw new Error(r.body.error);
     return r.body.token;
   }
+  // Another passkey for `ident` (another device of theirs), attached with
+  // a fresh session of their first.
+  async function addPasskey(ident) {
+    const token = await session(ident);
+    const p = await softPasskey();
+    const env = await signMessage(ident, {type: 'passkey_enrol', challenge: await challenge(), token, credId: p.credId, spki: p.spki, alg: p.alg, name: 'Second'});
+    const r = await post('enrol', {env});
+    if (r.status !== 200) throw new Error(r.body.error);
+    return p;
+  }
 
   // Opens `path`. With `ident`, answers the relay's request to prove the
   // player's ID, and (`unlock`, the default) unlocks the connection with a
-  // passkey session; `ready` resolves once that's done (or once open).
-  function open(path, ident = null, {unlock = true} = {}) {
+  // passkey session (of `passkey`, when given); `ready` resolves once
+  // that's done (or once open).
+  function open(path, ident = null, {unlock = true, passkey = null} = {}) {
     const ws = new WebSocket(`ws://localhost:${port}${path}`);
     const inbox = [], waiting = [];
     let readyFn, failFn;
@@ -89,7 +101,7 @@ export function relayClient(port) {
       if (ident && m.type === 'prove') { ws.send(JSON.stringify({type: 'prove', env: await signMessage(ident, {type: 'prove', room: decodeURIComponent(path.split('/')[2].split('?')[0]), challenge: m.challenge})})); return; }
       if (ident && m.type === 'proven') {
         if (!unlock) readyFn();
-        else ws.send(JSON.stringify({type: 'unlock', token: await session(ident)}));
+        else ws.send(JSON.stringify({type: 'unlock', token: await session(ident, passkey)}));
         return;
       }
       if (ident && unlock && m.type === 'unlocked') { readyFn(); return; }
@@ -106,5 +118,5 @@ export function relayClient(port) {
     return {ws, closed, closedWith, next, ready, send: obj => ws.send(JSON.stringify(obj))};
   }
 
-  return {post, challenge, passkeyOf, session, open};
+  return {post, challenge, passkeyOf, session, addPasskey, open};
 }

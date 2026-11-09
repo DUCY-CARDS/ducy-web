@@ -2585,6 +2585,16 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .cl-left-net { font: 400 34px var(--font-display); }
 .cl-left .cl-down, .mg-card .cl-down, .cl-sitform .cl-down { color: #b0391f; }
 .cl-left .cl-up { color: #2f7a43; }
+/* A member's vault (#579), on My chips. */
+.cl-vault { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; max-width: 520px; }
+.cl-vault-head { display: flex; align-items: baseline; gap: 12px; }
+.cl-vault-head h2 { margin: 0; }
+.cl-vault-chips { font: 400 24px var(--font-data); }
+.cl-vault-forms { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.cl-vault-form { display: flex; gap: 6px; align-items: center; }
+.cl-vault-form .pl-text { width: 110px; }
+.cl-vault-out { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; }
+.cl-float-now { font-family: var(--font-data); margin-right: 8px; }
 /* Back up your account (#562): a member's club page until they have. The
    passkey card (#575) in place of a club page until it's set up or used. */
 .cl-backup .cl-backup-text, .cl-pass .cl-backup-text { margin: 0; font-size: 14px; }

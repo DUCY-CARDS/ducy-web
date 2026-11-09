@@ -241,6 +241,7 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         "agent",
         "admin_result",
         "account",
+        "vault_result",
     ];
     if !known.contains(&kind) {
         return false;
@@ -408,6 +409,8 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
             );
         }
         "admin_result" => set("adminNote", text(b.get("error")).into()),
+        // How their vault command went (#579): why it was refused, or ''.
+        "vault_result" => set("vaultNote", cut(&text(b.get("error")), 200).into()),
         "account" => take_account(mem, &b, env),
         _ => return false,
     }
@@ -435,6 +438,14 @@ fn take_account(mem: &mut Map<String, Value>, b: &Value, env: &Value) {
     );
     // A cancel sent while the host was away has reached them (#188).
     mem.remove("cancelQueued");
+    // Their vault (#579): {vault, wait, shorter, outs}, as the host says.
+    mem.insert(
+        "vault".into(),
+        b.get("vault")
+            .filter(|v| v.is_object())
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
     if let Some(a) = b.get("answer") {
         mem.insert(
             "answer".into(),

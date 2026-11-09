@@ -9,7 +9,6 @@
 #![warn(missing_docs)]
 
 pub mod book;
-pub mod cap;
 pub mod groups;
 pub mod host;
 pub mod interest;
@@ -26,4 +25,5 @@ pub mod seats;
 pub mod service;
 pub mod tourney_host;
 pub mod tourneys;
+pub mod vault;
 pub mod views;

@@ -31,7 +31,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
 } from './club.js';
-import { ensureChips, ledgerCsv, MAX_NOTE, totals } from './club-chips.js';
+import { ensureChips, ledgerCsv, MAX_NOTE, totals, VAULT_WAITS } from './club-chips.js';
 import {
   buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -44,7 +44,7 @@ import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import * as pk from './passkey.js';
-import { CHIP_OPS } from './chip-moves.js';
+import { CHIP_OPS, VAULT_OPS } from './chip-moves.js';
 import { accountOf, playersOf } from './club-agents.js';
 import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
@@ -66,7 +66,7 @@ import { OFF } from './club-beta.js';
 import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
-import { chipCap, clearableKeys, managerNotices, raiseTo } from './club-notices.js';
+import { clearableKeys, floatOf, managerNotices, raiseTo } from './club-notices.js';
 import { entryTitle, fairPlayNotices, flagText, flowText, handFlagsText, handsText } from './club-fair-play.js';
 import { watchLocation } from './table-location.js';
 import { chipLines, leftSummary } from './club-member-view.js';
@@ -1009,6 +1009,8 @@ function chipFormHtml(m) {
   // Making an agent: what that means, before the limit (#190).
   if (chipForm.kind === 'agent') h += roleHtml('agent', null, m.name);
   if (t.label) h += `<label class="cl-formlabel" for="cl-amt">${esc(t.label)}</label>`;
+  // What the float holds to give from (#589).
+  if ((chipForm.kind === 'give' || chipForm.kind === 'grant') && isRemote()) h += `<span class="pl-meta cl-float-left">Float ${chips(floatOf(club).float)}</span>`;
   if (!t.noAmount) {
     h += `<input class="pl-text" id="cl-amt" name="amount" type="number" inputmode="decimal" required min="${chipInput(t.min ?? 1)}" step="${CHIP_STEP}"${t.max != null ? ` max="${chipInput(t.max)}"` : ''} value="${esc(amountValue(t.value))}" placeholder="Chips">`;
     // The usual amounts, from the open tables' buy-ins (#188).
@@ -1069,9 +1071,12 @@ function onSubmitIn(e) {
     hostAct(kind === 'raise' ? 'raise_credit' : 'grant', {id, amount: parseChips(notef.elements.amount.value)}).then(done);
     return;
   }
-  // The daily chip cap (#576).
-  const capf = e.target.closest('form[data-capform]');
-  if (capf) { e.preventDefault(); hostAct('chip_cap', {amount: parseChips(capf.elements.amount.value)}); return; }
+  // The float's size (#589).
+  const ff = e.target.closest('form[data-floatform]');
+  if (ff) { e.preventDefault(); hostAct('float_size', {amount: parseChips(ff.elements.amount.value)}); return; }
+  // A member's vault (#579): putting chips in, or taking them out.
+  const vf2 = e.target.closest('form[data-vaultform]');
+  if (vf2) { e.preventDefault(); vaultAct(vf2, vf2.dataset.vaultform, {amount: parseChips(vf2.elements.amount.value)}); return; }
   // Club info (#398).
   const inf = e.target.closest('form[data-infoform]');
   if (inf) { e.preventDefault(); hostAct('set_info', {info: readInfoForm(inf)}); return; }
@@ -1943,7 +1948,7 @@ function toolsHtml() {
 }
 
 // Forms whose typing survives a redraw (#398, #404, #544).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-capform]';
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform]';
 // A control that had the focus while it was busy (disabled): it gets it back
 // once it's answered (#544).
 let focusLater = '';
@@ -1982,7 +1987,7 @@ function render() {
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   // And what's typed in a notification's form or the Club info editor (#398).
-  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.capform || fm.dataset.table}|${fm.dataset.id || ''}`;
+  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.floatform || fm.dataset.vaultform || fm.dataset.table}|${fm.dataset.id || ''}`;
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     // A preset picked (#544): its radio's value.
@@ -2631,6 +2636,7 @@ function membersPageHtml({sort = 'name', n = 1, show = 'all', agent = ''} = {}) 
     h += `<li><a href="#${ph('member', m.id)}"><b>${esc(m.name)}</b>`;
     if (tags.length) h += `<span class="pl-meta">${tags.join(' · ')}</span>`;
     if (m.seat) h += `<span class="pl-meta">on a table ${chips(m.seat.stack)}</span>`;
+    if (m.vault) h += `<span class="pl-meta">vault ${chips(m.vault)}</span>`;
     h += `<span class="mg-row-end"><span class="pl-meta mg-active">${active[m.id] ? esc(ago(active[m.id], now)) : '–'}</span>`;
     h += `<span class="mg-bal${m.balance < 0 ? ' cl-down' : ''}">${signed(m.balance)}</span></span></a></li>`;
   }
@@ -2658,6 +2664,8 @@ function memberPageHtml(id) {
   h += '<div class="mg-stats">';
   h += statHtml('Balance', signed(c.balance), c.balance < 0 ? 'down' : '');
   h += statHtml('On a table', m.seat ? chips(c.onTable) : '–');
+  // Their vault (#579): its chips only; what they ask to take out is theirs.
+  if (m.vault) h += statHtml('Vault', chips(m.vault));
   if (c.credit) h += statHtml('Credit limit', chips(c.credit)) + statHtml('Available', chips(c.available));
   if (m.agent === 'yes') {
     const a = accountOf(club, m.id);
@@ -2689,7 +2697,8 @@ function memberPageHtml(id) {
   return h;
 }
 
-const memberNames = () => Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]));
+// (The owner's float's ledger entries are the member 'float', #589.)
+const memberNames = () => ({float: 'Float', ...Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]))});
 
 // What a member is in the club, for their row and page (the owner, agents
 // and their players), as HTML. An agent's players, and a player's agent
@@ -2840,21 +2849,44 @@ function noteHtml(n) {
   } else if (n.kind === 'fair_play') {
     // Flagged by the relay's check (#582): the Fair play page has the numbers.
     top = `<a href="#${ph('fairplay')}">${esc(n.name)}</a>`;
-  } else if (n.kind === 'cap_raise') {
-    // A raise of the daily chip cap waits a day (#576).
-    top = `Daily chip cap rises to <b>${chips(n.to)}</b>`;
+  } else if (n.kind === 'refill_wait') {
+    // A second refill in a day waits a day, unless approved from another
+    // of the owner's devices (#589).
+    top = `Refill of <b>${chips(n.amount)}</b> waiting`;
     body = `<span class="pl-meta">${esc(capWhen(n.applies))}</span>`;
-    acts = btn('cap-cancel', 'Cancel');
+    acts = btn('refill-approve', 'Approve', '', true) + btn('refill-cancel', 'Cancel');
+  } else if (n.kind === 'float_raise') {
+    // A raise of the float waits a day (#589).
+    top = `Float rises to <b>${chips(n.to)}</b>`;
+    body = `<span class="pl-meta">${esc(capWhen(n.applies))}</span>`;
+    acts = btn('float-cancel', 'Cancel');
   }
   // One row each (#516): what kind, who and what, how long ago, the answers.
   const tag = NOTE_TAGS[n.kind] || '';
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', cap_raise: 'Cap', fair_play: 'Fair play'};
+const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play'};
 
-// When a raise of the chip cap applies: "Sat 9:15 PM".
+// When something waiting applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
+
+// The owner's float (#589): what can be given now, of its size, refilled
+// from the owner's vault; a refill waiting (Approve from another device, or
+// Cancel); the size, lower at once and higher after a day.
+function floatRowsHtml() {
+  const f = floatOf(club);
+  let h = `<div class="pl-row"><span class="pl-label">Float</span><div class="pl-opts"><b class="cl-float-now">${chips(f.float)} of ${chips(f.size)}</b>`;
+  if (!f.wait) {
+    const refill = `<button class="btn-small" data-cl="refill">${f.waits ? 'Refill in 24 h' : 'Refill'}</button>`;
+    h += f.float >= f.size ? offBtn(refill, 'Full') : refill;
+  }
+  h += '</div></div>';
+  if (f.wait) h += `<p class="pl-meta cl-float-note">Refill waiting until ${esc(capWhen(f.wait.applies))} <button class="btn-small" data-cl="refill-approve">Approve</button> <button class="link-btn" data-cl="refill-cancel">Cancel</button></p>`;
+  h += `<div class="pl-row"><span class="pl-label">Float size</span><form class="pl-opts" data-floatform="size"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(f.size))}" aria-label="Float size"><button class="btn-small primary" type="submit">Save</button></form></div>`;
+  if (f.raise) h += `<p class="pl-meta cl-float-note">Rises to ${chips(f.raise.to)} ${esc(capWhen(f.raise.applies))} <button class="link-btn" data-cl="float-cancel">Cancel</button></p>`;
+  return h;
+}
 
 // Rules (#398): how the club's tables and members work.
 function rulesHtml() {
@@ -2876,10 +2908,7 @@ function rulesHtml() {
     h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${(club.codeJoin === true) === on ? ' on' : ''}" data-cl="code-join" data-on="${on ? 1 : 0}">${text}</button>`).join('');
     h += '</div></div>';
   }
-  // The daily chip cap (#576): lower at once, a raise after a day.
-  const cap = chipCap(club);
-  h += `<div class="pl-row"><span class="pl-label">Daily chip cap</span><form class="pl-opts" data-capform="cap"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(cap.cap))}" aria-label="Daily chip cap"><button class="btn-small primary" type="submit">Save</button></form></div>`;
-  h += `<p class="pl-meta cl-cap-note">${chips(cap.left)} left today${cap.raise ? ` · rises to ${chips(cap.raise.to)} ${esc(capWhen(cap.raise.applies))} <button class="link-btn" data-cl="cap-cancel">Cancel</button>` : ''}</p>`;
+  h += floatRowsHtml();
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
   if (remote && !OFF.has('services')) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
@@ -3097,6 +3126,7 @@ function memberHomeHtml(m, manage = '') {
   // Your balance (negative: what you owe, #404) and any credit limit.
   h += `<span class="cl-home-chips${m.balance < 0 ? ' owes' : ''}"${m.entries?.length && !mismatch ? ' title="Your copy of the ledger adds up to this balance"' : ''}>Balance ${signed(m.balance)}</span>`;
   if (m.credit) h += `<span class="cl-home-chips">Credit limit ${chips(m.credit)}</span>`;
+  if (m.vault?.vault) h += `<span class="cl-home-chips">Vault ${chips(m.vault.vault)}</span>`;
   h += '</div>';
   h += leftPanelHtml(m);
   h += memberBackupHtml();
@@ -3207,13 +3237,59 @@ function leftPanelHtml(m) {
   return h + `<button class="btn-small primary" data-cl="left-done" data-code="${esc(m.code)}">Done</button></section>`;
 }
 
+// A member's vault (#579), on My chips: its chips; Put in (at once, from
+// the balance) and Take out (after their wait, with a fresh passkey
+// unlock); what's on its way out, with Cancel; and the wait, a shorter one
+// applying only after the current one.
+const VAULT_WAIT_TEXT = {[VAULT_WAITS[0]]: '24 h', [VAULT_WAITS[1]]: '3 days', [VAULT_WAITS[2]]: '7 days'};
+function vaultHtml(m) {
+  const v = m.vault || {vault: 0, wait: VAULT_WAITS[0], outs: []};
+  const code = esc(m.code);
+  const online = !!playerNets.get(m.code)?.hostHere;
+  const off = online ? '' : ' disabled title="Can’t reach the club right now"';
+  const going = (v.outs || []).reduce((n, o) => n + o.amount, 0);
+  let h = `<section class="cl-vault" aria-label="Vault"><div class="cl-vault-head"><h2>Vault</h2><b class="cl-vault-chips">${chips(v.vault)}</b></div>`;
+  const form = (kind, max, label) => `<form class="cl-vault-form" data-vaultform="${kind}" data-id="${code}" data-code="${code}"><input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0.01" max="${chipInput(Math.max(0, max))}" step="${CHIP_STEP}" placeholder="Chips" aria-label="${label} chips"><button class="btn-small${kind === 'in' ? ' primary' : ''}" type="submit"${off}>${label}</button></form>`;
+  h += '<div class="cl-vault-forms">';
+  if (m.balance > 0) h += form('in', m.balance, 'Put in');
+  if (v.vault - going > 0) h += form('out', v.vault - going, 'Take out');
+  h += '</div>';
+  for (const o of v.outs || []) {
+    h += `<p class="cl-vault-out"><span><b>${chips(o.amount)}</b> out ${esc(capWhen(o.ready))}</span><button class="btn-small" data-cl="vault-cancel" data-code="${code}" data-out="${o.id}"${off}>Cancel</button></p>`;
+  }
+  h += `<div class="pl-row"><span class="pl-label">Wait to take out</span><div class="pl-opts">${VAULT_WAITS.map(w => `<button class="cc-btn${v.wait === w ? ' on' : ''}" data-cl="vault-wait" data-code="${code}" data-wait="${w}" aria-pressed="${v.wait === w}"${off}>${VAULT_WAIT_TEXT[w]}</button>`).join('')}</div></div>`;
+  if (v.shorter) h += `<p class="pl-meta">${VAULT_WAIT_TEXT[v.shorter.to]} from ${esc(capWhen(v.shorter.applies))}</p>`;
+  if (m.vaultNote) h += `<p class="pl-desc pl-neterr cl-err" role="alert">${esc(m.vaultNote)}</p>`;
+  return h + '</section>';
+}
+
+// A member's vault command (#579), from control `el`: taking out and the
+// wait need a passkey unlock from the last few minutes.
+async function vaultAct(el, op, args) {
+  const code = el.dataset.code;
+  const mem = memberships.find(x => x.code === code);
+  if (!mem) return;
+  if (op === 'in' || op === 'out') {
+    if (!Number.isSafeInteger(args.amount) || args.amount <= 0) { failAt(el, 'Enter an amount above 0, like 50 or 12.50.'); return; }
+  }
+  if (VAULT_OPS.has(op)) {
+    const no = await freshPass();
+    if (no) { failAt(el, no); return; }
+  }
+  mem.vaultNote = '';
+  sendToHost(code, {type: 'vault', club: code, op, ...args});
+  if (el.tagName === 'FORM') el.reset();
+  render();
+}
+
 // My chips (#398, #404): each table session as one line ("Left Main −120
 // → −220"), and every other chip move, with the balance after.
 function myChipsHtml(m) {
   const lines = chipLines(m.entries).slice(0, 50);
-  if (!lines.length) return '<p class="pl-meta">No chips in or out yet.</p>';
+  const vault = vaultHtml(m);
+  if (!lines.length) return vault + '<p class="pl-meta">No chips in or out yet.</p>';
   const tableName = id => m.tables?.find(t => t.id === id)?.name || 'a table';
-  let h = '<ul class="cl-ledger mg-rows">';
+  let h = vault + '<ul class="cl-ledger mg-rows">';
   for (const l of lines) {
     const what = l.kind === 'left' ? `Left ${esc(tableName(l.table))}` : l.kind === 'at' ? `At ${esc(tableName(l.table))}` : esc(KIND_TEXT[l.kind] || l.kind);
     h += `<li class="mg-row"><span>${what}${l.note ? ` <span class="pl-meta">“${esc(l.note)}”</span>` : ''}</span><span class="pl-meta">${when(l.at)}</span>${l.entry ? promoReplayBtn(l.entry, m.code, me.id) : ''}`;
@@ -3223,7 +3299,9 @@ function myChipsHtml(m) {
 }
 
 // The money model's entry kinds (club-money.js).
-const KIND_TEXT = {give: 'Chips given', take_back: 'Chips taken back', buy_in: 'Bought in', top_up: 'Topped up', refund: 'Refunded', cash_out: 'Cashed out', tourney_buy_in: 'Tournament buy-in', prize: 'Prize', rake_share: 'Rake share', void: 'Prize voided', opening: 'Opening balance'};
+const KIND_TEXT = {give: 'Chips given', take_back: 'Chips taken back', buy_in: 'Bought in', top_up: 'Topped up', refund: 'Refunded', cash_out: 'Cashed out', tourney_buy_in: 'Tournament buy-in', prize: 'Prize', rake_share: 'Rake share', void: 'Prize voided', opening: 'Opening balance',
+  // The owner's float (#589) and members' vaults (#579).
+  refill: 'Float refilled', to_vault: 'Float to vault', vault_in: 'Into vault', vault_out: 'Out of vault'};
 
 // The names of what entries are about: tables, tournaments and promotions.
 const aboutNames = c => Object.fromEntries([...(c.tables || []), ...(c.tourneys || []), ...(c.promos?.list || [])].map(x => [x.id, x.name]));
@@ -3745,7 +3823,14 @@ async function onClickIn(e) {
   else if (act === 'rathole') hostAct('settings', {ratholeHours: Number(b.dataset.hours)});
   else if (act === 'sitout-mins') hostAct('settings', {sitOutMins: Number(b.dataset.mins)});
   else if (act === 'call-time') hostAct('settings', {stayHands: Number(b.dataset.hands)});
-  else if (act === 'cap-cancel') hostAct('cancel_cap_raise', {});
+  // The owner's float (#589).
+  else if (act === 'refill') hostAct('refill', {});
+  else if (act === 'refill-approve') hostAct('approve_refill', {});
+  else if (act === 'refill-cancel') hostAct('cancel_refill', {});
+  else if (act === 'float-cancel') hostAct('cancel_float_raise', {});
+  // A member's vault (#579): a take-out cancelled, or the wait.
+  else if (act === 'vault-cancel') vaultAct(b, 'cancel', {out: Number(b.dataset.out)});
+  else if (act === 'vault-wait') vaultAct(b, 'wait', {wait: Number(b.dataset.wait)});
   else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }

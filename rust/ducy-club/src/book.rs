@@ -76,7 +76,7 @@ pub struct AgentDone {
     pub approved: Option<String>,
 }
 
-fn money_err(e: crate::money::MoneyError) -> RuleError {
+pub(crate) fn money_err(e: crate::money::MoneyError) -> RuleError {
     RuleError(e.to_string())
 }
 
@@ -91,7 +91,7 @@ fn note(s: &str) -> String {
     s.trim().chars().take(MAX_NOTE).collect()
 }
 
-fn int(v: Option<&Value>) -> Option<i64> {
+pub(crate) fn int(v: Option<&Value>) -> Option<i64> {
     let v = v?;
     v.as_i64().or_else(|| {
         v.as_f64()
@@ -134,7 +134,7 @@ impl Book {
         }
     }
 
-    fn name(&self, id: &str) -> String {
+    pub(crate) fn name(&self, id: &str) -> String {
         self.club
             .members
             .get(id)
@@ -146,7 +146,7 @@ impl Book {
     }
 
     /// A member, or why they can't be acted on.
-    fn member(&self, id: &str) -> Result<(), RuleError> {
+    pub(crate) fn member(&self, id: &str) -> Result<(), RuleError> {
         match self.club.members.get(id) {
             Some(m) if m.status == Status::Member => Ok(()),
             _ => refuse("Not a member of this club."),
@@ -169,7 +169,7 @@ impl Book {
         }
     }
 
-    fn through(&self, id: &str) -> Option<String> {
+    pub(crate) fn through(&self, id: &str) -> Option<String> {
         self.money.account(id).and_then(|a| a.through.clone())
     }
 
@@ -281,6 +281,12 @@ impl Book {
                 m.other.remove("credit");
             }
             m.other.insert("room".into(), room.into());
+            // Their vault (#579), apart from the balance.
+            if l.vault > 0 {
+                m.other.insert("vault".into(), l.vault.into());
+            } else {
+                m.other.remove("vault");
+            }
         }
     }
 
@@ -313,7 +319,7 @@ impl Book {
         }
     }
 
-    fn direct(&self, id: &str) -> Result<(), RuleError> {
+    pub(crate) fn direct(&self, id: &str) -> Result<(), RuleError> {
         let b = self.backer_of(id);
         if b != CLUB {
             return refuse(format!(
@@ -526,7 +532,7 @@ impl Book {
         self.check_grant(id)?;
         let given = amt.or_else(|| int(r.get("amount")));
         let why = r["note"].as_str().unwrap_or("").to_string();
-        let e = self.issue_capped(id, given, &why, now)?;
+        let e = self.give_float(id, given, &why, now)?;
         self.answer_request(id, "granted", given.unwrap_or(0) as u64, "", "", None, now)?;
         Ok(e)
     }

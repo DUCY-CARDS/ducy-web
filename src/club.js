@@ -20,7 +20,10 @@
 //   {type: 'chip_request', club, amount, note, table?}   ask the host for chips (#67),
 //                                        from a table when nothing's available (#404)
 //   {type: 'cancel_request', club}
-//   {type: 'table', club, table, cmd}    a command for a club table (#68): join, act,
+//   {type: 'vault', club, op, amount?, out?, wait?}   their vault (#579): op 'in',
+//                                        'out' (after their wait), 'cancel' (taking
+//                                        out `out`) or 'wait'
+//   {type: 'table', club, table, cmd}   a command for a club table (#68): join, act,
 //                                        sit_in, leave, request_chips; a tournament's
 //                                        tables are table 'tourney:<id>' (#81)
 //   {type: 'tourney', club, tourney, op} op: 'register' | 'unregister' (#77), or
@@ -39,6 +42,7 @@
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
 //   {type: 'tourney_error', club, tourney, reason}   why a tournament op was refused
 //   {type: 'admin_result', club, error}  how an agent's command went
+//   {type: 'vault_result', club, op, error}  how a vault command went (#579)
 //   {type: 'host_key', club, key}        the host's session key for table updates
 //   {type: 'help', club, staff, mine}    who's around to help, and your latest
 //                                        help requests (club-help.js, #192)

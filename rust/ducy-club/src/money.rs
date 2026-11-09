@@ -24,6 +24,15 @@
 //! The [ledger](Money::ledger) has one [`Entry`] per link per move. A move
 //! along a path is one transaction, so its entries share a `tx`.
 //!
+//! - **The owner's float and vault** (ducy-web #589): the club gives chips
+//!   from its owner's [float](Money::float), a fixed amount topped up from
+//!   the owner's vault, which has no limit. The float's moves are in the
+//!   ledger too, as entries of [`FLOAT`] with the club.
+//! - **Members' vaults** (ducy-web #579): a member keeps chips aside on
+//!   their link ([`Link::vault`]): put in and taken out, each an entry, so
+//!   the link's entries still add up to its balance, and the vault to what
+//!   went in less what came out.
+//!
 //! Amounts are whole hundredths of a chip, as in ducy-web. There's one
 //! currency and no exchange.
 
@@ -32,6 +41,9 @@ use std::fmt;
 
 /// The club's id as a backer.
 pub const CLUB: &str = "club";
+/// The owner's float, as the member of its ledger entries (with [`CLUB`]).
+/// Not a player ID, so no member has it.
+pub const FLOAT: &str = "float";
 /// The most chips one move can be.
 pub const MAX_CHIPS: u64 = 1_000_000_000_000;
 /// The longest note kept on an entry, in characters.
@@ -78,6 +90,14 @@ pub struct Link {
     pub share: Option<u32>,
     /// When the balance went below zero, while it is.
     pub below_since: Option<u64>,
+    /// Chips the member keeps in their vault: owed them still, but not in
+    /// the balance, so they can't be bought in with or taken back.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vault: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 impl Link {
@@ -90,6 +110,7 @@ impl Link {
             terms: None,
             share: None,
             below_since: None,
+            vault: 0,
         }
     }
 
@@ -161,6 +182,15 @@ pub enum EntryKind {
     Void,
     /// A link's balance when the club moved to links.
     Opening,
+    /// The owner's float topped up from their vault.
+    Refill,
+    /// Chips from the owner's float back to their vault (the float made
+    /// smaller).
+    ToVault,
+    /// A member put chips in their vault.
+    VaultIn,
+    /// Chips out of a member's vault, back to their balance.
+    VaultOut,
 }
 
 impl EntryKind {
@@ -168,8 +198,20 @@ impl EntryKind {
     pub fn is_path_move(self) -> bool {
         !matches!(
             self,
-            Self::Give | Self::TakeBack | Self::RakeShare | Self::Opening
+            Self::Give
+                | Self::TakeBack
+                | Self::RakeShare
+                | Self::Opening
+                | Self::Refill
+                | Self::ToVault
+                | Self::VaultIn
+                | Self::VaultOut
         )
+    }
+
+    /// A move in or out of a member's vault.
+    pub fn is_vault(self) -> bool {
+        matches!(self, Self::VaultIn | Self::VaultOut)
     }
 }
 
@@ -261,6 +303,16 @@ pub enum MoneyError {
     NotSeated,
     /// Not something the club pays.
     Kind,
+    /// More than the owner's float holds.
+    Float {
+        /// What it holds.
+        left: u64,
+    },
+    /// More than is in the member's vault, or than they have to put in it.
+    Vault {
+        /// What there is.
+        has: u64,
+    },
 }
 
 impl fmt::Display for MoneyError {
@@ -289,6 +341,8 @@ impl fmt::Display for MoneyError {
             Self::Seated => write!(f, "Already seated."),
             Self::NotSeated => write!(f, "Not seated."),
             Self::Kind => write!(f, "The club pays prizes and refunds."),
+            Self::Float { left } => write!(f, "The float has {left}."),
+            Self::Vault { has } => write!(f, "There's {has}."),
         }
     }
 }
@@ -306,6 +360,13 @@ pub struct Money {
     sessions: BTreeMap<String, Session>,
     ledger: Vec<Entry>,
     next_tx: u64,
+    /// The owner's float: chips the club can give now.
+    #[serde(default, skip_serializing_if = "is_zero_i")]
+    float: i64,
+}
+
+fn is_zero_i(v: &i64) -> bool {
+    *v == 0
 }
 
 fn amount(a: u64) -> Result<i64, MoneyError> {
@@ -751,6 +812,130 @@ impl Money {
         ))
     }
 
+    /// What the owner's float holds.
+    pub fn float(&self) -> u64 {
+        self.float.max(0) as u64
+    }
+
+    fn record_float(
+        &mut self,
+        kind: EntryKind,
+        change: i64,
+        (tx, now): (u64, u64),
+        why: Option<String>,
+    ) -> Entry {
+        self.float += change;
+        let e = Entry {
+            n: self.ledger.len() as u64 + 1,
+            at: now,
+            tx,
+            member: FLOAT.into(),
+            backer: CLUB.into(),
+            kind,
+            amount: change,
+            balance: self.float,
+            note: why,
+            about: None,
+        };
+        self.ledger.push(e.clone());
+        e
+    }
+
+    /// Tops the owner's float up by `amt` from their vault, which has no limit.
+    pub fn refill(&mut self, amt: u64, why: &str, now: u64) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        let tx = self.tx();
+        Ok(self.record_float(EntryKind::Refill, a, (tx, now), note(why)))
+    }
+
+    /// Puts `amt` of the owner's float back in their vault.
+    pub fn to_vault(&mut self, amt: u64, why: &str, now: u64) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        if amt > self.float() {
+            return Err(MoneyError::Float { left: self.float() });
+        }
+        let tx = self.tx();
+        Ok(self.record_float(EntryKind::ToVault, -a, (tx, now), note(why)))
+    }
+
+    /// The club gives `member` chips from the owner's float: the member's
+    /// entry, then the float's, in one transaction.
+    pub fn give_from_float(
+        &mut self,
+        member: &str,
+        amt: u64,
+        why: &str,
+        now: u64,
+    ) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        if amt > self.float() {
+            return Err(MoneyError::Float { left: self.float() });
+        }
+        self.link_mut(member, CLUB)?;
+        let tx = self.tx();
+        let e = self.record(
+            (member, CLUB),
+            EntryKind::Give,
+            a,
+            (tx, now),
+            note(why),
+            None,
+        );
+        self.record_float(EntryKind::Give, -a, (tx, now), None);
+        Ok(e)
+    }
+
+    /// `member` puts `amt` of their balance with `backer` in their vault.
+    pub fn vault_in(
+        &mut self,
+        member: &str,
+        backer: &str,
+        amt: u64,
+        now: u64,
+    ) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        let has = self.link_mut(member, backer)?.balance.max(0) as u64;
+        if amt > has {
+            return Err(MoneyError::Vault { has });
+        }
+        let tx = self.tx();
+        let e = self.record(
+            (member, backer),
+            EntryKind::VaultIn,
+            -a,
+            (tx, now),
+            None,
+            None,
+        );
+        self.link_mut(member, backer)?.vault += amt;
+        Ok(e)
+    }
+
+    /// `amt` out of `member`'s vault, back to their balance with `backer`.
+    pub fn vault_out(
+        &mut self,
+        member: &str,
+        backer: &str,
+        amt: u64,
+        now: u64,
+    ) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        let has = self.link_mut(member, backer)?.vault;
+        if amt > has {
+            return Err(MoneyError::Vault { has });
+        }
+        self.link_mut(member, backer)?.vault -= amt;
+        let tx = self.tx();
+        Ok(self.record(
+            (member, backer),
+            EntryKind::VaultOut,
+            a,
+            (tx, now),
+            None,
+            None,
+        ))
+    }
+
     /// Sits `member` at a table with `amt` club chips, down their path.
     pub fn buy_in(
         &mut self,
@@ -1061,6 +1246,27 @@ impl Money {
                     l.member, l.backer, l.balance
                 ));
             }
+            let vault: i64 = self
+                .ledger
+                .iter()
+                .filter(|e| e.member == l.member && e.backer == l.backer && e.kind.is_vault())
+                .map(|e| -e.amount)
+                .sum();
+            if vault != l.vault as i64 {
+                bad.push(format!(
+                    "{} with {}: vault entries {vault}, vault {}",
+                    l.member, l.backer, l.vault
+                ));
+            }
+        }
+        let float: i64 = self
+            .ledger
+            .iter()
+            .filter(|e| e.member == FLOAT)
+            .map(|e| e.amount)
+            .sum();
+        if float != self.float {
+            bad.push(format!("float: entries {float}, float {}", self.float));
         }
         let mut txs: BTreeMap<u64, i64> = BTreeMap::new();
         for e in self.ledger.iter().filter(|e| e.kind.is_path_move()) {
