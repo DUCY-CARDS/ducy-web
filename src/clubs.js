@@ -1977,7 +1977,7 @@ function toolsHtml() {
 }
 
 // Forms whose typing survives a redraw (#398, #404, #544).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform]';
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform], form[data-schedform]';
 // A control that had the focus while it was busy (disabled): it gets it back
 // once it's answered (#544).
 let focusLater = '';
@@ -2015,8 +2015,9 @@ function render() {
   // And a lobby chat line being typed.
   const lobbyTyping = root.querySelector('form[data-lobbyform] input');
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
-  // And what's typed in a notification's form or the Club info editor (#398).
-  const keepKey = fm => `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.floatform || fm.dataset.vaultform || fm.dataset.table}|${fm.dataset.id || ''}`;
+  // And what's typed in a notification's form or the Club info editor (#398),
+  // or a scheduled game's form (#599).
+  const keepKey = fm => (fm.dataset.schedform != null ? `sched|${fm.dataset.schedform}` : `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.floatform || fm.dataset.vaultform || fm.dataset.table}|${fm.dataset.id || ''}`);
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     // A preset picked (#544): its radio's value.
