@@ -327,12 +327,14 @@ test('only the relay’s hand-records.js reads full hand records, and nothing se
   // Their storage keys.
   assert.deepEqual(files.filter(f => /['"`](?:full:|fullHands['"`])/.test(text(f))), ['relay/src/hand-records.js']);
   // The module: only the club's room loads it, to keep and drop records,
-  // and ducy's collusion check (#582), to read them; it sends out counts
-  // and hand numbers only (test/collusion.test.mjs).
-  assert.deepEqual(files.filter(f => /hand-records\.js['"]/.test(text(f))), ['relay/src/club-room.js', 'relay/src/collusion.js']);
+  // and ducy's checks, collusion (#582) and real-time assistance (#591,
+  // run together by fair-play.js), to read them; they send out counts and
+  // hand numbers only (test/collusion.test.mjs, test/assist.test.mjs).
+  assert.deepEqual(files.filter(f => /hand-records\.js['"]/.test(text(f))), ['relay/src/club-room.js', 'relay/src/collusion.js', 'relay/src/fair-play.js']);
   const imports = f => text(f).match(/import \{([^}]*)\} from '\.\/hand-records\.js'/)[1].split(',').map(s => s.trim()).sort();
   assert.deepEqual(imports('relay/src/club-room.js'), ['dropFullHands', 'fullRecord', 'keepFullHand']);
   assert.deepEqual(imports('relay/src/collusion.js'), ['fullHands']);
+  assert.deepEqual(imports('relay/src/fair-play.js'), ['fullHands']);
   // The engine's every-seat cards: only the club's room asks for them.
   assert.deepEqual(files.filter(f => /runnerCards|\.holeCards\(/.test(text(f))), ['src/club-engine.js', 'src/club-host.js']);
 });

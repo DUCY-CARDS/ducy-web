@@ -19,9 +19,9 @@
 //   hands, hand:<…>      finished hands, as the host saw them (#125)
 //   fullHands, full:<…>  finished hands with every seat's cards, for ducy's
 //                        own checks (#580): only hand-records.js reads them,
-//                        for collusion.js
+//                        for collusion.js and assist.js (fair-play.js)
 //   seen                 when each player was last heard from, {id: ms} (#401)
-//   fairPlay             the latest collusion check's report (#582): counts
+//   fairPlay             the latest fair play check's report (#582, #591): counts
 //                        and hand numbers, no cards; the owner sees it
 //   fairPlayDue          when the first hand not yet checked was played
 //   conns, connSalt      each player's last few connections, hashed with
@@ -39,7 +39,8 @@ import { command } from '../../src/club-commands.js';
 import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
-import { checkClub, SCHEDULE } from './collusion.js';
+import { SCHEDULE } from './collusion.js';
+import { fairPlayReport } from './fair-play.js';
 import { ipNetwork, liveOf, readingOf, seatPayloads, tableSignals, takeReading, trustOf } from './proximity.js';
 import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
@@ -331,7 +332,8 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     if (!onProved) throw new Error('ducy’s server can’t record that right now.');
     server.setRecord(await onProved(club.ownerId));
   }
-  // The collusion check (#582, collusion.js): after a session (play quiet
+  // The fair play check (fair-play.js: collusion, #582, and real-time
+  // assistance, #591): after a session (play quiet
   // for SCHEDULE.QUIET_MS) and every SCHEDULE.EVERY_MS while play goes on,
   // on the tables' timers (the room's alarm, in the Worker). `fairPlayDue`,
   // kept, is when the first hand not yet checked was played, so a room
@@ -344,7 +346,7 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     checkT = null;
     checking ||= (async () => {
       const before = kept;
-      const report = await checkClub(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
+      const report = await fairPlayReport(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
       if (deleted) return report;
       fairPlay = report;
       // Hands kept while it ran are due next time.
