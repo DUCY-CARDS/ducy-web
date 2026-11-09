@@ -8,13 +8,13 @@
 :root {
   --bg: #edeef0; --bg-raised: #f7f7f8; --fg: #3e4248; --fg-muted: #848890;
   --line: #d3d5d9; --teal: #2e7888; --red: #b0443c; --amber: #9a6a12;
-  --series: #00889e;
+  --series: #00889e; --flag-bg: #b0443c14;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16191e; --bg-raised: #1f2329; --fg: #c9ccd1; --fg-muted: #868b93;
     --line: #343941; --teal: #4aa3b5; --red: #d9776f; --amber: #d1a24a;
-    --series: #16a2bb;
+    --series: #16a2bb; --flag-bg: #d9776f1f;
   }
 }
 * { box-sizing: border-box; }
@@ -87,6 +87,13 @@ a { color: var(--teal); }
 .chart .dot { fill: var(--series); stroke: var(--bg-raised); stroke-width: 2; }
 .chart .tip { position: absolute; top: 18px; pointer-events: none; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; font-size: 12px; white-space: nowrap; }
 .chart .tip span { color: var(--fg-muted); }
+/* Fair play (#612): sortable headers, flagged rows. */
+th button.sort { background: none; border: none; padding: 0; font: inherit; color: inherit; white-space: nowrap; }
+th[aria-sort] button.sort { color: var(--fg); }
+tr.flagged td { background: var(--flag-bg); }
+/* One line per row: wide tables scroll sideways rather than wrap. */
+table[data-table] td { white-space: nowrap; }
+td.n span[title] { text-decoration: underline dotted; text-underline-offset: 3px; }
 @media (max-width: 520px) {
   main { padding: 16px; }
   section { padding: 10px; }

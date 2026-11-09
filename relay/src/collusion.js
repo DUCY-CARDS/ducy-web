@@ -442,7 +442,9 @@ const odds = (k, n) => (k + 0.5) / (n - k + 0.5);
 // [{table, hand}]}]}]}, the flagged pairs only, most flags first. No cards.
 // `partnerRecs`: the records for the partner's-cards check (#600), which
 // needs more hands than a week holds; `recs` if not given.
-export function collusionReport(recs, {now = Date.now(), since = 0, partnerRecs = recs, partnerSince = since} = {}) {
+// `stats`: also `pairStats`, every pair's numbers behind the comparisons,
+// flagged or not, for ducy's admin (pairStatsOf).
+export function collusionReport(recs, {now = Date.now(), since = 0, partnerRecs = recs, partnerSince = since, stats = false} = {}) {
   const t = tally(recs);
   const L = LIMITS;
   const tests = [];
@@ -515,7 +517,8 @@ export function collusionReport(recs, {now = Date.now(), since = 0, partnerRecs 
     }
   }
 
-  tests.push(...partnerTests(partnerRecs, t, lastRefs));
+  const partner = partnerTests(partnerRecs, t, lastRefs);
+  tests.push(...partner.tests);
 
   // Bonferroni: each comparison's share of the run's false-alarm chance.
   const cut = L.FAMILY_ALPHA / Math.max(1, tests.length);
@@ -544,7 +547,72 @@ export function collusionReport(recs, {now = Date.now(), since = 0, partnerRecs 
     flags,
   }));
   // And one player's (#581): a VPN, a location that may be faked.
-  return addFlagged({at: now, since, hands: recs.length, partnerSince, partnerHands: partnerRecs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
+  const report = addFlagged({at: now, since, hands: recs.length, partnerSince, partnerHands: partnerRecs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
+  return stats ? {...report, pairStats: pairStatsOf(t, tests, cut, partner.pooled, flowOf)} : report;
+}
+
+// ---- every pair's numbers, for ducy's admin ----
+
+// The kinds where a higher rate against the other player stands out; for
+// the rest ('raises', 'enters') a lower one does.
+const UPPER = new Set(['folds', 'checks', 'dumps', 'partner']);
+
+// How far comparison `x` leans the suspicious way, as a factor: the odds
+// against the other player over the odds elsewhere (or its inverse, for a
+// lower rate), so 1 is no difference and a flag needs ODDS_RATIO (partner:
+// PARTNER_ODDS_RATIO); for 'contest', pots expected over pots played.
+// null for 'chips' (its big blinds say it).
+export function strengthOf(x) {
+  if (x.kind === 'contest') return round2((x.expected + 0.5) / (x.with.k + 0.5));
+  if (!x.with || !x.elsewhere) return null;
+  const r = odds(x.with.k, x.with.n) / odds(x.elsewhere.k, x.elsewhere.n);
+  return round2(UPPER.has(x.kind) ? r : 1 / r);
+}
+const round2 = v => Math.round(v * 100) / 100;
+
+// {pairs: [{ids, names, shared, contested, flow (chips; above 0 the first
+// lost to the second), bb (the same in big blinds), near, network (hands
+// with that seat flag), tests: [{kind, who, with, elsewhere, expected, bb,
+// x (strengthOf), flagged}]}], club: {kind: {k, n}}}: every pair dealt in
+// together, flagged first, then by hands together, at most MAX_STAT_PAIRS;
+// `club`, each kind's rate over every pair and direction. Counts only.
+export const MAX_STAT_PAIRS = 100;
+function pairStatsOf(t, tests, cut, partnerPooled, flowOf) {
+  const rows = new Map();
+  const names = id => t.name.get(id) || '';
+  for (const p of t.pairs.values()) {
+    const ab = flowOf(p.a, p.b), ba = flowOf(p.b, p.a);
+    const row = {ids: [p.a, p.b], names: {[p.a]: names(p.a), [p.b]: names(p.b)}, shared: p.shared, contested: p.contested, flow: Math.round(ab.chips - ba.chips), bb: round2(ab.bb - ba.bb), tests: []};
+    for (const kind of PAIR_KINDS) {
+      const n = t.prox.get(`${kind}|${p.a}|${p.b}`)?.n;
+      if (n) row[kind] = n;
+    }
+    rows.set(p, row);
+  }
+  for (const x of tests) {
+    const row = rows.get(x.pair);
+    if (!row) continue;
+    const s = {kind: x.kind, who: x.who, flagged: !!(x.big && x.chance < cut)};
+    if (x.with) s.with = x.with;
+    if (x.elsewhere) s.elsewhere = x.elsewhere;
+    if (x.expected != null) s.expected = x.expected;
+    if (x.kind === 'chips') { s.bb = x.bb; s.chips = x.chips; }
+    const strength = strengthOf(x);
+    if (strength != null) s.x = strength;
+    row.tests.push(s);
+  }
+  const club = {};
+  for (const kind of ['raises', 'enters', 'folds', 'checks']) {
+    let k = 0, n = 0;
+    for (const d of t.dirs.values()) { k += d[kind].k; n += d[kind].n; }
+    club[kind] = {k, n};
+  }
+  const losses = t.bigLosses;
+  club.dumps = {k: losses.filter(x => x.weak).length, n: losses.length};
+  club.partner = partnerPooled;
+  const flaggedRow = r => r.tests.some(s => s.flagged) || r.near || r.network;
+  const pairs = [...rows.values()].sort((x, y) => flaggedRow(y) - flaggedRow(x) || y.shared - x.shared).slice(0, MAX_STAT_PAIRS);
+  return {pairs, club};
 }
 
 // Playing as if a partner's cards were known (#600): for each player and
@@ -570,6 +638,8 @@ function partnerTests(recs, t, lastRefs) {
     note(m.get(s.partner), s.ref, s.fits);
   }
   const tests = [];
+  // Every spot, for the club's rate (pairStatsOf).
+  const pooled = {k: spots.filter(s => s.fits).length, n: spots.length};
   for (const [who, m] of by) {
     for (const [partner, w] of m) {
       const each = [...m].filter(([q]) => q !== partner).map(([, c]) => c);
@@ -584,7 +654,7 @@ function partnerTests(recs, t, lastRefs) {
       });
     }
   }
-  return tests;
+  return {tests, pooled};
 }
 
 // The report's `flagged` list, most flags first, at most MAX_PAIRS. Each is

@@ -372,7 +372,9 @@ function linesFor(id, ds, st, all) {
 // [{ids: [id], names, decisions, flags}]}, `decisions` scored in all,
 // `players` with MIN_DECISIONS or more. Flags as linesFor, plus a jump
 // ({kind: 'gto-jump', before, after: {top, off, n}}). No cards.
-export function assistReport(recs, {model = MODEL()} = {}) {
+// `stats`: also `stats`, every player's numbers, judged or not, and the
+// club's (playerStats), for ducy's admin.
+export function assistReport(recs, {model = MODEL(), stats = false} = {}) {
   const by = new Map();
   let total = 0;
   for (const rec of recs) {
@@ -382,7 +384,56 @@ export function assistReport(recs, {model = MODEL()} = {}) {
       by.get(d.id).push(d);
     }
   }
-  return {decisions: total, ...assistFlags(by)};
+  const out = {decisions: total, ...assistFlags(by)};
+  return stats ? {...out, stats: playerStats(by)} : out;
+}
+
+// One player's numbers in brief, from statsOf (`st`): {n (decisions), top
+// (the model's top play), exp (how often the model itself would take it,
+// on the same decisions), off (plays the model never makes), mixed,
+// minority, expMinority (the less common play in close spots, and the
+// model's), sized, sizeOk (raises, at its size), clear, hard (median
+// seconds on clear and harder decisions), nClear, nHard, median, spread
+// (seconds: median and half the middle 50%), timed, away, awayKnown (tab
+// hidden while deciding)}. Rates and seconds only: nothing about a hand.
+export function briefStats(st) {
+  const r1 = v => Math.round(v * 10) / 10;
+  const timed = st.times.length;
+  return {
+    n: st.n, top: st.top, exp: r1(st.expTop), off: st.off,
+    mixed: st.mixed, minority: st.minority, expMinority: r1(st.expMinority),
+    sized: st.sized, sizeOk: st.sizeOk,
+    clear: st.clear.length ? secs(median(st.clear)) : null, hard: st.hard.length ? secs(median(st.hard)) : null,
+    nClear: st.clear.length, nHard: st.hard.length,
+    median: timed ? secs(median(st.times)) : null, spread: timed ? secs((quantile(st.times, 0.75) - quantile(st.times, 0.25)) / 2) : null, timed,
+    away: st.away, awayKnown: st.awayKnown,
+  };
+}
+
+// Timing ratio: harder decisions' median time over clear ones' (about 1
+// means it doesn't follow how hard the spot is); null without MIN_TIMED of
+// each.
+export const paceOf = b => (b.nClear >= LIMITS.MIN_TIMED && b.nHard >= LIMITS.MIN_TIMED && b.clear > 0 ? Math.round((100 * b.hard) / b.clear) / 100 : null);
+// Timing evenness: the spread over the median (small is very even); null
+// under 2 × MIN_TIMED timed decisions.
+export const evenOf = b => (b.timed >= 2 * LIMITS.MIN_TIMED && b.median > 0 ? Math.round((100 * b.spread) / b.median) / 100 : null);
+
+// {players: [{id, name, ...briefStats}], club: {players, n, top, exp, off,
+// away, awayKnown, pace, even}}: the club's from its players with
+// MIN_BASELINE decisions or more (everyone, if no one has that many), with
+// pace and evenness the median player's.
+export function playerStats(by) {
+  const players = [];
+  for (const [id, ds] of by) players.push({id, name: ds[ds.length - 1]?.name || '', ...briefStats(statsOf(ds))});
+  players.sort((a, b) => b.n - a.n);
+  const base = players.some(p => p.n >= LIMITS.MIN_BASELINE) ? players.filter(p => p.n >= LIMITS.MIN_BASELINE) : players;
+  const sum = k => base.reduce((s, p) => s + p[k], 0);
+  const mid = xs => { const v = xs.filter(x => x != null); return v.length ? Math.round(100 * median(v)) / 100 : null; };
+  const club = {
+    players: base.length, n: sum('n'), top: sum('top'), exp: Math.round(10 * sum('exp')) / 10, off: sum('off'), away: sum('away'), awayKnown: sum('awayKnown'),
+    pace: mid(base.map(paceOf)), even: mid(base.map(evenOf)),
+  };
+  return {players, club};
 }
 
 // {players, flagged} from each player's decisions (`by`: id → decisions).

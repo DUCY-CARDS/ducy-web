@@ -178,7 +178,9 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   const cy = await person('Cy', checkCall);
   const players = [ann, bob, cy];
 
-  server = await openClub({storage, send, online: [], ClubTable: watchedTables(seeds), timers});
+  // Each fair play run's summary for ducy's admin (#612).
+  const summaries = [];
+  server = await openClub({storage, send, online: [], ClubTable: watchedTables(seeds), timers, onFairPlay: s => summaries.push(JSON.parse(JSON.stringify(s)))});
   let n = 0;
   const ownerSays = async (op, args) => server.message({from: owner.id, data: await signMessage(owner, {club: code, type: 'owner_cmd', op, args, id: ++n})});
   await server.message({from: owner.id, event: 'open'});
@@ -277,6 +279,19 @@ test('at a club on the relay, no player gets a seed or anyone else’s folded ca
   for (const rec of full) for (const s of rec.seats) for (const c of s.cards) assert.ok(!said.includes(`"${c}"`), c);
   await server.flush();
   assert.deepEqual(await storage.get('fairPlay'), report);
+  // The admin's summary of the same run (#612): every player's numbers,
+  // and no card, folded ones included, and no seed.
+  await until('the admin summary', () => summaries.length > 0);
+  const summary = summaries[summaries.length - 1];
+  assert.equal(summary.hands, full.length);
+  assert.deepEqual(summary.players.map(p => p.id).sort(), [...ids].sort());
+  assert.ok(summary.players.every(p => p.hands > 0 && p.p && 'vpn' in p.p));
+  assert.equal(summary.pairs.length, 3, 'each pair of the three');
+  const toAdmin = JSON.stringify(summary);
+  for (const rec of full) for (const s of rec.seats) for (const c of s.cards) assert.ok(!toAdmin.includes(`"${c}"`), c);
+  for (const s of seeds) assert.ok(!toAdmin.includes(s), 'no seed');
+  assert.doesNotMatch(toAdmin, /"(cards|cls|cells|probs|seed|deal|conn|ip|ua)"/);
+  assert.ok(!('pairStats' in report) && !('stats' in report), 'the owner’s report is as it was');
   // A deal that doesn't match the cards fails the check.
   const bad = structuredClone(full[0]);
   [bad.seats[0].cards, bad.seats[1].cards] = [bad.seats[1].cards, bad.seats[0].cards];
