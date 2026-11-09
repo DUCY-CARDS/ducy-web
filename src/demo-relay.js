@@ -54,8 +54,9 @@ const LIMITS = {tables: 5, tourneysPerDay: 5};
 const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, temporary: false, at: Date.now()});
 // Add bots fills a table's empty seats, up to a full nine-handed table.
 const MAX_BOTS = 8;
-// The demo club's daily chip cap (#576): 1,000,000 chips.
-const DEMO_CHIP_CAP = 100_000_000;
+// The demo club's float (#589): 1,000,000 chips, filled again whenever it
+// runs low, since the demo gives its bots chips as the owner would, often.
+const DEMO_FLOAT = 100_000_000;
 // How long a bot (or the person, in a simulated hand) takes to act.
 const PACE_MS = 600, FAST_MS = 250;
 // Deals tried for a chosen outcome before giving up on that hand.
@@ -67,6 +68,21 @@ const GAME_BY_CARDS = {2: 'nlhe', 4: 'plo4', 5: 'plo5', 6: 'plo6'};
 const LEAVE_CHANCE = 0.03, COME_CHANCE = 0.25;
 
 const num = v => Number(v) || 0;
+
+// The demo club's float (#589) made DEMO_FLOAT and filled, when it's
+// smaller or under a tenth full: as a new club's is filled (the refill is
+// in the ledger), with none of the owner's passkey steps a demo can't take.
+async function demoFloat(server) {
+  const f = server.club.float;
+  if (!f || (f.size >= DEMO_FLOAT && num(server.club.money?.float) >= DEMO_FLOAT / 10)) return;
+  Object.assign(f, {size: DEMO_FLOAT, open: false});
+  await server.run('vault_settle', {});
+}
+// The demo gives as the owner would, from its float.
+async function demoGive(server, args) {
+  await demoFloat(server);
+  return server.run('give', args);
+}
 const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 // A scenario's dice, so its bots are the same people every time it starts.
 const seedOf = text => Math.floor(roll(0, 'demo', text) * 2 ** 31);
@@ -147,9 +163,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       },
       onDeleted: () => { room.server = null; },
     });
-    // The demo gives its bots chips as the owner would, often: its daily
-    // chip cap (#576) is set high enough for them.
-    server.club.chipCap ??= DEMO_CHIP_CAP;
+    await demoFloat(server);
     // Bots follow the people at their tables (see syncBots), checked now and then.
     room.timer ||= setInterval(() => inRoom(room, () => syncBots(room)), 5000);
     room.timer.unref?.(); // (in Node, the tests)
@@ -350,7 +364,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     const m = server.club.members[id];
     if (num(m?.balance) >= max) return true;
     const agent = m?.agentOf && room.agents.get(m.agentOf);
-    if (!agent) { await server.run('give', {id, amount: max * 5, note: 'Demo bot'}); return true; }
+    if (!agent) { await demoGive(server, {id, amount: max * 5, note: 'Demo bot'}); return true; }
     try { await agentGives(server, agent, id, max - num(m.balance)); return true; } catch { return false; }
   }
 
@@ -405,7 +419,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     if (agent) {
       await server.run('assign_agent', {id: bot.id, agent: agent.id});
       if (amount > 0) await agentGives(server, agent, bot.id, amount);
-    } else if (amount > 0) await server.run('give', {id: bot.id, amount, note: 'Demo bot'});
+    } else if (amount > 0) await demoGive(server, {id: bot.id, amount, note: 'Demo bot'});
     if (!t) return bot;
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'join'}});
     await botSends(room, bot, {type: 'table', table: t.id, cmd: {type: 'request_chips', amount: max}});
@@ -688,7 +702,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
           if (p.under != null) {
             await server.run('assign_agent', {id: p.ident.id, agent: people[p.under].ident.id});
             if (p.balance) await agentGives(server, people[p.under].ident, p.ident.id, p.balance);
-          } else if (p.balance) await server.run('give', {id: p.ident.id, amount: p.balance});
+          } else if (p.balance) await demoGive(server, {id: p.ident.id, amount: p.balance});
           // An agent's credit limit is their member one (#445).
           const credit = p.agent || p.credit;
           if (credit) await server.run('set_credit', {id: p.ident.id, amount: credit});

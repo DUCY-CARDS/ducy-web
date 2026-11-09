@@ -526,13 +526,21 @@ pub struct Club {
     /// Requests refused from keys that are no service of the club's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_refused: Option<Refusals>,
-    /// The most chips the club gives out in any 24 hours, as the owner set
-    /// it (ducy-web #576); none: the default ([`crate::cap`]).
+    /// The daily chip cap the owner set (ducy-web #576), from before the
+    /// float replaced it: read once, to size the float ([`crate::vault`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chip_cap: Option<u64>,
-    /// A raise of the cap, waiting its day.
+    /// A raise of that cap that was waiting its day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cap_raise: Option<crate::cap::CapRaise>,
+    pub cap_raise: Option<crate::vault::CapRaise>,
+    /// The owner's float (ducy-web #589). None: a club from before it,
+    /// which gets one from its daily cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub float: Option<crate::vault::Float>,
+    /// Members' vault settings and what they've asked to take out
+    /// (ducy-web #579), by id. Never in the owner's view.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub vaults: BTreeMap<String, crate::vault::MemberVault>,
 }
 
 fn one() -> u32 {
@@ -572,6 +580,9 @@ pub struct Received {
     /// A chip request or its cancelling, from a member: the message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chips: Option<Value>,
+    /// A member's own vault (ducy-web #579): `{from, op, amount, out, wait}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault: Option<Value>,
     /// A member checked in: send them their account, with the ledger
     /// entries after this one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -871,6 +882,8 @@ impl Club {
             service_refused: None,
             chip_cap: None,
             cap_raise: None,
+            float: Some(crate::vault::Float::new(crate::vault::DEFAULT_FLOAT)),
+            vaults: BTreeMap::new(),
         })
     }
 
@@ -949,6 +962,7 @@ impl Club {
             "lobby_say",
             "chip_request",
             "cancel_request",
+            "vault",
         ];
         if !known.contains(&kind) {
             return Received::refused(vec![], "unknown message");
@@ -988,6 +1002,17 @@ impl Club {
             "lobby_say" => match text {
                 Some(t) => r.lobby = Some(json!({"from": from, "text": t})),
                 None => return Received::refused(vec![], "bad lobby message"),
+            },
+            // Their vault (#579): put in, take out, cancel taking out, or
+            // the wait.
+            "vault" => match str_of("op") {
+                Some(op @ ("in" | "out" | "cancel" | "wait")) => {
+                    r.vault = Some(json!({
+                        "from": from, "op": op, "amount": body.get("amount"),
+                        "out": body.get("out"), "wait": body.get("wait"),
+                    }));
+                }
+                _ => return Received::refused(vec![], "bad vault command"),
             },
             _ => r.chips = Some(body.clone()),
         }

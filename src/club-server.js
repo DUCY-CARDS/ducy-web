@@ -78,6 +78,10 @@ import {
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
+// The owner's commands that take the passkey their connection was unlocked
+// with, as the relay says (#589): approving a refill takes another device's.
+const DEVICE_OPS = new Set(['refill', 'approve_refill']);
+
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, fullHand = null, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
@@ -166,6 +170,9 @@ export function createClubServer({
     // A copy: signing waits on WebCrypto, and the club may change before the
     // view is sent, which would no longer match its signature.
     const data = JSON.parse(JSON.stringify(club));
+    // Members' vault settings and what they've asked to take out are theirs
+    // alone (#579); the owner sees each vault's chips, on the links.
+    delete data.vaults;
     const hostKey = (await hostKeys()).pub;
     // When each member was last heard from, for Members' Last active (#426).
     const seen = Object.fromEntries(Object.entries(lastSeen() || {}).filter(([mid]) => club.members[mid]));
@@ -178,11 +185,15 @@ export function createClubServer({
   function unwatch(who = club.ownerId) { watching.get(who)?.(); watching.delete(who); }
 
   // The owner's check-in, or one of their actions (run): they get the
-  // result, then the club as it is now.
-  async function handleOwner({type, from, body}) {
+  // result, then the club as it is now. `device`: the passkey the relay
+  // says their connection was unlocked with (#589), '' when there's none.
+  async function handleOwner({type, from, body}, device = '') {
     if (type === 'owner_cmd') {
       let error = '', value = null;
-      const op = String(body.op), args = body.args && typeof body.args === 'object' ? body.args : {};
+      const op = String(body.op);
+      // Which device a refill comes from is the relay's word, never the page's.
+      const {device: _ignored, ...given} = body.args && typeof body.args === 'object' ? body.args : {};
+      const args = DEVICE_OPS.has(op) ? {...given, device: String(device || '')} : given;
       try {
         if (from !== club.ownerId) throw new Error('Only the club’s owner can do that.');
         // Moving someone to a new player ID is the relay's, after a passkey
@@ -626,7 +637,9 @@ export function createClubServer({
     }
     if (r.tourney && r.tourney.from === msg.from) { await handleTourney(r.tourney); return; }
     if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); changed(); return; }
-    if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner); return; }
+    if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner, msg.device); return; }
+    // A member's own vault (#579): only from their signed message.
+    if (r.vault && r.vault.from === msg.from) { await handleVault(r.vault); return; }
     if (r.help && r.help.from === msg.from) {
       try { askHelp(club, msg.from, r.help.text, r.help.table); changed(); } catch (e) { console.warn('club: help request refused:', e.message); }
       sendHelp(msg.from);
@@ -654,6 +667,44 @@ export function createClubServer({
       broadcastLobby();
     }
     if (r.changed || r.replies.length) changed();
+  }
+
+  // A member's vault command (#579): put in, take out, cancel, the wait.
+  // They hear how it went, and get their account.
+  async function handleVault({from, op, amount, out, wait}) {
+    let error = '';
+    try {
+      await hosted('member_vault', {id: from, op, amount, out, wait});
+    } catch (e) {
+      error = e.message || String(e);
+      sendToPlayer(account(club, from, Infinity));
+    }
+    sendToPlayer({to: from, body: {type: 'vault_result', club: club.code, op: String(op), error}});
+  }
+
+  // The float and members' vaults (#579, #589): what's due next is settled
+  // then, on a timer (the room's alarm in an always-on club), and when the
+  // club opens, so whatever came due while it slept is settled on waking.
+  let vaultTimer = null;
+  function armVault(next) {
+    if (vaultTimer != null) promoTimers.clear(vaultTimer);
+    vaultTimer = null;
+    if (next != null) vaultTimer = promoTimers.set(settleVault, Math.min(Math.max(0, next - Date.now()) + 1000, 2 ** 31 - 1));
+    // A plain timer (Node) doesn't keep a process up on its own: the club
+    // settles anyway when it next opens.
+    vaultTimer?.unref?.();
+  }
+  function settleVault() {
+    vaultTimer = null;
+    try {
+      // Saved, and the owner told, only when something was due.
+      const state = () => JSON.stringify([club.float ?? null, club.vaults ?? null, club.money?.ledger?.length ?? 0, club.log?.length ?? 0]);
+      const before = state();
+      const out = command(club, 'vault_settle', {});
+      if (state() !== before) changed();
+      for (const a of out.accounts) sendToPlayer(account(club, a.id, a.since ?? Infinity));
+      armVault(out.nextVault);
+    } catch (e) { console.warn('club: vault:', e); }
   }
 
   // Everything else the host can do: what drives the running tables and
@@ -756,6 +807,7 @@ export function createClubServer({
     }
     if (out.armPromos) armPromos();
     if (out.armSeries) armSeries(out.nextSeries);
+    if ('nextVault' in out) armVault(out.nextVault);
     return out.value ?? undefined;
   }
 
@@ -813,7 +865,7 @@ export function createClubServer({
     // The relay accepted this as the club's host: it says again who's
     // connected, and the tables start (only once: a second tab, refused by
     // the relay, never runs them).
-    async relayOpen() { await keysReady; online.clear(); startTables(); settlePromos(); onChange(); },
+    async relayOpen() { await keysReady; online.clear(); startTables(); settlePromos(); settleVault(); onChange(); },
     message,
     run,
     // The host's link to the relay is up or down: tables stop their clocks

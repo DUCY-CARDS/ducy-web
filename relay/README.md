@@ -79,6 +79,12 @@ minutes, so a removed passkey's connections stop. Messages that move chips
 `grant`: `src/chip-moves.js`) need a sign-in from the last 5 minutes, or
 they're dropped with `{type: 'unlock_again'}`.
 
+Each message that passes goes to the club with `device`: which passkey the
+connection was unlocked with (a hash of its credential ID). The owner's
+float (#589) uses it: a second refill in a day goes ahead early only when
+approved from a connection unlocked with another of the owner's passkeys.
+With one passkey, the refill waits its 24 hours.
+
 **Recovery.** With the PRF extension, the page keeps a copy of the player's
 key on the relay, locked with a key only that passkey can make
 (`copy`); signing in on a new device fetches it, and the page opens it: the

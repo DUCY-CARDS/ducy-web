@@ -59,6 +59,9 @@ export function unb64url(s) {
 const random = n => b64url(crypto.getRandomValues(new Uint8Array(n)));
 const sha256 = async bytes => new Uint8Array(await subtle().digest('SHA-256', bytes));
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// Which passkey a session came from, as clubs see it: a hash of its
+// credential ID, the same every time, that can't be turned back into it.
+export const deviceOf = async credId => b64url(await sha256(enc.encode(`ducy-device|${credId}`))).slice(0, 22);
 
 // The WebAuthn relying party for a page's origin: ducy.cards for it and
 // every subdomain (staging.ducy.cards too), else the host itself (localhost).
@@ -308,9 +311,12 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
       return {ok: true, from, to};
     },
 
-    // For a room: session `token`, if it's live, as {id, at, movedFrom}.
-    // It counts as used now, and club `club` ({code, hostId, name, owner})
-    // is remembered for the player's recovery.
+    // For a room: session `token`, if it's live, as {id, at, movedFrom,
+    // device}. `device` names the passkey it was signed in with (a hash of
+    // its credential ID), so a club can tell the owner's devices apart
+    // (#589: a refill approved from another one). It counts as used now,
+    // and club `club` ({code, hostId, name, owner}) is remembered for the
+    // player's recovery.
     async session(token, club = null) {
       const s = await live(token);
       if (!s) return null;
@@ -328,7 +334,7 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
           await put(s.id, rec);
         }
       }
-      return {id: s.id, at: s.at, movedFrom: rec.movedFrom || null};
+      return {id: s.id, at: s.at, movedFrom: rec.movedFrom || null, device: await deviceOf(s.credId)};
     },
 
     // Answers POST /passkey/<op> with `body`: {status, body}.

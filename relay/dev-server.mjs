@@ -411,7 +411,8 @@ function guest(ws, room, code, id, queue, isClub, held) {
           if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
           if (g.reply) send(ws, g.reply);
           if (!g.pass) return;
-          if (club) return club.message({from: id, data: msg});
+          // With the passkey it was unlocked with (#589: refills).
+          if (club) return club.message({from: id, data: msg, device: ws.unlock?.device || ''});
           const type = msg?.body?.type;
           if (type !== 'create_club' && type !== 'import_club') return;
           try {

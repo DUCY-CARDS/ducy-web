@@ -803,7 +803,8 @@ export class Room {
         if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
         if (g.reply) ws.send(JSON.stringify(g.reply));
         if (!g.pass) return;
-        if (club) await club.message({from: id, data: m});
+        // With the passkey it was unlocked with (#589: refills).
+        if (club) await club.message({from: id, data: m, device: g.u?.device || ''});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
         else if (m?.body?.type === 'import_club') await this.importHere(ws, id, m);
         return;

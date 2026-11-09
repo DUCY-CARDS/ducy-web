@@ -224,6 +224,13 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Members: search, filters and sort all work. A member's page shows their chips history.
 3. History: hands and replays open. Big chip moves stand out in the activity log.
 
+**C5b Float and vaults** (#589, #579; the owner on two real devices, each with its own passkey)
+1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for, and the float is full again, with a notice.
+2. Give some, then refill again the same day: it waits 24 hours, with a notice that has Approve and Cancel. Approve on the same device: refused. Approve on the other device: the float fills, with a notice.
+3. With only one passkey, the waiting refill can only be cancelled or left to go ahead after 24 hours.
+4. Lower the float's size: at once. Raise it: it waits a day, with Cancel.
+5. As a member: put chips in the vault (at once), take some out (the passkey first; it waits the chosen time), and cancel it from another of your devices. The owner sees the vault on your member page, but not the request.
+
 **C6 Backup and restore**
 1. Download the club's backup. Restore it into a fresh browser: the members, balances and tables come back.
 2. `node relay/hostrocket/check.mjs` passes. It needs the relay's backup secrets.

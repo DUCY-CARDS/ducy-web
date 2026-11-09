@@ -80,6 +80,8 @@ pub struct Totals {
     pub reclaimed: i64,
     /// On the club's links.
     pub balances: i64,
+    /// In members' vaults (#579): owed them too, apart from their balances.
+    pub in_vaults: i64,
     /// At tables.
     pub on_tables: i64,
     /// Held by tournaments until they pay out or refund.
@@ -129,6 +131,14 @@ impl ClubState {
             .filter(|l| l.backer == CLUB)
             .map(|l| l.balance)
             .collect();
+        let in_vaults: i64 = self
+            .book
+            .money
+            .links()
+            .iter()
+            .filter(|l| l.backer == CLUB)
+            .map(|l| l.vault as i64)
+            .sum();
         let on_tables: i64 = self
             .book
             .club
@@ -144,11 +154,12 @@ impl ClubState {
             issued: c.issued,
             reclaimed: c.reclaimed,
             balances,
+            in_vaults,
             on_tables,
             in_tourneys,
             owed_to_club: links.iter().map(|b| (-b).max(0)).sum(),
-            owed_to_players: links.iter().map(|b| (*b).max(0)).sum(),
-            conserved: c.issued - c.reclaimed == balances + on_tables + in_tourneys,
+            owed_to_players: links.iter().map(|b| (*b).max(0)).sum::<i64>() + in_vaults,
+            conserved: c.issued - c.reclaimed == balances + in_vaults + on_tables + in_tourneys,
         }
     }
 
@@ -308,11 +319,12 @@ impl ClubState {
     /// What needs the manager, newest first, each with a `key` (unique and
     /// stable while it stands) and what its quick actions need: join, chips,
     /// at_limit, help, prize, stopped, left_owing, move (a big chip move,
-    /// a removal or a cap change, #576), cap_raise. Those `cleared` are left
-    /// out; `seated`: seats taken by table.
+    /// a removal, a refill or a change to the float, #576, #589),
+    /// refill_wait and float_raise. Those `cleared` are left out; `seated`:
+    /// seats taken by table.
     pub fn notices(&self, cleared: &[String], seated: &Map<String, Value>, now: u64) -> Vec<Value> {
         let members = &self.book.club.members;
-        // Big chip moves, removals and the chip cap (#576).
+        // Big chip moves, removals, refills and the float (#576, #589).
         let mut out = self.book.move_notices(now);
         for m in members.values() {
             if m.status == Status::Pending {
@@ -447,7 +459,7 @@ impl ClubState {
                     .unwrap_or_default();
                 to(&self.notices(&cleared, &obj("seated"), now))
             }
-            "chipCap" => self.book.cap_view(now),
+            "float" => self.book.float_view(now),
             _ => return refuse(format!("no overview op {op}")),
         })
     }

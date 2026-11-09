@@ -448,6 +448,69 @@ test.describe('a club member', () => {
     await fitsTheScreen(owner);
     await owner.screenshot({path: info.outputPath('owner-hand-flags.png'), fullPage: true});
   });
+
+  test('the owner gives from a float and refills it; Ava keeps chips in her vault (#589, #579)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, ava, code} = await clubWithAva(browser, watch);
+    // A new club's float, on Rules: full.
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 2,000');
+    // Giving Ava 1,500 from it.
+    await owner.evaluate(() => { location.hash = 'clubs/members'; });
+    await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
+    await owner.locator('[data-cl="give"]').click();
+    await expect(owner.locator('.cl-float-left')).toHaveText('Float 2,000');
+    await owner.locator('#cl-amt').fill('1500');
+    await owner.locator('form[data-chipform] button[type=submit]').click();
+    await expect(ava.getByText('Balance 1,500')).toBeVisible();
+    // The first refill of the day goes ahead; the next one would wait.
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await expect(owner.locator('.cl-float-now')).toHaveText('500 of 2,000');
+    await owner.locator('[data-cl="refill"]').click();
+    await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 2,000');
+    await owner.evaluate(() => { location.hash = 'clubs/members'; });
+    await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
+    await owner.locator('[data-cl="give"]').click();
+    await owner.locator('#cl-amt').fill('100');
+    await owner.locator('form[data-chipform] button[type=submit]').click();
+    await expect(ava.getByText('Balance 1,600')).toBeVisible();
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await owner.getByRole('button', {name: 'Refill in 24 h'}).click();
+    await expect(owner.locator('.cl-float-note').getByText(/Refill waiting until/)).toBeVisible();
+    // This device can't approve it: it takes another device's passkey.
+    await owner.locator('.cl-float-note [data-cl="refill-approve"]').click();
+    await expect(owner.getByText(/another of your devices/)).toBeVisible();
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('float.png'), fullPage: true});
+    // The owner hears of it, with Cancel.
+    await owner.evaluate(() => { location.hash = 'clubs/overview'; });
+    await expect(owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'}).first()).toBeVisible();
+    await owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'}).first().locator('[data-cl="refill-cancel"]').click();
+    await expect(owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'})).toHaveCount(0);
+
+    // Ava puts 1,000 in her vault, and asks to take 400 out: it waits.
+    await ava.locator(`[data-cl="mtab"][data-tab="chips"]`).click();
+    const vault = ava.locator('.cl-vault');
+    await vault.locator('form[data-vaultform="in"] input').fill('1000');
+    await vault.locator('form[data-vaultform="in"] button').click();
+    await expect(vault.locator('.cl-vault-chips')).toHaveText('1,000');
+    await expect(ava.getByText('Balance 600')).toBeVisible();
+    await vault.locator('form[data-vaultform="out"] input').fill('400');
+    await vault.locator('form[data-vaultform="out"] button').click();
+    await expect(vault.locator('.cl-vault-out')).toHaveCount(1);
+    await expect(vault.locator('.cl-vault-out')).toContainText('400');
+    await vault.locator('[data-cl="vault-wait"][data-wait="604800000"]').click();
+    await expect(vault.locator('[data-cl="vault-wait"][data-wait="604800000"]')).toHaveAttribute('aria-pressed', 'true');
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('vault.png'), fullPage: true});
+    await vault.locator('[data-cl="vault-cancel"]').click();
+    await expect(vault.locator('.cl-vault-out')).toHaveCount(0);
+    // The owner sees her vault, not what she asked to take out.
+    await owner.evaluate(() => { location.hash = 'clubs/members'; });
+    await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
+    await expect(owner.locator('.mg-stat', {hasText: 'Vault'})).toContainText('1,000');
+    expect(code).toBeTruthy();
+  });
 });
 
 // Two hands in a member's history, made in the page as a club table makes
