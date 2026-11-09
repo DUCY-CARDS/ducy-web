@@ -6,7 +6,8 @@
 // ADMIN_SHOTS=<dir> saves a screenshot of each view, light and dark.
 import { test, expect } from '@playwright/test';
 
-const RELAY = 'http://localhost:9';
+// Nothing listens there: page.route answers. (Not a port browsers block.)
+const RELAY = 'http://localhost:59999';
 const a = (n, top, exp, off, extra = {}) => ({n, top, exp, off, mixed: 40, minority: 10, expMinority: 11, sized: 30, sizeOk: 20, clear: 2.1, hard: 4.8, nClear: 60, nHard: 50, median: 3.2, spread: 1.4, timed: 110, away: 4, awayKnown: 110, ...extra});
 const p = (id, name, hands, as, pp = {}, flags = []) => ({id, name, hands, flags, a: as, p: {vpn: 0, relay: 0, fake: 0, hidden: 0, ...pp}});
 const ref = (...hands) => hands.map(hand => ({table: 'Main', hand}));
@@ -71,11 +72,14 @@ const HISTORY = {id: 'id-ava', weeks: [
 // The relay's answers: each request must be a signed admin envelope for its path.
 async function standIn(page, seen) {
   await page.route(`${RELAY}/**`, async route => {
+    const cors = {'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST'};
+    // A browser may ask first (CORS).
+    if (route.request().method() === 'OPTIONS') return route.fulfill({status: 204, headers: cors});
     const path = new URL(route.request().url()).pathname;
     const body = route.request().postDataJSON();
     seen.push({path, signed: !!(body?.sig && body?.from && body?.body?.type === 'admin' && body.body.path === path)});
     const out = path === '/admin/fair-play' ? FAIR : path === '/admin/fair-play/history' ? {...HISTORY, id: body.body.data.id} : {error: 'not here'};
-    await route.fulfill({status: out.error ? 404 : 200, contentType: 'application/json', headers: {'access-control-allow-origin': '*'}, body: JSON.stringify(out)});
+    await route.fulfill({status: out.error ? 404 : 200, contentType: 'application/json', headers: cors, body: JSON.stringify(out)});
   });
 }
 
