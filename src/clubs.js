@@ -8,11 +8,11 @@
 //   'play'   Bots (Train), and the table you're at: nothing from here
 //   'join'   your join requests and how they're going
 //   'host'   Start a game (Play): nothing from here
-//   'clubs'  Private clubs: the list of your clubs (#225; joining one is
-//            Play's Enter a code, and creating one is on the club manager,
-//            #393); then a club's page (the address says which, see
-//            shownClub): the club you run, agent tools, or the
-//            one you belong to (balance, chips, tables to sit at)
+//   'clubs'  a club's page (the address says which, see shownClub): the
+//            club you run, agent tools, or the one you belong to (balance,
+//            chips, tables to sit at). Your clubs are listed on the front
+//            page (yourClubs, #611), joining one is its Enter a code (#393),
+//            and #clubs naming none of yours goes there.
 // The connections start with the page (startClubs), whichever tab is open,
 // so requests arrive live (#145); onClubsChange tells the tab bar.
 //
@@ -659,7 +659,7 @@ function noticeHelp() {
   for (const x of lists.flat()) {
     if (helpNoticed.has(x.id)) continue;
     helpNoticed.add(x.id);
-    notice(`${x.name} asks for help: “${x.text}”`, 'clubs');
+    notice(`${x.name} asks for help: “${x.text}”`, 'clubs/own');
   }
 }
 // The History tab's activity log, filtered to one person ('' for everyone),
@@ -1971,7 +1971,7 @@ function toolsHtml() {
     const who = myName() || 'You';
     h += `<details class="cl-menu mg-acct" data-keep="mg-acct"><summary class="mg-avatar" aria-label="Account" title="${esc(who)}">${esc(who.slice(0, 1).toUpperCase())}</summary><div class="cl-menu-items">`;
     h += `<span class="cl-menu-item mg-acct-id"><b>${esc(who)}</b> <code>${esc(showId(me.id))}</code></span>`;
-    h += `<a class="cl-menu-item" href="${playerHref('clubs')}">Player app</a><a class="cl-menu-item" href="#clubs">All clubs</a></div></details>`;
+    h += `<a class="cl-menu-item" href="${playerHref('')}">Player app</a><a class="cl-menu-item" href="#clubs">All clubs</a></div></details>`;
   }
   return h;
 }
@@ -2125,15 +2125,27 @@ function viewHtml() {
     const h = requestsHtml();
     return h || msg ? msg + h : '';
   }
-  // Private clubs (V3, #225): the club the address names (shownClub), or
-  // the list of your clubs. Setting up a club is on the club manager only.
+  // A club's page (V3, #225): the club the address names (shownClub). There's
+  // no list of clubs (#611): they're on the front page, so an address that
+  // names none of yours goes there.
   const own = club || isRemote();
   const at = shownClub();
   if (at === 'own' && own) return msg + runHereHtml() + footHtml();
   const mem = at && memberships.find(m => m.code === at && m.status === 'member');
   // An agent's players are a tab of their own club page here (#428).
   if (mem) return msg + memberHomeHtml(mem, '') + footHtml();
-  return msg + clubListHtml() + footHtml();
+  // A club you asked to join, still on its way in: its page once you're in.
+  const asked = at && at !== 'own' && memberships.find(m => m.code === at);
+  if (asked) return msg + `<p class="pl-meta">${esc(STATUS_TEXT[asked.status] || asked.status)}</p>` + footHtml();
+  // The club you run, still loading.
+  if (at === 'own' && (load(CLUB_KEY, null) || load('ducyClubRemote', null))) return msg + '<p class="pl-meta">Loading…</p>';
+  toFrontPage();
+  return '';
+}
+
+// To the front page, keeping the query (?relay=), once this redraw is done.
+function toFrontPage() {
+  queueMicrotask(() => { if (location.hash.startsWith('#clubs')) location.replace(`${location.pathname}${location.search}#`); });
 }
 
 // The player app's word on the club you run: running it is on the club
@@ -2147,7 +2159,7 @@ function runHereHtml() {
 }
 
 // The club manager (manage.html): the club you run, a club you're an agent
-// of, or the list of both with starting a club.
+// of, or the list of both.
 function managerHtml() {
   // Clubs need the passkey first (#575).
   const gate = passGateHtml();
@@ -2172,13 +2184,16 @@ function managerHtml() {
   }
   for (const m of helped) h += card({href: clubHash(m.code), name: m.name || m.code, who: 'Agent', waiting: helperWaiting(m)});
   h += '</div>';
-  if (!own) h += `<div class="cl-club-acts">${createHtml()}${demo ? '' : demoCardHtml()}</div>`;
+  // Starting a club (#611) takes ducy's permission, and nothing links to
+  // it: the person given it opens #clubs/new. A demo club starts here.
+  const starting = !own && (demo || location.hash.split('?')[0] === '#clubs/new');
+  if (starting || (!own && !demo)) h += `<div class="cl-club-acts">${starting ? createHtml() : ''}${demo ? '' : demoCardHtml()}</div>`;
   return h + footHtml();
 }
 
 // Which club the address shows (#225): 'own' for the one you run (#clubs/own,
 // or one of the manager's pages, #clubs/members, club-nav.js), a club code
-// for one you're in (#clubs/c/CODE), or '' for the list.
+// for one you're in (#clubs/c/CODE), or '' for none.
 function shownClub() {
   const p = location.hash.slice(1).split('/');
   if (p[0] !== 'clubs' || !p[1]) return '';
@@ -2188,8 +2203,7 @@ function shownClub() {
 // The address of club `code`'s page.
 const clubHash = code => (code && code === myClubCode() ? 'clubs/own' : code ? `clubs/c/${encodeURIComponent(code)}` : 'clubs');
 
-// The name of the club showing, for the breadcrumb (play-section.js), or ''
-// on the list.
+// The name of the club showing, for the breadcrumb (play-section.js), or ''.
 export function clubCrumb() {
   if (!open || view !== 'clubs') return '';
   const at = shownClub();
@@ -2198,33 +2212,21 @@ export function clubCrumb() {
   return m ? m.name || m.code : '';
 }
 
-// The list (#225): a card for each club (the ones you run or help run in
-// cream), each opening its page; then where joining one is (#393).
-function clubListHtml() {
-  const own = club || isRemote();
-  const card = c => {
-    let h = `<a class="cl-club${c.cream ? ' cream' : ''}" href="${c.url || `#${c.href}`}"><span class="cl-club-text"><span class="cl-club-name">${esc(c.name)}</span><span class="cl-club-who">${esc(c.who)}</span></span>`;
-    if (c.tables) h += `<span class="cl-pill">${c.tables} table${c.tables === 1 ? '' : 's'} open</span>`;
-    else if (c.quiet) h += '<span class="cl-club-quiet">Quiet</span>';
-    if (c.waiting) h += `<span class="cl-pill hot">${c.waiting} need${c.waiting === 1 ? 's' : ''} you</span>`;
-    return h + `<span class="cl-club-go">${c.chips != null ? `Your chips ${chips(c.chips)}` : c.go || 'Open'} →</span></a>`;
-  };
-  let h = '<div class="pl-head"><h1>Private clubs</h1></div><div class="cl-clubs">';
-  if (own) {
-    const members = club ? membersByStatus(club, 'member').length : 0;
-    // Running it is on the club manager.
-    h += card({url: managerHref('clubs/own'), cream: true, name: club?.name || owner.record.name, who: `You run this club${club ? ` · ${members} member${members === 1 ? '' : 's'}` : ''}`, tables: club ? openTables(club).length : 0, waiting: hostWaiting(), quiet: !!club, go: 'Club manager'});
+/**
+ * Your clubs, for the front page (home.js, #611): [{name, href, who}], the
+ * one you run (on the club manager), the ones you're in, and the ones you
+ * asked to join. Read from storage until the clubs have started.
+ */
+export function yourClubs() {
+  const list = [];
+  const ownClub = started ? club || owner?.record : load(CLUB_KEY, null) || load('ducyClubRemote', null);
+  if (ownClub?.code) list.push({name: ownClub.name || ownClub.code, href: managerHref('clubs/own'), who: 'You run it'});
+  for (const m of started ? memberships : load(MEMBERSHIPS_KEY, [])) {
+    if (!m?.code || m.code === ownClub?.code) continue;
+    if (m.status === 'member') list.push({name: m.name || m.code, href: `#${clubHash(m.code)}`, who: helps(m) ? 'Agent' : 'Member'});
+    else if (m.status === 'new' || m.status === 'pending') list.push({name: m.name || m.code, href: '#join', who: 'Asked to join'});
   }
-  for (const m of memberships) {
-    if (m.status === 'member') {
-      const who = helps(m) ? 'Agent' : 'Member';
-      h += card({href: clubHash(m.code), cream: helps(m), name: m.name || m.code, who, tables: (m.tables || []).length, waiting: helperWaiting(m), chips: m.balance || 0, quiet: true});
-    } else h += card({href: 'join', name: m.name || m.code, who: STATUS_TEXT[m.status] || m.status, go: 'Your request'});
-  }
-  h += '</div>';
-  // Joining (#393, #564): a code or an invite link, here as on the front page.
-  h += '<form class="cl-ask" data-clcode><input class="pl-text" name="code" aria-label="Club code or invite link" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button class="btn-small primary" type="submit">Join</button></form>';
-  return h + (codeNote ? `<p class="pl-meta" role="status">${esc(codeNote)}</p>` : '');
+  return list;
 }
 
 // What's waiting for you at the club you run: join and chip requests, and
@@ -2258,7 +2260,7 @@ function requestsHtml() {
     h += `<li><span class="cl-name">${esc(m.name || m.code)}</span><span class="cl-status cl-${esc(m.status)}">${inNow ? 'You’re in' : m.nameTaken && m.status === 'new' ? 'Name taken' : esc(STATUS_TEXT[m.status] || m.status)}</span>`;
     if (!inNow) h += `<span class="pl-meta cl-conn">${live}</span>`;
     h += '<span class="cl-acts">';
-    if (inNow) h += '<a class="btn-small primary" href="#clubs">Open the club</a>';
+    if (inNow) h += `<a class="btn-small primary" href="#${clubHash(m.code)}">Open the club</a>`;
     else {
       if (!n) h += `<button class="btn-small" data-cl="retry" data-code="${esc(m.code)}">Try again</button>`;
       h += `<button class="btn-small" data-cl="forget" data-code="${esc(m.code)}">Forget</button>`;
@@ -2268,7 +2270,7 @@ function requestsHtml() {
     if (m.status === 'pending' || m.status === 'new') {
       h += `<span class="pl-desc cl-next">Next: the manager lets you in, then gives you chips to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
     } else if (inNow) {
-      h += '<span class="pl-desc cl-next">Next: ask the manager for chips on <a href="#clubs">Clubs</a>, then sit at one of the club’s tables.</span>';
+      h += `<span class="pl-desc cl-next">Next: ask the manager for chips on <a href="#${clubHash(m.code)}">the club’s page</a>, then sit at one of its tables.</span>`;
     } else if (m.status === 'declined') {
       h += '<span class="pl-desc cl-next">If that’s a mistake, ask the manager: they can let you in from a new invite link.</span>';
     }
@@ -2311,7 +2313,8 @@ function notice(text, go = 'play') {
 
 // Clubs' Create a club card (#152, #209), when you don't run one: just a
 // name. The club is always on; there's nothing else to choose here.
-// Since V3 (#225), a card beside Join a club on the list.
+// On the club manager at #clubs/new only, linked from nowhere (#611), and
+// in a demo.
 function createHtml() {
   if (club || isRemote()) return '';
   let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span>';
@@ -4194,13 +4197,8 @@ export function startClubs() {
   })());
 }
 
-// Private clubs' code box (#564): `enterCode(text)` is the front page's, and
-// may resolve to a word to show under it.
-let enterCode = null, codeNote = '';
-
 // Draws tab `v` of the Play section (see the views above) into `el`.
-export async function openClubs(el, v = 'clubs', onCode = null) {
-  if (onCode) enterCode = onCode;
+export async function openClubs(el, v = 'clubs') {
   if (!root) {
     // The club rules the page draws from are ducy-play's (#455).
     await loadEngine().catch(e => { note = `The club couldn’t start: ${e.message}`; });
@@ -4211,16 +4209,6 @@ export async function openClubs(el, v = 'clubs', onCode = null) {
     }
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKey);
-    root.addEventListener('submit', async e => {
-      const f = e.target.closest('form[data-clcode]');
-      if (!f || !enterCode) return;
-      e.preventDefault();
-      const btn = f.querySelector('button[type=submit]');
-      if (btn.disabled) return;
-      btn.disabled = true;
-      try { codeNote = (await enterCode(String(f.elements.code.value || '').trim())) || ''; } finally { btn.disabled = false; }
-      render();
-    });
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
     // Restore a club from its backup file (#191).

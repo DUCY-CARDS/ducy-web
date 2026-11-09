@@ -4,10 +4,10 @@
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
 //            Heads-up training
 //   #challenge  Heads-up training: the GTO bot
-//   #lobby   Play: friends, private clubs, the Regulars and the heads-up
+//   #lobby   Play: friends, your clubs, the Regulars and the heads-up
 //            challenge
 // The pages behind them (#equity, #trainer, #ladder, #practice, #host,
-// #join, #clubs) are the ones there were before V3; each shows where it is
+// #join, a club's #clubs/…) are the ones there were before V3; each shows where it is
 // with a breadcrumb back to Study or Play (`crumbFor`). Pure: the page
 // strings are built from what `hubData` reads, so they can be tested.
 
@@ -34,7 +34,7 @@ const CRUMBS = {
   practice: ['lobby', 'Play the Regulars'],
   host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
-  clubs: ['lobby', 'Private clubs'],
+  clubs: ['lobby', 'Clubs'],
 };
 const PARENTS = {study: ['home', 'Study'], challenge: ['study', 'Heads-up training'], lobby: ['home', 'Play']};
 
@@ -212,6 +212,22 @@ function challengePage(d) {
   return h + '</div></div>';
 }
 
+// Your clubs (#611), where they live: there's no page of them. One opens
+// its page; several are listed; with none there's no tile (the code box
+// above joins one). `clubs`: [{name, href, who}] (clubs.js yourClubs).
+function clubsTile(clubs) {
+  if (!clubs.length) return '';
+  if (clubs.length === 1) {
+    const [c] = clubs;
+    let h = `<a class="v3-tile v3-tile-cream" href="${esc(c.href)}"><span class="v3-tile-text"><span class="v3-tile-name">${esc(c.name)}</span><b>${esc(c.who)}</b></span><span class="v3-members" aria-hidden="true">`;
+    for (const id of ['player-06', 'player-07', 'player-08', 'player-09', 'player-10']) h += `<img src="${avatarUrl(id)}" alt="">`;
+    return h + '</span></a>';
+  }
+  let h = '<div class="v3-tile v3-tile-cream"><span class="v3-tile-name">Clubs</span><ul class="v3-clubs">';
+  for (const c of clubs) h += `<li><a href="${esc(c.href)}"><span class="v3-club-name">${esc(c.name)}</span><span class="v3-club-who">${esc(c.who)}</span><span aria-hidden="true">→</span></a></li>`;
+  return h + '</ul></div>';
+}
+
 // What Play offers: friends, clubs and the bots.
 function playTiles(d) {
   let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
@@ -220,9 +236,7 @@ function playTiles(d) {
   h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form>';
   h += '<p class="v3-join-note" data-v3note role="status" hidden></p></div>';
   h += '<div class="v3-tiles">';
-  h += '<a class="v3-tile v3-tile-cream" href="#clubs"><span class="v3-tile-name">Private clubs</span><span class="v3-members" aria-hidden="true">';
-  for (const id of ['player-06', 'player-07', 'player-08', 'player-09', 'player-10']) h += `<img src="${avatarUrl(id)}" alt="">`;
-  h += '</span></a>';
+  h += clubsTile(d.clubs || []);
   h += `<a class="v3-tile v3-tile-red" href="#practice"><span class="v3-tile-name">Play the Regulars</span>${miniTable(['doug_poker', 'milk_king', 'phil_bigmouth', 'nik_airbag', 'jen_silly'])}</a>`;
   h += '</div>';
   // The beta (#564): friends, clubs and the Regulars, nothing more.
@@ -273,10 +287,11 @@ export const hubOpen = () => !!showing;
 /**
  * Shows hub `name` in `el`; `onJoin(code)` handles Play's code box, and may
  * resolve to a word to show under it (#393: a club's code that needs its
- * invite link, say).
+ * invite link, say). `clubs`: your clubs (clubs.js yourClubs).
  */
-export function openHub(el, name, onJoin) {
+export function openHub(el, name, onJoin, clubs = []) {
   showing = name;
+  shownClubs = clubs;
   if (!root) {
     root = el;
     root.addEventListener('submit', async e => {
@@ -293,9 +308,22 @@ export function openHub(el, name, onJoin) {
       if (note) { note.textContent = msg || ''; note.hidden = !msg; }
     });
   }
-  root.innerHTML = hubHtml(name, hubData());
+  root.innerHTML = hubHtml(name, {...hubData(), clubs});
   root.hidden = false;
   window.scrollTo(0, 0);
+}
+
+// Your clubs changed (a request let in, a club's name arriving): the hub
+// showing redraws if they read differently, keeping what's typed.
+let shownClubs = [];
+export function refreshHubClubs(clubs) {
+  if (!showing || !root || JSON.stringify(clubs) === JSON.stringify(shownClubs)) return;
+  shownClubs = clubs;
+  const typed = root.querySelector('#v3-code');
+  const value = typed?.value || '', focused = typed && document.activeElement === typed;
+  root.innerHTML = hubHtml(showing, {...hubData(), clubs});
+  const box = root.querySelector('#v3-code');
+  if (box) { box.value = value; if (focused) box.focus({preventScroll: true}); }
 }
 
 export function closeHub() {
