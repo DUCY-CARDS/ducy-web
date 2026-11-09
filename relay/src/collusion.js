@@ -22,6 +22,9 @@
 //   contest    pots both played (each put chips in by choice), against what
 //              their own rates of playing hands would give
 //   chips      chips that went from one to the other over the window
+//   partner    Ava's turn and river calls and folds where Bo's cards change
+//              what's right: how often she chose what knowing them gives,
+//              against with everyone else's cards (partner-cards.js, #600)
 // and the seat and location flags the records carry (#581: proximityFlags
 // for pairs, soloFlags for one player).
 // The records also hold signals nothing here reads yet (when each action
@@ -36,6 +39,7 @@
 // run raises a false alarm about 1% of the time at most.
 
 import { fullHands } from './hand-records.js';
+import { partnerSpots } from './partner-cards.js';
 import { handWords } from '../../wasm/ducy_wasm.js';
 
 // ---- the thresholds, all here ----
@@ -80,6 +84,26 @@ export const LIMITS = {
   FLOW_BB: 1000,
   FLOW_SHARE: 0.6,
   FLOW_MIN_HANDS: 10,
+  // Playing as if a partner's cards were known (#600, partner-cards.js):
+  // the spots that count need this many per player and partner, and as many
+  // with everyone else. Slow to fire, on purpose.
+  MIN_PARTNER_SPOTS: 30,
+  // A spot counts when the partner's cards move the player's chance of
+  // winning across the pot odds, by at least this much (a tie's worth of
+  // change is noise).
+  PARTNER_MIN_MOVE: 0.01,
+  // The model of a bettor's hand: the strongest share counts fully, the
+  // rest at this weight (a bet mostly means strength).
+  PARTNER_BET_TOP: 0.35,
+  PARTNER_BLUFF_WEIGHT: 0.15,
+  // River cards tried for a turn spot.
+  PARTNER_TURN_SAMPLES: 4,
+  // How much better the partner's cards must fit than everyone else's, in
+  // odds. Lower than ODDS_RATIO: who the partner is has nothing to do with
+  // the cards dealt, so other players' cards are a clean control, and a cheat
+  // gains only in close spots, which waters the difference down. In made-up
+  // weeks it never flagged an honest player (see test/partner-cards.test.mjs).
+  PARTNER_ODDS_RATIO: 2.5,
   // Hands listed per flag, the newest; and pairs in the report.
   MAX_HANDS_LISTED: 10,
   MAX_PAIRS: 20,
@@ -486,6 +510,8 @@ export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
     }
   }
 
+  tests.push(...partnerTests(recs, t, lastRefs));
+
   // Bonferroni: each comparison's share of the run's false-alarm chance.
   const cut = L.FAMILY_ALPHA / Math.max(1, tests.length);
   const flagged = new Map();
@@ -514,6 +540,44 @@ export function collusionReport(recs, {now = Date.now(), since = 0} = {}) {
   }));
   // And one player's (#581): a VPN, a location that may be faked.
   return addFlagged({at: now, since, hands: recs.length, players: t.hands.size, compared: tests.length, flagged: sortFlagged(entries)}, soloFlags(t));
+}
+
+// Playing as if a partner's cards were known (#600): for each player and
+// each other player dealt in, the spots where that one's cards change
+// what's right (partner-cards.js), and how often the player chose what
+// knowing them gives; against the same with everyone else's cards (the
+// one who fits best left out, with three or more), so only a partner whose
+// cards the player fits far better than anyone's stands out.
+export const partnerOpts = () => ({
+  betTop: LIMITS.PARTNER_BET_TOP, bluffWeight: LIMITS.PARTNER_BLUFF_WEIGHT, turnSamples: LIMITS.PARTNER_TURN_SAMPLES,
+  minMove: LIMITS.PARTNER_MIN_MOVE,
+});
+function partnerTests(recs, t, lastRefs) {
+  const L = LIMITS;
+  const spots = partnerSpots(recs, partnerOpts());
+  const by = new Map();
+  for (const s of spots) {
+    if (!by.has(s.who)) by.set(s.who, new Map());
+    const m = by.get(s.who);
+    if (!m.has(s.partner)) m.set(s.partner, counter());
+    note(m.get(s.partner), s.ref, s.fits);
+  }
+  const tests = [];
+  for (const [who, m] of by) {
+    for (const [partner, w] of m) {
+      const each = [...m].filter(([q]) => q !== partner).map(([, c]) => c);
+      if (each.length >= 3) each.sort((p, q) => odds(p.k, p.n) - odds(q.k, q.n)).pop();
+      const e = each.reduce((x, c) => ({n: x.n + c.n, k: x.k + c.k}), {n: 0, k: 0});
+      if (w.n < L.MIN_PARTNER_SPOTS || e.n < L.MIN_PARTNER_SPOTS) continue;
+      tests.push({
+        pair: t.pair(who, partner), kind: 'partner', who, other: partner, with: {k: w.k, n: w.n}, elsewhere: e,
+        big: odds(w.k, w.n) / odds(e.k, e.n) >= L.PARTNER_ODDS_RATIO,
+        chance: binomTail(w.k, w.n, (e.k + 0.5) / (e.n + 1), true),
+        hands: lastRefs(w.hits),
+      });
+    }
+  }
+  return tests;
 }
 
 // The report's `flagged` list, most flags first, at most MAX_PAIRS. Each is
