@@ -29,7 +29,14 @@
 //
 // The super admin's API (#265, #401): POST /admin/…, each request signed by
 // a key listed in admins.json (bundled at build time). admin.js has the
-// routes and the checks.
+// routes and the checks. Pages on ALLOWED_ORIGINS or ADMIN_ORIGINS (the
+// admin site, #601) may call it.
+//
+// Usage counts (#601, stats.js): rooms tell the registry when a friends
+// game starts, gains a player or finishes a hand (the host's tab sends
+// {stat: 'hand'}, never forwarded), and when a club gets a player or
+// finishes a hand. The registry keeps totals per day; the admin site reads
+// them with /admin/stats.
 //
 // What a code is (#393), for Play's Enter a code, public:
 //   GET /code/<code>   {kind: 'club', ask, name, hostId} for an always-on
@@ -58,6 +65,8 @@ import { clubCodes, resetRefusal } from './reset.js';
 import { passkeys } from './passkeys.js';
 import { mustProve, newChallenge, proves } from './prove.js';
 import { check as unlockCheck, unlockedNow } from './unlock.js';
+import { LIVE_STALE_MS, liveGames, stats } from './stats.js';
+import { cfAnalytics } from './cf-analytics.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
 import wasmModule from '../../wasm/ducy_wasm_bg.wasm';
 
@@ -115,6 +124,12 @@ function connOf(req) {
 
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
+// A host back within this long carries on the same friends game (#601),
+// after a reload or a dropped connection.
+const GAME_GAP_MS = 10 * 60_000;
+// A friends game's hands are counted at most this often (the host's tab
+// says when one finished).
+const HAND_STAT_MS = 3000;
 // How often the registry looks for unused temporary clubs to delete (#395).
 const CLEANUP_EVERY_MS = 6 * 3600e3;
 
@@ -124,6 +139,23 @@ const roomOf = (env, code) => env.ROOMS.get(env.ROOMS.idFromName(code));
 
 // The admins (#401): admins.json at the repo root, bundled when the relay is built.
 const ADMINS = adminsFrom(adminList);
+// Their player IDs, left out of the usage counts (#601).
+const ADMIN_IDS = new Set(ADMINS.keys());
+const originsOf = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+
+// What's live now (#601): each club's players and running tables (its
+// room's /admin/now), and the friends games the registry was told of.
+async function liveNow(env, reg) {
+  const [list, {games}] = await Promise.all([reg('/list'), reg('/live-list')]);
+  const clubs = await Promise.all(list.clubs.map(c => roomOf(env, c.code).fetch(`https://room/admin/now/${encodeURIComponent(c.code)}`).then(r => r.json()).catch(() => ({online: 0, tables: 0}))));
+  const busy = clubs.filter(c => c.online > 0);
+  return {
+    rooms: busy.length + games.length,
+    players: busy.reduce((s, c) => s + c.online, 0) + games.reduce((s, g) => s + g.players, 0),
+    games: games.length,
+    clubTables: clubs.reduce((s, c) => s + (c.tables || 0), 0),
+  };
+}
 
 // The super admin's API (#265, #401): admin.js says what it answers.
 async function admin(req, env, url, cors) {
@@ -147,6 +179,11 @@ async function admin(req, env, url, cors) {
     log: entry => reg('/admin-log', {entry}),
     logList: () => reg('/admin-log-list').then(r => r.log),
     errors: () => reg('/errors').then(r => r.errors),
+    stats: async () => {
+      const [{days}, now] = await Promise.all([reg('/stats', {days: 30}), liveNow(env, reg)]);
+      return {days, now};
+    },
+    cloudflare: () => cfAnalytics(env),
     list: () => reg('/list'),
     grant: (id, body) => reg('/grant', {...body, id}),
     revoke: id => reg('/revoke', {id}),
@@ -178,11 +215,12 @@ async function route(req, env) {
   // The admin API checks signatures here, before any room has started.
   loadEngine();
   const url = new URL(req.url);
-  const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const allowed = originsOf(env.ALLOWED_ORIGINS);
   if (url.pathname.startsWith('/admin/')) {
     const origin = req.headers.get('Origin');
-    // The admin page on the site, or a script (no Origin), signing as an admin.
-    const cors = origin && (!allowed.length || allowed.includes(origin))
+    // The admin site (ADMIN_ORIGINS, #601) or a page on the site, or a
+    // script (no Origin), signing as an admin.
+    const cors = origin && (!allowed.length || allowed.includes(origin) || originsOf(env.ADMIN_ORIGINS).includes(origin))
       ? {'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST', vary: 'Origin'}
       : {};
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
@@ -271,6 +309,8 @@ export class Registry {
     this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(env));
     // Passkeys (#575): pages on ALLOWED_ORIGINS only.
     this.pk = passkeys({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {origins: (env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)});
+    // Usage counts (#601).
+    this.stats = stats({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {admins: ADMIN_IDS});
   }
 
   async alarm() {
@@ -294,6 +334,7 @@ export class Registry {
       await this.state.storage.deleteAll();
       const s = this.state.storage;
       this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(this.env));
+      this.stats = stats({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {admins: ADMIN_IDS});
       return Response.json({ok: true});
     }
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
@@ -330,6 +371,18 @@ export class Registry {
       else if (path === '/admin-log-list') return Response.json({log: await this.reg.adminLogList()});
       else if (path === '/report') await this.reg.report(body);
       else if (path === '/errors') return Response.json({errors: await this.reg.errors()});
+      // Usage counts (#601), from rooms; read by the admin API.
+      else if (path === '/stat') await this.stats.note(body);
+      else if (path === '/stats') return Response.json({days: await this.stats.days(Math.min(90, Math.max(1, Number(body.days) || 30)))});
+      else if (path === '/live') {
+        const all = (await this.state.storage.get('liveGames')) || {};
+        const code = String(body.code || '');
+        if (Number.isSafeInteger(body.players) && body.players > 0) all[code] = {players: body.players, at: Date.now()};
+        else delete all[code];
+        for (const [k, g] of Object.entries(all)) if (Date.now() - g.at >= LIVE_STALE_MS) delete all[k];
+        await this.state.storage.put('liveGames', all);
+      }
+      else if (path === '/live-list') return Response.json({games: liveGames((await this.state.storage.get('liveGames')) || {})});
       else return new Response('not found', {status: 404});
       return Response.json({ok: true});
     } catch (e) {
@@ -385,7 +438,8 @@ export class Room {
       .then(({record}) => openClub({
         storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, openConns, record,
         onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
-      onDeleted: () => this.deleted(),
+        onHand: ids => this.clubCode().then(c => this.registry('/stat', {kind: 'clubHand', code: c, ids})),
+        onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
         // A backup proved (#395): recorded in the registry, signed for by the owner.
         onProved: async owner => {
@@ -429,6 +483,17 @@ export class Room {
   // The super admin changed the club, or looks inside it (#265); or the
   // registry found it temporary and unused (#395).
   async adminRequest(path, code) {
+    // Who's here and the tables running, for the admin site's Now (#601):
+    // the admins left out. A club no one is in isn't opened to ask.
+    if (path === 'now') {
+      const ids = new Set(this.state.getWebSockets('guest').filter(g => !this.unproven(g)).map(g => this.guestId(g)).filter(id => id && !ADMIN_IDS.has(id)));
+      let tables = 0;
+      if (ids.size || this.clubP) {
+        const club = await this.club(code).catch(() => null);
+        if (club) tables = (await club.adminInfo()).tables.filter(t => t.running).length;
+      }
+      return Response.json({online: ids.size, tables});
+    }
     if (path === 'expire') {
       const st = await this.status(code, true);
       const at = removesAt(st.record);
@@ -614,7 +679,7 @@ export class Room {
     }
     // From the Worker's admin API only: the outside world reaches rooms by
     // /room/<code> WebSockets alone.
-    const adm = url.pathname.match(/^\/admin\/(refresh|info|expire)\//);
+    const adm = url.pathname.match(/^\/admin\/(refresh|info|expire|now)\//);
     if (adm) return this.adminRequest(adm[1], code);
     // The club as the admin page shows it, from storage (#401).
     const view = url.pathname.match(/^\/admin\/(full|people|person)\//);
@@ -656,6 +721,7 @@ export class Room {
         g.send(JSON.stringify({type: 'host_back'}));
       }
       for (const q of await this.queued()) server.send(JSON.stringify({from: q.from, data: q.data, queued: q.n}));
+      await this.gameHosted(code).catch(e => console.warn('stats:', e));
     } else if (role === 'guest') {
       if (!ID.test(id)) return refuse(4000, 'bad id');
       if (!host && !queue && !club) return refuse(4004, 'no such table');
@@ -704,9 +770,73 @@ export class Room {
     const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
     const club = await this.club(code);
     const host = this.host();
-    if (club) await club.message({from: id, event: 'open', conn});
-    else if (host) host.send(JSON.stringify({from: id, event: 'open'}));
-    else ws.send(JSON.stringify({type: 'host_away'}));
+    if (club) {
+      this.notePlayer(id, code);
+      await club.message({from: id, event: 'open', conn});
+    } else if (host) {
+      host.send(JSON.stringify({from: id, event: 'open'}));
+      await this.gameGuest(id).catch(e => console.warn('stats:', e));
+    } else ws.send(JSON.stringify({type: 'host_away'}));
+  }
+
+  // ---- usage counts (#601, stats.js) ----
+
+  stat(ev) {
+    this.registry('/stat', ev).catch(e => console.warn('stats:', e));
+  }
+
+  // A player in the club: counted once a day per room (the registry
+  // counts each player once a day in all).
+  notePlayer(id, code) {
+    const day = new Date().toISOString().slice(0, 10);
+    if (this.notedDay !== day) { this.notedDay = day; this.noted = new Set(); }
+    if (this.noted.has(id)) return;
+    this.noted.add(id);
+    this.stat({kind: 'player', id, code});
+  }
+
+  // A host connected: a new friends game, unless it's the last one's host
+  // back within GAME_GAP_MS. Players already waiting join it.
+  async gameHosted(code) {
+    const s = this.state.storage, now = Date.now();
+    const g = await s.get('game');
+    if (!g || (g.endedAt && now - g.endedAt > GAME_GAP_MS)) {
+      await s.put('game', {code, start: now, guests: [], endedAt: null});
+      this.stat({kind: 'game'});
+    } else if (g.endedAt) await s.put('game', {...g, endedAt: null});
+    for (const gw of this.state.getWebSockets('guest')) await this.gameGuest(this.guestId(gw));
+    await this.gameLive();
+  }
+
+  // Player `id` (a tab's own ID, not a player ID) joined the game: counted
+  // the first time.
+  async gameGuest(id) {
+    const s = this.state.storage;
+    const g = await s.get('game');
+    if (!g || g.endedAt || !id) return;
+    if (!g.guests.includes(id) && g.guests.length < 64) {
+      g.guests.push(id);
+      await s.put('game', g);
+      this.stat({kind: 'gamePlayer'});
+    }
+    await this.gameLive();
+  }
+
+  // How many are in the game now, for the admin site's Now; null: it ended.
+  // `leaving`: a guest socket closing, not counted.
+  async gameLive(ended = false, leaving = null) {
+    const g = await this.state.storage.get('game');
+    if (!g?.code) return;
+    const players = ended || !this.host() ? null : 1 + new Set(this.state.getWebSockets('guest').filter(w => w !== leaving).map(w => this.guestId(w))).size;
+    await this.registry('/live', {code: g.code, players}).catch(e => console.warn('stats:', e));
+  }
+
+  async gameEnded() {
+    const s = this.state.storage;
+    const g = await s.get('game');
+    if (!g || g.endedAt) return;
+    await s.put('game', {...g, endedAt: Date.now()});
+    await this.gameLive(true);
   }
 
   // A proof from unproven connection `ws` (#577): it counts, replacing any
@@ -803,6 +933,9 @@ export class Room {
         if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
         if (g.reply) ws.send(JSON.stringify(g.reply));
         if (!g.pass) return;
+        // Counted as active (#601), as well as on connecting: the player
+        // who just made the club connected before it was one.
+        if (club) this.notePlayer(id, c.code);
         // With the passkey it was unlocked with (#589: refills).
         if (club) await club.message({from: id, data: m, device: g.u?.device || ''});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
@@ -827,6 +960,11 @@ export class Room {
       for (const g of this.guests(m.to)) g.send(out);
     } else if (m && Number.isSafeInteger(m.ack)) {
       await this.state.storage.delete('q:' + String(m.ack).padStart(12, '0'));
+    } else if (m?.stat === 'hand') {
+      // A hand finished at the host's table (#601): counted, never forwarded.
+      if (Date.now() - (this.handStatAt || 0) < HAND_STAT_MS) return;
+      this.handStatAt = Date.now();
+      this.stat({kind: 'hand'});
     }
   }
 
@@ -848,7 +986,9 @@ export class Room {
       if (this.guests(id).some(g => g !== ws)) return;
       if (this.clubP) { this.clubP.then(c => c.message({from: id, event: 'close'})).catch(e => console.warn(e)); return; }
       this.host()?.send(JSON.stringify({from: id, event: 'close'}));
+      if (this.host()) this.gameLive(false, ws).catch(e => console.warn('stats:', e));
     } else if (this.state.getTags(ws).includes('host') && !this.host(ws)) {
+      this.gameEnded().catch(e => console.warn('stats:', e));
       for (const g of this.state.getWebSockets('guest')) {
         try {
           g.send(JSON.stringify({type: 'host_gone'}));

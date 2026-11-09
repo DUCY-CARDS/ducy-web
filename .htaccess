@@ -5,6 +5,9 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 AddType application/wasm .wasm
 AddType application/manifest+json .webmanifest
 
+# The admin page moved to its own site (#601).
+RewriteRule ^admin\.html$ https://admin.ducy.cards/ [L,R=301]
+
 # Safari 15 and every browser on iOS 15 (#442): see the policy below. Set with
 # mod_rewrite, which the host runs (SetEnvIf had no effect there).
 # Safari 15 on a Mac or an iPad asking for the desktop site, but not Chrome or
@@ -22,6 +25,12 @@ RewriteRule ^ - [E=ducy_safari15:1]
   <FilesMatch "\.(html|js|css|wasm|json)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
+  # The admin site (admin.ducy.cards, #601) reads which release this is; on
+  # a password-protected site, once you've signed in to it in that browser.
+  <Files "version.json">
+    Header set Access-Control-Allow-Origin "https://admin.ducy.cards"
+    Header set Access-Control-Allow-Credentials "true"
+  </Files>
   # The GTO bot's model files never change: a new model gets a new folder.
   <FilesMatch "\.bin$">
     Header set Cache-Control "public, max-age=31536000, immutable"

@@ -2,14 +2,15 @@
 # Assemble the deployable site into OUT_DIR with every asset under
 # v/<version>/, so a page only ever loads files from a single release.
 #
-#   OUT_DIR/index.html, manage.html, admin.html, privacy.html, admins.json, favicon.svg,
+#   OUT_DIR/index.html, manage.html, privacy.html, admins.json, favicon.svg,
 #     apple-touch-icon.png, icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #   OUT_DIR/v/<version>/relay/src/club-room.js, registry.js (a demo club's)
 #
-# Only index.html, manage.html (the club manager), admin.html and privacy.html are rewritten (to point
-# at v/<version>/src/). The JS loads
+# Only index.html, manage.html (the club manager) and privacy.html are rewritten (to point
+# at v/<version>/src/). The admin page is a site of its own (build-admin.sh,
+# #601); .htaccess sends admin.html there. The JS loads
 # the workers and the WASM relative to its own URL, so those resolve
 # inside the same release folder.
 #
@@ -55,6 +56,8 @@ REL="$OUT/v/$VERSION"
 mkdir -p "$REL/src" "$REL/wasm"
 
 cp src/*.js src/*.css "$REL/src/"
+# The admin site's own files (build-admin.sh) aren't this site's.
+rm -f "$REL/src/admin.js" "$REL/src/admin.css" "$REL/src/admin-charts.js"
 cp -r src/avatars "$REL/src/"
 cp wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm "$REL/wasm/"
 # A demo club runs the relay's club room in the page (src/demo-relay.js, #406).
@@ -103,16 +106,6 @@ if grep -nE '(src|href)="(src|wasm)/' "$OUT/manage.html"; then
   exit 1
 fi
 
-# The super admin's page (#265, #401): unlinked, pointed at the same
-# release. The relay answers only requests signed by a key in admins.json.
-sed -e "s#href=\"src/admin.css\"#href=\"v/$VERSION/src/admin.css\"#" \
-    -e "s#src=\"src/admin.js\"#src=\"v/$VERSION/src/admin.js\"#" \
-    -e "$CHECK" "${NO_META[@]}" \
-    admin.html > "$OUT/admin.html"
-for ref in "href=\"v/$VERSION/src/admin.css\"" "src=\"v/$VERSION/src/admin.js\"" "src=\"v/$VERSION/src/browser-check.js\""; do
-  grep -qF "$ref" "$OUT/admin.html" || { echo "admin.html is missing $ref" >&2; exit 1; }
-done
-
 # The privacy policy (#554): text only, no script, pointed at the same release.
 sed -e "s#href=\"src/style.css\"#href=\"v/$VERSION/src/style.css\"#" \
     "${NO_META[@]}" \
@@ -123,7 +116,7 @@ grep -qF "href=\"v/$VERSION/src/style.css\"" "$OUT/privacy.html" || { echo "priv
 # mentions the local relay, nor has an inline script, <style> or on…=
 # handler, which the policy would block.
 grep -qF 'Header set Content-Security-Policy' "$OUT/.htaccess" || { echo ".htaccess sends no Content-Security-Policy" >&2; exit 1; }
-for page in index.html manage.html admin.html privacy.html; do
+for page in index.html manage.html privacy.html; do
   if grep -niF 'Content-Security-Policy' "$OUT/$page"; then
     echo "$page still has a policy of its own (above)" >&2
     exit 1
@@ -139,7 +132,7 @@ for page in index.html manage.html admin.html privacy.html; do
 done
 
 # Another environment's relay, in place of the live one: in the JS (play-net.js,
-# admin.js, service-client.js, error-report.js) and the policy's connect-src.
+# service-client.js, error-report.js) and the policy's connect-src.
 if [ "$RELAY_HOST" != "$LIVE_RELAY_HOST" ]; then
   sed -i "s#//$LIVE_RELAY_HOST#//$RELAY_HOST#g" "$REL"/src/*.js "$OUT/.htaccess"
   if grep -rlF "$LIVE_RELAY_HOST" "$REL" "$OUT/.htaccess"; then
@@ -155,7 +148,7 @@ if [ "$DUCY_ENV" != production ]; then
   case "$DUCY_ENV" in sandbox) BG='#f08a4b' ;; *) BG='#f5c542' ;; esac
   LABEL="${DUCY_ENV^} · $VERSION"
   STRIP="<div class=\"env-strip\" role=\"note\" style=\"position:fixed;left:0;bottom:0;z-index:2147483647;pointer-events:none;padding:2px 8px;font:600 11px/1.5 system-ui,sans-serif;color:#1b1b1b;background:$BG;border-top-right-radius:6px;opacity:.9\">$LABEL</div>"
-  for page in index.html manage.html admin.html privacy.html; do
+  for page in index.html manage.html privacy.html; do
     sed -i "0,/<body[^>]*>/s||&\n$STRIP|" "$OUT/$page"
     grep -qF "$LABEL</div>" "$OUT/$page" || { echo "$page has no environment strip" >&2; exit 1; }
   done

@@ -271,6 +271,7 @@ let statsSort = {key: 'seat', dir: 1};
 // 'guest' at someone else's table.
 let mode = 'solo';
 let net = null; // relay connection
+let statHand = ''; // `${session}:${hand}` last counted at the relay (#601)
 let room = ''; // table code
 // A friends table's name (#152): the host's, sent to each player.
 let hostTitle = '';
@@ -2420,6 +2421,13 @@ async function hostStep(step, {draw, gift}) {
     else if (a.type === 'refused') refused = true;
   }
   if (gift && !refused && ledger) give(ledger, gift.id, gift.name, num(gift.amount));
+  // A hand finished: the relay counts it for ducy's admin site (#601). Just
+  // that it happened; nothing about it.
+  const hn = num(last?.state?.hand_number);
+  if (last?.state?.complete && hn && statHand !== `${session}:${hn}`) {
+    statHand = `${session}:${hn}`;
+    net?.send({stat: 'hand'});
+  }
   sendStandings();
   const changed = hostTimers(step);
   if (draw && last && last.seq !== shownSeq) show(last);

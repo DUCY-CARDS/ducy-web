@@ -20,6 +20,10 @@
 //   /admin/person {id}            their activity in every club
 //   /admin/log                    the admin log: every admin action
 //   /admin/errors                 what pages reported going wrong (#552)
+//   /admin/stats                  usage (#601): {days (the last 30, stats.js),
+//                                 now: {rooms, players, games, clubTables}}
+//   /admin/cloudflare             Cloudflare's numbers for this relay, if its
+//                                 token is set (cf-analytics.js)
 //
 // Changes, and each reveal, go in the admin log (registry.js), with who and
 // when. Owners aren't told.
@@ -106,6 +110,8 @@ export function mergePeople(list, perClub) {
 //   log(entry)               adds to the admin log
 //   logList()                the admin log
 //   errors()                 the pages' error reports
+//   stats()                  {days, now} (#601)
+//   cloudflare()             cf-analytics.js's answer
 //   list() grant(id, body) revoke(id) setClub(code, change) status(code)
 //                            the registry (registry.js)
 //   room(code, what, params) a club room's view: 'info', 'full' {reveal},
@@ -120,6 +126,8 @@ export async function adminApi(path, env, admins, ops, now = Date.now()) {
     if (path === '/admin/clubs') return ok(await ops.list());
     if (path === '/admin/log') return ok({log: await ops.logList()});
     if (path === '/admin/errors') return ok({errors: await ops.errors()});
+    if (path === '/admin/stats') return ok(await ops.stats());
+    if (path === '/admin/cloudflare') return ok(ops.cloudflare ? await ops.cloudflare() : {enabled: false});
     if (path === '/admin/grant') {
       const out = await ops.grant(String(data.id), data);
       await log('grant', String(data.id), [data.note, data.maxClubs ? `${data.maxClubs} clubs` : '', data.limits ? `${data.limits.tables} tables, ${data.limits.tourneysPerDay}/day` : ''].filter(Boolean).join(' · '));

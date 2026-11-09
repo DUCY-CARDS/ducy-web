@@ -26,11 +26,17 @@ new_sqlite_classes = ["Registry"]
 # Empty allows any origin. The site only, so other pages can't use the relay (#103);
 # a page opened from elsewhere (e.g. localhost) uses a local relay instead.
 ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
+# The admin site (#601): may call /admin/ only.
+ADMIN_ORIGINS = "https://admin.ducy.cards"
 # Always-on clubs (#98, #265): at most this many per owner, and in all,
 # while on Cloudflare's free plan. Creating a club takes permission, granted
-# on the admin page (admin.html), except each player's one free trial club.
-# CLUB_CREATORS: a comma-separated list of player IDs granted here as well.
-# Who may use the admin page: ../admins.json, bundled into the Worker (#401).
+# on the admin site (admin.ducy.cards, #601), except each player's one free
+# trial club. CLUB_CREATORS: a comma-separated list of player IDs granted
+# here as well. Who may use the admin site: ../admins.json, bundled into the
+# Worker (#401).
+# Cloudflare's numbers on the admin site (optional, #601): the secrets
+# CF_ANALYTICS_TOKEN (Account Analytics: Read) and CF_ACCOUNT_ID, set with
+# `wrangler secret put` on each environment (DEPLOY.md).
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
@@ -58,6 +64,7 @@ class_name = "Registry"
 [env.staging.vars]
 ENVIRONMENT = "staging"
 ALLOWED_ORIGINS = "https://staging.ducy.cards"
+ADMIN_ORIGINS = "https://admin.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
@@ -80,6 +87,7 @@ class_name = "Registry"
 [env.sandbox.vars]
 ENVIRONMENT = "sandbox"
 ALLOWED_ORIGINS = "https://sandbox.ducy.cards"
+ADMIN_ORIGINS = "https://admin.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
