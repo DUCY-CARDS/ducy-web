@@ -155,6 +155,46 @@ test('the float (#589): gives stop at it, a refill and a raise wait, and a resta
   assert.ok(totals(server.club).conserved);
 });
 
+test('an agent’s player has a vault; the agent’s take back reaches it, with notices (#579)', {skip: !haveWasm && 'no wasm build'}, async () => {
+  await engine();
+  const storage = memoryStorage();
+  const owner = await createIdentity(), ann = await createIdentity(), bo = await createIdentity();
+  const code = 'AGNT-VALT';
+  const {hostId, invite} = await createClub(storage, await signMessage(owner, {type: 'create_club', club: code, name: 'Agents'}), code);
+  const box = inbox(hostId);
+  const server = await openClub({storage, send: box.send, online: [owner.id]});
+  const say = async (who, body) => { await server.message({from: who.id, data: await signMessage(who, {club: code, ...body})}); await settle(); };
+  for (const [who, name] of [[ann, 'Ann'], [bo, 'Bo']]) {
+    await server.message({from: who.id, event: 'open'});
+    await say(who, {type: 'join', invite, name});
+    await server.run('approve', {id: who.id});
+  }
+  await server.run('offer_agent', {id: ann.id});
+  await say(ann, {type: 'agent_reply', accept: true});
+  await server.run('assign_agent', {id: bo.id, agent: ann.id});
+  await say(ann, {type: 'agent_cmd', cmd: {op: 'give', id: bo.id, amount: 80_000}});
+  // Bo's vault, on his link with Ann.
+  await say(bo, {type: 'vault', op: 'in', amount: 50_000});
+  assert.equal(server.club.members[bo.id].vault, 50_000);
+  await say(bo, {type: 'vault', op: 'out', amount: 30_000});
+  // Ann sees his vault, not what he asked to take out (her view goes out
+  // at most every 200 ms).
+  await new Promise(r => setTimeout(r, 300));
+  const view = (await box.bodies(ann.id, 'agent')).at(-1);
+  assert.equal(view.players[0].vault, 50_000);
+  assert.ok(!JSON.stringify(view).includes('outs'));
+  // Her take back: his balance, then his vault.
+  await say(ann, {type: 'agent_cmd', cmd: {op: 'take', id: bo.id, amount: 70_000}});
+  assert.equal(server.club.members[bo.id].balance, 0);
+  assert.equal(server.club.members[bo.id].vault, 10_000);
+  const acc = (await box.bodies(bo.id, 'account')).at(-1);
+  assert.equal(acc.vault.taken.amount, 40_000);
+  assert.equal(acc.vault.outs[0].amount, 10_000);
+  assert.ok(server.club.log.some(l => l.notice && l.text === 'Bo’s agent Ann took 400 back from their vault'));
+  const {totals} = await import('../src/club-chips.js');
+  assert.ok(totals(server.club).conserved);
+});
+
 test('a browser-run club moves to its room (#98): balances kept, members follow the handoff', {skip: !haveWasm && 'no wasm build'}, async () => {
   const {newClub, approve, newMembership, playerReceive, hostReceive} = await import('../src/club.js');
   const {issue, totals} = await import('../src/club-chips.js');

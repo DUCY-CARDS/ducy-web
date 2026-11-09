@@ -698,10 +698,13 @@ impl Book {
                     "{name}'s balance is below zero: bring it back to zero first."
                 ));
             }
-            let open = self
-                .players_of(id)
-                .into_iter()
-                .find(|p| self.seated(p) || self.money.link(p, id).is_some_and(|l| l.balance != 0));
+            let open = self.players_of(id).into_iter().find(|p| {
+                self.seated(p)
+                    || self
+                        .money
+                        .link(p, id)
+                        .is_some_and(|l| l.balance != 0 || l.vault != 0)
+            });
             if let Some(p) = open {
                 let after = if self.seated(&p) {
                     ", after they leave their table"
@@ -776,10 +779,11 @@ impl Book {
                 ));
             }
             let bal = self.balance(player);
-            if bal != 0 {
+            // Their vault is with whoever they play through (#579).
+            if bal != 0 || self.vault_chips(player) > 0 {
                 return refuse(format!(
                     "{name} has {} on their account: clear it first.",
-                    chip_text(bal.max(0) as u64)
+                    chip_text(bal.max(0) as u64 + self.vault_chips(player))
                 ));
             }
             self.ensure_links(now)?;
@@ -892,7 +896,10 @@ impl Book {
             }
             "take" => {
                 let p = self.mine(by, &id)?;
-                let e = self.backer_take(by, &id, int(cmd.get("amount")), &why, now)?;
+                // Their vault doesn't keep chips from their agent (#579):
+                // the balance first, then the vault.
+                let (e, from_vault) =
+                    self.agent_take(by, &id, int(cmd.get("amount")), &why, now)?;
                 let took = (-e.amount) as u64;
                 self.log_action(
                     by,
@@ -902,7 +909,7 @@ impl Book {
                 );
                 done.accounts.push(AccountTo {
                     id,
-                    since: Some(e.n - 1),
+                    since: Some(e.n - if from_vault > 0 { 2 } else { 1 }),
                 });
             }
             "deny" => {
@@ -1371,6 +1378,8 @@ pub fn written(book: &Book) -> Value {
     json!({
         "members": book.club.members, "money": book.money, "chips": book.chips,
         "requestLog": book.request_log, "log": book.log,
+        // Members' vault settings (#579): an agent's take back trims them.
+        "vaults": book.club.vaults,
     })
 }
 

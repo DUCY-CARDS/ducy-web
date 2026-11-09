@@ -348,6 +348,9 @@ impl ClubState {
             .map(|m| {
                 let mut p = json!({
                     "id": m.id, "name": m.name, "balance": self.book.balance(&m.id),
+                    // Their vault's chips (#579), as the owner sees them; not
+                    // what they've asked to take out, or their wait.
+                    "vault": self.book.vault_chips(&m.id),
                     "request": m.other.get("request").filter(|r| !r.is_null()).cloned().unwrap_or(Value::Null),
                     "seated": m.seat().is_some(), "result": self.tables_result(&m.id),
                 });

@@ -23,10 +23,13 @@
 //! balance; taken out after their chosen wait ([`WAITS`], 24 hours unless
 //! they pick another), and only by them. Shortening the wait applies once
 //! the current wait has passed; lengthening it is at once. Vault chips are
-//! on their link with the club ([`crate::money::Link::vault`]), so they
-//! count in the club's books but can't be bought in with or taken back. The
-//! owner sees each member's vault; what they've asked to take out is theirs
-//! alone ([`MemberVault`], left out of the owner's view).
+//! on the link they play through ([`crate::money::Link::vault`]): the
+//! club's, or their agent's. They count in the books but can't be bought in
+//! with, or taken back by the owner. An agent's take back can reach them,
+//! after the player's balance, with a notice to the owner and the player
+//! ([`Book::agent_take`]). The owner, and a player's agent, see each vault;
+//! what they've asked to take out and their wait are theirs alone
+//! ([`MemberVault`], left out of the owner's view and the agent's).
 //!
 //! **Notices**: a give or take back of more than a full buy-in at the
 //! club's biggest table ([`Book::notice_from`]), a removal, every refill
@@ -184,6 +187,18 @@ pub struct MemberVault {
     /// The last request's number.
     #[serde(default)]
     pub next: u64,
+    /// Their agent's last take back that reached the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taken: Option<VaultTaken>,
+}
+
+/// Chips an agent took back from a player's vault.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultTaken {
+    /// The chips.
+    pub amount: u64,
+    /// When.
+    pub at: u64,
 }
 
 impl Default for MemberVault {
@@ -193,6 +208,7 @@ impl Default for MemberVault {
             shorter: None,
             outs: Vec::new(),
             next: 0,
+            taken: None,
         }
     }
 }
@@ -358,7 +374,8 @@ impl Book {
             v.outs = keep;
             for o in due {
                 // A vault emptied some other way since: nothing to move.
-                if self.money.vault_out(&id, CLUB, o.amount, now).is_ok() {
+                let backer = self.vault_backer(&id);
+                if self.money.vault_out(&id, &backer, o.amount, now).is_ok() {
                     changed.push(id.clone());
                 }
             }
@@ -559,12 +576,12 @@ impl Book {
         match op {
             "in" => {
                 let amt = amt()?;
-                if self.through(id).is_some_and(|b| b != CLUB) {
-                    return refuse("Only chips from the club go in the vault.");
-                }
                 self.ensure_links(now)?;
+                // Everyone's vault is on the link they play through: the
+                // club's, or their agent's.
+                let backer = self.vault_backer(id);
                 self.money
-                    .vault_in(id, CLUB, amt, now)
+                    .vault_in(id, &backer, amt, now)
                     .map_err(|e| match e {
                         MoneyError::Vault { has } => {
                             RuleError(format!("You have {} to put in.", chip_text(has)))
@@ -576,7 +593,7 @@ impl Book {
             }
             "out" => {
                 let amt = amt()?;
-                let has = self.money.link(id, CLUB).map_or(0, |l| l.vault);
+                let has = self.vault_chips(id);
                 let v = self.club.vaults.entry(id.into()).or_default();
                 let going: u64 = v.outs.iter().map(|o| o.amount).sum();
                 let free = has.saturating_sub(going);
@@ -625,9 +642,84 @@ impl Book {
     /// A member's vault as they see it: {vault, wait, shorter: {to, applies}
     /// or null, outs: [{id, amount, at, ready}]}.
     pub fn vault_of(&self, id: &str) -> Value {
-        let has = self.money.link(id, CLUB).map_or(0, |l| l.vault);
+        let has = self.vault_chips(id);
         let v = self.club.vaults.get(id).cloned().unwrap_or_default();
-        json!({"vault": has, "wait": v.wait, "shorter": v.shorter, "outs": v.outs})
+        json!({"vault": has, "wait": v.wait, "shorter": v.shorter, "outs": v.outs, "taken": v.taken})
+    }
+
+    /// Whom a member's vault is with: whoever they play through, the club
+    /// or their agent.
+    pub fn vault_backer(&self, id: &str) -> String {
+        self.through(id).unwrap_or_else(|| CLUB.into())
+    }
+
+    /// The chips in a member's vault.
+    pub fn vault_chips(&self, id: &str) -> u64 {
+        self.money
+            .link(id, &self.vault_backer(id))
+            .map_or(0, |l| l.vault)
+    }
+
+    /// An agent (`backer`) takes `amt` back from their player `id`: from
+    /// their balance first, then their vault, which doesn't protect a
+    /// player's chips from their agent. What came from the vault comes out
+    /// of it first (its own entry), and requests to take out more than is
+    /// left are cut down. A take back that reaches the vault is a notice to
+    /// the owner, and the player sees it too. The take back's entry, and
+    /// what came from the vault.
+    pub fn agent_take(
+        &mut self,
+        backer: &str,
+        id: &str,
+        amt: Option<i64>,
+        why: &str,
+        now: u64,
+    ) -> Result<(Entry, u64), RuleError> {
+        self.member(id)?;
+        let amt = amount(amt)?;
+        let bal = self.balance(id).max(0) as u64;
+        let has = self.money.link(id, backer).map_or(0, |l| l.vault);
+        if amt > bal + has {
+            return refuse(format!(
+                "{} has {} chips.",
+                self.name(id),
+                chip_text(bal + has)
+            ));
+        }
+        let from_vault = amt.saturating_sub(bal);
+        if from_vault > 0 {
+            self.money
+                .vault_out(id, backer, from_vault, now)
+                .map_err(money_err)?;
+            if let Some(v) = self.club.vaults.get_mut(id) {
+                let mut left = has - from_vault;
+                for o in &mut v.outs {
+                    o.amount = o.amount.min(left);
+                    left -= o.amount;
+                }
+                v.outs.retain(|o| o.amount > 0);
+            }
+            self.club.vaults.entry(id.into()).or_default().taken = Some(VaultTaken {
+                amount: from_vault,
+                at: now,
+            });
+        }
+        let note: String = why.trim().chars().take(80).collect();
+        let e = self
+            .money
+            .take_back(backer, id, amt, &note, now)
+            .map_err(money_err)?;
+        self.sync();
+        if from_vault > 0 {
+            let text = format!(
+                "{}’s agent {} took {} back from their vault",
+                self.name(id),
+                self.name(backer),
+                chip_text(from_vault)
+            );
+            self.log_notice(backer, &text, now, Some(from_vault as i64));
+        }
+        Ok((e, from_vault))
     }
 
     /// The size a give or take back must be over for a notice: a full
@@ -1094,6 +1186,57 @@ mod tests {
             c.book
                 .member_vault("ann", &json!({"op": "wait", "wait": 2 * DAY}), NOW)
                 .is_err()
+        );
+        audit(&c);
+    }
+
+    #[test]
+    fn an_agents_player_has_a_vault_their_agent_can_take_back_from() {
+        let mut c = new_club(&["ann", "bo"]);
+        c.book.club.members.get_mut("ann").unwrap().agent = Some("yes".into());
+        c.book.assign_to_agent("bo", Some("ann"), NOW).unwrap();
+        let agent = |c: &mut ClubState, cmd: Value| c.book.run_agent("ann", &cmd, NOW + H);
+        agent(&mut c, json!({"op": "give", "id": "bo", "amount": 80_000})).unwrap();
+        // The same vault, on their link with their agent.
+        c.book
+            .member_vault("bo", &json!({"op": "in", "amount": 50_000}), NOW + H)
+            .unwrap();
+        assert_eq!(c.book.money.link("bo", "ann").unwrap().vault, 50_000);
+        assert_eq!(c.book.club.members["bo"].other["vault"], 50_000);
+        c.book
+            .member_vault("bo", &json!({"op": "out", "amount": 30_000}), NOW + H)
+            .unwrap();
+        // The agent sees the vault, not what they asked to take out.
+        let body = c.agent_body("ann").unwrap();
+        assert_eq!(body["players"][0]["vault"], 50_000);
+        assert!(!body.to_string().contains("outs"));
+        // A take back: the balance (300) first, then the vault (400).
+        let done = agent(&mut c, json!({"op": "take", "id": "bo", "amount": 70_000})).unwrap();
+        assert_eq!(c.book.balance("bo"), 0);
+        assert_eq!(c.book.vault_chips("bo"), 10_000);
+        // What was on its way out is cut to what's left.
+        assert_eq!(c.book.vault_of("bo")["outs"][0]["amount"], 10_000);
+        assert_eq!(
+            c.book.vault_of("bo")["taken"],
+            json!({"amount": 40_000, "at": NOW + H})
+        );
+        assert_eq!(
+            done.accounts[0].since,
+            Some(c.book.money.ledger().len() as u64 - 2)
+        );
+        // A notice to the owner.
+        assert!(c.book.move_notices(NOW + H).iter().any(|n| n["text"]
+            == "Bo’s agent Ann took 400 back from their vault"
+            && n["amount"] == 40_000));
+        // More than both: refused.
+        assert!(agent(&mut c, json!({"op": "take", "id": "bo", "amount": 20_000})).is_err());
+        // Moving to another backer waits until the vault is empty.
+        assert!(
+            c.book
+                .assign_to_agent("bo", None, NOW + H)
+                .unwrap_err()
+                .0
+                .contains("100")
         );
         audit(&c);
     }
