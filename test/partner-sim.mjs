@@ -66,7 +66,7 @@ export function riverHands({hands, seed, cheat = null, noise = 0.03, start = 1_0
     const total = put.reduce((x, y) => x + y, 0);
     const winner = goes && R() < ch[0] ? p : b;
     recs.push({
-      id: `T:${h}`, at: start + h * 60_000, club: 'TEST-CLUB', table: 't1', tableName: 'Main', game: 'nlhe', hand: h, sb: 100, bb: 200, button,
+      id: `T:${seed}:${cheat ? cheat.join('-') : 'honest'}:${h}`, at: start + h * 60_000, club: 'TEST-CLUB', table: 't1', tableName: 'Main', game: 'nlhe', hand: h, sb: 100, bb: 200, button,
       seats: NAMES.map((name, i) => ({seat: i, id: `id-${name}`, name, cards: cards[i], folded: i !== p && i !== b ? true : i === p && !goes, net: (i === winner ? total : 0) - put[i], won: i === winner ? total : 0, stackEnd: 200})),
       actions, board, board2: [], pot: total, showdown: goes, pots: [], deal: null,
     });
