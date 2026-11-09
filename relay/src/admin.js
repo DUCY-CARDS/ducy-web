@@ -24,11 +24,17 @@
 //                                 now: {rooms, players, games, clubTables}}
 //   /admin/cloudflare             Cloudflare's numbers for this relay, if its
 //                                 token is set (cf-analytics.js)
+//   /admin/fair-play              every club's latest fair play summary
+//                                 (fair-play-admin.js, #612): open flags,
+//                                 each player's and pair's numbers, the
+//                                 club's averages; never a card
+//   /admin/fair-play/history {id} that player's weekly summaries, every club
 //
 // Changes, and each reveal, go in the admin log (registry.js), with who and
 // when. Owners aren't told.
 
 import { checkSignature, isPlayerId } from '../../src/identity.js';
+import { THRESHOLDS as FAIR_PLAY_LIMITS } from './fair-play-admin.js';
 
 // How far a request's seq (the time it was signed) may be from the relay's clock.
 export const WINDOW_MS = 5 * 60_000;
@@ -112,6 +118,8 @@ export function mergePeople(list, perClub) {
 //   errors()                 the pages' error reports
 //   stats()                  {days, now} (#601)
 //   cloudflare()             cf-analytics.js's answer
+//   fairPlay()               fair-play-admin.js list(): each club's summary
+//   fairPlayHistory(id)      fair-play-admin.js history(id)
 //   list() grant(id, body) revoke(id) setClub(code, change) status(code)
 //                            the registry (registry.js)
 //   room(code, what, params) a club room's view: 'info', 'full' {reveal},
@@ -128,6 +136,19 @@ export async function adminApi(path, env, admins, ops, now = Date.now()) {
     if (path === '/admin/errors') return ok({errors: await ops.errors()});
     if (path === '/admin/stats') return ok(await ops.stats());
     if (path === '/admin/cloudflare') return ok(ops.cloudflare ? await ops.cloudflare() : {enabled: false});
+    if (path === '/admin/fair-play') {
+      // Club names from the registry's list; a summary's club may be gone.
+      const [clubs, list] = await Promise.all([ops.fairPlay(), ops.list()]);
+      const names = Object.fromEntries((list.clubs || []).map(c => [c.code, c.name]));
+      return ok({clubs: clubs.filter(c => c.code in names).map(c => ({...c, name: names[c.code] || ''})), limits: FAIR_PLAY_LIMITS});
+    }
+    if (path === '/admin/fair-play/history') {
+      const id = String(data.id || '');
+      if (!/^[\w-]{1,64}$/.test(id)) throw new AdminError(400, 'That isn’t a player ID.');
+      const [weeks, list] = await Promise.all([ops.fairPlayHistory(id), ops.list()]);
+      const names = Object.fromEntries((list.clubs || []).map(c => [c.code, c.name]));
+      return ok({id, weeks: weeks.map(w => ({...w, club: names[w.code] || ''}))});
+    }
     if (path === '/admin/grant') {
       const out = await ops.grant(String(data.id), data);
       await log('grant', String(data.id), [data.note, data.maxClubs ? `${data.maxClubs} clubs` : '', data.limits ? `${data.limits.tables} tables, ${data.limits.tourneysPerDay}/day` : ''].filter(Boolean).join(' · '));

@@ -40,7 +40,7 @@ import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
 import { SCHEDULE } from './collusion.js';
-import { fairPlayReport } from './fair-play.js';
+import { fairPlayRun } from './fair-play.js';
 import { ipNetwork, liveOf, readingOf, seatPayloads, tableSignals, takeReading, trustOf } from './proximity.js';
 import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
@@ -260,7 +260,10 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // ID (vouchedMove); the caller updates the registry's record.
 // `openConns`: {id: conn} for those in `online`, their connections as the
 // relay saw them (worker.js connOf), for the seat and location signals.
-export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, timers = null, record = null}) {
+// `onFairPlay(summary)`: a fair play run finished; its summary for ducy's
+// admin (fair-play-admin.js adminSummary, #612), which the caller sends to
+// the registry. No cards in it.
+export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, onFairPlay = () => {}, timers = null, record = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -346,8 +349,11 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     checkT = null;
     checking ||= (async () => {
       const before = kept;
-      const report = await fairPlayReport(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
+      const {report, summary} = await fairPlayRun(storage, {days: club.keepDays ?? HOST_KEEP_DAYS});
       if (deleted) return report;
+      // To ducy's admin (#612), by way of the registry: a failure only
+      // means the admin sees the run before this one until the next.
+      Promise.resolve().then(() => onFairPlay(summary)).catch(e => console.warn('club: fair play summary not sent:', e));
       fairPlay = report;
       // Hands kept while it ran are due next time.
       if (kept === before) due = null;

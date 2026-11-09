@@ -10,7 +10,9 @@
 // Cloudflare's numbers when the relay has its token), #clubs (usage,
 // permission, the club list), #club=<code> (everything the club stores,
 // read-only), #people, #person=<id> (their activity in every club), #log
-// (the admin log), #errors (what pages reported going wrong, #552).
+// (the admin log), #errors (what pages reported going wrong, #552), #fair
+// (every club's fair play numbers, #612, admin-fair-play.js) and
+// #fair-player=<id> (that player's weeks).
 // A club's lobby chat and finished hands' cards stay hidden until "Show
 // chats and cards"; each use goes in the admin log.
 //
@@ -21,6 +23,7 @@ import { importIdentity, loadIdentity, saveIdentity, showId, signMessage } from 
 import { chipText } from './chip-format.js';
 import { ago as agoText } from './time-ago.js';
 import { chartHtml, fmt, wire } from './admin-charts.js';
+import { fairHtml, historyHtml, nextSort } from './admin-fair-play.js';
 
 // ducy's engine first: signing (the JSON a request is signed over) and
 // player IDs use it (identity.js, #460).
@@ -87,8 +90,12 @@ let usage = null;
 function route() {
   const h = location.hash.slice(1);
   const [k, v] = h.split('=');
-  return {view: ['clubs', 'club', 'person', 'people', 'log', 'errors'].includes(k) ? k : 'overview', arg: v ? decodeURIComponent(v) : ''};
+  return {view: ['clubs', 'club', 'person', 'people', 'log', 'errors', 'fair', 'fair-player'].includes(k) ? k : 'overview', arg: v ? decodeURIComponent(v) : ''};
 }
+
+// Fair play (#612): the last answers, redrawn as the club or a sort changes.
+const fair = {data: null, history: null, club: '', sort: {}, historySort: {}};
+const drawFair = () => { $('view').innerHTML = route().view === 'fair' ? fairHtml(fair.data, fair) : historyHtml(fair.history, {sort: fair.historySort}, fair.data?.limits); };
 
 function drawEnvs() {
   $('envs').innerHTML = envs.map(e => `<button data-env="${esc(e.key)}"${e === env ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${esc(e.label)}</button>`).join('');
@@ -99,7 +106,7 @@ async function show() {
   const {view, arg} = route();
   const mine = ++showing;
   for (const b of document.querySelectorAll('nav button')) {
-    if (b.dataset.go === view || (view === 'club' && b.dataset.go === 'clubs') || (view === 'person' && b.dataset.go === 'people')) b.setAttribute('aria-current', 'page');
+    if (b.dataset.go === view || (view === 'club' && b.dataset.go === 'clubs') || (view === 'person' && b.dataset.go === 'people') || (view === 'fair-player' && b.dataset.go === 'fair')) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   }
   say('Loading…');
@@ -117,6 +124,12 @@ async function show() {
       html = peopleHtml((await api('/admin/people')).people);
     } else if (view === 'person') {
       html = personHtml(await api('/admin/person', {id: arg}));
+    } else if (view === 'fair') {
+      fair.data = await api('/admin/fair-play');
+      html = fairHtml(fair.data, fair);
+    } else if (view === 'fair-player') {
+      fair.history = await api('/admin/fair-play/history', {id: arg});
+      html = historyHtml(fair.history, {sort: fair.historySort}, fair.data?.limits);
     } else if (view === 'errors') {
       html = errorsHtml((await api('/admin/errors')).errors);
     } else {
@@ -409,7 +422,8 @@ document.addEventListener('click', async e => {
     drawEnvs();
     // A club or person belongs to one relay: back to its list.
     const {view} = route();
-    if (view === 'club' || view === 'person') { location.hash = view === 'club' ? 'clubs' : 'people'; return; }
+    if (view === 'club' || view === 'person' || view === 'fair-player') { location.hash = {club: 'clubs', person: 'people', 'fair-player': 'fair'}[view]; return; }
+    fair.club = '';
     return show();
   }
   if (b.dataset.view) {
@@ -422,6 +436,13 @@ document.addEventListener('click', async e => {
   if (b.dataset.go) { location.hash = b.dataset.go; return; }
   if (b.dataset.club) { location.hash = `club=${encodeURIComponent(b.dataset.club)}`; return; }
   if (b.dataset.person) { location.hash = `person=${encodeURIComponent(b.dataset.person)}`; return; }
+  if (b.dataset.fair) { location.hash = `fair-player=${encodeURIComponent(b.dataset.fair)}`; return; }
+  if (b.dataset.sort) {
+    const text = ['club', 'players', 'signal', 'numbers', 'name', 'week'].includes(b.dataset.key);
+    if (b.dataset.sort === 'history') fair.historySort = nextSort(fair.historySort, 'history', b.dataset.key, text);
+    else fair.sort = nextSort(fair.sort, b.dataset.sort, b.dataset.key, text);
+    return drawFair();
+  }
   if (b.id === 'reveal') {
     const code = route().arg;
     if (!confirm('Show this club’s chats and cards? It goes in the admin log.')) return;
@@ -460,6 +481,7 @@ document.addEventListener('click', async e => {
 });
 
 document.addEventListener('change', e => {
+  if (e.target.id === 'fp-club') { fair.club = e.target.value; drawFair(); return; }
   if (e.target.id === 'lf-member' || e.target.id === 'lf-kind') {
     ledgerFilter[e.target.id === 'lf-member' ? 'member' : 'kind'] = e.target.value;
     $('ledger-card').innerHTML = ledgerHtml();

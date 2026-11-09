@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { adminView, codeInfo, createClub, importClub, openClub } from './src/club-room.js';
 import { adminApi, adminsFrom } from './src/admin.js';
 import { limitsFrom, registry } from './src/registry.js';
+import { fairPlayStore } from './src/fair-play-admin.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
 import { passkeys } from './src/passkeys.js';
@@ -101,6 +102,8 @@ function inRoom(room, fn) {
 // from the environment as in wrangler.toml (MAX_CLUBS_PER_OWNER, MAX_CLUBS,
 // CLUB_CREATORS).
 const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
+// Each club's fair play summaries (#612), as the Worker's registry keeps them.
+const fairPlay = fairPlayStore(storageOf({store: new Map()}));
 
 // Passkeys (#575), in memory: pages on ALLOWED_ORIGINS, else local ones.
 const pk = passkeys(storageOf({store: new Map()}), {origins: String(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)});
@@ -143,6 +146,7 @@ async function clubOf(room, code) {
     timers: clubTimers(),
     onUsage: (minutes, at) => reg.used(minutes, at ?? Date.now(), code),
     onHand: ids => usage.note({kind: 'clubHand', code, ids}),
+    onFairPlay: summary => fairPlay.note(code, summary),
     onSaved: () => scheduleBackup(room, code),
     // A backup proved (#395): recorded in the registry, signed for by the owner.
     onProved: owner => reg.proved(code, owner),
@@ -152,6 +156,7 @@ async function clubOf(room, code) {
     onDeleted: async () => {
       room.club = null;
       await reg.release(code);
+      await fairPlay.drop(code);
       clearTimeout(room.backupTimer);
       room.backupTimer = null;
       if (backups) await dropBackups(backups, code).catch(e => console.warn(e));
@@ -175,7 +180,7 @@ async function expireClubs() {
     const club = room ? await clubOf(room, code) : null;
     // Deleting tells its members, and releases it from the registry.
     if (club) await inRoom(room, () => club.run('delete_club'));
-    else await reg.release(code);
+    else { await reg.release(code); await fairPlay.drop(code); }
   }
 }
 setInterval(() => expireClubs().catch(e => console.warn('club: not expired:', e)), CLEANUP_MS).unref();
@@ -267,6 +272,8 @@ async function admin(req, res, url) {
     errors: () => reg.errors(),
     stats: async () => ({days: await usage.days(30, statNow()), now: await liveNow()}),
     cloudflare: () => cfAnalytics(process.env),
+    fairPlay: () => fairPlay.list(),
+    fairPlayHistory: id => fairPlay.history(id),
     list: () => reg.list(),
     grant: (id, body) => reg.grant(id, body),
     revoke: id => reg.revoke(id),

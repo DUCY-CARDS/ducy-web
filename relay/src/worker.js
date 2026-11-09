@@ -57,6 +57,7 @@ import { adminView, codeInfo, createClub, importClub, openClub } from './club-ro
 import { adminApi, adminsFrom } from './admin.js';
 import adminList from '../../admins.json';
 import { limitsFrom, registry, removesAt } from './registry.js';
+import { fairPlayStore } from './fair-play-admin.js';
 import { MAX_REPORT_BYTES } from './error-log.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
 import { pingReply } from './ping.js';
@@ -184,6 +185,8 @@ async function admin(req, env, url, cors) {
       return {days, now};
     },
     cloudflare: () => cfAnalytics(env),
+    fairPlay: () => reg('/fair-play-list').then(r => r.clubs),
+    fairPlayHistory: id => reg('/fair-play-history', {id}).then(r => r.weeks),
     list: () => reg('/list'),
     grant: (id, body) => reg('/grant', {...body, id}),
     revoke: id => reg('/revoke', {id}),
@@ -311,6 +314,8 @@ export class Registry {
     this.pk = passkeys({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {origins: (env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)});
     // Usage counts (#601).
     this.stats = stats({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {admins: ADMIN_IDS});
+    // Each club's fair play summaries (#612).
+    this.fp = fairPlayStore({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)});
   }
 
   async alarm() {
@@ -335,6 +340,7 @@ export class Registry {
       const s = this.state.storage;
       this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(this.env));
       this.stats = stats({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {admins: ADMIN_IDS});
+      this.fp = fairPlayStore({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)});
       return Response.json({ok: true});
     }
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
@@ -354,7 +360,7 @@ export class Registry {
       else if (path === '/proved') return Response.json(await this.reg.proved(String(body.code), String(body.owner)));
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
-      else if (path === '/release') await this.reg.release(String(body.code));
+      else if (path === '/release') { await this.reg.release(String(body.code)); await this.fp.drop(String(body.code)); }
       // On the day it was played (`at`, #421): within the last day or so.
       else if (path === '/used') {
         const now = Date.now(), at = Number(body.at);
@@ -373,6 +379,10 @@ export class Registry {
       else if (path === '/errors') return Response.json({errors: await this.reg.errors()});
       // Usage counts (#601), from rooms; read by the admin API.
       else if (path === '/stat') await this.stats.note(body);
+      // Fair play summaries (#612): from rooms after each run; read by the admin API.
+      else if (path === '/fair-play') await this.fp.note(String(body.code), body.summary);
+      else if (path === '/fair-play-list') return Response.json({clubs: await this.fp.list()});
+      else if (path === '/fair-play-history') return Response.json({weeks: await this.fp.history(String(body.id || ''))});
       else if (path === '/stats') return Response.json({days: await this.stats.days(Math.min(90, Math.max(1, Number(body.days) || 30)))});
       else if (path === '/live') {
         const all = (await this.state.storage.get('liveGames')) || {};
@@ -439,6 +449,8 @@ export class Room {
         storage: this.storage(), send: (to, data) => this.toGuest(to, data), online, openConns, record,
         onUsage: (minutes, at) => this.clubCode().then(c => this.registry('/used', {minutes, at, code: c})),
         onHand: ids => this.clubCode().then(c => this.registry('/stat', {kind: 'clubHand', code: c, ids})),
+        // Each fair play run's summary, for the admin site (#612).
+        onFairPlay: summary => this.clubCode().then(c => this.registry('/fair-play', {code: c, summary})),
         onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
         // A backup proved (#395): recorded in the registry, signed for by the owner.
