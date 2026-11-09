@@ -40,7 +40,7 @@ import { keyPairFromJSON, keyPairToJSON, newKeyPair } from '../../src/e2e.js';
 import { clubRoom } from '../../wasm/ducy_wasm.js';
 import { dropFullHands, fullRecord, keepFullHand } from './hand-records.js';
 import { checkClub, SCHEDULE } from './collusion.js';
-import { ipNetwork, liveOf, readingOf, tableSignals, takeReading, trustOf } from './proximity.js';
+import { ipNetwork, liveOf, readingOf, seatPayloads, tableSignals, takeReading, trustOf } from './proximity.js';
 import { HOST_KEEP_DAYS } from '../../src/hand-store.js';
 
 // Hands kept for the owner's history (#125); about 1–2 KB each.
@@ -407,7 +407,7 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
   // the flags from it go to the seats at their table, the hand records,
   // and from those the fair play check.
   const live = new Map();
-  const flagsSent = new Map(); // table id → the seats' flags last sent, as JSON
+  const flagsSent = new Map(); // `${table}|${player}` → the flags last sent them, as JSON
   const signalsAmong = ids => tableSignals(ids.map(id => ({id, live: live.get(id) || null})));
   // A reading from player `id` (their page sends one when they sit down,
   // then as it changes and every minute).
@@ -419,19 +419,29 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     const tid = tableOf(id);
     if (tid) refreshFlags(tid, id);
   }
-  const tableOf = id => club.members[id]?.seat?.table || (club.tables || []).find(t => (server.seatsAt?.(t.id) || []).some(s => s.id === id))?.id || null;
-  // Table `tid`'s seats' flags ({seat: [kind]}, by the engine's seat
-  // numbers) to everyone seated there when they've changed, and to `also`
-  // in any case (they've just sat down, or come back).
+  // The table player `id` sits at: a cash table's id, or a tournament's
+  // `tourney:<id>`.
+  const groupsOf = tid => server.seatGroups?.(tid) || [];
+  const tableOf = id => {
+    if (club.members[id]?.seat?.table) return club.members[id].seat.table;
+    const tables = [...(club.tables || []).map(t => t.id), ...(club.tourneys || []).filter(t => t.status === 'running').map(t => `tourney:${t.id}`)];
+    return tables.find(tid => groupsOf(tid).some(g => g.some(s => s.id === id))) || null;
+  };
+  // Table `tid`'s seat flags (proximity.js seatPayloads, by the engine's
+  // seat numbers; a tournament's, each of its tables apart), to each
+  // player seated there whose own flags changed, and to `also` in any case
+  // (they've just sat down, or come back). Each gets their own: never a
+  // group of players near each other that they're in.
   function refreshFlags(tid, also = null) {
-    const seats = server.seatsAt?.(tid) || [];
-    const sig = signalsAmong(seats.map(s => s.id));
-    const bySeat = Object.fromEntries(seats.filter(s => sig.seats[s.id]).map(s => [s.seat, sig.seats[s.id]]));
-    const json = JSON.stringify(bySeat);
-    const changed = flagsSent.get(tid) !== json;
-    flagsSent.set(tid, json);
-    for (const s of seats) {
-      if ((changed || s.id === also) && server.online.has(s.id)) server.sendTable(s.id, {table: tid, update: {type: 'seat_flags', seats: bySeat}});
+    for (const seats of groupsOf(tid)) {
+      const forViewer = seatPayloads(seats, signalsAmong(seats.map(s => s.id)));
+      for (const s of seats) {
+        const update = {type: 'seat_flags', ...forViewer(s.id)};
+        const json = JSON.stringify(update), key = `${tid}|${s.id}`;
+        const changed = flagsSent.get(key) !== json;
+        flagsSent.set(key, json);
+        if ((changed || s.id === also) && server.online.has(s.id)) server.sendTable(s.id, {table: tid, update});
+      }
     }
   }
   // When each player was last heard from, for the admin page's People
@@ -441,6 +451,8 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
   const server = createClubServer({
     lastSeen: () => seen,
     identity, club, verifier,
+    // A tournament hand ended: its tables' seat flags again (#581).
+    handDone: tid => refreshFlags(tid),
     onPlay: playing,
     extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
     storeHand,

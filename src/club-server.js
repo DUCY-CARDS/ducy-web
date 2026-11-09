@@ -46,6 +46,8 @@
 //   checks()       the latest fair play report (relay/src/collusion.js,
 //                  #582): counts and hand numbers, no cards; only the owner
 //                  gets it, with their view. server.ownerChanged() when it's new.
+//   handDone(table) a hand finished at tournament `tourney:<id>`'s tables
+//                  (the relay's room sends their seat flags again, #581)
 //
 // An always-on club (#93) has an owner (club.ownerId) who runs it from their
 // page: they send the same host actions signed (owner_cmd), get each result
@@ -87,6 +89,7 @@ export function createClubServer({
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
   lastSeen = () => ({}),
   checks = () => null,
+  handDone = () => {},
 }) {
   const planInfo = () => (plan || limits ? {...(plan || {}), limits} : null);
   const online = new Set(); // members connected now
@@ -327,6 +330,8 @@ export function createClubServer({
     const rec = handRecord({club: club.code, table: `tourney:${tid}`, tableName: t?.name || 'Tournament', game: t?.game || '', view, who: 'host'});
     rec.tourney = tid;
     rec.sub = table;
+    // Who played each seat, by player ID (#581's flags need them).
+    rec.seats = rec.seats.map(s => ({...s, id: view.seats[s.i]?.id || null}));
     const players = view.seats.map((s, i) => ({seat: i, client_id: s.id})).filter(p => p.client_id);
     if (promoHand(rec, players)) storeHand(rec, {days: club.keepDays ?? HOST_KEEP_DAYS});
   }
@@ -415,7 +420,10 @@ export function createClubServer({
       online: id => online.has(id),
       onPlay,
       // Only while a promotion counts tournament hands (#274).
-      onHand: (tid, table, view) => { if (club.promos?.list?.some(p => p.status === 'running' && p.tourneys)) promoTourneyHand(tid, table, view); },
+      onHand: (tid, table, view) => {
+        if (club.promos?.list?.some(p => p.status === 'running' && p.tourneys)) promoTourneyHand(tid, table, view);
+        handDone(`tourney:${tid}`);
+      },
       ...engine,
     });
     tourneyHost.startAll();
@@ -889,9 +897,19 @@ export function createClubServer({
     limits: () => limits,
     // Something only the owner's view shows changed (the fair play report).
     ownerChanged: () => sendOwnerView(),
-    // Who sits where at cash table `tid` ([{seat, id}]), and a table update
-    // for member `to`, encrypted to them: the relay's seat flags (#581).
+    // Who sits where at cash table `tid` ([{seat, id}]), or at each of
+    // tournament `tourney:<id>`'s tables ([[{seat, id}], ...]), and a table
+    // update for member `to`, encrypted to them: the relay's seat flags (#581).
     seatsAt: tid => tableHost?.seatsOf(tid) || [],
+    seatGroups(tid) {
+      if (!String(tid).startsWith('tourney:')) return [tableHost?.seatsOf(tid) || []];
+      const by = new Map();
+      for (const s of tourneyHost?.seatsOf(String(tid).slice(8)) || []) {
+        if (!by.has(s.table)) by.set(s.table, []);
+        by.get(s.table).push({seat: s.seat, id: s.id});
+      }
+      return [...by.values()];
+    },
     sendTable: sendSealed,
   };
 }

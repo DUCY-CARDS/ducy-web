@@ -33,7 +33,7 @@ import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
 import { fairPlayer } from './fair-check.js';
-import { seatFlagsText } from './club-fair-play.js';
+import { readSeatFlags, seatMarks } from './club-fair-play.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
@@ -2891,15 +2891,31 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   startClock();
 }
 let watching = false;
-// A club table's seat flags (#581): {seat: [kind]}, the table's seat
-// numbers (a view's seat i is the table's (view.seat + i) mod seats).
-let seatFlags = {};
+// A club table's seat flags from the relay (#581): {seats: {seat:
+// [kind]}, groups: [{letter, seats, links}]}, by the table's seat numbers
+// (a view's seat i is the table's (view.seat + i) mod seats). On the
+// avatar's corners: a group's letter in its colour (players near each
+// other or on one network; the relay never sends you a group you're in),
+// and a red flag for location not shared, a VPN or a location that may be
+// faked (grey for a private relay). Tapped, they say so in words
+// (seatFlagLines); never where.
+let seatFlags = {seats: {}, groups: []};
+let flagPop = -1; // the table seat whose flags' words are open
 function seatFlagHtml(s, i) {
   const n = s.seats?.length || 0;
-  if (!n || !Object.keys(seatFlags).length) return '';
-  const text = seatFlagsText(seatFlags[(num(s.seat) + i) % n]);
-  return text ? `<i class="pl-flag">${esc(text)}</i>` : '';
+  if (!n) return '';
+  const at = (num(s.seat) + i) % n;
+  const nameAt = seat => s.seats[(seat - num(s.seat) + 2 * n) % n]?.name || 'someone';
+  const m = seatMarks(seatFlags, at, nameAt);
+  if (!m.lines.length) return '';
+  const words = esc(m.lines.join('. '));
+  let h = '';
+  if (m.group) h += `<button type="button" class="pl-mark l g${m.group.index % 6}" data-act="seat-flags" data-flag-seat="${at}" title="${words}" aria-label="${words}">${esc(m.group.letter)}</button>`;
+  if (m.flag) h += `<button type="button" class="pl-mark r ${m.flag}" data-act="seat-flags" data-flag-seat="${at}" title="${words}" aria-label="${words}">${FLAG_SVG}</button>`;
+  if (flagPop === at) h += `<div class="pl-fpop" role="tooltip">${m.lines.map(l => `<div>${esc(l)}</div>`).join('')}</div>`;
+  return h;
 }
+const FLAG_SVG = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M3 1h1.6v14H3zM5.4 2h8l-2 3.2 2 3.3h-8z"/></svg>';
 let seatToolsHook = null; // joinTableVia's seatTools
 let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
@@ -2977,7 +2993,8 @@ function startGuest(code) {
   seated = true;
   state = null;
   lastView = null;
-  seatFlags = {};
+  seatFlags = {seats: {}, groups: []};
+  flagPop = -1;
   raiseTo = 0;
   foldQueued = false;
 }
@@ -2986,7 +3003,7 @@ function guestMessage(m) {
   if (m.type === 'table') { tableTitle = String(m.name || '').slice(0, 40); render(); return; }
   // A club table's seat flags from the relay (#581): {seat: [kind]}, by the
   // table's own seat numbers.
-  if (m.type === 'seat_flags') { seatFlags = m.seats && typeof m.seats === 'object' ? m.seats : {}; render(); return; }
+  if (m.type === 'seat_flags') { seatFlags = readSeatFlags(m); render(); return; }
   // A fair deal at a friends table (#136, #462): this page's part of the
   // host's round.
   if (m.type === 'fair' && joinedByCode) {
@@ -3611,7 +3628,7 @@ function renderTable() {
     }
     if (seat.sitting_out) {
       const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
-      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span>${seatFlagHtml(s, i)}</div><div class="pl-note">${why}</div></div>`;
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}${seatFlagHtml(s, i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
@@ -3619,11 +3636,11 @@ function renderTable() {
     const mucked = shows && !shows.has(i) && !seat.folded;
     const shown = (!mucked && seat.cards) || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
-    h += avatarHtml(i);
+    h += avatarHtml(i) + seatFlagHtml(s, i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
     const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
-    h += `<div class="pl-plate"><b>${esc(seat.name)}</b>${questChip(i)}<span>${c(seat.stack)}</span>${seatFlagHtml(s, i)}${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
+    h += `<div class="pl-plate"><b>${esc(seat.name)}</b>${questChip(i)}<span>${c(seat.stack)}</span>${chipRow(chips.stack, 5, `ch-seat ${p.x > 50 ? 'ch-left' : 'ch-right'}`)}${s.button === i ? buttonHtml(p) : ''}</div>`;
     // Your hand in words ("Straight, 8 high"), from the flop on.
     if (i === 0 && !watching && !seat.folded) {
       // On a double board, what you make on each, first board first.
@@ -4339,6 +4356,14 @@ function reviewTotalsHtml() {
 function onClick(e) {
   // Browsers play sound only after the person has interacted with the page.
   unlockSounds();
+  // A seat's flags (#581): their words open and close; any other click closes them.
+  const fl = e.target.closest('[data-act="seat-flags"]');
+  if (fl || flagPop >= 0) {
+    const at = fl ? Number(fl.dataset.flagSeat) : -1;
+    flagPop = at === flagPop ? -1 : at;
+    render();
+    if (fl) return;
+  }
   // A one-off tournament's form and page (#394).
   if (view === 'host' && tourneyPage?.click(e)) return;
   // More options stays as it was left (it opens or closes after this click).

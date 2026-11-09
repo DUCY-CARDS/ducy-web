@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import {
-  hostingNetwork, ipNetwork, LIMITS, liveOf, metres, readingOf, tableSignals, takeReading, trustOf,
+  hostingNetwork, ipNetwork, LIMITS, liveOf, metres, privateRelay, readingOf, seatPayloads, tableSignals, takeReading, trustOf,
 } from '../relay/src/proximity.js';
 import { unlockedNow } from '../relay/src/unlock.js';
 import { IDLE_MS } from '../relay/src/passkeys.js';
@@ -17,7 +17,7 @@ import { collusionReport, proximityFlags } from '../relay/src/collusion.js';
 import { connSnapshot, createClub, openClub } from '../relay/src/club-room.js';
 import { fullHands } from '../relay/src/hand-records.js';
 import { EVERY_MS, MIN_MS, watchLocation } from '../src/table-location.js';
-import { flagText, handFlagsText, seatFlagsText } from '../src/club-fair-play.js';
+import { flagText, handFlagsText, readSeatFlags, seatFlagsText, seatMarks } from '../src/club-fair-play.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { newKeyPair, open as openBox, sharedKey } from '../src/e2e.js';
 
@@ -301,17 +301,28 @@ test('at a club on the relay: the seats get their flags, the records keep them, 
   // Each page's latest flags, by the table's seats; a view's seat i is the
   // table's (view.seat + i) mod seats.
   const seatOf = Object.fromEntries(server.seatsAt(tid).map(s => [s.id, s.seat]));
+  // Cy sees Ann and Bob as a group; Ann and Bob, who are in it, never do.
+  // Cy's own flags go to everyone.
+  const want = {
+    Ann: {Ann: '', Bob: '', Cy: 'VPN · location not shared'},
+    Bob: {Ann: '', Bob: '', Cy: 'VPN · location not shared'},
+    Cy: {Ann: 'within 100 m · same network', Bob: 'within 100 m · same network', Cy: 'VPN · location not shared'},
+  };
   for (const p of players) {
-    const flags = p.got.filter(u => u.type === 'seat_flags').at(-1)?.seats;
-    assert.ok(flags, `${p.name} got the seats' flags`);
-    assert.deepEqual(flags[seatOf[ann.ident.id]], ['near', 'network']);
-    assert.deepEqual(flags[seatOf[bob.ident.id]], ['near', 'network']);
-    assert.deepEqual(flags[seatOf[cy.ident.id]], ['vpn', 'hidden']);
-    const view = p.got.filter(u => u.type === 'state').at(-1).view;
+    const u = p.got.filter(x => x.type === 'seat_flags').at(-1);
+    assert.ok(u, `${p.name} got the seats' flags`);
+    const view = p.got.filter(x => x.type === 'state').at(-1).view;
     assert.equal(view.seats[0].name, p.name);
     assert.equal(Number(view.seat), seatOf[p.ident.id], 'the view says which seat is theirs');
-    const shown = Object.fromEntries(view.seats.map((s, i) => [s.name, seatFlagsText(flags[(Number(view.seat) + i) % view.seats.length])]));
-    assert.deepEqual(shown, {Ann: 'within 100 m · same network', Bob: 'within 100 m · same network', Cy: 'VPN · location not shared'});
+    const shown = Object.fromEntries(view.seats.map((x, i) => [x.name, seatFlagsText(u.seats[(Number(view.seat) + i) % view.seats.length])]));
+    assert.deepEqual(shown, want[p.name], p.name);
+    if (p === cy) {
+      assert.deepEqual(u.groups.map(g => [g.letter, [...g.seats].sort()]), [['A', [seatOf[ann.ident.id], seatOf[bob.ident.id]].sort()]]);
+      assert.deepEqual(u.groups[0].links.map(l => l.kind).sort(), ['near', 'network']);
+    } else {
+      assert.deepEqual(u.groups, [], `${p.name} isn't told who's near them`);
+      assert.doesNotMatch(JSON.stringify(p.got.filter(x => x.type === 'seat_flags')), /near|network/, `${p.name} never was`);
+    }
   }
 
   // The records: the owner's history and the full records carry the flags.
@@ -320,8 +331,9 @@ test('at a club on the relay: the seats get their flags, the records keep them, 
   assert.ok(history.length >= 2);
   const last = history[0];
   assert.match(handFlagsText(last), /Ann and Bob: within 100 m · same network|Bob and Ann: within 100 m · same network/);
-  // Cy's flag is in it if Cy was dealt into it (Cy sat down last).
-  if ((last.seats || []).some(s => s.id === cy.ident.id && s.inHand !== false)) assert.match(handFlagsText(last), /Cy: VPN · location not shared/);
+  // Cy's flags, if Cy was dealt into it (Cy sat down last).
+  if ((last.seats || []).some(x => x.id === cy.ident.id && x.inHand !== false)) assert.match(handFlagsText(last), /Cy: VPN · location not shared/);
+  else assert.doesNotMatch(handFlagsText(last), /Cy/);
   const full = await fullHands(storage);
   assert.ok(full.at(-1).prox.some(f => f.kind === 'near'));
   assert.equal(full.at(-1).seats.find(s => s.id === ann.ident.id).conn.trust, 'website');
@@ -342,12 +354,100 @@ test('at a club on the relay: the seats get their flags, the records keep them, 
   for (const p of players) assert.doesNotMatch(JSON.stringify(p.got.filter(u => u.type === 'seat_flags')), /30\.2|97\.7/);
 
   // Bob leaves the relay: his reading goes with him, and the table hears.
-  const before = ann.got.filter(u => u.type === 'seat_flags').length;
+  const before = cy.got.filter(u => u.type === 'seat_flags').length;
   await server.message({from: bob.ident.id, event: 'close'});
-  await until('new flags', () => ann.got.filter(u => u.type === 'seat_flags').length > before);
-  const now = ann.got.filter(u => u.type === 'seat_flags').at(-1).seats;
-  assert.equal(now[seatOf[bob.ident.id]], undefined);
-  assert.equal(now[seatOf[ann.ident.id]], undefined, 'no one near her now');
+  await until('new flags', () => cy.got.filter(u => u.type === 'seat_flags').length > before);
+  const now = cy.got.filter(u => u.type === 'seat_flags').at(-1);
+  assert.equal(now.seats[seatOf[bob.ident.id]], undefined);
+  assert.equal(now.seats[seatOf[ann.ident.id]], undefined, 'no one near her now');
+  assert.deepEqual(now.groups, []);
   await ownerSays('close_table', {table: tid});
+  await server.flush();
+});
+
+test('a private relay is its own, milder flag; a VPN stays a VPN', () => {
+  assert.equal(privateRelay(36183, 'Akamai Technologies, Inc.'), true, 'iCloud Private Relay');
+  assert.equal(privateRelay(13335, 'Cloudflare, Inc.'), true, 'WARP');
+  assert.equal(hostingNetwork(13335, 'Cloudflare, Inc.'), false);
+  assert.equal(hostingNetwork(9009, 'M247 Europe SRL'), true);
+  assert.equal(privateRelay(9009, 'M247 Europe SRL'), false);
+  const s = tableSignals([{id: 'a', live: liveOf({asn: 36183})}, {id: 'b', live: liveOf({asn: 9009})}]);
+  assert.deepEqual(s.seats, {a: ['relay', 'hidden'], b: ['vpn', 'hidden']});
+  assert.equal(seatFlagsText(s.seats.a), 'private relay · location not shared');
+  // Not a fair play flag.
+  const r = collusionReport(hands(10, () => [{kind: 'relay', ids: ['cy']}]));
+  assert.deepEqual(r.flagged, []);
+});
+
+test('each player gets the table’s groups, lettered alike for all, but never one they’re in', () => {
+  const live = (ipNet, p) => { const L = liveOf({ipNet}); if (p) takeReading(L, reading(p), 0); return L; };
+  const far = {lat: 40.7, lon: -74};
+  // Seats 0–1 near each other; 1–2 on one network (so 0, 1, 2 are one group); 4–5 near each other; 3 alone.
+  const players = [
+    {id: 'a', live: live('n1', AUSTIN)}, {id: 'b', live: live('n2', at(AUSTIN, 30))}, {id: 'c', live: live('n2', at(AUSTIN, 9000))},
+    {id: 'd', live: live('n4', at(AUSTIN, 30_000))}, {id: 'e', live: live('n5', far)}, {id: 'f', live: live('n6', at(far, 20))},
+  ];
+  const seats = players.map((p, i) => ({seat: i, id: p.id}));
+  const forViewer = seatPayloads(seats, tableSignals(players));
+  const d = forViewer('d');
+  assert.deepEqual(d.groups.map(g => [g.letter, g.seats]), [['A', [0, 1, 2]], ['B', [4, 5]]]);
+  assert.deepEqual(d.groups[0].links.map(l => [l.kind, l.seats]).sort(), [['near', [0, 1]], ['network', [1, 2]]]);
+  assert.deepEqual(d.seats, {0: ['near'], 1: ['near', 'network'], 2: ['network'], 4: ['near'], 5: ['near']});
+  // B's players see A, and nothing of their own group.
+  const e = forViewer('e');
+  assert.deepEqual(e.groups.map(g => g.letter), ['A']);
+  assert.equal(e.seats[4], undefined);
+  assert.equal(e.seats[5], undefined);
+  // In A, even through someone else (c is on b's network, not near a): nothing of A.
+  const c = forViewer('c');
+  assert.deepEqual(c.groups.map(g => g.letter), ['B']);
+  for (const seat of [0, 1, 2]) assert.equal(c.seats[seat], undefined);
+  // One-player flags go to everyone, their own seat included.
+  const lone = seatPayloads([{seat: 0, id: 'x'}, {seat: 1, id: 'y'}], tableSignals([{id: 'x', live: liveOf({asn: 9009})}, {id: 'y', live: liveOf()}]));
+  assert.deepEqual(lone('x').seats, {0: ['vpn', 'hidden'], 1: ['hidden']});
+});
+
+test('the page’s icons: a group’s letter and colour, a red or grey flag, and plain words', () => {
+  const flags = readSeatFlags({seats: {0: ['near', 'network'], 1: ['near'], 2: ['network', 'hidden'], 3: ['vpn', 'fake'], 4: ['relay'], 5: ['bogus']}, groups: [
+    {letter: 'B', seats: [0, 1, 2], links: [{kind: 'near', seats: [0, 1]}, {kind: 'network', seats: [0, 2]}, {kind: 'odd', seats: [0, 1]}]},
+  ]});
+  const names = ['Ann', 'Bo', 'Cy', 'Dee', 'Eve', 'Flo'];
+  const nameAt = i => names[i];
+  assert.deepEqual(seatMarks(flags, 0, nameAt), {group: {letter: 'B', index: 1}, flag: null, lines: ['Within 100 m of Bo', 'Same network as Cy']});
+  assert.deepEqual(seatMarks(flags, 2, nameAt), {group: {letter: 'B', index: 1}, flag: 'red', lines: ['Same network as Ann', 'Location not shared']});
+  assert.deepEqual(seatMarks(flags, 3, nameAt), {group: null, flag: 'red', lines: ['VPN', 'Location may be faked']});
+  assert.deepEqual(seatMarks(flags, 4, nameAt), {group: null, flag: 'grey', lines: ['Private relay']});
+  assert.deepEqual(seatMarks(flags, 5, nameAt), {group: null, flag: null, lines: []});
+  assert.doesNotMatch(JSON.stringify([0, 1, 2, 3, 4].map(i => seatMarks(flags, i, nameAt))), /\d+ ?m\b(?<!100 m)|km|lat|lon/);
+  assert.deepEqual(readSeatFlags({}), {seats: {}, groups: []});
+});
+
+test('at a tournament’s tables: each of its tables gets its own flags', async () => {
+  const store = new Map();
+  const storage = {get: async k => structuredClone(store.get(k)), put: async (k, v) => { store.set(k, structuredClone(v)); }, delete: async k => { store.delete(k); }};
+  const owner = await createIdentity();
+  await createClub(storage, await signMessage(owner, {type: 'create_club', club: 'TOUR-NEY1', name: 'T'}), 'TOUR-NEY1');
+  const server = await openClub({storage, send() {}, online: [], timers});
+  // A running tournament on two tables, as club-server.js seatGroups gives them.
+  server.club.tourneys = [{id: 'tz', status: 'running'}];
+  const groups = [[{seat: 0, id: 'a'}, {seat: 1, id: 'b'}], [{seat: 0, id: 'c'}, {seat: 1, id: 'd'}]];
+  server.seatGroups = tid => (tid === 'tourney:tz' ? groups : []);
+  const sent = [];
+  server.sendTable = (to, m) => sent.push({to, ...m});
+  for (const id of ['a', 'b', 'c', 'd']) {
+    server.online.add(id);
+    await server.message({from: id, event: 'open', conn: {ip: id === 'c' || id === 'd' ? '198.51.100.9' : `192.0.2.${id.charCodeAt(0)}`, asn: 7922}});
+  }
+  // a and c near each other, but at different tables: nothing. c and d on one network.
+  await server.message({from: 'a', data: {type: 'location', lat: AUSTIN.lat, lon: AUSTIN.lon, acc: 10, off: CST}});
+  await server.message({from: 'c', data: {type: 'location', lat: AUSTIN.lat, lon: AUSTIN.lon, acc: 10, off: CST}});
+  const latest = id => sent.filter(m => m.to === id).at(-1);
+  assert.equal(latest('a').table, 'tourney:tz');
+  assert.deepEqual(latest('a').update, {type: 'seat_flags', seats: {1: ['hidden']}, groups: []});
+  assert.deepEqual(latest('b').update.seats, {1: ['hidden']});
+  assert.deepEqual(latest('c').update, {type: 'seat_flags', seats: {1: ['hidden']}, groups: []}, 'c isn’t told about d');
+  assert.deepEqual(latest('d').update, {type: 'seat_flags', seats: {1: ['hidden']}, groups: []}, 'nor d about c; d’s own flag shows');
+  // Each table apart: a and c are near each other, but not at one table.
+  assert.ok(!sent.some(m => ['a', 'b'].includes(m.to) && JSON.stringify(m.update).includes('network')), 'the other table hears nothing of c and d');
   await server.flush();
 });
