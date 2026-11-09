@@ -21,6 +21,7 @@ pub mod promos;
 pub mod registry;
 pub mod room;
 pub mod rules;
+pub mod scheduled;
 pub mod seats;
 pub mod service;
 pub mod tourney_host;

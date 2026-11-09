@@ -218,6 +218,39 @@ enum Op {
         id: String,
         most: Option<u64>,
     },
+    ScheduleGame {
+        spec: Value,
+    },
+    EditScheduled {
+        id: String,
+        spec: Value,
+    },
+    CancelScheduled {
+        id: String,
+    },
+    StartScheduled {
+        id: String,
+        most: Option<u64>,
+    },
+    SchedSignUp {
+        id: String,
+        who: String,
+    },
+    SchedLeave {
+        id: String,
+        who: String,
+    },
+    SchedCheckIn {
+        id: String,
+        who: String,
+    },
+    ScheduledDue {
+        most: Option<u64>,
+    },
+    NextScheduledDue,
+    ScheduledFor {
+        id: String,
+    },
     AddService {
         id: String,
         alg: String,
@@ -455,6 +488,24 @@ pub fn club_rules(club: &str, op: JsValue, now: f64) -> Result<JsValue, JsError>
         }
         Op::GroupAnswer { id, who, yes } => value(c.group_answer(&id, &who, yes, now)),
         Op::FinishAsk { id, most } => value(c.finish_ask(&id, now, most, &mut rng())),
+        Op::ScheduleGame { spec } => c.schedule_game(&spec, now, &mut rng()).and_then(value),
+        Op::EditScheduled { id, spec } => c.edit_scheduled(&id, &spec, now).and_then(value),
+        Op::CancelScheduled { id } => c.cancel_scheduled(&id, now).and_then(value),
+        Op::StartScheduled { id, most } => c
+            .start_scheduled(&id, now, most, &mut rng())
+            .and_then(value),
+        Op::SchedSignUp { id, who } => c.sched_sign_up(&id, &who, now).and_then(value),
+        Op::SchedLeave { id, who } => c.sched_leave(&id, &who, now).and_then(value),
+        Op::SchedCheckIn { id, who } => c.sched_check_in(&id, &who, now).and_then(value),
+        Op::ScheduledDue { most } => value(c.scheduled_due(now, most, &mut rng())),
+        Op::NextScheduledDue => {
+            changes = false;
+            value(c.next_scheduled_due())
+        }
+        Op::ScheduledFor { id } => {
+            changes = false;
+            Ok(c.scheduled_for(&id, now))
+        }
         Op::AddService { id, alg, key, o } => {
             c.add_service(&id, &alg, &key, &o, now).and_then(value)
         }

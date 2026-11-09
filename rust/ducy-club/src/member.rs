@@ -234,6 +234,8 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         "group",
         "lists",
         "list",
+        "scheduled",
+        "sched",
         "tourney_error",
         "host_key",
         "table_error",
@@ -285,6 +287,35 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         // The waitlists you're on (#518): each with its count and your
         // place, a seat offered, or when your place goes.
         "lists" => set("lists", list(b.get("lists"))),
+        // Scheduled cash games (#599): those coming up, and yours lately.
+        "scheduled" => set("scheduled", list(b.get("games"))),
+        // News of one: sign-up confirmed, a seat from the waitlist, check-in
+        // open, starting (your table), too few checked in, edited, cancelled,
+        // or on the game's live waitlist.
+        "sched" => {
+            let k = b.get("kind").and_then(Value::as_str).unwrap_or("");
+            let kinds = [
+                "confirmed",
+                "seat",
+                "checkin",
+                "start",
+                "short",
+                "edited",
+                "cancelled",
+                "waitlist",
+                "refused",
+            ];
+            if !kinds.contains(&k) {
+                return false;
+            }
+            set(
+                "schedEvent",
+                json!({"kind": k, "id": short(b.get("id"), 40), "name": short(b.get("name"), 60),
+                       "startAt": number(b.get("startAt")), "table": short(b.get("table"), 40),
+                       "tableName": short(b.get("tableName"), 60), "place": number(b.get("place")),
+                       "reason": short(b.get("reason"), 200)}),
+            );
+        }
         // A seat offered (offer), an offer missed (missed), off a list
         // (off), or a list refused (refused).
         "list" => {

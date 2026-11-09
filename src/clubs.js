@@ -67,6 +67,7 @@ import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './cl
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, floatOf, managerNotices, raiseTo } from './club-notices.js';
+import { ownerScheduledHtml, readSchedForm, upcomingHtml } from './club-scheduled-ui.js';
 import { entryTitle, fairPlayNotices, flagText, flowText, handFlagsText, handsText } from './club-fair-play.js';
 import { watchLocation } from './table-location.js';
 import { chipLines, leftSummary } from './club-member-view.js';
@@ -121,6 +122,7 @@ const appBase = () => new URL('./', location.href).href;
 // (#152): none runs in a browser tab (#580).
 let alwaysFailed = null;
 let tableForm = false; // the New table form is open
+let schedForm = null; // the Schedule a game form: {id, note} (#599)
 // Tournaments (#64): the New tournament wizard (#477: {step, d, editor,
 // edit, note}, club-tourneys-ui.js wizardHtml), the payout table being made
 // or edited in it (#424: {id ('new' for a new one), name, draft},
@@ -761,6 +763,8 @@ function cashHtml() {
   // for it before any table of it runs.
   let h = tableForm ? tableFormHtml({offer: tableForm === 'offer'})
     : '<div class="pl-actions"><button class="btn-small primary" data-cl="new-table">New table</button><button class="btn-small" data-cl="offer-game">Offer a game</button></div>';
+  // Scheduled games (#599), of any game the club offers or deals.
+  h += ownerScheduledHtml(club, {games: games.map(g => ({key: g.key, label: `${gameTitle(g.t)} · ${seatsName(g.t.seats)}`, seats: g.t.seats})), form: schedForm, name: id => club.members[id]?.name || 'Someone'});
   if (!games.length) return h + (tableForm ? '' : '<p class="pl-meta cl-empty">No tables open.</p>');
   const waiting = g => listOf(club, g.key).length;
   // Filter by seats, when there's more than one size.
@@ -1122,6 +1126,16 @@ function onSubmitIn(e) {
   if (hr) { e.preventDefault(); answerHelpReq(hr.dataset.helpreply, hr.elements.reply.value, false); return; }
   const tf = e.target.closest('form[data-tableform]');
   if (tf) { e.preventDefault(); submitTable(tf); return; }
+  // Schedule a game, or change one (#599).
+  const schedF = e.target.closest('form[data-schedform]');
+  if (schedF) {
+    e.preventDefault();
+    const {spec, note} = readSchedForm(schedF);
+    const id = schedF.dataset.schedform;
+    if (note) { schedForm = {...schedForm, note}; render(); return; }
+    hostAct(id ? 'edit_scheduled' : 'schedule_game', id ? {id, game: spec} : {game: spec}).then(ok => { if (ok) { schedForm = null; render(); } });
+    return;
+  }
   // A game's Must move (#518).
   const mf = e.target.closest('form[data-mmform]');
   if (mf) {
@@ -1365,6 +1379,21 @@ function connectMembership(mem) {
         if (ev.kind === 'offer') notice(`${cname}: a seat at ${ev.name} is yours for a minute.`, clubHash(mem.code));
         else if (ev.kind === 'missed') notice(`${cname}: you missed your seat. You keep your place for 10 minutes.`, clubHash(mem.code));
         else if (ev.kind === 'refused' && ev.reason) notice(`${cname}: ${ev.reason}`, clubHash(mem.code));
+      }
+      // A scheduled game's news (#599), wherever you are; at the start, your
+      // seat's buy-in.
+      if (msg.body?.type === 'sched' && mem.schedEvent) {
+        const ev = mem.schedEvent;
+        mem.schedEvent = null;
+        const say = {
+          confirmed: ev.place ? `you’re #${ev.place} on the waitlist for ${ev.name}.` : `you’re signed up for ${ev.name}.`,
+          seat: `you got a seat in ${ev.name}.`, checkin: `check-in is open for ${ev.name}.`,
+          start: `${ev.name} is starting. Take your seat at ${ev.tableName}.`, short: `${ev.name}: too few checked in. Waiting on the owner.`,
+          edited: `${ev.name} was changed.`, cancelled: `${ev.name} was cancelled.`, waitlist: `${ev.name} is full. You’re on its waitlist.`,
+          refused: ev.reason,
+        }[ev.kind];
+        if (say) notice(`${cname}: ${say}`, clubHash(mem.code));
+        if (ev.kind === 'start' && ev.table && !(seatedAt?.code === mem.code)) { sitForm = `${mem.code}|${ev.table}`; sitAmount = 0; }
       }
       // A promotion prize, or a new high hand (#267), wherever you are.
       // At the club's table, it's celebrated there instead (#278).
@@ -2849,6 +2878,11 @@ function noteHtml(n) {
   } else if (n.kind === 'fair_play') {
     // Flagged by the relay's check (#582): the Fair play page has the numbers.
     top = `<a href="#${ph('fairplay')}">${esc(n.name)}</a>`;
+  } else if (n.kind === 'short') {
+    // A scheduled game's start with too few checked in (#599).
+    top = `<b>${esc(n.name)}</b>: ${n.checkedIn} checked in of ${n.min}`;
+    if (n.note) body = `<span class="pl-meta">${esc(n.note)}</span>`;
+    acts = btn('sched-start', 'Start short', ` data-id="${esc(n.id)}"`, true) + btn('sched-cancel', 'Cancel', ` data-id="${esc(n.id)}" data-ask="Cancel this game?" data-yes="Cancel game"`);
   } else if (n.kind === 'refill_wait') {
     // A second refill in a day waits a day, unless approved from another
     // of the owner's devices (#589).
@@ -2866,7 +2900,7 @@ function noteHtml(n) {
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play'};
+const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play', short: 'Game'};
 
 // When something waiting applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
@@ -3480,7 +3514,8 @@ function memberTablesHtml(m, hostHere) {
     const net = last.net > 0 ? `+${chips(last.net)}` : signed(last.net);
     h += `<p class="pl-desc cl-last">Last session at ${esc(where)}: in ${chips(last.put)}, out ${chips(last.took)} → <b class="${last.net > 0 ? 'cl-up' : last.net < 0 ? 'cl-down' : ''}">${net}</b></p>`;
   }
-  // Games the club offers that aren't running: sign up for them.
+  // Scheduled games (#599), then games the club offers that aren't running.
+  h += upcomingHtml(m, hostHere, {gameName, render});
   const menu = menuGamesHtml(m, hostHere);
   if (!m.tables?.length) return h + (menu || `<p class="pl-meta cl-empty">No tables open right now. <button class="btn-small" data-cl="help-open" data-code="${esc(m.code)}"${hostHere ? '' : ' disabled'}>Ask for one</button></p>`);
   // Filter by stakes, when the club deals more than one band.
@@ -3845,6 +3880,13 @@ async function onClickIn(e) {
   // The club's menu: offering a game, and no longer offering one.
   else if (act === 'offer-game') { tableForm = 'offer'; render(); }
   else if (act === 'offer-remove') hostAct('remove_offer', {key: b.dataset.key});
+  // Scheduled games (#599): a member's sign-up, leaving and check-in; the
+  // owner's form, Cancel and Start short.
+  else if (act === 'sched-act') { b.disabled = true; sendToHost(b.dataset.code, {type: 'table', club: b.dataset.code, table: `sched:${b.dataset.id}`, cmd: {type: b.dataset.type}}); }
+  else if (act === 'sched-new' || act === 'sched-edit') { schedForm = {id: b.dataset.id || '', note: ''}; render(); root.querySelector('form[data-schedform] input[name=at]')?.focus(); }
+  else if (act === 'sched-close') { schedForm = null; render(); }
+  else if (act === 'sched-cancel') hostAct('cancel_scheduled', {id: b.dataset.id});
+  else if (act === 'sched-start') hostAct('start_scheduled', {id: b.dataset.id});
   // The host: agents.
   else if (act === 'make-agent') openChipForm('agent', b.dataset.id);
   else if (act === 'revoke-agent') hostAct('revoke_agent', {id: b.dataset.id});
