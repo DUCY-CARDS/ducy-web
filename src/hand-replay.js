@@ -61,6 +61,9 @@ function amountText(e, name) {
     case 'bet': return `${who} bets ${c(e.to)}${allIn}`;
     case 'raise': return `${who} raises to ${c(e.to)}${allIn}`;
     case 'award': return `${who} wins ${c(e.amount)}${num(e.pot) > 0 ? ' (side pot)' : ''}`;
+    // What a club table takes (#449).
+    case 'rake': return `Rake ${c(e.amount)}${num(e.pot) > 0 ? ' (side pot)' : ''}`;
+    case 'time': return `${who} pays ${c(e.amount)} time`;
     default: return null;
   }
 }

@@ -60,11 +60,16 @@ export const tableResult = (club, id) => view(club, 'tableResult', {id});
 
 // What an agent sees: their account, what they'd owe the club if their
 // players stood up now (#428), recruits waiting, and their players (with
-// their results at the tables, #190, and where they're playing, #428).
-export function agentBody(club, id) {
+// their results at the tables, #190, and where they're playing, #428), and
+// the rake and time their players paid (#449).
+export function agentBody(club, id, now = Date.now()) {
   ensureChips(club);
-  return view(club, 'agentBody', {id});
+  return view(club, 'agentBody', {id, now});
 }
+
+// Each player's rake and time (#449), for the owner: {players: [{id, name,
+// agent, today, week, all}], agents, totals}; with `agent`, theirs only.
+export const contributions = (club, agent = null, now = Date.now()) => view(club, 'contributions', {now, ...(agent ? {agent} : {})});
 
 // An agent's command (sent signed through the host): approving or
 // declining their recruits, giving, granting, taking back, or denying a

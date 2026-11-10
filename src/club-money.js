@@ -17,7 +17,8 @@
 // change to the link's balance (below zero: toward the backer) and `about`
 // the table, tournament or promotion. Kinds: give, take_back, buy_in,
 // top_up, refund, cash_out, tourney_buy_in, prize, rake_share, void,
-// opening. The entries of one move along a path share a `tx`, the player's
+// opening; and rake (#449), what a player paid over a session, as an entry
+// of the 'house' (with `from`, who paid it). The entries of one move along a path share a `tx`, the player's
 // own link first; `entryView` adds whose move it was (`player`) to the
 // others, and a prize's hand.
 //

@@ -329,9 +329,10 @@ impl ClubState {
 
     /// What agent `id` sees: their account, what they'd owe the club if
     /// their players stood up now (credit used less their players' chips at
-    /// the tables), their invite, recruits waiting, and each player with
-    /// their balance, request, seat and result at the tables.
-    pub fn agent_body(&self, id: &str) -> Result<Value, RuleError> {
+    /// the tables), their invite, recruits waiting, each player with
+    /// their balance, request, seat and result at the tables, and their
+    /// players' rake and time at `now` (#449), when they've paid any.
+    pub fn agent_body(&self, id: &str, now: u64) -> Result<Value, RuleError> {
         let Some(me) = self.book.club.members.get(id) else {
             return refuse("No such member.");
         };
@@ -366,18 +367,24 @@ impl ClubState {
             .iter()
             .map(|m| json!({"id": m.id, "name": m.name, "at": m.requested_at}))
             .collect();
-        Ok(json!({
+        let mut body = json!({
             "type": "agent", "club": self.book.club.code,
             "own": a["own"], "shares": a["shares"], "total": total, "limit": a["limit"],
             "creditUsed": a["creditUsed"], "room": a["room"],
             "owed": (-(total + at_tables)).max(0),
             "invite": me.agent_invite, "recruits": recruits, "players": list,
-        }))
+        });
+        let rake = self.contributions(Some(id), now);
+        if rake["players"].as_array().is_some_and(|p| !p.is_empty()) {
+            body["rake"] = rake;
+        }
+        Ok(body)
     }
 
     /// Runs view op `op` with `args`: "entriesOf" {id, since}, "ledger",
     /// "entryViews" {ns} (those entries, by number), "settleRows"
-    /// {backer}, "accountOf" {id}, "tableResult" {id}, "agentBody" {id}.
+    /// {backer}, "accountOf" {id}, "tableResult" {id}, "agentBody" {id,
+    /// now}, "contributions" {now, agent}.
     pub fn view(&self, op: &str, args: &Value) -> Result<Value, RuleError> {
         let id = text(args.get("id"));
         Ok(match op {
@@ -408,7 +415,16 @@ impl ClubState {
             }
             "accountOf" => self.account_of(id),
             "tableResult" => self.tables_result(id).into(),
-            "agentBody" => self.agent_body(id)?,
+            "agentBody" => {
+                let now = args.get("now").and_then(Value::as_u64).unwrap_or(0);
+                self.agent_body(id, now)?
+            }
+            // Each player's rake and time (#449): {now, agent?}.
+            "contributions" => {
+                let now = args.get("now").and_then(Value::as_u64).unwrap_or(0);
+                let agent = args.get("agent").and_then(Value::as_str);
+                self.contributions(agent, now)
+            }
             _ => return refuse(format!("no view op {op}")),
         })
     }
@@ -518,13 +534,18 @@ mod tests {
                 .iter()
                 .all(|x| x.get("player").is_none())
         );
-        let v = c.agent_body("al").unwrap();
+        let v = c.agent_body("al", 0).unwrap();
         assert_eq!(v["recruits"], json!([{"id": "cy", "name": "Cy", "at": 7}]));
         assert_eq!(v["players"][0]["table"], "Main");
         assert_eq!(v["players"][0]["stack"], 200);
         assert_eq!(v["invite"], "INV");
         assert_eq!(v["total"], c.book.balance("al"));
-        assert!(c.agent_body("nobody").is_err());
+        // No rake paid yet: none shown.
+        assert!(v.get("rake").is_none());
+        c.book.rake_hand("t1", 1, &[("bo".into(), 4)], 0);
+        let v = c.agent_body("al", 0).unwrap();
+        assert_eq!(v["rake"]["totals"]["all"], 4);
+        assert!(c.agent_body("nobody", 0).is_err());
         assert_eq!(c.view("tableResult", &json!({"id": "bo"})).unwrap(), 0);
     }
 }

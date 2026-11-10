@@ -571,6 +571,96 @@ test.describe('a club member', () => {
     await owner.screenshot({path: info.outputPath('owner-hand-flags.png'), fullPage: true});
   });
 
+  test('a raked table: members see the rake before they sit, the hand log and replay show it, and the owner sees what each paid (#449)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    test.setTimeout(180_000);
+    // The owner opens a 0.25/0.50 table taking 10%, capped at a big blind.
+    const {page: owner} = await browserWith(browser, watch);
+    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('[data-cl="wiz-skip"]').click();
+    await owner.locator('[data-cl="wiz-onward"]').click();
+    const form = owner.locator('form[data-tableform]');
+    await expect(form).toBeVisible();
+    // The new club's first messages redraw the page: let them land first.
+    await owner.waitForTimeout(1500);
+    await form.locator('input[name=blinds][value=other]').check({force: true});
+    await form.locator('[name=blindsOther]').selectOption('25/50');
+    await form.locator('.tf-more summary').click();
+    // Off in the beta until club-beta.js turns it on.
+    test.skip(!(await form.locator('[name=house]').count()), 'rake is off in the beta');
+    await expect(form.locator('[name=rakePct]')).toBeHidden();
+    await form.locator('[name=house]').selectOption('rake');
+    await form.locator('[name=rakePct]').selectOption('1000');
+    await form.locator('[name=rakeCap]').selectOption('1');
+    await expect(form.locator('[name=noFlop]')).toBeChecked();
+    await expect(form.locator('input[name=blinds][value=other]')).toBeChecked();
+    await expect(form.locator('[name=house]')).toHaveValue('rake');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('rake-form.png'), fullPage: true});
+    await form.locator('button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+
+    // Ava and Bo join, see the rake on the table, and sit.
+    const join = async name => {
+      const {page} = await browserWith(browser, watch);
+      await page.goto(invite);
+      await page.locator('form[data-joinform] input[name="name"]').fill(name);
+      await page.locator('form[data-joinform] button[type="submit"]').click();
+      await page.locator('[data-cl="pass-enrol"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="approve"]').first().click();
+      await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+      await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+      await page.locator(`[data-ask-amt="${code}"]`).fill('50');
+      await page.locator('[data-cl="ask"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="grant"]').first().click();
+      await expect(page.getByText('Balance 50')).toBeVisible();
+      await expect(page.locator('.cl-charge').first()).toHaveText('Rake 10% · cap 0.50 · no flop, no drop');
+      await fitsTheScreen(page);
+      await page.locator('[data-cl="sit-open"]').first().click();
+      await page.locator('form[data-sitform] button[type="submit"]').click();
+      await expect(page.locator('.pl-felt')).toBeVisible();
+      return page;
+    };
+    const ava = await join('Ava');
+    const bo = await join('Bo');
+    // Both check and call to the river: a 1.00 pot, 0.10 of it the club's.
+    const players = [ava, bo];
+    const log = ava.locator('#pl-log');
+    for (let i = 0; i < 240 && !(await log.getByText('Rake 0.10').count()); i++) {
+      for (const p of players) {
+        const act = p.locator('[data-act="check"], [data-act="call"]').first();
+        if (await act.isVisible()) await act.click().catch(() => {});
+      }
+      await ava.waitForTimeout(250);
+    }
+    await expect(log.getByText('Rake 0.10')).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('rake-log.png'), fullPage: true});
+
+    // The owner: each player's share on Chips, and the rake in the replay.
+    await owner.evaluate(() => { location.hash = 'clubs/chips'; });
+    const rake = owner.locator('.cl-rake');
+    await expect(rake.getByRole('heading', {name: 'Rake and time'})).toBeVisible();
+    await expect(rake.locator('tr', {hasText: 'Ava'})).toContainText('0.05');
+    await expect(rake.locator('tr', {hasText: 'Bo'})).toContainText('0.05');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('rake-owner.png'), fullPage: true});
+    await owner.evaluate(() => { location.hash = 'clubs/history'; });
+    await owner.locator('[data-cl="hands"]').first().click();
+    await owner.locator('[data-cl="replay"]').last().click();
+    const dialog = owner.getByRole('dialog', {name: 'Hand replay'});
+    for (let i = 0; i < 40 && !(await dialog.getByText('Rake 0.10').count()); i++) await owner.keyboard.press('ArrowRight');
+    await expect(dialog.getByText('Rake 0.10')).toBeVisible();
+    await fitsTheScreen(owner);
+  });
+
   test('the owner gives from a float and refills it; Ava keeps chips in her vault (#589, #579)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, ava, code} = await clubWithAva(browser, watch);

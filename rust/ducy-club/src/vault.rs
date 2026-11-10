@@ -1207,7 +1207,7 @@ mod tests {
             .member_vault("bo", &json!({"op": "out", "amount": 30_000}), NOW + H)
             .unwrap();
         // The agent sees the vault, not what they asked to take out.
-        let body = c.agent_body("ann").unwrap();
+        let body = c.agent_body("ann", 0).unwrap();
         assert_eq!(body["players"][0]["vault"], 50_000);
         assert!(!body.to_string().contains("outs"));
         // A take back: the balance (300) first, then the vault (400).

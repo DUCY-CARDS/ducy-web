@@ -429,15 +429,17 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
                 .filter(|o| !o.is_null())
                 .cloned()
                 .unwrap_or_else(|| g("creditUsed"));
-            set(
-                "agentView",
-                json!({
-                    "own": g("own"), "shares": g("shares"), "total": g("total"), "limit": g("limit"),
-                    "creditUsed": g("creditUsed"), "room": g("room"), "owed": owed, "invite": g("invite"),
-                    "recruits": b.get("recruits").filter(|v| truthy(Some(v))).cloned().unwrap_or(json!([])),
-                    "players": b.get("players").filter(|v| truthy(Some(v))).cloned().unwrap_or(json!([])),
-                }),
-            );
+            let mut view = json!({
+                "own": g("own"), "shares": g("shares"), "total": g("total"), "limit": g("limit"),
+                "creditUsed": g("creditUsed"), "room": g("room"), "owed": owed, "invite": g("invite"),
+                "recruits": b.get("recruits").filter(|v| truthy(Some(v))).cloned().unwrap_or(json!([])),
+                "players": b.get("players").filter(|v| truthy(Some(v))).cloned().unwrap_or(json!([])),
+            });
+            // Their players' rake and time (#449), when there is any.
+            if let Some(r) = b.get("rake").filter(|r| r.is_object()) {
+                view["rake"] = r.clone();
+            }
+            set("agentView", view);
         }
         "admin_result" => set("adminNote", text(b.get("error")).into()),
         // How their vault command went (#579): why it was refused, or ''.

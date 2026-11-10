@@ -217,6 +217,7 @@ impl Club {
             turn_secs: t.turn_secs,
             sit_out_mins: t.sit_out_mins,
             stay_hands: t.stay_hands,
+            charge: t.charge,
         })
     }
 

@@ -1221,6 +1221,7 @@ impl MultiTable {
             seed,
             game,
             turn_ms,
+            ducy_play::Rake::default(),
         )?;
         Ok(MultiTable { host })
     }

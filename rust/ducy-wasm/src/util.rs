@@ -116,7 +116,8 @@ pub(crate) fn friends_host(
         .map_err(err)
 }
 
-/// A club table's host: `seats` empty seats and no seat for the host.
+/// A club table's host: `seats` empty seats and no seat for the host; the
+/// club takes `rake` from each hand (#449).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn club_host(
     seats: usize,
@@ -127,8 +128,9 @@ pub(crate) fn club_host(
     seed: u64,
     game: Option<String>,
     turn_ms: u64,
+    rake: ducy_play::Rake,
 ) -> Result<TableHost, JsError> {
-    let rules = rules_for(game.as_deref(), small_blind, big_blind)?;
+    let rules = rules_for(game.as_deref(), small_blind, big_blind)?.with_rake(rake);
     if small_blind == 0 || big_blind < small_blind || min_buy_in < big_blind {
         return Err(JsError::new("invalid blinds or buy-in"));
     }

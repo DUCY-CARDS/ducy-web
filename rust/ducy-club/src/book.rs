@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};
 
 use crate::money::{CLUB, Entry, EntryKind, Money, MoneyError};
+use crate::rake::RakeBook;
 use crate::rules::{Club, RuleError, Status, chip_text, new_invite, refuse};
 
 /// The most chips in one move.
@@ -54,6 +55,9 @@ pub struct Book {
     /// What was done, newest last.
     #[serde(default)]
     pub log: Vec<Value>,
+    /// What each player paid in rake and time (#449).
+    #[serde(default, skip_serializing_if = "RakeBook::is_empty")]
+    pub rake_book: RakeBook,
 }
 
 /// A member's account to send them, after entry `since` (none: no entries).
@@ -1177,13 +1181,16 @@ impl Book {
             .unwrap_or("")
             .to_string();
         let stack = seat.get("stack").and_then(Value::as_u64).unwrap_or(0);
+        // The rake and time they paid this session (#449).
+        let rake = seat.get("rake").and_then(Value::as_u64).unwrap_or(0);
         self.money
             .set_stack(id, stack)
             .map_err(|e| self.refusal(id, e))?;
         let entries = self
             .money
-            .cash_out(id, 0, now)
+            .cash_out(id, rake, now)
             .map_err(|e| self.refusal(id, e))?;
+        self.note_rake_shares(&entries);
         self.set_seat(id, Value::Null);
         let mut left = self
             .get(id, "left")
@@ -1380,6 +1387,8 @@ pub fn written(book: &Book) -> Value {
         "requestLog": book.request_log, "log": book.log,
         // Members' vault settings (#579): an agent's take back trims them.
         "vaults": book.club.vaults,
+        // What each player paid in rake and time (#449).
+        "rakeBook": book.rake_book,
     })
 }
 
