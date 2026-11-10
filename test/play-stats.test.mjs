@@ -5,7 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { countHand, recordHand, rates, pct, afText, emptyCounts } from '../src/play-stats.js';
+import { readFileSync } from 'node:fs';
+import { countHand, recordHand, rates, pct, afText, emptyCounts, statsAtTable, withoutPeople } from '../src/play-stats.js';
 
 const SB = (seat, amount = 1) => ({type: 'small_blind', seat, amount});
 const BB = (seat, amount = 2) => ({type: 'big_blind', seat, amount});
@@ -162,6 +163,38 @@ test('net and bb/100 add up across hands; stats follow the id, not the seat', ()
   assert.equal(book.you.net, 1);
   assert.equal(rates(book.a).bb100, (1.5 / 2) * 100);
   assert.equal(book.b.hands, 1);
+});
+
+test('stats are kept at bot tables only, not at tables of people (#625)', () => {
+  assert.equal(statsAtTable('solo'), true);
+  // A friends table or one-off tournament you host; a club table, club
+  // tournament or someone else's game you joined (or watch).
+  assert.equal(statsAtTable('host'), false);
+  assert.equal(statsAtTable('guest'), false);
+  assert.equal(statsAtTable(undefined), false);
+});
+
+test('stats kept from friends tables lose the people, and keep the rest (#625)', () => {
+  const c = {...emptyCounts(), hands: 3};
+  const kept = {nlhe: {you: c, doug_poker: c, 'friend:Gus': c}, plo4: {'friend:Ava': c}};
+  assert.deepEqual(withoutPeople(kept), {nlhe: {you: c, doug_poker: c}, plo4: {}});
+  // Nothing to drop: the same object back, so nothing is written.
+  const bots = {nlhe: {you: c, doug_poker: c}};
+  assert.equal(withoutPeople(bots), bots);
+  assert.deepEqual(withoutPeople({}), {});
+});
+
+test('the table draws and counts stats only where statsAtTable says (#625)', () => {
+  const src = readFileSync(new URL('../src/play.js', import.meta.url), 'utf8');
+  // The seat stats, the stats table, their menu items, and the counting.
+  assert.match(src, /const statsShown = \(\) => statsHere\(\) && /);
+  assert.match(src, /if \(setup\.hud && statsHere\(\)\) h \+= hudHtml\(/);
+  assert.match(src, /if \(statsHere\(\)\) \{\s*h \+= item\('hud', 'Stats on seats'[^\n]*\n\s*h \+= item\('stats', 'Stats table'/);
+  assert.match(src, /function recordStats\(\) \{\s*if \(!statsHere\(\) \|\|/);
+  // Nowhere else draws them.
+  assert.equal(src.match(/hudHtml\(/g).length, 2);
+  assert.equal(src.match(/statsHtml\(\)/g).length, 2);
+  assert.equal(src.match(/item\('hud'/g).length, 1);
 });
 
 test('rates with no sample show a dash', () => {

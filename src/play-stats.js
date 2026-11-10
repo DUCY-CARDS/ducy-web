@@ -113,6 +113,27 @@ export function afText(r) {
 
 // VPIP / PFR for each personality in no-limit Hold'em, as measured in
 // ducy-play's README (6-handed, 1,500 hands), for comparison.
+// Stats are for bot tables only (`mode` 'solo'). At a table of people (a
+// club's cash table or tournament, a friends table, a one-off tournament)
+// nothing is shown or counted, so nothing about them builds up here.
+export const statsAtTable = mode => mode === 'solo';
+
+// Stats kept from before, without the people in them (friends tables kept
+// them as "friend:<name>"). Returns `games` itself when there were none.
+export function withoutPeople(games) {
+  let dropped = false;
+  const out = {};
+  for (const [g, book] of Object.entries(games || {})) {
+    if (!book || typeof book !== 'object') { dropped = true; continue; }
+    out[g] = {};
+    for (const [id, c] of Object.entries(book)) {
+      if (id.startsWith('friend:')) dropped = true;
+      else out[g][id] = c;
+    }
+  }
+  return dropped ? out : games;
+}
+
 export const ADVERTISED = {
   doug_poker: [23, 16],
   jonny_slow: [11, 3],
