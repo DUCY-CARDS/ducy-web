@@ -13,8 +13,8 @@
 use serde_json::{Map, Value, json};
 
 use crate::rules::{
-    LOBBY_KEEP, MAX_EVENT_TEXT, MAX_EVENTS, MAX_INFO_TEXT, MAX_PLAYER_NAME, chat_name, clean_chat,
-    cut, info_text,
+    LOBBY_KEEP, MAX_EVENT_TEXT, MAX_EVENTS, MAX_INFO_TEXT, MAX_PLAYER_NAME, MAX_THREAD, chat_name,
+    clean_chat, cut, info_text, note_text,
 };
 
 /// The longest club name a member keeps.
@@ -244,6 +244,7 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         "admin_result",
         "account",
         "vault_result",
+        "thread",
     ];
     if !known.contains(&kind) {
         return false;
@@ -445,6 +446,31 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         // How their vault command went (#579): why it was refused, or ''.
         "vault_result" => set("vaultNote", cut(&text(b.get("error")), 200).into()),
         "account" => take_account(mem, &b, env),
+        // Your thread with the club (#621): your lines and the replies.
+        "thread" => {
+            let all = b
+                .get("thread")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let lines: Vec<Value> = all[all.len().saturating_sub(MAX_THREAD)..]
+                .iter()
+                .map(|n| {
+                    let mine = truthy(n.get("mine"));
+                    let by = if mine {
+                        String::new()
+                    } else {
+                        chat_name(&text(n.get("by")))
+                    };
+                    json!({
+                        "mine": mine, "by": by,
+                        "text": note_text(&text(n.get("text"))), "at": number(n.get("at")),
+                    })
+                })
+                .filter(|n| n["text"] != "")
+                .collect();
+            set("thread", lines.into());
+        }
         _ => return false,
     }
     true
@@ -688,6 +714,23 @@ mod tests {
             ),
         );
         assert_eq!(m["info"], Value::Null);
+        // Your thread (#621): checked and cut; empty lines go.
+        take_host_message(
+            &mut m,
+            &env(
+                5,
+                json!({"type": "thread", "club": "ABCD-EFGH", "thread": [
+                    {"mine": true, "by": "x", "text": "Ann, Bo's sister", "at": 1},
+                    {"mine": false, "by": "Manager", "text": "y".repeat(400), "at": 2},
+                    {"mine": false, "text": "  "}]}),
+            ),
+        );
+        assert_eq!(
+            m["thread"][0],
+            json!({"mine": true, "by": "", "text": "Ann, Bo's sister", "at": 1.0})
+        );
+        assert_eq!(m["thread"][1]["text"].as_str().unwrap().len(), 300);
+        assert_eq!(m["thread"].as_array().unwrap().len(), 2);
         assert!(!take_host_message(
             &mut m,
             &env(4, json!({"type": "nope", "club": "ABCD-EFGH"}))

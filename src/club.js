@@ -10,9 +10,12 @@
 // check the host's against the ID in the link.
 //
 // Player → host bodies:
-//   {type: 'join', club, invite, name}   ask to join (or update a pending request);
+//   {type: 'join', club, invite, name, intro}   ask to join (or update a pending
+//                                        request), saying who you are (#621);
 //                                        no invite: by the club's code, when the
 //                                        club allows it (codeJoin, #393)
+//   {type: 'note', club, text}           a line in your thread with the owner or
+//                                        your agent (#621), pending or a member
 //   {type: 'hello', club, name, since, ledger}   a member or applicant checking in;
 //                                        `since` is the last ledger entry they have,
 //                                        `ledger: 'links'` when their copy is the
@@ -38,6 +41,7 @@
 //                                        someone in the club has it (#450)
 //   {type: 'account', club, balance, request, entries, credit, available, ledger}
 //                                        see club-chips.js (credit: #404)
+//   {type: 'thread', club, thread}       your thread (#621): [{mine, by, text, at}]
 //   {type: 'tables', club, tables}       the open tables (club-tables.js)
 //   {type: 'tourneys', club, tourneys}   the tournaments (club-tourneys.js)
 //   {type: 'tourney_error', club, tourney, reason}   why a tournament op was refused

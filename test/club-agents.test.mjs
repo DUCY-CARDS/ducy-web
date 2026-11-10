@@ -111,7 +111,7 @@ test('the agent view: where each player sits, and what the agent would owe if th
   runAgent(club, 'a', {op: 'give', id: 'p', amount: 800});
   chipsForTable(club, 'p', t, 800); // the agent's link: −300
   let v = agentBody(club, 'a');
-  assert.deepEqual(v.players.find(x => x.id === 'p'), {id: 'p', name: 'P', balance: 0, vault: 0, request: null, seated: true, result: 0, table: 'Main', stack: 800});
+  assert.deepEqual(v.players.find(x => x.id === 'p'), {id: 'p', name: 'P', balance: 0, vault: 0, request: null, seated: true, result: 0, table: 'Main', stack: 800, new: false, thread: [], credit: 0});
   assert.equal(v.players.find(x => x.id === 'q').table, undefined, 'not at a table');
   // Credit used counts chips at the table (#63 example A); owed doesn't.
   assert.deepEqual([v.creditUsed, v.owed, v.room], [300, 0, 700]);

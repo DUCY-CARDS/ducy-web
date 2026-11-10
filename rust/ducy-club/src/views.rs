@@ -344,10 +344,24 @@ impl ClubState {
             .filter_map(|p| p.seat())
             .map(|s| int(s.get("stack")))
             .sum();
+        let had_chips = self.had_chips();
+        // Their thread (#621), as the agent sees it: each line, and whether
+        // it's the player's.
+        let thread = |m: &crate::rules::Member| -> Vec<Value> {
+            m.thread
+                .iter()
+                .map(|n| json!({"player": n.from == m.id, "text": n.text, "at": n.at}))
+                .collect()
+        };
         let list: Vec<Value> = players
             .iter()
             .map(|m| {
                 let mut p = json!({
+                    // New (#621): joined with a message, no chips yet.
+                    "new": !m.thread.is_empty() && !had_chips.contains(m.id.as_str()) && self.book.credit(&m.id) == 0,
+                    // A Credit player's line (#621).
+                    "credit": self.book.credit(&m.id),
+                    "thread": thread(m),
                     "id": m.id, "name": m.name, "balance": self.book.balance(&m.id),
                     // Their vault's chips (#579), as the owner sees them; not
                     // what they've asked to take out, or their wait.
@@ -365,7 +379,7 @@ impl ClubState {
         let recruits: Vec<Value> = self
             .players_of(id, Status::Pending)
             .iter()
-            .map(|m| json!({"id": m.id, "name": m.name, "at": m.requested_at}))
+            .map(|m| json!({"id": m.id, "name": m.name, "at": m.requested_at, "thread": thread(m)}))
             .collect();
         let mut body = json!({
             "type": "agent", "club": self.book.club.code,
@@ -489,8 +503,11 @@ mod tests {
             "members": {
                 "al": {"id": "al", "name": "Al", "status": "member", "agent": "yes", "agentInvite": "INV"},
                 "bo": {"id": "bo", "name": "Bo", "status": "member", "agentOf": "al"},
-                "cy": {"id": "cy", "name": "Cy", "status": "pending", "agentOf": "al", "requestedAt": 7},
+                "cy": {"id": "cy", "name": "Cy", "status": "pending", "agentOf": "al", "requestedAt": 7,
+                       "thread": [{"from": "cy", "text": "Cy, Al's neighbour", "at": 7}]},
                 "di": {"id": "di", "name": "Di", "status": "member"},
+                "ed": {"id": "ed", "name": "Ed", "status": "member", "agentOf": "al",
+                       "thread": [{"from": "ed", "text": "Ed from work", "at": 8}, {"from": "al", "text": "Hi Ed", "at": 9}]},
             },
             "tables": [{"id": "t1", "name": "Main", "game": "nlhe", "sb": 1, "bb": 2, "minBB": 20, "maxBB": 100, "seats": 6, "status": "open"}],
         }))
@@ -535,7 +552,17 @@ mod tests {
                 .all(|x| x.get("player").is_none())
         );
         let v = c.agent_body("al", 0).unwrap();
-        assert_eq!(v["recruits"], json!([{"id": "cy", "name": "Cy", "at": 7}]));
+        assert_eq!(
+            v["recruits"],
+            json!([{"id": "cy", "name": "Cy", "at": 7, "thread": [{"player": true, "text": "Cy, Al's neighbour", "at": 7}]}])
+        );
+        // New (#621): Ed joined with Al's link and has no chips yet; Bo has.
+        assert_eq!(v["players"][0]["new"], false);
+        assert_eq!(v["players"][1]["new"], true);
+        assert_eq!(
+            v["players"][1]["thread"],
+            json!([{"player": true, "text": "Ed from work", "at": 8}, {"player": false, "text": "Hi Ed", "at": 9}])
+        );
         assert_eq!(v["players"][0]["table"], "Main");
         assert_eq!(v["players"][0]["stack"], 200);
         assert_eq!(v["invite"], "INV");

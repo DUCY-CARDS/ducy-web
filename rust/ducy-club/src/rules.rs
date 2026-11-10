@@ -137,6 +137,11 @@ pub struct Member {
     /// The agent who brought them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_of: Option<String>,
+    /// Their messages with the club (ducy-web #621): who they are, sent
+    /// when joining, and the replies between them and the owner or their
+    /// agent, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thread: Vec<Note>,
     /// Everything else other parts keep on them (chips, seat, …).
     #[serde(flatten)]
     pub other: Map<String, Value>,
@@ -155,8 +160,20 @@ impl Member {
             agent: None,
             agent_invite: None,
             agent_of: None,
+            thread: Vec::new(),
             other: Map::new(),
         }
+    }
+
+    /// Adds a line to their thread, keeping the last [`MAX_THREAD`].
+    fn add_note(&mut self, from: &str, text: String, now: u64) {
+        self.thread.push(Note {
+            from: from.into(),
+            text,
+            at: now,
+        });
+        let extra = self.thread.len().saturating_sub(MAX_THREAD);
+        self.thread.drain(..extra);
     }
 
     pub(crate) fn is(&self, status: Status) -> bool {
@@ -176,6 +193,34 @@ impl Member {
     fn is_agent(&self) -> bool {
         self.agent.as_deref() == Some("yes") && self.is(Status::Member)
     }
+}
+
+/// The longest message in a member's thread (#621).
+pub const MAX_NOTE: usize = 300;
+/// The most lines a thread keeps.
+pub const MAX_THREAD: usize = 20;
+/// The most lines a member sends in a row, before a reply.
+pub const NOTES_IN_A_ROW: usize = 3;
+
+/// A line in a member's thread (#621): from them, or from the owner or
+/// their agent (`from`, by id).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    /// Who wrote it.
+    pub from: String,
+    /// What they wrote.
+    pub text: String,
+    /// When.
+    pub at: u64,
+}
+
+/// A thread line's text: one line, cut to [`MAX_NOTE`]; "" if nothing's left.
+pub fn note_text(s: &str) -> String {
+    let spaced: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    cut(&squash(&spaced), MAX_NOTE)
 }
 
 /// A member's call for help.
@@ -1040,6 +1085,83 @@ impl Club {
         json!({"to": id, "body": self.status_body(id)})
     }
 
+    /// Member `id`'s thread (#621), as they see it: each line's text and
+    /// time, whether it's theirs, and who wrote it when it isn't (their
+    /// agent's name, or "Manager").
+    pub fn thread_body(&self, id: &str) -> Value {
+        let lines: Vec<Value> = self.members.get(id).map_or(vec![], |m| {
+            m.thread
+                .iter()
+                .map(|n| {
+                    let mine = n.from == id;
+                    let by = if mine {
+                        String::new()
+                    } else {
+                        self.members
+                            .get(&n.from)
+                            .map_or("Manager".into(), |a| a.name.clone())
+                    };
+                    json!({"mine": mine, "by": by, "text": n.text, "at": n.at})
+                })
+                .collect()
+        });
+        json!({"type": "thread", "club": self.code, "thread": lines})
+    }
+
+    fn thread_reply(&self, id: &str) -> Value {
+        json!({"to": id, "body": self.thread_body(id)})
+    }
+
+    /// A line from member (or someone asking) `from` in their thread: at
+    /// most [`NOTES_IN_A_ROW`] before a reply.
+    fn member_note(&mut self, from: &str, text: &str, now: u64) -> Received {
+        let text = note_text(text);
+        let Some(m) = self
+            .members
+            .get_mut(from)
+            .filter(|m| m.is(Status::Member) || m.is(Status::Pending))
+        else {
+            return Received::refused(vec![self.reply(from)], "not a member");
+        };
+        if text.is_empty() {
+            return Received::refused(vec![], "empty note");
+        }
+        let in_a_row = m.thread.iter().rev().take_while(|n| n.from == from).count();
+        if in_a_row >= NOTES_IN_A_ROW {
+            return Received::refused(vec![self.thread_reply(from)], "wait for a reply");
+        }
+        m.add_note(from, text, now);
+        Received {
+            replies: vec![self.thread_reply(from)],
+            changed: true,
+            ..Received::default()
+        }
+    }
+
+    /// A reply in member `id`'s thread from the owner or their agent (`by`;
+    /// the caller checks they may): the thread to send them.
+    pub fn reply_note(
+        &mut self,
+        by: &str,
+        id: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<Value, RuleError> {
+        let text = note_text(text);
+        if text.is_empty() {
+            return refuse("Write a reply.");
+        }
+        let Some(m) = self
+            .members
+            .get_mut(id)
+            .filter(|m| m.is(Status::Member) || m.is(Status::Pending))
+        else {
+            return refuse("They aren’t in the club.");
+        };
+        m.add_note(by, text, now);
+        Ok(self.thread_reply(id))
+    }
+
     /// A message from `from`, whose signature the caller has checked.
     pub fn receive(&mut self, from: &str, body: &Value, now: u64) -> Received {
         if body.get("club").and_then(Value::as_str) != Some(self.code.as_str()) {
@@ -1061,6 +1183,10 @@ impl Club {
         }
         if kind == "hello" {
             return self.hello(from, body);
+        }
+        // A line in their thread (#621), from a member or someone asking.
+        if kind == "note" {
+            return self.member_note(from, &text_of(body.get("text")), now);
         }
         let known = [
             "agent_reply",
@@ -1184,6 +1310,8 @@ impl Club {
             reply["body"]["nameTaken"] = name.into();
             return Received::refused(vec![reply], "name taken");
         }
+        // Who they are (#621), for the owner or their agent.
+        let intro = note_text(&text_of(body.get("intro")));
         // New, or asking again after being declined or removed.
         let m = self
             .members
@@ -1199,8 +1327,15 @@ impl Club {
         if agent.is_some() {
             m.agent_of = agent;
         }
+        if !intro.is_empty() {
+            m.add_note(from, intro, now);
+        }
+        let mut replies = vec![self.reply(from)];
+        if !self.members[from].thread.is_empty() {
+            replies.push(self.thread_reply(from));
+        }
         Received {
-            replies: vec![self.reply(from)],
+            replies,
             changed: true,
             ..Received::default()
         }
@@ -1233,8 +1368,15 @@ impl Club {
         } else {
             0.0
         };
+        let mut replies = vec![reply];
+        // Their thread (#621), when they have one.
+        if self.members.get(from).is_some_and(|m| {
+            !m.thread.is_empty() && (m.is(Status::Member) || m.is(Status::Pending))
+        }) {
+            replies.push(self.thread_reply(from));
+        }
         Received {
-            replies: vec![reply],
+            replies,
             changed,
             account: self.member(from).map(|_| since),
             ..Received::default()
@@ -2522,16 +2664,73 @@ mod tests {
         let r = c.receive("ann", &join(&c, &c.invite.clone(), "Ann"), 2000);
         assert!(r.changed);
         assert_eq!(
-            r.replies,
-            vec![
-                json!({"to": "ann", "body": {"type": "status", "club": "ABCD-EFGH", "name": "Friday Game", "status": "pending"}})
-            ]
+            r.replies[0],
+            json!({"to": "ann", "body": {"type": "status", "club": "ABCD-EFGH", "name": "Friday Game", "status": "pending"}})
         );
+        assert_eq!(r.replies.len(), 1, "no message, no thread");
         assert_eq!(c.members["ann"].requested_at, Some(2000));
         let a = c.approve("ann", 3000).unwrap();
         assert_eq!(a["body"]["status"], "member");
         assert_eq!(c.members["ann"].joined_at, Some(3000));
         assert_eq!(c.approve("ann", 3000), None, "only once");
+    }
+
+    #[test]
+    fn asking_to_join_with_a_message_and_a_thread_both_ways() {
+        let mut c = club();
+        let mut body = join(&c, &c.invite.clone(), "Ann");
+        body["intro"] = "  Ann,\n Bo's friend ".into();
+        let r = c.receive("ann", &body, 2000);
+        assert_eq!(status(&r), "pending");
+        assert_eq!(
+            r.replies[1]["body"],
+            json!({"type": "thread", "club": "ABCD-EFGH", "thread": [{"mine": true, "by": "", "text": "Ann, Bo's friend", "at": 2000}]})
+        );
+        // The owner replies; she answers; three in a row at most.
+        let to = c.reply_note("HOSTHOST", "ann", "Welcome!", 2100).unwrap();
+        assert_eq!(
+            to["body"]["thread"][1],
+            json!({"mine": false, "by": "Manager", "text": "Welcome!", "at": 2100})
+        );
+        assert!(c.reply_note("HOSTHOST", "ann", "   ", 2100).is_err());
+        assert!(c.reply_note("HOSTHOST", "nobody", "Hi", 2100).is_err());
+        let note = |c: &mut Club, t: &str| {
+            c.receive(
+                "ann",
+                &json!({"type": "note", "club": "ABCD-EFGH", "text": t}),
+                2200,
+            )
+        };
+        for _ in 0..NOTES_IN_A_ROW {
+            assert!(note(&mut c, "Thanks").changed);
+        }
+        assert_eq!(
+            note(&mut c, "Hello?").reason.as_deref(),
+            Some("wait for a reply")
+        );
+        assert_eq!(note(&mut c, "  ").reason.as_deref(), Some("empty note"));
+        // Long text is cut; the thread keeps its last lines.
+        c.reply_note("HOSTHOST", "ann", &"x".repeat(500), 2300)
+            .unwrap();
+        assert_eq!(c.members["ann"].thread.last().unwrap().text.len(), MAX_NOTE);
+        for i in 0..30 {
+            c.reply_note("HOSTHOST", "ann", &format!("{i}"), 2400)
+                .unwrap();
+        }
+        assert_eq!(c.members["ann"].thread.len(), MAX_THREAD);
+        // Her thread comes with her hello.
+        let h = c.receive("ann", &json!({"type": "hello", "club": "ABCD-EFGH"}), 2500);
+        assert_eq!(h.replies[1]["body"]["type"], "thread");
+        // Someone who isn't in the club can't add to a thread.
+        let eve = c.receive(
+            "eve",
+            &json!({"type": "note", "club": "ABCD-EFGH", "text": "Hi"}),
+            0,
+        );
+        assert_eq!(eve.reason.as_deref(), Some("not a member"));
+        // Let in, the thread stays theirs.
+        c.approve("ann", 3000);
+        assert_eq!(c.members["ann"].thread.len(), MAX_THREAD);
     }
 
     #[test]

@@ -271,6 +271,8 @@ const aboutOf = new Map();
 function renderJoin() {
   const link = linked();
   const name = knownName();
+  // What's typed in Who are you? survives a redraw.
+  const introTyped = joinRoot?.querySelector('textarea[name=intro]')?.value || '';
   // V3 (#225): a cream form like Start a game's.
   let h = '<div class="pl-wrap"><div class="pl-head"><h1>Join a game</h1></div>';
   if (!relayUrl()) {
@@ -292,7 +294,6 @@ function renderJoin() {
   if (club) {
     h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
     h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
-    h += '<p class="pj-meta">The manager sees your name, lets you in, and gives you chips for the club’s tables.</p>';
     // About the club, from the club itself (#398).
     const about = aboutOf.get(club.code);
     if (about) h += `<div class="pj-about cl-info-text">${formatInfo(about)}</div>`;
@@ -304,6 +305,8 @@ function renderJoin() {
   }
   if (!club) h += `<p class="pj-meta">Game <b>${esc(link.code)}</b></p>`;
   h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
+  // Who you are (#621), for the owner or the agent who sent the link.
+  if (club) h += `<label class="pj-field"><span class="sg-label">Who are you?</span><textarea class="pl-text pj-intro" name="intro" rows="2" maxlength="300" required placeholder="Your name and who invited you">${esc(introTyped)}</textarea></label>`;
   if (joinNote) h += `<p class="pl-neterr">${esc(joinNote)}</p>`;
   h += `<button class="tr-start sg-open" type="submit">${club ? 'Ask to join' : 'Join'}</button>`;
   if (name) h += `<p class="pj-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
@@ -333,6 +336,7 @@ function onJoin(e) {
   e.preventDefault();
   const what = linked();
   const name = String(f.elements.name.value || '').trim();
+  const intro = String(f.elements.intro?.value || '').trim();
   if (!what) { renderJoin(); return; }
   if (!name) {
     joinNote = 'Enter your name: it’s what the others see.';
@@ -341,15 +345,22 @@ function onJoin(e) {
     joinRoot.querySelector('[name=name]').focus();
     return;
   }
-  go(what, name);
+  // Who you are (#621): needed to join a club.
+  if (what.kind === 'club' && !intro) {
+    joinNote = 'Say who you are.';
+    renderJoin();
+    joinRoot.querySelector('[name=intro]')?.focus();
+    return;
+  }
+  go(what, name, intro);
 }
 
-function go(what, name) {
+function go(what, name, intro = '') {
   joinNote = '';
   codeClub = null;
   clearLink();
   if (what.kind === 'club') {
-    joinClub(what.inv, name);
+    joinClub(what.inv, name, intro);
     renderJoin();
   } else joinTable({code: what.code, name, hostId: what.hostId});
 }

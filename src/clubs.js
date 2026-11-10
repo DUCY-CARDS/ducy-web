@@ -1087,6 +1087,36 @@ function onSubmitIn(e) {
     hostAct('void_award', {id: vf.dataset.voidform, why: vf.elements.why.value}).then(ok => { if (ok) { voiding = ''; render(); } });
     return;
   }
+  // Letting someone in as a Cash or Credit player (#621).
+  const lif = e.target.closest('form[data-letin]');
+  if (lif) {
+    e.preventDefault();
+    const kind = lif.elements.kind.value === 'credit' ? 'credit' : 'cash';
+    const credit = kind === 'credit' ? parseChips(lif.elements.credit.value) : 0;
+    if (kind === 'credit' && !(credit > 0)) { lif.elements.credit.focus(); failAt(lif.querySelector('[type=submit]'), 'Give a Credit player a credit line.'); return; }
+    const [who, a, b] = lif.dataset.letin.split('|');
+    const args = kind === 'credit' ? {kind, credit} : {kind};
+    letIn = '';
+    if (who === 'o') hostAct('approve', {id: a, ...args});
+    else agentCmd(a, {op: 'approve', id: b, ...args});
+    render();
+    return;
+  }
+  // A line in a member's thread (#621): theirs (m|code), the owner's reply
+  // (o|id), or their agent's (a|code|id).
+  const thf = e.target.closest('form[data-threadform]');
+  if (thf) {
+    e.preventDefault();
+    const text = thf.elements.text.value.trim();
+    if (!text) return;
+    const [who, a, b] = thf.dataset.threadform.split('|');
+    thf.elements.text.value = '';
+    if (who === 'm') sendToHost(a, {type: 'note', club: a, text});
+    else if (who === 'o') hostAct('note_reply', {id: a, text});
+    else if (who === 'a') agentCmd(a, {op: 'reply', id: b, text});
+    if (noteForm) { noteForm = ''; render(); }
+    return;
+  }
   // A notification's form (#398): another amount, a reply, a new credit limit.
   const notef = e.target.closest('form[data-noteform]');
   if (notef) {
@@ -1321,7 +1351,7 @@ function connectMembership(mem) {
     if (mem.status === 'new' && !nameIn(mem)) { mem.error = 'Enter your name above and click Save to send your request.'; render(); return; }
     const key = (await entry.keys).pub;
     const body = mem.status === 'new'
-      ? {type: 'join', club: mem.code, invite: mem.invite, name: nameIn(mem), key}
+      ? {type: 'join', club: mem.code, invite: mem.invite, name: nameIn(mem), intro: mem.intro || '', key}
       : {type: 'hello', club: mem.code, name: nameIn(mem), since: lastEntry(mem), ledger: 'links', key};
     sendToHost(mem.code, body);
     // Back at a club table after the host (or this page) reconnected.
@@ -1358,6 +1388,8 @@ function connectMembership(mem) {
     if (await playerReceive(mem, msg)) {
       // In a club, maybe with chips: ask the browser to keep this player ID (#562).
       if (mem.status === 'member') keepStorage();
+      // The request reached the club, with who you are (#621).
+      if (mem.status !== 'new') delete mem.intro;
       if (before !== 'member' && mem.status === 'member') {
         justJoined.add(mem.code);
         // Approved: say so wherever you are (#185).
@@ -1635,9 +1667,11 @@ async function freshPass() {
   }
 }
 
-function joinFromInvite(name) {
+function joinFromInvite(name, intro = '') {
   const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
   if (!n) { note = 'Enter the name the manager will see.'; render(); return; }
+  // Who you are (#621): it goes with the join, to the owner or the agent.
+  const said = String(intro || '').trim().slice(0, MAX_THREAD_NOTE);
   if (invite.hostId === me.id) { note = 'That’s an invite to your own club.'; invite = null; clearInviteFromAddress(); render(); return; }
   // The first name given is this browser's; another one is for this club
   // only (#185).
@@ -1653,6 +1687,7 @@ function joinFromInvite(name) {
     memberships.push(mem);
   }
   if (n !== myName()) mem.myName = n; else delete mem.myName;
+  if (said) mem.intro = said;
   saveMemberships();
   invite = null;
   note = '';
@@ -1680,7 +1715,7 @@ function sendName(m) {
   m.error = '';
   const name = nameIn(m);
   sendToHost(m.code, m.status === 'new'
-    ? {type: 'join', club: m.code, invite: m.invite, name}
+    ? {type: 'join', club: m.code, invite: m.invite, name, intro: m.intro || ''}
     : {type: 'hello', club: m.code, name});
 }
 
@@ -1999,7 +2034,7 @@ function toolsHtml() {
 }
 
 // Forms whose typing survives a redraw (#398, #404, #544).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform], form[data-schedform]';
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform], form[data-schedform], form[data-threadform], form[data-letin]';
 // A control that had the focus while it was busy (disabled): it gets it back
 // once it's answered (#544).
 let focusLater = '';
@@ -2039,7 +2074,7 @@ function render() {
   const lobbyKept = lobbyTyping && {v: lobbyTyping.value, focus: document.activeElement === lobbyTyping};
   // And what's typed in a notification's form or the Club info editor (#398),
   // or a scheduled game's form (#599).
-  const keepKey = fm => (fm.dataset.schedform != null ? `sched|${fm.dataset.schedform}` : `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.floatform || fm.dataset.vaultform || fm.dataset.table}|${fm.dataset.id || ''}`);
+  const keepKey = fm => (fm.dataset.schedform != null ? `sched|${fm.dataset.schedform}` : fm.dataset.threadform ? `thread|${fm.dataset.threadform}` : fm.dataset.letin ? `letin|${fm.dataset.letin}` : `${fm.dataset.noteform || fm.dataset.infoform || fm.dataset.creditform || fm.dataset.voidform || fm.dataset.floatform || fm.dataset.vaultform || fm.dataset.table}|${fm.dataset.id || ''}`);
   const typed = [...root.querySelectorAll(KEPT_FORMS)].map(fm => ({
     key: keepKey(fm), focus: fm.contains(document.activeElement) ? document.activeElement.name : '',
     // A preset picked (#544): its radio's value.
@@ -2158,7 +2193,7 @@ function viewHtml() {
   if (mem) return msg + memberHomeHtml(mem, '') + footHtml();
   // A club you asked to join, still on its way in: its page once you're in.
   const asked = at && at !== 'own' && memberships.find(m => m.code === at);
-  if (asked) return msg + `<p class="pl-meta">${esc(STATUS_TEXT[asked.status] || asked.status)}</p>` + footHtml();
+  if (asked) return msg + `<div class="cl-home-head"><h1 class="cl-home-name">${esc(asked.name || asked.code)}</h1></div><p class="pl-meta">${esc(STATUS_TEXT[asked.status] || asked.status)}</p>` + pendingThreadHtml(asked) + footHtml();
   // The club you run, still loading.
   if (at === 'own' && (load(CLUB_KEY, null) || load('ducyClubRemote', null))) return msg + '<p class="pl-meta">Loading…</p>';
   toFrontPage();
@@ -2260,7 +2295,8 @@ function hostWaiting() {
 }
 function helperWaiting(m) {
   if (m.status !== 'member' || m.agent !== 'yes' || !m.agentView) return 0;
-  return m.agentView.recruits.length + m.agentView.players.filter(x => x.request).length;
+  // New players (#621) until their first chips.
+  return m.agentView.recruits.length + m.agentView.players.filter(x => x.request || x.new).length;
 }
 
 // Under the club tabs: only a warning when a local page uses the live relay
@@ -2296,12 +2332,24 @@ function requestsHtml() {
     } else if (m.status === 'declined') {
       h += '<span class="pl-desc cl-next">If that’s a mistake, ask the manager: they can let you in from a new invite link.</span>';
     }
+    h += pendingThreadHtml(m);
     if (m.error) h += `<span class="pl-desc pl-neterr cl-err">${esc(m.error)}</span>`;
     // The name asked with is taken there (#450): another, for that club.
     if (m.nameTaken) h += clubNameHtml(m);
     h += '</li>';
   }
   return h + '</ul></section>';
+}
+
+// Your messages with the manager while you wait (#621).
+function pendingThreadHtml(m) {
+  if (m.status !== 'pending' || !m.thread?.length) return '';
+  return memberThreadHtml(m, !!playerNets.get(m.code)?.hostHere);
+}
+function memberThreadHtml(m, hostHere) {
+  // At most three in a row before a reply.
+  const row = m.thread.length - m.thread.findLastIndex(x => !x.mine) - 1;
+  return threadHtml(m.thread.map(x => ({...x, who: x.mine ? 'You' : x.by || 'Manager'})), `m|${m.code}`, {dis: hostHere ? '' : ' disabled', open: row < 3});
 }
 
 // A notice at the bottom of the page, whichever page is showing, and from
@@ -2608,13 +2656,21 @@ function requestsPageHtml() {
     // with Give (#395).
     for (const m of pending) {
       h += `<li><span class="cl-name">${esc(m.name)}</span><span class="pl-meta">asks to join · <code>${esc(showId(m.id))}</code>${m.agentOf && club.members[m.agentOf] ? ` · via ${esc(club.members[m.agentOf].name)}` : ''}</span>${removedHtml(m.removedAt)}`;
-      h += `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span></li>`;
+      // Who they are, and the messages since (#621); Let in asks Cash or Credit.
+      h += letIn === `o|${m.id}` ? letInHtml(`o|${m.id}`) : `<span class="cl-acts"><button class="btn-small primary" data-cl="approve" data-id="${esc(m.id)}">Let in</button><button class="btn-small" data-cl="decline" data-id="${esc(m.id)}">Decline</button></span>`;
+      h += ownerThreadHtml(m) + '</li>';
     }
     for (const m of asking) h += askRowHtml(m);
     h += '</ul>';
   } else if (!openHelp(club).length) h += '<p class="pl-meta cl-empty">Nothing waiting.</p>';
   h += requestLogHtml();
   return h + inviteRowHtml();
+}
+
+// Member `m`'s thread (#621) as the owner sees it, with a reply box.
+function ownerThreadHtml(m) {
+  if (!m.thread?.length) return '';
+  return threadHtml(m.thread.map(x => ({...x, mine: x.from !== m.id, who: x.from === m.id ? m.name : club.members[x.from]?.name || 'You'})), `o|${m.id}`);
 }
 
 // Someone asking to join who was removed before (#488): nobody comes back
@@ -2733,6 +2789,8 @@ function memberPageHtml(id) {
   h += memberMenuHtml(m) + '</div>';
   if (chipForm?.id === m.id) h += chipFormHtml(m);
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
+  // Their messages (#621), from when they asked to join.
+  if (m.thread?.length) h += `<section class="mg-sec"><h2>Messages</h2>${ownerThreadHtml(m)}</section>`;
   // Credit (#404): the limit (0 for none), and what it leaves them.
   if (!OFF.has('credit') || c.credit) {
     h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
@@ -2762,6 +2820,8 @@ function memberTags(m, links = false) {
   const link = (href, text) => (links ? `<a href="#${href}">${esc(text)}</a>` : esc(text));
   const agent = m.agentOf && club.members[m.agentOf];
   return [
+    // New (#621): let in, no chips or credit yet.
+    m.thread?.length && !m.credit && !entriesOf(club, m.id).length && '<span class="cl-new">New</span>',
     m.id === club.ownerId && 'Owner',
     m.agent === 'yes' && link(ph('members', '', {agent: m.id}), `Agent · ${playersText(playersOf(club, m.id).length)}`),
     m.agent === 'offered' && 'Offered agent',
@@ -2872,9 +2932,20 @@ function noteHtml(n) {
   const amount = (v, label) => `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(v))}" aria-label="${label}">`;
   let top = '', body = '', acts = '';
   const open = noteForm === n.key;
+  // Their message, and a reply to it (#621).
+  const said = n.text ? `<span class="cl-said">“${esc(n.text)}”</span>` : '';
+  const replyForm = `<form class="mg-note-acts" data-threadform="o|${id}"><input class="pl-text mg-note-wide" name="text" maxlength="${MAX_THREAD_NOTE}" required aria-label="Reply"><button class="btn-small primary" type="submit">Send</button><button class="btn-small" type="button" data-cl="note-cancel">Cancel</button></form>`;
   if (n.kind === 'join') {
     top = `${who} asks to join${n.via ? ` <span class="pl-meta">via ${esc(n.via)}</span>` : ''}${removedHtml(n.removedAt)}`;
-    acts = btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('decline', 'Decline', ` data-id="${id}"`);
+    body = said;
+    // (On Requests, the choice opens there only: one form keeps what's picked.)
+    acts = letIn === `o|${n.member}` && managerPage(location.hash)?.page !== 'requests' ? letInHtml(`o|${n.member}`)
+      : open ? replyForm : btn('approve', 'Let in', ` data-id="${id}"`, true) + btn('note-open', 'Reply', ` data-key="${esc(n.key)}"`) + btn('decline', 'Decline', ` data-id="${id}"`);
+  } else if (n.kind === 'new') {
+    // Let in, with no chips or credit yet (#621): New until then.
+    top = `<a href="#${ph('member', n.member)}">${who}</a>${removedHtml(n.removedAt)}`;
+    body = said;
+    acts = open ? replyForm : `<a class="btn-small primary" href="#${ph('member', n.member)}">Give chips</a>` + btn('note-open', n.waiting ? 'Reply' : 'Message', ` data-key="${esc(n.key)}"`);
   } else if (n.kind === 'chips') {
     top = `${who} asks for <b>${chips(n.amount)}</b>${n.table ? ` at ${esc(n.table)}` : ''}`;
     if (n.note) body = `<span class="pl-meta">“${esc(n.note)}”</span>`;
@@ -2928,7 +2999,7 @@ function noteHtml(n) {
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play', short: 'Game'};
+const NOTE_TAGS = {join: 'Join', new: 'New', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play', short: 'Game'};
 
 // When something waiting applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
@@ -3171,6 +3242,32 @@ function clubNameForm(m) {
   return h;
 }
 
+// Letting someone in (#621): as a Cash or a Credit player, with their credit
+// line. `letIn`: whose choice is open; `to`: 'o|id' (the owner) or
+// 'a|code|id' (their agent).
+let letIn = '';
+function letInHtml(to, dis = '') {
+  let h = `<form class="mg-note-acts cl-letin" data-letin="${esc(to)}">`;
+  h += '<span class="pl-opts" role="radiogroup" aria-label="Player">';
+  h += `<label class="cc-btn"><input type="radio" name="kind" value="cash" checked> Cash</label><label class="cc-btn"><input type="radio" name="kind" value="credit"> Credit</label></span>`;
+  h += `<input class="pl-text cl-credit-in" name="credit" type="number" inputmode="decimal" min="0.01" step="${CHIP_STEP}" placeholder="Credit line" aria-label="Credit line">`;
+  return h + `<button class="btn-small primary" type="submit"${dis}>Let in</button><button class="btn-small" type="button" data-cl="letin-cancel">Cancel</button></form>`;
+}
+
+// A member's thread with the club (#621): each line ({mine, who, text, at}),
+// and a box to add one, its form keyed `form` (see onSubmitIn).
+const MAX_THREAD_NOTE = 300;
+function threadHtml(lines, form, {dis = '', open = true} = {}) {
+  let h = '<div class="cl-thread">';
+  if (lines.length) {
+    h += '<ul class="cl-thread-lines">';
+    for (const n of lines) h += `<li class="${n.mine ? 'mine' : ''}"><b>${esc(n.who)}</b> <span class="cl-thread-text">${esc(n.text)}</span> <span class="pl-meta">${when(n.at)}</span></li>`;
+    h += '</ul>';
+  }
+  if (open) h += `<form class="cl-thread-form" data-threadform="${esc(form)}"><input class="pl-text" name="text" maxlength="${MAX_THREAD_NOTE}" required placeholder="Message" aria-label="Message"${dis}><button class="btn-small primary" type="submit"${dis}>Send</button></form>`;
+  return h + '</div>';
+}
+
 // A club you're an agent of: Manage, with the agent's tools.
 function manageHtml(m) {
   const hostHere = !!playerNets.get(m.code)?.hostHere;
@@ -3259,6 +3356,8 @@ function memberHomeHtml(m, manage = '') {
     h += `<button class="btn-small primary" data-cl="ask" data-code="${code}"${hostHere ? '' : ' disabled title="Can’t reach the club right now"'}>Ask for chips</button></div>`;
   }
   h += '</div>';
+  // Your messages with the manager (#621), from when you joined.
+  if (m.thread?.length) h += `<div class="cl-side-card cl-messages"><h2>Messages</h2>${memberThreadHtml(m, hostHere)}</div>`;
   h += memberHelpHtml(m, hostHere);
   if (m.lobby) h += lobbyHtml(m.lobby.online, m.lobby.chat, m.code, hostHere);
   h += clubNameHtml(m);
@@ -3635,6 +3734,13 @@ async function agentCmd(code, cmd) {
 function agentFormHtml(code, x) {
   if (agentForm?.code !== code || agentForm.id !== x.id) return '';
   const {kind} = agentForm;
+  // A Credit player's line (#621): 0 for none.
+  if (kind === 'credit') {
+    let h = `<form class="cl-chipform" data-agentform="credit" data-code="${esc(code)}" data-id="${esc(x.id)}">`;
+    h += `<label class="cl-formlabel" for="cl-gamt">Credit line for ${esc(x.name)}</label>`;
+    h += `<input class="pl-text" id="cl-gamt" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(x.credit || 0))}">`;
+    return h + '<button class="btn-small primary" type="submit">Save</button><button class="btn-small" type="button" data-cl="cancel-gform">Cancel</button></form>';
+  }
   const label = kind === 'take' ? `Take back from ${x.name} (has ${chips(x.balance)})`
     : kind === 'grant' ? `Give ${x.name} (asked for ${chips(x.request?.amount)})` : `Give ${x.name}`;
   const value = kind === 'take' ? x.balance : kind === 'grant' ? x.request?.amount : '';
@@ -3690,17 +3796,24 @@ function agentHtml(m, hostHere, {page = false} = {}) {
   const btn = (act, x, label, extra = '') => `<button class="btn-small${extra}" data-cl="${act}" data-code="${esc(m.code)}" data-id="${esc(x.id)}"${dis}>${label}</button>`;
   if (a.recruits.length) {
     h += `<span class="pl-meta">Asking to join through you (${a.recruits.length})</span><ul class="cl-list">`;
-    for (const x of a.recruits) h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code><span class="cl-acts">${btn('ag-approve', x, 'Let in', ' primary')}${btn('ag-decline', x, 'Decline')}</span></li>`;
+    for (const x of a.recruits) {
+      const to = `a|${m.code}|${x.id}`;
+      h += `<li><span class="cl-name">${esc(x.name)}</span><code>${esc(showId(x.id))}</code>`;
+      h += letIn === to ? letInHtml(to, dis) : `<span class="cl-acts">${btn('ag-approve', x, 'Let in', ' primary')}${btn('ag-decline', x, 'Decline')}</span>`;
+      h += `${agentThreadHtml(m, x, dis)}</li>`;
+    }
     h += '</ul>';
   }
   if (!page) h += `<span class="pl-meta">Your players (${a.players.length})</span>`;
   if (!a.players.length) h += '<span class="pl-meta">No players yet. Send someone your link.</span>';
   else {
     h += '<ul class="cl-list">';
-    for (const x of a.players) {
-      h += `<li><span class="cl-name">${esc(x.name)}</span><span class="cl-chips">${signed(x.balance)}</span>`;
+    // New players first (#621): let in, no chips or credit yet.
+    for (const x of [...a.players].sort((p, q) => !!q.new - !!p.new)) {
+      h += `<li${x.new ? ' class="cl-new-row"' : ''}><span class="cl-name">${esc(x.name)}${x.new ? ' <span class="cl-new">New</span>' : ''}</span><span class="cl-chips">${signed(x.balance)}</span>`;
       // Their vault (#579): its chips, which a take back can reach after the balance.
       if (x.vault) h += `<span class="pl-meta">vault ${chips(x.vault)}</span>`;
+      if (x.credit) h += `<span class="pl-meta">credit ${chips(x.credit)}</span>`;
       // At a table (#428): which, and their stack there.
       if (x.seated) h += `<span class="cl-at">${esc(x.table || 'At a table')}${x.stack != null ? ` · ${chips(x.stack)}` : ''}</span>`;
       // How they've done at the tables (#190).
@@ -3708,13 +3821,21 @@ function agentHtml(m, hostHere, {page = false} = {}) {
       if (x.request) h += `<span class="pl-meta">asks for ${chips(x.request.amount)}</span>`;
       h += '<span class="cl-acts">';
       h += x.request ? `${btn('ag-grant', x, 'Give', ' primary')}${btn('ag-deny', x, 'Decline')}` : btn('ag-give', x, 'Give');
-      h += `${btn('ag-take', x, 'Take back')}</span>${agentFormHtml(m.code, x)}</li>`;
+      h += `${btn('ag-take', x, 'Take back')}${btn('ag-credit', x, 'Credit')}</span>${agentFormHtml(m.code, x)}`;
+      if (x.new) h += agentThreadHtml(m, x, dis);
+      h += '</li>';
     }
     h += '</ul>';
   }
   // Their players' rake and time (#449).
   if (page) h += contributionsHtml(a.rake, {agent: true});
   return h + '</div>';
+}
+
+// A player's thread with their agent (#621), on the agent's list.
+function agentThreadHtml(m, x, dis) {
+  if (!x.thread?.length) return '';
+  return threadHtml(x.thread.map(n => ({mine: !n.player, who: n.player ? x.name : 'You', text: n.text, at: n.at})), `a|${m.code}|${x.id}`, {dis});
 }
 
 // The tools when the club can't be reached (#190): with always-on clubs,
@@ -3790,7 +3911,7 @@ async function onClickIn(e) {
   else if (act === 'mg-notes') { notesOpen = !notesOpen; navOpen = false; render(); if (notesOpen) root.querySelector('.mg-notes button')?.focus(); }
   else if (act === 'mg-close') closeDrawer();
   // Notifications' quick actions (#398).
-  else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('form[data-noteform] input')?.focus(); }
+  else if (act === 'note-open') { noteForm = b.dataset.key; render(); root.querySelector('.mg-notes form[data-noteform] input, .mg-notes form[data-threadform] input, form[data-noteform] input')?.focus(); }
   else if (act === 'note-cancel') { noteForm = ''; render(); }
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
   // Passkeys (#575): make one, unlock, or bring an account back with one.
@@ -3873,7 +3994,9 @@ async function onClickIn(e) {
   else if (act === 'wiz-cancel') { backupNote = ''; setWizard(null); }
   else if (act === 'wiz-done') { setWizard(null); location.hash = 'clubs/overview'; }
   else if (act === 'share') { setHostNote('shared', true); navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {}); render(); }
-  else if (act === 'approve') hostAct('approve', {id: b.dataset.id});
+  // Let in: Cash or Credit first (#621).
+  else if (act === 'approve') { letIn = `o|${b.dataset.id}`; render(); }
+  else if (act === 'letin-cancel') { letIn = ''; render(); }
   else if (act === 'backup-nag-hide') { setHostNote('backupNagHidden', true); render(); }
   else if (act === 'close-table-yes') { closingTable = null; hostAct('close_table', {table: b.dataset.table}); render(); }
   else if (act === 'close-table-no') { closingTable = null; render(); }
@@ -3932,14 +4055,15 @@ async function onClickIn(e) {
   // A member: answering an agent offer.
   else if (act === 'agent-yes' || act === 'agent-no') sendToHost(b.dataset.code, {type: 'agent_reply', club: b.dataset.code, accept: act === 'agent-yes'});
   // An agent's tools.
-  else if (['ag-give', 'ag-take', 'ag-grant'].includes(act)) {
+  else if (['ag-give', 'ag-take', 'ag-grant', 'ag-credit'].includes(act)) {
     const kind = act.slice(3);
     agentForm = agentForm?.id === b.dataset.id && agentForm.kind === kind ? null : {code: b.dataset.code, kind, id: b.dataset.id};
     render();
     root.querySelector('#cl-gamt')?.focus();
   } else if (act === 'cancel-gform') { agentForm = null; render(); }
   else if (act === 'ag-deny') agentCmd(b.dataset.code, {op: 'deny', id: b.dataset.id});
-  else if (act === 'ag-approve' || act === 'ag-decline') agentCmd(b.dataset.code, {op: act.slice(3), id: b.dataset.id});
+  else if (act === 'ag-approve') { letIn = `a|${b.dataset.code}|${b.dataset.id}`; render(); }
+  else if (act === 'ag-decline') agentCmd(b.dataset.code, {op: 'decline', id: b.dataset.id});
   else if (act === 'ag-copy') {
     const v = root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.value || '';
     try { await navigator.clipboard.writeText(v); } catch { root.querySelector(`[data-aglink="${b.dataset.code}"]`)?.select(); }
@@ -4470,11 +4594,11 @@ export function clubPage(code) {
 
 // Asks to join the club in invite `inv` (from an invite link, or by the
 // club's code with no invite token, #393), as `name`.
-export async function joinClub(inv, name) {
+export async function joinClub(inv, name, intro = '') {
   await startClubs();
   if (!me) return;
   invite = inv;
-  joinFromInvite(name);
+  joinFromInvite(name, intro);
 }
 
 // The name this browser joins clubs as, and changing it (Player settings,
