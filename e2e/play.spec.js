@@ -741,14 +741,14 @@ test.describe('a club member', () => {
     await owner.keyboard.press('Escape');
 
     // The club's default on Rules: none, then 5% capped at 3 BB; time is
-    // at most ¼ BB. A new table starts from it.
+    // 0.05 to 0.25 BB. A new table starts from it.
     await owner.evaluate(() => { location.hash = 'clubs/rules'; });
     const rules = owner.locator('form[data-chargeform]');
     await expect(rules.locator('.cl-charge')).toHaveText('No rake');
     await rules.locator('[name=house]').selectOption('time');
     await rules.locator('[name=timeBB]').fill('1');
     await rules.locator('button[type="submit"]').click();
-    await expect(rules.getByText(/at most ¼ of a big blind/)).toBeVisible();
+    await expect(rules.getByText(/0\.05 to 0\.25 of a big blind/)).toBeVisible();
     await rules.locator('[name=house]').selectOption('rake');
     await rules.locator('[name=rakePct]').fill('5');
     await rules.locator('[name=rakeCap]').fill('3');

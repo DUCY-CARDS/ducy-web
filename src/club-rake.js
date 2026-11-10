@@ -1,6 +1,6 @@
 // What a club takes from each hand at its cash tables (#449): rake (a share
 // of each pot, maybe capped; never from a hand that ends before the flop)
-// or time (a fixed charge from each player dealt in, at most ¼ of a big
+// or time (a fixed charge from each player dealt in, 0.05 to 0.25 of a big
 // blind). The club sets a default on Rules (none to start); each new table
 // takes it unless the New table form sets its own (More options). Ducy's
 // engine takes it from each hand (club-host.js), and the club books each
@@ -15,8 +15,9 @@ import { OFF } from './club-beta.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
-// The limits: rake above 0% and at most 10%; time at most ¼ BB a hand.
+// The limits: rake above 0% and at most 10%; time 0.05 to 0.25 BB a hand.
 export const MAX_PCT = 10;
+export const MIN_TIME_BB = 0.05;
 export const MAX_TIME_BB = 0.25;
 export const MAX_CAP_BB = 1000;
 
@@ -63,7 +64,7 @@ export function readCharge(f) {
   }
   if (kind === 'time') {
     const t = Number(val('timeBB'));
-    if (!val('timeBB') || !Number.isFinite(t) || t <= 0 || t > MAX_TIME_BB) return {error: 'Time is more than 0 and at most ¼ of a big blind a hand.'};
+    if (!val('timeBB') || !Number.isFinite(t) || t < MIN_TIME_BB || t > MAX_TIME_BB) return {error: 'Time is 0.05 to 0.25 of a big blind a hand.'};
     return {charge: {percent: 0, capBB: 0, timeBB: hundredths(t)}};
   }
   return {charge: null};

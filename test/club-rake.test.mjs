@@ -145,7 +145,8 @@ test('the club’s rake is new tables’, unless a table sets its own, within th
   bad({percent: 500, timeBB: 10});
   bad({percent: 1001});
   bad({timeBB: 26});
-  assert.throws(() => command(club, 'settings', {charge: {timeBB: 50}}), /at most ¼/);
+  bad({timeBB: 4});
+  assert.throws(() => command(club, 'settings', {charge: {timeBB: 50}}), /0\.05 to 0\.25/);
   command(club, 'settings', {charge: null});
   assert.equal(club.charge, undefined);
 });
@@ -159,7 +160,9 @@ test('the fields, and what members and the owner are told', () => {
   assert.match(readCharge(form('rake', {rakePct: {value: '12'}})).error, /at most 10%/);
   assert.match(readCharge(form('rake', {rakePct: {value: '0'}})).error, /more than 0%/);
   assert.match(readCharge(form('rake', {rakeCap: {value: '-1'}})).error, /cap/);
-  assert.match(readCharge(form('time', {timeBB: {value: '0.5'}})).error, /¼/);
+  assert.match(readCharge(form('time', {timeBB: {value: '0.5'}})).error, /0\.05 to 0\.25/);
+  assert.match(readCharge(form('time', {timeBB: {value: '0.04'}})).error, /0\.05 to 0\.25/);
+  assert.deepEqual(readCharge(form('time', {timeBB: {value: '0.05'}})), {charge: {percent: 0, capBB: 0, timeBB: 5}});
   assert.equal(chargeText({charge: {percent: 500, capBB: 300}}), 'Rake 5% · cap 3 BB');
   assert.equal(chargeText({charge: {percent: 250, capBB: 0}}), 'Rake 2.5%');
   assert.equal(chargeText({charge: {timeBB: 25}}), 'Time 0.25 BB a hand');
