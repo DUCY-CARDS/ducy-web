@@ -154,7 +154,9 @@ test('a friend joins a hosted game by its code', async ({browser, watch}) => {
   await fitsTheScreen(guest);
 });
 
-test('muting a player hides their chat for you only, and unmuting brings it back (#616)', async ({browser, watch}, info) => {
+test('muting a player hides their chat for you only, and unmuting brings it back (#616)', async ({browser, watch, browserName}, info) => {
+  // Screenshots in Chromium only: WebKit's CSP refuses the style a screenshot adds.
+  const shot = (target, name) => (browserName === 'chromium' ? target.screenshot({path: info.outputPath(name)}) : null);
   // At the project's screen size: 1280 wide, or a 375 phone.
   const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
   const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
@@ -180,7 +182,7 @@ test('muting a player hides their chat for you only, and unmuting brings it back
 
   // Mute from the name in the chat.
   await hostLog.getByRole('button', {name: 'Gus'}).click();
-  await host.screenshot({path: info.outputPath('mute-chat-menu.png')});
+  await shot(host, 'mute-chat-menu.png');
   await hostLog.getByRole('button', {name: 'Mute'}).click();
   await expect(hostLog).not.toContainText('hello from Gus');
   // Gus isn't told, and still sees their own line; the host's still reach them.
@@ -194,7 +196,7 @@ test('muting a player hides their chat for you only, and unmuting brings it back
   // Unmute from Gus's seat: their lines come back.
   await host.locator('.pl-seat', {hasText: 'Gus'}).locator('.pl-plate').click();
   await expect(host.locator('.pl-mpop')).toBeVisible();
-  await host.screenshot({path: info.outputPath('mute-chat-seat.png')});
+  await shot(host, 'mute-chat-seat.png');
   await host.locator('.pl-mpop').getByRole('button', {name: 'Unmute'}).click();
   await expect(hostLog).toContainText('hello from Gus');
   await expect(hostLog).toContainText('still here');
@@ -207,7 +209,7 @@ test('muting a player hides their chat for you only, and unmuting brings it back
   await host.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
   const muted = host.locator('.ps-muted');
   await expect(muted).toContainText('Gus');
-  await muted.screenshot({path: info.outputPath('mute-chat-you.png')});
+  await shot(muted, 'mute-chat-you.png');
   await muted.getByRole('button', {name: 'Unmute'}).click();
   await expect(muted).toHaveCount(0);
   await expect(hostLog).toContainText('hello from Gus');
@@ -219,7 +221,7 @@ test('muting a player hides their chat for you only, and unmuting brings it back
   await guest.locator('.pl-mpop').getByRole('button', {name: 'Mute'}).click();
   await expect(guestLog).not.toContainText('hi all');
   await expect(guestLog).toContainText('still here');
-  await guest.screenshot({path: info.outputPath('mute-chat-guest.png')});
+  await shot(guest, 'mute-chat-guest.png');
   await fitsTheScreen(guest);
 });
 
