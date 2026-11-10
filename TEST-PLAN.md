@@ -51,7 +51,9 @@ A major release is any of these:
 | Several clubs: the front page lists them, and `#clubs` goes there | Main |
 | The club manager offers no way to start a club | Club manager |
 | A hand against the Regulars plays to its end, with no grades | Main |
+| The Regulars' table keeps its seat stats and stats table | Main |
 | A friend joins a hosted game by its code | Main |
+| A friends table shows no player stats and keeps none; the same at a club table | Main |
 | Starting a club without permission is refused | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
@@ -76,6 +78,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Disconnects, reloads, a host's table resuming | `heartbeat.test`, `idle-seats.test`, `hit-and-run.test` | no | M5 |
 | Table chat | `table-chat.test` | no | M3 |
 | Play the Regulars | `regulars.test`, `bot-chat.test` | yes | M1 |
+| Player stats (VPIP/PFR on seats, the stats table): bot tables only, none at tables of people | `play-stats.test` | yes | M3 |
 | Joining a club, asking for chips, playing at its tables | `club.test`, `club-member-view.test`, `relay-club.test` | no | M6 |
 | Player settings, name, avatar | – | no | M1 |
 | Identity backup and restore | `identity.test`, `backup.test` | no | M7 |
@@ -162,7 +165,8 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Guest: enter the code, give a name, join. Each browser sees the other.
 3. Play 20 hands, including an all-in with a side pot (three players), a bomb pot, and running it twice. The chips add up after each hand.
 4. Use table chat, both ways.
-5. Host: End game. Standings show, and the download works.
+5. Neither browser shows stats under the seats or a stats table, and the ⋯ menu has no stats items.
+6. Host: End game. Standings show, and the download works.
 
 **M4 A private tournament, three browsers**
 1. Host: set one up. Its setup shows a code, and the lobby opens with it.

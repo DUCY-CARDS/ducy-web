@@ -127,6 +127,74 @@ test('a hand against the Regulars plays to its end, with no grades', async ({pag
   await fitsTheScreen(page);
 });
 
+// The seat stats and the stats table, and their switches in the ⋯ menu (#625).
+const statsShownOn = async page => {
+  await page.locator('.pl-menu summary').click();
+  const items = await page.locator('.pl-menu-item', {hasText: /^Stats (on seats|table)/}).count();
+  await page.locator('.pl-menu summary').click();
+  return {hud: await page.locator('.pl-hud').count(), table: await page.locator('.pl-stats').count(), items};
+};
+// A screenshot in Chromium only: WebKit's CSP refuses the style a screenshot adds.
+const shotIn = (browserName, info) => (target, name) => (browserName === 'chromium' ? target.screenshot({path: info.outputPath(name), fullPage: true}) : null);
+
+test('the Regulars’ table keeps its stats on the seats and its stats table (#625)', async ({page, watch, browserName}, info) => {
+  await watch(page).goto('/#practice');
+  await page.locator('[data-act="sitregulars"]').click();
+  await playOutAHand(page);
+  await expect(page.locator('.pl-hud').first()).toBeVisible();
+  // Shown at once on a desktop; on a phone, from the menu.
+  await page.locator('.pl-menu summary').click();
+  await expect(page.locator('.pl-menu-item', {hasText: 'Stats on seats'})).toBeVisible();
+  if (!(await page.locator('.pl-stats').count())) await page.locator('.pl-menu-item', {hasText: 'Stats table'}).click();
+  else await page.locator('.pl-menu summary').click();
+  await expect(page.locator('.pl-stats-table')).toBeVisible();
+  await shotIn(browserName, info)(page, 'stats-regulars.png');
+  await fitsTheScreen(page);
+});
+
+test('a friends table shows no player stats, and keeps none (#625)', async ({browser, watch, browserName}, info) => {
+  const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
+  const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
+  const host = await open();
+  // Stats an earlier version kept at a friends table: the people's go.
+  const c = {hands: 4, vpip: 2, pfr: 1, threeBetChances: 0, threeBets: 0, aggressive: 0, calls: 0, folds: 0, facedBets: 0, foldsToBets: 0, sawFlop: 0, showdowns: 0, showdownsWon: 0, net: 0, netBB: 0};
+  await host.addInitScript(k => { if (!sessionStorage.seeded) { localStorage.setItem('ducyPlayStats', JSON.stringify({v: 1, games: {nlhe: {you: k, doug_poker: k, 'friend:Gus': k}}})); sessionStorage.seeded = '1'; } }, c);
+  await host.goto(`/?relay=${RELAY}#host`);
+  await host.locator('#pl-name').fill('Hana');
+  await host.locator('[data-act="host"]').click();
+  await expect(host.locator('[data-act="copy"]')).toBeVisible();
+  const code = (await host.locator('body').innerText()).match(/[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}/)[0];
+  const guest = await open();
+  await guest.goto(`/?table=${code}&relay=${RELAY}#join`);
+  await guest.locator('form[data-joinform] input[name="name"]').fill('Gus');
+  await guest.locator('form[data-joinform] button[type="submit"]').click();
+  await expect(host.locator('.pl-seat', {hasText: 'Gus'})).toBeVisible();
+  // Gus asks for chips, and Hana gives them.
+  await guest.locator('[data-act="askchips"]').click();
+  await host.locator('[data-approve]').first().click();
+
+  // A hand played out, both of them checking or calling.
+  const result = host.locator('.pl-result', {hasText: /wins?\b/});
+  for (let i = 0; i < 160 && !(await result.isVisible()); i++) {
+    for (const p of [host, guest]) {
+      const act = p.locator('[data-act="next"], [data-act="check"], [data-act="call"]').first();
+      if (await act.isVisible()) await act.click().catch(() => {});
+    }
+    await host.waitForTimeout(250);
+  }
+  await expect(result).toBeVisible();
+  for (const page of [host, guest]) {
+    expect(await statsShownOn(page)).toEqual({hud: 0, table: 0, items: 0});
+    await fitsTheScreen(page);
+  }
+  await shotIn(browserName, info)(host, 'stats-friends-host.png');
+  await shotIn(browserName, info)(guest, 'stats-friends-guest.png');
+  // Nothing counted: Gus is gone from the host's, the rest as it was; the guest has none.
+  const kept = page => page.evaluate(() => JSON.parse(localStorage.getItem('ducyPlayStats') || 'null')?.games ?? null);
+  expect(await kept(host)).toEqual({nlhe: {you: c, doug_poker: c}});
+  expect(await kept(guest)).toBeNull();
+});
+
 test('the heads-up challenge deals a hand, with no review', async ({page, watch}) => {
   await watch(page).goto('/#ladder');
   await page.locator('[data-act="ladder-play"]').click();
@@ -562,6 +630,12 @@ test.describe('a club member', () => {
     const handNo = async () => Number((await cy.locator('.pl-meta', {hasText: /· hand \d+ ·/}).first().innerText().catch(() => '')).match(/hand (\d+)/)?.[1] || 0);
     const start = await handNo();
     await playUntil(async () => (await handNo()) > start);
+    // No player stats at a club table, and none kept (#625).
+    for (const page of players) {
+      expect(await statsShownOn(page)).toEqual({hud: 0, table: 0, items: 0});
+      expect(await page.evaluate(() => localStorage.getItem('ducyPlayStats'))).toBeNull();
+    }
+    await ava.screenshot({path: info.outputPath('stats-club.png'), fullPage: true});
     await owner.evaluate(() => { location.hash = 'clubs/history'; });
     await owner.locator('[data-cl="hands"]').first().click();
     const flagged = owner.locator('.cl-handflags', {hasText: 'Cy'}).first();

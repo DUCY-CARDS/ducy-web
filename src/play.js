@@ -18,7 +18,7 @@
 // The Ladder tab (#212) plays heads-up freezeouts against one bot at a time,
 // easiest first, with the GTO bot at the top (ladder.js has the rules).
 
-import { countHand, recordHand, rates, pct, afText, ADVERTISED } from './play-stats.js';
+import { countHand, recordHand, rates, pct, afText, ADVERTISED, statsAtTable, withoutPeople } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
 import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
 import { checkSignature, loadIdentity, signMessage } from './identity.js';
@@ -230,10 +230,12 @@ let allStats = loadStats();
 let recordedHand = 0; // hand_number of the last hand added to the stats
 // The stats table: null until the player turns it on or off. Until then it
 // shows against the bots on a big screen (a desktop), where there's room
-// for it, and stays hidden on phones and at friends tables.
+// for it, and stays hidden on phones. Tables of people have no stats at all:
+// none on the seats, no table, none counted (statsAtTable).
 let statsOpen = null;
 const BIG_SCREEN = '(min-width: 1024px)';
-const statsShown = () => statsOpen ?? (mode === 'solo' && !!globalThis.matchMedia?.(BIG_SCREEN).matches);
+const statsHere = () => statsAtTable(mode);
+const statsShown = () => statsHere() && (statsOpen ?? !!globalThis.matchMedia?.(BIG_SCREEN).matches);
 // GTO training: the table is heads-up against a GTO bot.
 let gtoTable = false;
 // The bots at the table in play, one per seat after yours.
@@ -397,7 +399,12 @@ function saveSetup() {
 function loadStats() {
   try {
     const s = JSON.parse(localStorage.getItem(STATS_KEY) || 'null');
-    if (s && typeof s === 'object' && s.v === 1 && s.games && typeof s.games === 'object') return s.games;
+    if (s && typeof s === 'object' && s.v === 1 && s.games && typeof s.games === 'object') {
+      // People's stats, kept at friends tables before they had none: gone.
+      const games = withoutPeople(s.games);
+      if (games !== s.games) localStorage.setItem(STATS_KEY, JSON.stringify({v: 1, games}));
+      return games;
+    }
   } catch {}
   return {};
 }
@@ -3646,8 +3653,10 @@ function renderTable() {
     h += item('live', 'Live feedback', !!setup.live, 'Grade each decision against Ducybot as soon as you make it');
     h += item('review', 'Hand review', !!setup.review, 'Grade your decisions against Ducybot after each hand');
   }
-  h += item('hud', 'Stats on seats', !!setup.hud);
-  h += item('stats', 'Stats table', statsShown());
+  if (statsHere()) {
+    h += item('hud', 'Stats on seats', !!setup.hud);
+    h += item('stats', 'Stats table', statsShown());
+  }
   if (!watching) h += item('sounds', 'Alerts', !!setup.sounds, 'A chime when it’s your turn, and an alert at 5 seconds left');
   h += item('gamesounds', 'Game sounds', !!setup.gameSounds, 'Chips when someone bets, cards dealt, the shuffle, and the pot pushed to the winner');
   if (mode === 'solo') h += item('botchat', 'Bot chat', botChatOn(), 'The bots talk at the table, and answer when you chat');
@@ -3727,7 +3736,7 @@ function renderTable() {
     if (note) h += `<div class="pl-note">${note}</div>`;
     if (s.to_act === i && turnEnds) h += `<div class="pl-clock" data-clock>${clockText()}</div>`;
     if (i === 0) h += liveBadgeHtml();
-    if (setup.hud) h += hudHtml(seatId(i));
+    if (setup.hud && statsHere()) h += hudHtml(seatId(i));
     h += '</div>';
     // The bet on the felt, part of the way from the seat to the middle (less
     // of the way on phones, whose felt is narrow: style.css).
@@ -4123,9 +4132,9 @@ function render() {
 // The stats id of a seat: "you", or the bot's personality id.
 const seatId = i => state.seats[i].id || (i === 0 ? 'you' : tableBots[i - 1]);
 
-// Adds the hand to the stats once it's over (once per hand).
+// Adds the hand to the stats once it's over (once per hand), at bot tables.
 function recordStats() {
-  if (watching || !state || !state.complete || num(state.hand_number) === recordedHand) return;
+  if (!statsHere() || watching || !state || !state.complete || num(state.hand_number) === recordedHand) return;
   recordedHand = num(state.hand_number);
   const g = tableGame.id;
   // Empty seats and people sitting out weren't in the hand.
