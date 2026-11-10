@@ -189,8 +189,10 @@ test('notifications: each kind, newest first, with what its quick actions need',
   issue(c, 'ann', 20_000, NOW - 20 * MIN);
   cashOut(c, 'dee', NOW - 10_000);
   const list = managerNotices(c, {seated: {[t.id]: 1}});
-  assert.deepEqual(list.map(n => n.kind), ['left_owing', 'stopped', 'prize', 'help', 'at_limit', 'chips', 'join']);
+  assert.deepEqual(list.map(n => n.kind), ['move', 'left_owing', 'stopped', 'prize', 'help', 'at_limit', 'chips', 'join']);
   const by = Object.fromEntries(list.map(n => [n.kind, n]));
+  // Ben's 500 line is more than a full buy-in (200): a notice, as a give would be (#623).
+  assert.equal(by.move.text, 'Ben’s credit limit is now 500');
   assert.equal(by.join.member, 'eve');
   assert.deepEqual([by.chips.member, by.chips.amount, by.chips.note], ['ann', 50_000, 'for tonight']);
   assert.deepEqual([by.at_limit.member, by.at_limit.asked, by.at_limit.credit, by.at_limit.available, by.at_limit.table], ['ben', 80_000, 50_000, 50_000, 'Main']);
@@ -202,7 +204,7 @@ test('notifications: each kind, newest first, with what its quick actions need',
   assert.equal(by.left_owing.owesNow, 20_000);
   // Clear puts away only the ones that need no answer.
   const cleared = new Set(clearableKeys(list));
-  assert.deepEqual([...cleared].map(k => k.split(':')[0]), ['left_owing', 'stopped']);
+  assert.deepEqual([...cleared].map(k => k.split(':')[0]), ['move', 'left_owing', 'stopped']);
   assert.deepEqual(managerNotices(c, {cleared}).map(n => n.kind), ['prize', 'help', 'at_limit', 'chips', 'join']);
   // A table dealing again, or a debt settled, says nothing.
   t.dealing = dealClock(t.dealing, true, NOW);
