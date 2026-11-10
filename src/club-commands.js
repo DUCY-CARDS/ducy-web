@@ -25,6 +25,8 @@ export const HOSTED = new Set([
   // have due. (A member's own vault command, member_vault, isn't here: it
   // comes only from their signed message, club-server.js.)
   'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise', 'vault_settle',
+  // A reply in the thread with someone joining (#621).
+  'note_reply',
 ]);
 
 // The club's fields a command may change.

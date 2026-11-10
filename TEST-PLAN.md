@@ -55,6 +55,9 @@ A major release is any of these:
 | A friend joins a hosted game by its code | Main |
 | A friends table shows no player stats and keeps none; the same at a club table | Main |
 | Starting a club without permission is refused | Club manager |
+| A new player asks to join with a message, gets a reply, is let in as Cash and given chips | Main |
+| The same as a Credit player: let in with a credit line, and can sit with it | Club manager |
+| The same through an agent's link: the agent replies, lets them in and gives chips | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share (skipped while rake is off in the beta) | Beta extras |
 | The full landing page is still at `#welcome` | Beta extras |
@@ -80,7 +83,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Table chat | `table-chat.test` | no | M3 |
 | Play the Regulars | `regulars.test`, `bot-chat.test` | yes | M1 |
 | Player stats (VPIP/PFR on seats, the stats table): bot tables only, none at tables of people | `play-stats.test` | yes | M3 |
-| Joining a club, asking for chips, playing at its tables | `club.test`, `club-member-view.test`, `relay-club.test` | no | M6 |
+| Joining a club, asking for chips, playing at its tables | `club.test`, `club-member-view.test`, `relay-club.test` | join, chips | M6 |
 | Player settings, name, avatar | – | no | M1 |
 | Identity backup and restore | `identity.test`, `backup.test` | no | M7 |
 | Error reports reach the admin page | `error-report.test` | no | M8 |
@@ -96,11 +99,11 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
 | Tables: new, offer a game, move, remove a player | `club-tables.test`, `move-table.test`, `remove-from-table.test`, `table-groups.test` | no | C3 |
 | Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
-| Requests and members: join, give and take chips, remove | `club-chips.test`, `club-overview.test`, `club-log.test` | no | C5 |
+| Requests and members: join, messages, give and take chips, remove | `club.test`, `club-chips.test`, `club-overview.test`, `club-log.test` | join, give | C5 |
 | Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
 | Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
-| Agents: make one, their invite, their players' requests and chips | `club-agents.test` | no | C8 |
+| Agents: make one, their invite, their players' requests and chips | `club-agents.test` | join, give | C8 |
 | Demo clubs | `demo-club.test` | yes | C7 |
 
 ### Beta extras
@@ -182,10 +185,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 4. Close the guest's tab for good. After the timeout the seat empties, and the chips are kept in the standings.
 
 **M6 A club, as a member** (needs a club from C1)
-1. Open the owner's invite link in a fresh browser and ask to join.
-2. Once let in, ask for chips. When the owner gives them, the balance shows.
-3. Sit at the club's table and play five hands with another member. Stand up: the balance is right.
-4. The front page's club tile has the club's name, and opens it; its breadcrumb is Play › the club. Join a second club: the front page lists both, and each opens.
+1. Open the owner's invite link in a fresh browser. Fill in your name and "Who are you?" (Ask to join won't go without it), and ask to join. The passkey comes before anything reaches the club.
+2. The owner sees your request in Needs you, with your message. The owner replies: the reply shows under your request, and you can answer (at most three in a row before a reply).
+3. The owner lets you in as a Cash player. You're a member with a balance of 0: you see the tables and can sign up for a scheduled game, but can't sit. The owner's Needs you shows you as New, with Give chips.
+4. Ask for chips. When the owner gives them, the balance shows, and you're no longer New.
+5. Sit at the club's table and play five hands with another member. Stand up: the balance is right.
+6. The front page's club tile has the club's name, and opens it; its breadcrumb is Play › the club. Join a second club: the front page lists both, and each opens.
 
 **M7 Identity**
 1. Save a backup from player settings.
@@ -224,7 +229,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 3. Edit club info and rules. A member sees the change, marked as updated.
 
 **C3 Tables**
-1. Make a cash table, and offer a game. A member sees both.
+1. Make a cash table, and offer a game. A member sees both. A member just let in (0 chips, no credit) sees them too, but can't sit until given chips or credit.
 2. Move a seated player to another table, then remove one. Their chips go back to their balance.
 
 **C4 Tournaments**
@@ -232,9 +237,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Run one to a winner with two members. The prizes reach their balances, and History records it.
 
 **C5 Members and chips**
-1. Approve a join request, give chips, take some back, and decline a request. The member sees each change.
-2. Members: search, filters and sort all work. A member's page shows their chips history.
-3. History: hands and replays open. Big chip moves stand out in the activity log.
+1. A player asks to join (M6): Needs you and Requests show their message, with Let in, Reply and Decline. Reply: they see it, and their answer shows in the thread.
+2. Let in: choose Cash. They're a member with nothing to sit with, and New in Needs you until you give chips. Give chips, then take some back. The member sees each change.
+3. Let in another as Credit: Let in without a credit line is refused; with one, they can sit with it. Change the line later on their member page (Credit). Decline a third: they see it.
+4. Remove a member: they're out, and asking again shows "Removed" on their request.
+5. Members: search, filters and sort all work. A member's page shows their chips history and messages.
+6. History: hands and replays open. Big chip moves stand out in the activity log.
 
 **C5b Float and vaults** (#589, #579; the owner on two real devices, each with its own passkey)
 1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for, and the float is full again, with a notice.
@@ -253,7 +261,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 **C8 Agents** (three browsers: owner, agent, a player)
 1. Owner: on a member's page, Make agent. The member accepts, and their page shows their agent view.
 2. Owner: give the agent chips to back their players.
-3. A player joins through the agent's invite link. The request reaches the agent, not the owner, and the agent approves it.
+3. A player asks to join through the agent's invite link, with a message. The request reaches the agent with the message; the agent replies and the player sees it. The agent lets them in as Cash: they're the agent's player, New, with 0 chips. Another, let in as Credit with a line, can sit with it; the agent's Credit button changes the line later.
 4. The agent gives that player chips, then takes some back. Each needs a recent passkey unlock. The agent's balance goes down and up by the same amounts, and the owner's activity log shows each move.
 5. The agent can't give chips to a player who isn't theirs, and can't make tables.
 

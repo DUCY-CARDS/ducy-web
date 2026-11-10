@@ -2141,6 +2141,20 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .cl-side-card .btn-small:not(.primary) { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
 .cl-side-card .cl-side-row:first-child, .cl-side-ask + .cl-side-row { border-top: 0; padding-top: 0; }
 .cl-home-main > .pl-actions { margin: 0; }
+/* A member's thread with the club (#621): their message when joining, and the replies. */
+.cl-thread { display: flex; flex-direction: column; gap: 8px; min-width: 0; flex-basis: 100%; }
+.cl-thread-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cl-thread-lines li { font-size: 14px; overflow-wrap: anywhere; padding: 6px 10px; border-radius: 10px; background: rgba(127, 127, 127, .12); align-self: flex-start; max-width: 90%; display: block; }
+.cl-thread-lines li.mine { align-self: flex-end; background: rgba(47, 107, 61, .16); }
+.cl-thread-form { display: flex; gap: 6px; flex-wrap: wrap; }
+.cl-thread-form .pl-text { flex: 1 1 160px; width: auto; min-width: 0; }
+.cl-side-card .cl-thread-form .pl-text { background: #fffaf0; color: #1d3a2c; border: 1px solid #c9b98f; }
+.cl-side-card h2 { margin: 0; font-size: 16px; color: #1d3a2c; }
+.cl-said { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.cl-new { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #2f6b3d; }
+.mg-note-tag.k-new { color: #2f6b3d; }
+.mg-note-acts a.btn-small { text-decoration: none; }
+.pj-intro { resize: vertical; font: inherit; }
 /* The lobby (club-lobby.js): who's online, and the chat. */
 .cl-lobby .pl-meta { color: #5d6b55; }
 .cl-lobby-who, .cl-lobby-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; font-size: 14px; }

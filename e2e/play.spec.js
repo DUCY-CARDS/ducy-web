@@ -315,6 +315,26 @@ async function authenticator(page, {prf = true} = {}) {
 }
 const needsPasskeys = browserName => test.skip(browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
 
+// Asking to join (#621): a name and who you are.
+async function askToJoin(page, name, intro = `${name}, a friend of the owner`) {
+  await page.locator('form[data-joinform] input[name="name"]').fill(name);
+  await page.locator('form[data-joinform] textarea[name="intro"]').fill(intro);
+  await page.locator('form[data-joinform] button[type="submit"]').click();
+}
+// Letting the first one asking in, from Requests (#621): as a Cash player,
+// or a Credit one with `credit`.
+async function letIn(owner, credit = 0) {
+  await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+  await owner.locator('.cl-needs [data-cl="approve"]').first().click();
+  const form = owner.locator('.cl-needs form[data-letin]');
+  if (credit) {
+    await form.locator('input[value="credit"]').check();
+    await form.locator('[name=credit]').fill(String(credit));
+  }
+  await form.locator('button[type=submit]').click();
+  await expect(form).toHaveCount(0);
+}
+
 test('starting a club without permission is refused, and says who to give ducy', async ({page, watch, browserName}) => {
   needsPasskeys(browserName);
   await authenticator(page);
@@ -374,16 +394,14 @@ test.describe('a club member', () => {
 
     const {page: ava, auth} = await browserWith(browser, watch);
     await ava.goto(invite);
-    await ava.locator('form[data-joinform] input[name="name"]').fill('Ava');
-    await ava.locator('form[data-joinform] button[type="submit"]').click();
+    await askToJoin(ava, 'Ava');
     // Clubs need a passkey (#575): her request goes once she has one.
     await expect(ava.getByText('Set up a passkey')).toBeVisible();
     await fitsTheScreen(ava);
     if (info) await ava.screenshot({path: info.outputPath('enrol.png'), fullPage: true});
     await ava.locator('[data-cl="pass-enrol"]').click();
     await owner.locator('[data-cl="wiz-done"]').click();
-    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
-    await owner.locator('[data-cl="approve"]').first().click();
+    await letIn(owner);
     const code = new URL(invite).searchParams.get('club');
     await ava.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
     await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
@@ -449,8 +467,7 @@ test.describe('a club member', () => {
     await expect(again.getByRole('heading', {name: 'Join a game'})).toBeVisible();
     await again.waitForLoadState('networkidle');
     await again.goto(invite);
-    await again.locator('form[data-joinform] input[name="name"]').fill('Ava');
-    await again.locator('form[data-joinform] button[type="submit"]').click();
+    await askToJoin(again, 'Ava');
     await again.locator('[data-cl="pass-unlock"]').click();
     await again.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
     await expect(again.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
@@ -568,11 +585,11 @@ test.describe('a club member', () => {
       const page = watch(await context.newPage());
       await authenticator(page);
       await page.goto(invite);
-      await page.locator('form[data-joinform] input[name="name"]').fill(name);
-      await page.locator('form[data-joinform] button[type="submit"]').click();
+      await askToJoin(page, name);
       await page.locator('[data-cl="pass-enrol"]').click();
       await owner.evaluate(() => { location.hash = 'clubs/requests'; });
-      await owner.locator('[data-cl="approve"]').first().click();
+      await expect(owner.locator('.cl-needs [data-cl="approve"]')).toHaveCount(1);
+      await letIn(owner);
       await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
       await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
       await page.locator(`[data-ask-amt="${code}"]`).fill('200');
@@ -849,6 +866,156 @@ test.describe('a club member', () => {
     await expect(ava.locator('form[data-sitform]')).toBeVisible();
     await fitsTheScreen(ava);
     await ava.screenshot({path: info.outputPath('seated.png'), fullPage: true});
+  });
+});
+
+// Joining a club (#621): a passkey, a request with who you are, messages
+// both ways while pending, let in as Cash or Credit, then chips or credit
+// before sitting.
+test.describe('joining a club', () => {
+  let relay, url;
+  test.beforeAll(async ({}, info) => {
+    const port = RELAY_PORT + 30 + info.parallelIndex;
+    relay = await trialRelay(port);
+    url = `ws://localhost:${port}`;
+  });
+  test.afterAll(() => relay?.kill());
+
+  const browserWith = async (browser, watch) => {
+    const page = watch(await (await browser.newContext()).newPage());
+    await authenticator(page);
+    return page;
+  };
+  // The owner starts a club with a table open; its invite link and code.
+  async function ownerClub(browser, watch) {
+    const owner = await browserWith(browser, watch);
+    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('[data-cl="wiz-skip"]').click();
+    await owner.locator('[data-cl="wiz-onward"]').click();
+    await owner.locator('form[data-tableform] button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    await owner.locator('[data-cl="wiz-done"]').click();
+    return {owner, invite, code: new URL(invite).searchParams.get('club')};
+  }
+  // `who` asks to join with `link`, saying who they are, and makes a passkey.
+  async function asks(browser, watch, link, name, intro) {
+    const page = await browserWith(browser, watch);
+    await page.goto(link);
+    // No request without who you are.
+    await page.locator('form[data-joinform] input[name="name"]').fill(name);
+    await page.locator('form[data-joinform] button[type="submit"]').click();
+    await expect(page.getByText('Set up a passkey')).toHaveCount(0);
+    await page.locator('form[data-joinform] textarea[name="intro"]').fill(intro);
+    await page.locator('form[data-joinform] button[type="submit"]').click();
+    await page.locator('[data-cl="pass-enrol"]').click();
+    await page.evaluate(() => { location.hash = 'join'; });
+    await expect(page.getByText('Waiting for the manager to let you in')).toBeVisible();
+    return page;
+  }
+  const shot = async (page, info, name) => { await fitsTheScreen(page); await page.screenshot({path: info.outputPath(name), fullPage: true}); };
+  const say = async (page, form, text) => {
+    await page.locator(`form[data-threadform="${form}"] [name=text]`).fill(text);
+    await page.locator(`form[data-threadform="${form}"] button[type=submit]`).click();
+  };
+  const clubPage = (page, code) => page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+
+  test('a new player asks with a message, gets a reply, is let in as Cash and given chips', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, invite, code} = await ownerClub(browser, watch);
+    const gus = await asks(browser, watch, invite, 'Gus', 'Gus, Ann’s brother');
+    // The owner sees who they are, in Needs you and on Requests, and replies.
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await expect(owner.locator('.cl-needs').getByText('Gus, Ann’s brother')).toBeVisible();
+    const gusId = await owner.locator('[data-cl="approve"]').first().getAttribute('data-id');
+    await say(owner, `o|${gusId}`, 'Welcome! Which Ann?');
+    await shot(owner, info, 'owner-request.png');
+    // Gus sees it while he waits, and answers.
+    await expect(gus.getByText('Welcome! Which Ann?')).toBeVisible();
+    await say(gus, `m|${code}`, 'Ann from Tuesdays');
+    await shot(gus, info, 'pending-thread.png');
+    await expect(owner.locator('.cl-needs').getByText('Ann from Tuesdays', {exact: true})).toBeVisible();
+    // Let in as a Cash player: a member, with nothing to sit with.
+    await letIn(owner);
+    await clubPage(gus, code);
+    await expect(gus.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(gus.getByText('Balance 0')).toBeVisible();
+    await expect(gus.locator('.cl-messages').getByText('Ann from Tuesdays')).toBeVisible();
+    // New in the owner's Needs you until his first chips.
+    await owner.evaluate(() => { location.hash = 'clubs/overview'; });
+    await expect(owner.locator('.mg-note', {hasText: 'Gus'}).locator('.k-new').first()).toBeVisible();
+    await shot(owner, info, 'owner-new.png');
+    await owner.evaluate(id => { location.hash = `clubs/member/${id}`; }, gusId);
+    await owner.locator('[data-cl="give"]').click();
+    await owner.locator('#cl-amt').fill('200');
+    await owner.locator('form[data-chipform] button[type=submit]').click();
+    await expect(gus.getByText('Balance 200')).toBeVisible();
+    await shot(gus, info, 'member-chips.png');
+    await owner.evaluate(() => { location.hash = 'clubs/overview'; });
+    await expect(owner.locator('.mg-note .k-new')).toHaveCount(0);
+  });
+
+  test('a Credit player is let in with a credit line, and can sit with it', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, invite, code} = await ownerClub(browser, watch);
+    const cy = await asks(browser, watch, invite, 'Cy', 'Cy from work');
+    // Credit with no line isn't let in.
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await owner.locator('.cl-needs [data-cl="approve"]').first().click();
+    await owner.locator('.cl-needs form[data-letin] input[value="credit"]').check();
+    await owner.locator('.cl-needs form[data-letin] button[type=submit]').click();
+    await expect(owner.getByText('Give a Credit player a credit line.')).toBeVisible();
+    await owner.locator('.cl-needs form[data-letin] [name=credit]').fill('500');
+    await shot(owner, info, 'let-in-credit.png');
+    await owner.locator('.cl-needs form[data-letin] button[type=submit]').click();
+    await clubPage(cy, code);
+    await expect(cy.getByText('Credit limit 500')).toBeVisible();
+    await cy.locator('[data-cl="sit-open"]').first().click();
+    await expect(cy.locator('form[data-sitform] button[type="submit"]')).toBeEnabled();
+    await shot(cy, info, 'credit-player.png');
+  });
+
+  test('through an agent’s link: the agent replies, lets them in and gives chips', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, invite, code} = await ownerClub(browser, watch);
+    // Ava joins, is given chips, and becomes an agent.
+    const ava = await asks(browser, watch, invite, 'Ava', 'Ava, the owner’s sister');
+    await letIn(owner);
+    await clubPage(ava, code);
+    await owner.evaluate(() => { location.hash = 'clubs/members'; });
+    await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
+    await owner.locator('[data-cl="give"]').click();
+    await owner.locator('#cl-amt').fill('1000');
+    await owner.locator('form[data-chipform] button[type=submit]').click();
+    await expect(ava.getByText('Balance 1,000')).toBeVisible();
+    await owner.locator('summary[aria-label="More for Ava"]').click();
+    await owner.locator('[data-cl="make-agent"]').click();
+    await owner.locator('form[data-chipform="agent"] button[type=submit]').click();
+    await ava.locator('[data-cl="agent-yes"]').click();
+    await ava.locator('[data-cl="mtab"][data-tab="players"]').click();
+    const link = await ava.locator(`[data-aglink="${code}"]`).inputValue();
+    // Bo asks through Ava's link: the request is hers.
+    const bo = await asks(browser, watch, link, 'Bo', 'Bo, Ava’s neighbour');
+    const recruits = ava.locator('.cl-agent li', {hasText: 'Bo'});
+    await expect(recruits.getByText('Bo, Ava’s neighbour')).toBeVisible();
+    const boId = await recruits.locator('[data-cl="ag-approve"]').getAttribute('data-id');
+    await say(ava, `a|${code}|${boId}`, 'Hi Bo!');
+    await expect(bo.getByText('Hi Bo!')).toBeVisible();
+    await shot(ava, info, 'agent-request.png');
+    await recruits.locator('[data-cl="ag-approve"]').click();
+    await ava.locator('form[data-letin] button[type=submit]').click();
+    // Bo is her player, New until she gives him chips.
+    const row = ava.locator('.cl-agent li', {hasText: 'Bo'});
+    await expect(row.locator('.cl-new')).toBeVisible();
+    await row.locator('[data-cl="ag-give"]').click();
+    await ava.locator('#cl-gamt').fill('300');
+    await ava.locator('form[data-agentform] button[type=submit]').click();
+    await clubPage(bo, code);
+    await expect(bo.getByText('Balance 300')).toBeVisible();
+    await expect(row.locator('.cl-new')).toHaveCount(0);
+    await shot(ava, info, 'agent-players.png');
   });
 });
 

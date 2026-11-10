@@ -9,6 +9,7 @@ import {
   parseInvite, playerReceive, removeMember, revokeInvite,
 } from '../src/club.js';
 import { managerNotices } from '../src/club-notices.js';
+import { command } from '../src/club-commands.js';
 
 async function setup() {
   const host = await createIdentity();
@@ -64,6 +65,35 @@ test('join → pending → approve → member, with signed status replies', asyn
   assert.equal(club.members[ann.id].joinedAt, 3000);
   assert.ok(await playerReceive(mem, await signMessage(host, a.body)));
   assert.equal(mem.status, 'member');
+});
+
+test('asking with who you are: a thread both ways while pending, then let in as Cash or Credit (#621)', async () => {
+  const {host, club, verifier} = await setup();
+  const ann = await createIdentity(), bo = await createIdentity();
+  const mem = newMembership(parseInvite(inviteLink(club, 'https://ducy.example/')));
+  const r = await hostReceive(club, verifier, await signMessage(ann, {...join(club), intro: 'Ann, Bo’s sister'}), 2000);
+  assert.equal(r.replies[0].body.status, 'pending');
+  for (const x of r.replies) assert.ok(await playerReceive(mem, await signMessage(host, x.body)));
+  assert.deepEqual(mem.thread, [{mine: true, by: '', text: 'Ann, Bo’s sister', at: 2000}]);
+  // The owner sees it in Needs you, and replies; she hears it, and answers.
+  assert.equal(managerNotices(club, {}, 2500).find(n => n.kind === 'join').text, 'Ann, Bo’s sister');
+  const out = command(club, 'note_reply', {id: ann.id, text: 'Which Bo?'}, 2600);
+  assert.ok(await playerReceive(mem, await signMessage(host, out.replies[0].body)));
+  assert.equal(mem.thread[1].text, 'Which Bo?');
+  assert.equal(mem.thread[1].mine, false);
+  const said = await hostReceive(club, verifier, await signMessage(ann, {type: 'note', club: club.code, text: 'Bo from Tuesdays'}), 2700);
+  assert.ok(said.changed);
+  assert.equal(club.members[ann.id].thread.length, 3);
+  // Let in as a Cash player: nothing to sit with, New until her first chips.
+  command(club, 'approve', {id: ann.id, kind: 'cash'}, 3000);
+  assert.equal(club.members[ann.id].status, 'member');
+  assert.equal(club.members[ann.id].credit ?? 0, 0);
+  assert.ok(managerNotices(club, {}, 3100).some(n => n.kind === 'new' && n.member === ann.id));
+  // Bo as a Credit player: only with a credit line.
+  await hostReceive(club, verifier, await signMessage(bo, {...join(club, club.invite, 'Bo'), intro: 'Bo'}), 4000);
+  assert.throws(() => command(club, 'approve', {id: bo.id, kind: 'credit'}, 4100), /credit line/);
+  command(club, 'approve', {id: bo.id, kind: 'credit', credit: 50000}, 4100);
+  assert.equal(club.members[bo.id].credit, 50000);
 });
 
 test('a wrong or revoked invite is refused; members are unaffected by revoking', async () => {

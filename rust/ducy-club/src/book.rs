@@ -104,6 +104,18 @@ pub(crate) fn int(v: Option<&Value>) -> Option<i64> {
     })
 }
 
+/// The credit line an approval sets (#621): `{kind: "credit", credit}` for a
+/// Credit player, a whole number of chips above 0; None for a Cash player.
+pub fn approval_credit(args: &Value) -> Result<Option<u64>, RuleError> {
+    if args.get("kind").and_then(Value::as_str) != Some("credit") {
+        return Ok(None);
+    }
+    match args.get("credit").and_then(Value::as_u64) {
+        Some(n) if n > 0 && n <= MAX_CHIPS => Ok(Some(n)),
+        _ => refuse("A Credit player needs a credit line: a whole number of chips."),
+    }
+}
+
 impl Book {
     fn get(&self, id: &str, k: &str) -> Option<&Value> {
         self.club
@@ -837,6 +849,8 @@ impl Book {
                 if !ok {
                     return refuse("No such request.");
                 }
+                // A Credit player (#621): let in with a line on their link with the agent.
+                let credit = approval_credit(cmd)?;
                 let p = self.name(&id);
                 let reply = if op == "approve" {
                     self.club.approve(&id, now)
@@ -851,10 +865,29 @@ impl Book {
                 };
                 self.log_action(by, &format!("{a} {did} {p}"), now, None);
                 if op == "approve" {
-                    done.approved = Some(id);
                     self.ensure_links(now)?;
                     self.sync();
+                    if let Some(limit) = credit {
+                        self.set_credit(&id, Some(limit as i64), now)?;
+                        done.accounts.push(AccountTo {
+                            id: id.clone(),
+                            since: None,
+                        });
+                    }
+                    done.approved = Some(id);
                 }
+            }
+            // A player's credit line (#621), on their link with the agent.
+            "credit" => {
+                self.mine(by, &id)?;
+                self.set_credit(&id, int(cmd.get("amount")), now)?;
+                done.accounts.push(AccountTo { id, since: None });
+            }
+            // A reply in one of their players' threads (#621).
+            "reply" => {
+                self.mine(by, &id)?;
+                let text = cmd.get("text").and_then(Value::as_str).unwrap_or("");
+                done.replies.push(self.club.reply_note(by, &id, text, now)?);
             }
             "give" | "grant" => {
                 let p = self.mine(by, &id)?;
@@ -1655,6 +1688,54 @@ mod tests {
         assert!(
             err(b.run_agent("al", &json!({"op": "approve", "id": "cy"}), 3))
                 .contains("No such request.")
+        );
+        // A Credit player (#621): a line on their link with Al, at
+        // approval or later.
+        let p: crate::rules::Member = serde_json::from_value(
+            json!({"id": "dee", "name": "Dee", "status": "pending", "agentOf": "al"}),
+        )
+        .unwrap();
+        b.club.members.insert("dee".into(), p);
+        assert!(
+            err(b.run_agent(
+                "al",
+                &json!({"op": "approve", "id": "dee", "kind": "credit"}),
+                3
+            ))
+            .contains("credit line")
+        );
+        let done = b
+            .run_agent(
+                "al",
+                &json!({"op": "approve", "id": "dee", "kind": "credit", "credit": 300}),
+                3,
+            )
+            .unwrap();
+        assert_eq!(done.accounts[0].id, "dee");
+        assert_eq!(
+            (b.credit("dee"), b.through("dee").as_deref()),
+            (300, Some("al"))
+        );
+        b.run_agent("al", &json!({"op": "credit", "id": "cy", "amount": 200}), 3)
+            .unwrap();
+        assert_eq!(b.credit("cy"), 200);
+        assert!(
+            err(b.run_agent("al", &json!({"op": "credit", "id": "al", "amount": 200}), 3))
+                .contains("Not one of your players.")
+        );
+        // A reply in their thread (#621): to their own players only.
+        let done = b
+            .run_agent(
+                "al",
+                &json!({"op": "reply", "id": "cy", "text": "Hi Cy"}),
+                4,
+            )
+            .unwrap();
+        assert_eq!(done.replies[0]["body"]["thread"][0]["by"], "Al");
+        assert_eq!(b.club.members["cy"].thread[0].from, "al");
+        assert!(
+            err(b.run_agent("al", &json!({"op": "reply", "id": "al", "text": "Hi"}), 4))
+                .contains("Not one of your players.")
         );
     }
 

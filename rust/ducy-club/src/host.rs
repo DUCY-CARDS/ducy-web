@@ -397,6 +397,8 @@ impl ClubState {
         let actor = self.actor();
         match op {
             "approve" | "decline" => {
+                // A Credit player (#621): let in with a credit line.
+                let credit = crate::book::approval_credit(args)?;
                 let reply = if op == "approve" {
                     self.book.club.approve(&id, now)
                 } else {
@@ -407,9 +409,21 @@ impl ClubState {
                 if op == "approve" {
                     self.book.ensure_links(now)?;
                     self.book.sync();
+                    if let Some(limit) = credit {
+                        self.book.set_credit(&id, Some(limit as i64), now)?;
+                        out.account(&id, None);
+                    }
                     out.tables_to.push(id);
                 }
                 out.tell.push(Tell::Lobby);
+            }
+            // A reply in a member's thread (#621).
+            "note_reply" => {
+                let reply = self
+                    .book
+                    .club
+                    .reply_note(&actor, &id, &text(args, "text"), now)?;
+                out.replies.push(reply);
             }
             "remove" => self.remove(&id, now, &mut out)?,
             // Someone who lost their player ID, on a new one (#575).
@@ -978,6 +992,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.book.club.owner_id.as_deref(), Some("NEWOWNER"));
+    }
+
+    #[test]
+    fn asking_with_a_message_a_reply_and_let_in_as_cash_or_credit() {
+        let mut c = club(&["ann"]);
+        c.book.club.invite = "INVITE".into();
+        let join = |name: &str| json!({"type": "join", "club": "ABCD-EFGH", "invite": "INVITE", "name": name, "intro": format!("{name}, Ann's friend")});
+        let r = c.book.club.receive("gus", &join("Gus"), 5);
+        assert_eq!(r.replies[0]["body"]["status"], "pending");
+        assert_eq!(
+            r.replies[1]["body"]["thread"][0]["text"],
+            "Gus, Ann's friend"
+        );
+        // The owner replies while they wait; they hear it.
+        let o = run(
+            &mut c,
+            "note_reply",
+            json!({"id": "gus", "text": "Welcome"}),
+        )
+        .unwrap();
+        assert_eq!(o.replies[0]["to"], "gus");
+        assert_eq!(o.replies[0]["body"]["thread"][1]["text"], "Welcome");
+        assert!(run(&mut c, "note_reply", json!({"id": "gus", "text": ""})).is_err());
+        // Let in as a Cash player: no credit, no chips.
+        run(&mut c, "approve", json!({"id": "gus", "kind": "cash"})).unwrap();
+        assert_eq!(c.book.club.members["gus"].status, Status::Member);
+        assert_eq!((c.book.credit("gus"), c.book.available("gus")), (0, 0));
+        // A Credit player: their line, and they hear of it.
+        c.book.club.receive("hal", &join("Hal"), 6);
+        assert!(
+            run(&mut c, "approve", json!({"id": "hal", "kind": "credit"}))
+                .unwrap_err()
+                .0
+                .contains("credit line")
+        );
+        assert_eq!(c.book.club.members["hal"].status, Status::Pending);
+        let o = run(
+            &mut c,
+            "approve",
+            json!({"id": "hal", "kind": "credit", "credit": 500}),
+        )
+        .unwrap();
+        assert_eq!((c.book.credit("hal"), c.book.available("hal")), (500, 500));
+        assert_eq!(o.accounts[0].id, "hal");
     }
 
     #[test]

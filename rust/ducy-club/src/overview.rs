@@ -326,7 +326,12 @@ impl ClubState {
         let members = &self.book.club.members;
         // Big chip moves, removals, refills and the float (#576, #589).
         let mut out = self.book.move_notices(now);
+        let had_chips = self.had_chips();
         for m in members.values() {
+            // Their latest line, and whether it waits for a reply (#621).
+            let last = m.thread.iter().rev().find(|n| n.from == m.id);
+            let waiting = m.thread.last().is_some_and(|n| n.from == m.id);
+            let said = last.map_or("", |n| n.text.as_str());
             if m.status == Status::Pending {
                 let via = m
                     .agent_of
@@ -336,7 +341,22 @@ impl ClubState {
                 let at = m.requested_at.unwrap_or(0);
                 out.push(json!({
                     "key": format!("join:{}:{at}", m.id), "kind": "join", "member": m.id, "name": m.name,
-                    "via": via, "removedAt": m.removed_at.unwrap_or(0), "at": at,
+                    "via": via, "removedAt": m.removed_at.unwrap_or(0), "at": at, "text": said,
+                }));
+            }
+            // New (#621): joined with a message, no chips yet. The owner's,
+            // not an agent's player: those are the agent's.
+            if m.status == Status::Member
+                && m.agent_of.is_none()
+                && !m.thread.is_empty()
+                && !had_chips.contains(m.id.as_str())
+                && self.book.credit(&m.id) == 0
+            {
+                let at = m.thread.last().map_or(0, |n| n.at);
+                out.push(json!({
+                    "key": format!("new:{}:{at}", m.id), "kind": "new", "member": m.id, "name": m.name,
+                    "text": said, "waiting": waiting, "replies": m.thread.iter().filter(|n| n.from != m.id).count(),
+                    "removedAt": m.removed_at.unwrap_or(0), "at": at,
                 }));
             }
             // An agent's player asks their agent; one at their limit is an
@@ -413,6 +433,17 @@ impl ClubState {
         });
         out.sort_by_key(|n| std::cmp::Reverse(num(n.get("at"))));
         out
+    }
+
+    /// The members who have ever had chips (an entry of theirs in the
+    /// ledger): the rest are new (#621).
+    pub fn had_chips(&self) -> std::collections::BTreeSet<&str> {
+        self.book
+            .money
+            .ledger()
+            .iter()
+            .map(|e| e.member.as_str())
+            .collect()
     }
 
     /// The size from which a chip move in the log counts as big (#190): a
@@ -685,6 +716,68 @@ mod tests {
         assert_eq!(
             c.overview("nope", &Value::Null, NOW).unwrap_err().0,
             "no overview op nope"
+        );
+    }
+
+    #[test]
+    fn a_new_member_is_new_with_their_message_until_their_first_chips() {
+        let mut c = club();
+        let note = |from: &str, text: &str, at: u64| crate::rules::Note {
+            from: from.into(),
+            text: text.into(),
+            at,
+        };
+        let gus = serde_json::from_value(
+            json!({"id": "gus", "name": "Gus", "status": "member", "joinedAt": NOW - MIN}),
+        )
+        .unwrap();
+        c.book.club.members.insert("gus".into(), gus);
+        c.book.club.members.get_mut("gus").unwrap().thread =
+            vec![note("gus", "Gus, Ann's brother", NOW - MIN)];
+        // An agent's player is the agent's (agent_body), not the owner's.
+        let mut hal: crate::rules::Member = serde_json::from_value(
+            json!({"id": "hal", "name": "Hal", "status": "member", "agentOf": "ann"}),
+        )
+        .unwrap();
+        hal.thread = vec![note("hal", "Hal", NOW)];
+        c.book.club.members.insert("hal".into(), hal);
+        c.book.club.members.get_mut("eve").unwrap().thread =
+            vec![note("eve", "Eve from Tuesday", NOW - 5 * MIN)];
+        c.book.ensure_links(NOW).unwrap();
+        let none = Map::new();
+        let list = c.notices(&[], &none, NOW);
+        let new: Vec<&Value> = list.iter().filter(|n| n["kind"] == "new").collect();
+        assert_eq!(new.len(), 1);
+        assert_eq!(
+            (
+                new[0]["member"].clone(),
+                new[0]["text"].clone(),
+                new[0]["waiting"].clone()
+            ),
+            (json!("gus"), json!("Gus, Ann's brother"), json!(true))
+        );
+        let join = list.iter().find(|n| n["kind"] == "join").unwrap();
+        assert_eq!(join["text"], "Eve from Tuesday");
+        // Replied to: still new, no longer waiting.
+        c.book
+            .club
+            .reply_note("host", "gus", "Welcome", NOW)
+            .unwrap();
+        let n = c
+            .notices(&[], &none, NOW)
+            .into_iter()
+            .find(|n| n["kind"] == "new")
+            .unwrap();
+        assert_eq!(
+            (n["waiting"].clone(), n["replies"].clone()),
+            (json!(false), json!(1))
+        );
+        // Their first chips: no longer new.
+        c.book.issue("gus", Some(500), "", NOW).unwrap();
+        assert!(
+            !c.notices(&[], &none, NOW)
+                .iter()
+                .any(|n| n["kind"] == "new")
         );
     }
 }
