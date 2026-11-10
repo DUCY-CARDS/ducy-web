@@ -168,6 +168,8 @@ fn setting_ok(k: &str, v: &Value) -> bool {
         "keepDays" => int(1, 3650),
         // Let people ask to join with the club code, no invite link (#393).
         "codeJoin" => v.is_boolean(),
+        // Let everyone in (#631): a request is let in at once.
+        "letAllIn" => v.is_boolean(),
         // New tables' rake or time (#449).
         "charge" => crate::rules::Charge::from_value(v).is_ok(),
         _ => false,
@@ -427,6 +429,27 @@ impl ClubState {
                     .reply_note(&actor, &id, &text(args, "text"), now)?;
                 out.replies.push(reply);
             }
+            // Let in at once (#631, the club server after a join): their
+            // chips' link, and the log. Only someone who is a member.
+            "admit" => {
+                let Some(m) = self
+                    .book
+                    .club
+                    .members
+                    .get(&id)
+                    .filter(|m| m.status == Status::Member)
+                else {
+                    return Ok(out);
+                };
+                let mut line = format!("{} joined (let in at once)", m.name);
+                if let Some(a) = m.agent_of.as_deref() {
+                    line = format!("{} joined via {} (let in at once)", m.name, self.name(a));
+                }
+                self.book.ensure_links(now)?;
+                self.book.sync();
+                self.book.log_action(&actor, &line, now, None);
+                out.tell.push(Tell::Lobby);
+            }
             "remove" => self.remove(&id, now, &mut out)?,
             // Someone who lost their player ID, on a new one (#575).
             "move_member" => {
@@ -541,6 +564,16 @@ impl ClubState {
                         "stayHands" => self.book.club.stay_hands = v.as_number().cloned(),
                         "keepDays" => self.keep_days = v.as_number().cloned(),
                         "codeJoin" => self.book.club.code_join = v.as_bool(),
+                        // Let everyone in (#631), logged.
+                        "letAllIn" => {
+                            let on = v.as_bool() == Some(true);
+                            if on != (self.book.club.let_all_in == Some(true)) {
+                                self.book.club.let_all_in = Some(on);
+                                let text =
+                                    format!("Let everyone in: {}", if on { "on" } else { "off" });
+                                self.book.log_action(&actor, &text, now, None);
+                            }
+                        }
                         "charge" => {
                             self.book.club.charge = crate::rules::Charge::from_value(v)?;
                             self.book
@@ -1003,6 +1036,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.book.club.owner_id.as_deref(), Some("NEWOWNER"));
+    }
+
+    #[test]
+    fn let_everyone_in_admits_at_once_logged_with_a_link() {
+        let mut c = club(&["ann"]);
+        c.book.club.invite = "INVITE".into();
+        run(&mut c, "settings", json!({"letAllIn": true})).unwrap();
+        assert_eq!(c.book.club.let_all_in, Some(true));
+        assert_eq!(c.book.log.last().unwrap()["text"], "Let everyone in: on");
+        assert!(run(&mut c, "settings", json!({"letAllIn": "yes"})).is_err());
+        let join = json!({"type": "join", "club": "ABCD-EFGH", "invite": "INVITE", "name": "Gus", "intro": "Gus, Ann's brother"});
+        let r = c.book.club.receive("gus", &join, 5);
+        assert_eq!(r.admitted.as_deref(), Some("gus"));
+        run(&mut c, "admit", json!({"id": "gus"})).unwrap();
+        assert!(c.book.through("gus").is_some(), "a link for their chips");
+        assert_eq!((c.book.credit("gus"), c.book.available("gus")), (0, 0));
+        assert_eq!(
+            c.book.log.last().unwrap()["text"],
+            "Gus joined (let in at once)"
+        );
+        // Nobody to admit: nothing happens.
+        assert!(
+            run(&mut c, "admit", json!({"id": "nobody"}))
+                .unwrap()
+                .replies
+                .is_empty()
+        );
+        run(&mut c, "settings", json!({"letAllIn": false})).unwrap();
+        assert_eq!(c.book.log.last().unwrap()["text"], "Let everyone in: off");
     }
 
     #[test]

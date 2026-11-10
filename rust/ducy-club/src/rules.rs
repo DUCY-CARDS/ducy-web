@@ -624,6 +624,11 @@ pub struct Club {
     /// Whether people may ask to join with the club's code alone (#393).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_join: Option<bool>,
+    /// "Let everyone in" (ducy-web #631): a request is let in at once, as a
+    /// Cash player with no chips. Off (the default): the owner or their
+    /// agent lets them in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub let_all_in: Option<bool>,
     /// Everyone who has asked to join, by id.
     #[serde(default)]
     pub members: BTreeMap<String, Member>,
@@ -739,6 +744,9 @@ pub struct Received {
     /// entries after this one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<f64>,
+    /// Let in at once (#631): the caller links their chips and welcomes them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admitted: Option<String>,
 }
 
 impl Received {
@@ -1017,6 +1025,7 @@ impl Club {
             invite: new_invite(rng),
             created_at: now,
             code_join: None,
+            let_all_in: None,
             members: BTreeMap::new(),
             help: Vec::new(),
             lobby: Vec::new(),
@@ -1312,6 +1321,9 @@ impl Club {
         }
         // Who they are (#621), for the owner or their agent.
         let intro = note_text(&text_of(body.get("intro")));
+        // Let everyone in (#631): a member at once, a Cash player with no
+        // chips. Someone declined or removed before still asks.
+        let at_once = self.let_all_in == Some(true) && !self.members.contains_key(from);
         // New, or asking again after being declined or removed.
         let m = self
             .members
@@ -1330,6 +1342,11 @@ impl Club {
         if !intro.is_empty() {
             m.add_note(from, intro, now);
         }
+        if at_once {
+            m.status = Status::Member;
+            m.joined_at = Some(now);
+            m.changed_at = Some(now);
+        }
         let mut replies = vec![self.reply(from)];
         if !self.members[from].thread.is_empty() {
             replies.push(self.thread_reply(from));
@@ -1337,6 +1354,8 @@ impl Club {
         Received {
             replies,
             changed: true,
+            account: at_once.then_some(0.0),
+            admitted: at_once.then(|| from.to_string()),
             ..Received::default()
         }
     }
@@ -2731,6 +2750,43 @@ mod tests {
         // Let in, the thread stays theirs.
         c.approve("ann", 3000);
         assert_eq!(c.members["ann"].thread.len(), MAX_THREAD);
+    }
+
+    #[test]
+    fn let_everyone_in_makes_a_member_at_once_with_their_message() {
+        let mut c = club();
+        c.let_all_in = Some(true);
+        let mut body = join(&c, &c.invite.clone(), "Ann");
+        body["intro"] = "Ann, Bo's friend".into();
+        let r = c.receive("ann", &body, 2000);
+        assert_eq!(status(&r), "member");
+        assert_eq!((r.admitted.as_deref(), r.account), (Some("ann"), Some(0.0)));
+        assert_eq!(c.members["ann"].joined_at, Some(2000));
+        assert_eq!(
+            r.replies[1]["body"]["thread"][0]["text"],
+            "Ann, Bo's friend"
+        );
+        // Asking again as a member changes nothing.
+        assert_eq!(c.receive("ann", &body, 2100).admitted, None);
+        // An agent's link: under the agent, at once.
+        let mut ag = Member::new("ag", "Al");
+        ag.status = Status::Member;
+        ag.agent = Some("yes".into());
+        ag.agent_invite = Some("AGENT".into());
+        c.members.insert("ag".into(), ag);
+        let r = c.receive("pat", &join(&c, "AGENT", "Pat"), 2200);
+        assert_eq!(status(&r), "member");
+        assert_eq!(c.members["pat"].agent_of.as_deref(), Some("ag"));
+        // Removed, they ask again rather than walk back in.
+        c.remove("ann", 3000);
+        let r = c.receive("ann", &body, 4000);
+        assert_eq!((status(&r), r.admitted.clone()), ("pending", None));
+        // Off: they ask.
+        c.let_all_in = Some(false);
+        assert_eq!(
+            status(&c.receive("cy", &join(&c, &c.invite.clone(), "Cy"), 0)),
+            "pending"
+        );
     }
 
     #[test]

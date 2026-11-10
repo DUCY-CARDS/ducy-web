@@ -701,6 +701,12 @@ export function createClubServer({
     const verified = !['malformed', 'bad signature', 'id does not match key', 'id in use', 'replayed'].includes(r.reason);
     if (verified && msg.data?.from === msg.from && msg.data?.body?.key) await memberKey(msg.from, msg.data.body.key);
     for (const rep of r.replies) sendToPlayer(rep);
+    // Let in at once (#631, Let everyone in): their chips' link and the
+    // log, then welcomed below like a member checking in.
+    const admitted = !!r.admitted && r.admitted === msg.from;
+    if (admitted) {
+      try { await hosted('admit', {id: msg.from}); } catch (e) { console.warn('club: letting in', e.message); }
+    }
     // A table command, from the member who signed it (the relay's sender id
     // must match, so no one can act for someone else). No one is seated
     // without a key: their cards would have to cross the relay in the clear.
@@ -737,7 +743,7 @@ export function createClubServer({
       return;
     }
     const m = club.members[msg.from];
-    if (msg.data?.body?.type === 'hello' && m?.status === 'member') {
+    if ((msg.data?.body?.type === 'hello' || admitted) && m?.status === 'member') {
       // Members checking in get the tables, the host's key for encrypted
       // table updates, and an agent their view.
       if (tableHost) sendToPlayer({to: msg.from, body: tablesNow()});

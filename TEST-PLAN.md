@@ -58,6 +58,7 @@ A major release is any of these:
 | A new player asks to join with a message, gets a reply, is let in as Cash and given chips | Main |
 | The same as a Credit player: let in with a credit line, and can sit with it | Club manager |
 | The same through an agent's link: the agent replies, lets them in and gives chips | Club manager |
+| With Let everyone in on: in at once as Cash, New until the owner gives chips | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while rake is off in the beta) | Beta extras |
 | The full landing page is still at `#welcome` | Beta extras |
@@ -241,8 +242,9 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Let in: choose Cash. They're a member with nothing to sit with, and New in Needs you until you give chips. Give chips, then take some back. The member sees each change.
 3. Let in another as Credit: Let in without a credit line is refused; with one, they can sit with it. Change the line later on their member page (Credit). Decline a third: they see it.
 4. Remove a member: they're out, and asking again shows "Removed" on their request.
-5. Members: search, filters and sort all work. A member's page shows their chips history and messages.
-6. History: hands and replays open. Big chip moves stand out in the activity log.
+5. Rules → Let everyone in: On (History logs it). A new player asks with a message: after the passkey they're on the club's page at once, a Cash player with 0 chips who can't sit. No request waits; Needs you shows them New with their message, and Reply works both ways. Give chips: New goes. Through an agent's link, the same, under the agent. Someone removed who asks again still waits to be let in. Turn it Off: the next player asks and waits.
+6. Members: search, filters and sort all work. A member's page shows their chips history and messages.
+7. History: hands and replays open. Big chip moves stand out in the activity log.
 
 **C5b Float and vaults** (#589, #579; the owner on two real devices, each with its own passkey)
 1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for, and the float is full again, with a notice.

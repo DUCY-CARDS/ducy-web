@@ -27,12 +27,14 @@ export const HOSTED = new Set([
   'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise', 'vault_settle',
   // A reply in the thread with someone joining (#621).
   'note_reply',
+  // Let in at once (#631): the club server runs it after a join it let in.
+  'admit',
 ]);
 
 // The club's fields a command may change.
 // (ownerId and lobby: a member moved to a new player ID, #575. chipCap and
 // capRaise: the daily cap the float replaced, #589, dropped once read.)
-const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise', 'float', 'vaults',
+const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'letAllIn', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise', 'float', 'vaults',
   // New tables' rake or time (#449).
   'charge'];
 

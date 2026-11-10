@@ -992,6 +992,44 @@ test.describe('joining a club', () => {
     await expect(owner.locator('.mg-note .k-new')).toHaveCount(0);
   });
 
+  test('with Let everyone in on, a new player is in at once as Cash, New until the owner gives chips (#631)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, invite, code} = await ownerClub(browser, watch);
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await owner.locator('[data-cl="let-all-in"][data-on="1"]').click();
+    await expect(owner.locator('[data-cl="let-all-in"][data-on="1"]')).toHaveAttribute('aria-pressed', 'true');
+    await shot(owner, info, 'rules-let-everyone-in.png');
+    // Gus asks, makes his passkey, and lands on the club's page as a member.
+    const gus = await browserWith(browser, watch);
+    await gus.goto(invite);
+    await askToJoin(gus, 'Gus', 'Gus, Ann’s brother');
+    await gus.locator('[data-cl="pass-enrol"]').click();
+    await expect(gus.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(gus).toHaveURL(new RegExp(`#clubs/c/${code}$`));
+    await expect(gus.getByText('Balance 0')).toBeVisible();
+    await expect(gus.locator('.cl-messages').getByText('Gus, Ann’s brother')).toBeVisible();
+    await shot(gus, info, 'let-in-at-once.png');
+    // The owner: no request, Gus New with his message; a reply reaches him.
+    await owner.evaluate(() => { location.hash = 'clubs/overview'; });
+    const note = owner.locator('.mg-note', {hasText: 'Gus'}).first();
+    await expect(note.locator('.k-new')).toBeVisible();
+    await expect(note.getByText('Gus, Ann’s brother')).toBeVisible();
+    await expect(owner.locator('.mg-note .k-join')).toHaveCount(0);
+    await note.locator('[data-cl="note-open"]').click();
+    await owner.locator(`.mg-note form[data-threadform] [name=text]`).first().fill('Welcome, Gus');
+    await owner.locator(`.mg-note form[data-threadform] button[type=submit]`).first().click();
+    await expect(gus.locator('.cl-messages').getByText('Welcome, Gus')).toBeVisible();
+    await shot(owner, info, 'owner-new-at-once.png');
+    // Chips are still the gate: given, he's no longer New.
+    await note.getByRole('link', {name: 'Give chips'}).click();
+    await owner.locator('[data-cl="give"]').click();
+    await owner.locator('#cl-amt').fill('200');
+    await owner.locator('form[data-chipform] button[type=submit]').click();
+    await expect(gus.getByText('Balance 200')).toBeVisible();
+    await owner.evaluate(() => { location.hash = 'clubs/overview'; });
+    await expect(owner.locator('.mg-note .k-new')).toHaveCount(0);
+  });
+
   test('a Credit player is let in with a credit line, and can sit with it', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, invite, code} = await ownerClub(browser, watch);
