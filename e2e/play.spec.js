@@ -666,10 +666,15 @@ test.describe('a club member', () => {
     // Off in the beta until club-beta.js turns it on.
     test.skip(!(await form.locator('[name=house]').count()), 'rake is off in the beta');
     await expect(form.locator('[name=rakePct]')).toBeHidden();
+    // None by default; a typed percentage and a cap in big blinds.
+    await expect(form.locator('[name=house]')).toHaveValue('none');
     await form.locator('[name=house]').selectOption('rake');
-    await form.locator('[name=rakePct]').selectOption('1000');
-    await form.locator('[name=rakeCap]').selectOption('1');
-    await expect(form.locator('[name=noFlop]')).toBeChecked();
+    await form.locator('[name=rakePct]').fill('12');
+    await form.locator('button[type="submit"]').click();
+    await expect(form.getByText('Rake is more than 0% and at most 10%.')).toBeVisible();
+    await form.locator('[name=rakePct]').fill('10');
+    await form.locator('[name=rakeCap]').fill('1');
+    await expect(form.locator('[name=timeBB]')).toBeHidden();
     await expect(form.locator('input[name=blinds][value=other]')).toBeChecked();
     await expect(form.locator('[name=house]')).toHaveValue('rake');
     await fitsTheScreen(owner);
@@ -695,7 +700,7 @@ test.describe('a club member', () => {
       await owner.evaluate(() => { location.hash = 'clubs/requests'; });
       await owner.locator('[data-cl="grant"]').first().click();
       await expect(page.getByText('Balance 50')).toBeVisible();
-      await expect(page.locator('.cl-charge').first()).toHaveText('Rake 10% · cap 0.50 · no flop, no drop');
+      await expect(page.locator('.cl-charge').first()).toHaveText('Rake 10% · cap 1 BB');
       await fitsTheScreen(page);
       await page.locator('[data-cl="sit-open"]').first().click();
       await page.locator('form[data-sitform] button[type="submit"]').click();
@@ -732,6 +737,36 @@ test.describe('a club member', () => {
     const dialog = owner.getByRole('dialog', {name: 'Hand replay'});
     for (let i = 0; i < 40 && !(await dialog.getByText('Rake 0.10').count()); i++) await owner.keyboard.press('ArrowRight');
     await expect(dialog.getByText('Rake 0.10')).toBeVisible();
+    await fitsTheScreen(owner);
+    await owner.keyboard.press('Escape');
+
+    // The club's default on Rules: none, then 5% capped at 3 BB; time is
+    // at most ¼ BB. A new table starts from it.
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    const rules = owner.locator('form[data-chargeform]');
+    await expect(rules.locator('.cl-charge')).toHaveText('No rake');
+    await rules.locator('[name=house]').selectOption('time');
+    await rules.locator('[name=timeBB]').fill('1');
+    await rules.locator('button[type="submit"]').click();
+    await expect(rules.getByText(/at most ¼ of a big blind/)).toBeVisible();
+    await rules.locator('[name=house]').selectOption('rake');
+    await rules.locator('[name=rakePct]').fill('5');
+    await rules.locator('[name=rakeCap]').fill('3');
+    await rules.locator('button[type="submit"]').click();
+    await expect(owner.locator('form[data-chargeform] .cl-charge')).toHaveText('Rake 5% · cap 3 BB');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('rake-rules.png'), fullPage: true});
+    await owner.evaluate(() => { location.hash = 'clubs/cash'; });
+    await owner.locator('[data-cl="new-table"]').click();
+    const next = owner.locator('form[data-tableform]');
+    await next.locator('.tf-more summary').click();
+    await expect(next.locator('[name=house]')).toHaveValue('rake');
+    await expect(next.locator('[name=rakePct]')).toHaveValue('5');
+    await expect(next.locator('[name=rakeCap]')).toHaveValue('3');
+    // The open table's terms on the owner's game page.
+    await owner.locator('[data-cl="cancel-table"]').click();
+    await owner.locator('[data-cl="game-open"]').first().click();
+    await expect(owner.locator('.cl-tcard .cl-charge').first()).toHaveText('Rake 10% · cap 1 BB');
     await fitsTheScreen(owner);
   });
 

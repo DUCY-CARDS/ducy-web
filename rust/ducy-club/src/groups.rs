@@ -667,7 +667,7 @@ impl Club {
             "game": t.game, "sb": t.sb, "bb": t.bb, "minBB": t.min_bb, "maxBB": t.max_bb, "seats": t.seats,
             "turnSecs": t.turn_secs, "sitOutMins": t.sit_out_mins, "stayHands": t.stay_hands,
         });
-        t.charge.into_spec(&mut spec);
+        spec["charge"] = json!(t.charge);
         // A new table of the game joins the end of its chain.
         let new = self.new_table(&spec, now, most, rng)?.id.clone();
         let moves = yes

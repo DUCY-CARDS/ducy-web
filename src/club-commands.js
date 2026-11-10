@@ -30,7 +30,9 @@ export const HOSTED = new Set([
 // The club's fields a command may change.
 // (ownerId and lobby: a member moved to a new player ID, #575. chipCap and
 // capRaise: the daily cap the float replaced, #589, dropped once read.)
-const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise', 'float', 'vaults'];
+const WRITES = ['ownerId', 'lobby', 'invite', 'help', 'info', 'money', 'requestLog', 'log', 'ratholeHours', 'sitOutMins', 'stayHands', 'keepDays', 'codeJoin', 'groups', 'lists', 'waitlist', 'menu', 'interest', 'interestTried', 'chipCap', 'capRaise', 'float', 'vaults',
+  // New tables' rake or time (#449).
+  'charge'];
 
 const plain = v => v && typeof v === 'object' && !Array.isArray(v);
 

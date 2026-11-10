@@ -18,7 +18,8 @@ const { createTableHost } = await import('../src/club-host.js');
 const { contributions } = await import('../src/club-agents.js');
 const { handRecord, replayFrames } = await import('../src/hand-replay.js');
 const { handText } = await import('../src/replayer.js');
-const { chargeSpec, chargeText, contributionsHtml, readCharge } = await import('../src/club-rake.js');
+const { chargeText, clubChargeHtml, contributionsHtml, readCharge } = await import('../src/club-rake.js');
+const { command } = await import('../src/club-commands.js');
 const { ledgerView } = await import('../src/club-money.js');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -81,9 +82,9 @@ function addsUp(club) {
 
 test('a raked table takes its share of each pot, and each player’s goes in the ledger when they leave', {skip: !haveWasm && 'no wasm build'}, async tc => {
   const club = clubWith(['ann', 'bob']);
-  // 1/2, 10% capped at 6, raked before the flop too.
-  const t = newTable(club, {name: 'Main', sb: 100, bb: 200, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, rake: {percent: 1000, cap: 600, noFlop: false}});
-  assert.deepEqual(t.charge, {percent: 1000, cap: 600, noFlop: false, time: 0});
+  // 1/2, 10% capped at 3 BB (6).
+  const t = newTable(club, {name: 'Main', sb: 100, bb: 200, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, charge: {percent: 1000, capBB: 300}});
+  assert.deepEqual(t.charge, {percent: 1000, capBB: 300, timeBB: 0});
   // Everyone all in, every hand: a 400 pot, 6 of it the club's, 3 from each.
   const {host, hands} = await running(tc, club, t, ['ann', 'bob'], 20_000, (id, legal) => (legal.call != null && legal.raise == null ? {kind: 'call', amount: 0} : {kind: 'allin', amount: 0}));
   const view = await until('a hand over', () => hands[0]);
@@ -117,7 +118,8 @@ test('a raked table takes its share of each pot, and each player’s goes in the
 
 test('a table charging time takes it from each player dealt in, every hand', {skip: !haveWasm && 'no wasm build'}, async tc => {
   const club = clubWith(['ann', 'bob']);
-  const t = newTable(club, {name: 'Timed', sb: 100, bb: 200, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, time: 50});
+  // ¼ BB a hand: 0.50 at 1/2.
+  const t = newTable(club, {name: 'Timed', sb: 100, bb: 200, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, charge: {timeBB: 25}});
   // The small blind folds every hand: the blinds go back and forth.
   const {host, hands} = await running(tc, club, t, ['ann', 'bob'], 20_000, (id, legal) => (legal.can_check ? {kind: 'check', amount: 0} : {kind: 'fold', amount: 0}));
   await until('three hands', () => hands.length >= 3);
@@ -130,28 +132,39 @@ test('a table charging time takes it from each player dealt in, every hand', {sk
   assert.equal(club.members.ann.balance + club.members.bob.balance, 200_000 - 100 * hands.length);
 });
 
-test('a table takes rake or time, never both, within its limits', {skip: !haveWasm && 'no wasm build'}, () => {
+test('the club’s rake is new tables’, unless a table sets its own, within the limits', {skip: !haveWasm && 'no wasm build'}, () => {
   const club = clubWith([]);
-  const bad = spec => assert.throws(() => newTable(club, {sb: 100, bb: 200, ...spec}));
-  bad({rake: {percent: 500}, time: 100});
-  bad({rake: {percent: 1500}});
-  bad({time: 10_000_000});
-  const none = newTable(club, {sb: 100, bb: 200});
-  assert.equal(none.charge, undefined);
+  // None to start.
+  assert.equal(newTable(club, {sb: 100, bb: 200}).charge, undefined);
+  command(club, 'settings', {charge: {percent: 450, capBB: 250}});
+  assert.deepEqual(club.charge, {percent: 450, capBB: 250, timeBB: 0});
+  assert.deepEqual(newTable(club, {sb: 100, bb: 200}).charge, club.charge);
+  assert.deepEqual(newTable(club, {sb: 100, bb: 200, charge: {timeBB: 20}}).charge, {percent: 0, capBB: 0, timeBB: 20});
+  assert.equal(newTable(club, {sb: 100, bb: 200, charge: null}).charge, undefined);
+  const bad = charge => assert.throws(() => newTable(club, {sb: 100, bb: 200, charge}));
+  bad({percent: 500, timeBB: 10});
+  bad({percent: 1001});
+  bad({timeBB: 26});
+  assert.throws(() => command(club, 'settings', {charge: {timeBB: 50}}), /at most ¼/);
+  command(club, 'settings', {charge: null});
+  assert.equal(club.charge, undefined);
 });
 
-test('the form’s choices, and what members are told', () => {
-  const form = (house, extra = {}) => ({elements: {house: {value: house}, rakePct: {value: '500'}, rakeCap: {value: '3'}, noFlop: {checked: true}, timeBB: {value: '0.5'}, ...extra}});
-  assert.deepEqual(readCharge(form('rake'), 200).spec, {rake: {percent: 500, cap: 600, noFlop: true}});
-  assert.deepEqual(readCharge(form('rake', {rakeCap: {value: '0'}}), 200).spec, {rake: {percent: 500, cap: 0, noFlop: true}});
-  assert.deepEqual(readCharge(form('time'), 200).spec, {time: 100});
-  assert.deepEqual(readCharge(form('none'), 200).spec, {});
-  assert.equal(chargeText({rake: {percent: 500, cap: 600, noFlop: true}}), 'Rake 5% · cap 6 · no flop, no drop');
-  assert.equal(chargeText({charge: {percent: 250, cap: 0, noFlop: false}}), 'Rake 2.5%');
-  assert.equal(chargeText({time: 100}), 'Time 1 a hand');
+test('the fields, and what members and the owner are told', () => {
+  const form = (house, extra = {}) => ({elements: {house: {value: house}, rakePct: {value: '4.5'}, rakeCap: {value: '3'}, timeBB: {value: '0.25'}, ...extra}});
+  assert.deepEqual(readCharge(form('rake')), {charge: {percent: 450, capBB: 300, timeBB: 0}});
+  assert.deepEqual(readCharge(form('rake', {rakeCap: {value: ''}})), {charge: {percent: 450, capBB: 0, timeBB: 0}});
+  assert.deepEqual(readCharge(form('time')), {charge: {percent: 0, capBB: 0, timeBB: 25}});
+  assert.deepEqual(readCharge(form('none')), {charge: null});
+  assert.match(readCharge(form('rake', {rakePct: {value: '12'}})).error, /at most 10%/);
+  assert.match(readCharge(form('rake', {rakePct: {value: '0'}})).error, /more than 0%/);
+  assert.match(readCharge(form('rake', {rakeCap: {value: '-1'}})).error, /cap/);
+  assert.match(readCharge(form('time', {timeBB: {value: '0.5'}})).error, /¼/);
+  assert.equal(chargeText({charge: {percent: 500, capBB: 300}}), 'Rake 5% · cap 3 BB');
+  assert.equal(chargeText({charge: {percent: 250, capBB: 0}}), 'Rake 2.5%');
+  assert.equal(chargeText({charge: {timeBB: 25}}), 'Time 0.25 BB a hand');
   assert.equal(chargeText({}), '');
-  assert.deepEqual(chargeSpec({percent: 500, cap: 600, noFlop: true, time: 0}), {rake: {percent: 500, cap: 600, noFlop: true}});
-  assert.deepEqual(chargeSpec({time: 50}), {time: 50});
-  assert.deepEqual(chargeSpec(undefined), {});
+  assert.match(clubChargeHtml({charge: {percent: 500, capBB: 300}}), /Rake 5% · cap 3 BB/);
+  assert.match(clubChargeHtml({}), /No rake/);
   assert.equal(contributionsHtml({players: []}), '');
 });

@@ -56,7 +56,7 @@ A major release is any of these:
 | A friends table shows no player stats and keeps none; the same at a club table | Main |
 | Starting a club without permission is refused | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
-| A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share (skipped while rake is off in the beta) | Beta extras |
+| A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while rake is off in the beta) | Beta extras |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
 
@@ -290,11 +290,11 @@ Run a row only when that feature is about to be turned on.
 - **B5:** Bankroll Quest. A new run, winning, going broke, travel and records.
 - **B6:** each club feature in `src/club-beta.js`. First take it out of `OFF`. Then a manager can set it up, a member sees its effect, and the ledger adds up.
 - **B7:** rake and time at cash tables (#449), with `rake` out of `OFF`, at desktop and phone width.
-  1. New table → More options → House: Rake, 5%, cap 3 BB, no flop no drop. Members see "Rake 5% · cap … · no flop, no drop" on the table before they sit.
-  2. Play hands with two or three members: one that ends before the flop takes no rake; one that sees a flop does, in whole chips. A side pot and a run twice still pay out right. The hand log and the replay say "Rake …".
+  1. Rules → Rake: "No rake" to start. Set 4.5% with a 2.5 BB cap: refused above 10% or at 0%; time above ¼ BB refused. New table → More options starts from it; set a table's own instead. Members see "Rake 4.5% · cap 2.5 BB" on the table before they sit, and the owner on the game's table cards and table rows.
+  2. Play hands with two or three members: one that ends before the flop takes no rake (always); one that sees a flop does, in whole chips. A side pot and a run twice still pay out right. The hand log and the replay say "Rake …".
   3. Stand up: Chips → Rake and time shows each player's share today, over 7 days and in all, and per agent; the ledger has a "Rake and time" line from the house, and In the club still adds up.
   4. An agent's Your players shows their players' rake and time, and no one else's.
-  5. A second table with House: Time, ½ BB: each player dealt in pays it every hand, from what they end it with (one who busts pays nothing); one sitting out doesn't.
+  5. A second table with House: Time, 0.25 BB: each player dealt in pays it every hand, from what they end it with (one who busts pays nothing); one sitting out doesn't.
 
 ## Results
 

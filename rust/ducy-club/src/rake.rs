@@ -240,7 +240,7 @@ mod tests {
         let mut c: ClubState = serde_json::from_value(json!({
             "code": "ABCD-EFGH", "hostId": "HOST", "members": members,
             "tables": [{"id": "t1", "name": "Main", "game": "nlhe", "sb": 100, "bb": 200, "minBB": 5, "maxBB": 100,
-                        "seats": 6, "status": "open", "charge": {"percent": 500, "cap": 600}}],
+                        "seats": 6, "status": "open", "charge": {"percent": 500, "capBB": 300}}],
         }))
         .unwrap();
         c.book.ensure_links(0).unwrap();
@@ -370,6 +370,72 @@ mod tests {
     fn test_rng() -> rand::rngs::StdRng {
         use rand::SeedableRng;
         rand::rngs::StdRng::seed_from_u64(3)
+    }
+
+    #[test]
+    fn the_club_s_rake_is_new_tables_unless_one_sets_its_own() {
+        use crate::rules::Charge;
+        let ok = |v: Value| Charge::from_value(&v);
+        assert_eq!(
+            ok(json!({"percent": 450, "capBB": 250})).unwrap(),
+            Charge {
+                percent: 450,
+                cap_bb: 250,
+                time_bb: 0
+            }
+        );
+        assert!(ok(Value::Null).unwrap().is_none());
+        for bad in [
+            json!({"percent": 1001}),
+            json!({"timeBB": 26}),
+            json!({"percent": 500, "timeBB": 10}),
+            json!({"percent": -1}),
+            json!({"percent": 4.5}),
+            json!("5%"),
+        ] {
+            assert!(ok(bad).is_err());
+        }
+        // At 1/2: a cap of 2.5 BB is 5 chips; no flop, no drop, always.
+        let e = ok(json!({"percent": 450, "capBB": 250}))
+            .unwrap()
+            .engine(200);
+        assert_eq!((e.percent, e.cap, e.no_flop, e.time), (450, 500, true, 0));
+        assert_eq!(ok(json!({"timeBB": 25})).unwrap().engine(200).time, 50);
+
+        // The club's: none, then 5% capped at 3 BB.
+        let mut c = club(&[]);
+        assert!(c.book.club.charge.is_none());
+        c.run(
+            "settings",
+            &json!({"charge": {"percent": 500, "capBB": 300}}),
+            1,
+            &mut test_rng(),
+        )
+        .unwrap();
+        let why = c
+            .run(
+                "settings",
+                &json!({"charge": {"percent": 2000}}),
+                1,
+                &mut test_rng(),
+            )
+            .unwrap_err()
+            .0;
+        assert!(why.contains("at most 10%"), "{why}");
+        let mut r = test_rng();
+        let mut new = |spec: Value| {
+            c.book
+                .club
+                .new_table(&spec, 1, None, &mut r)
+                .unwrap()
+                .charge
+        };
+        assert_eq!(new(json!({})).cap_bb, 300);
+        assert_eq!(new(json!({"charge": {"timeBB": 25}})).time_bb, 25);
+        assert!(new(json!({"charge": null})).is_none());
+        // Members are told before they sit.
+        let body = c.book.club.tables_body(&Default::default());
+        assert_eq!(body["tables"][0]["charge"]["capBB"], 300);
     }
 
     #[test]

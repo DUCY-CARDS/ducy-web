@@ -124,7 +124,7 @@ impl ClubTable {
             c.seed,
             c.game.clone(),
             c.turn_ms,
-            c.charge.engine(),
+            c.charge.engine(c.bb),
         )?;
         host.set_sit_out_limit(c.sit_out_ms.unwrap_or(SIT_OUT_MS));
         Ok(ClubTable {
