@@ -187,7 +187,7 @@ test('closeness: off plays, the top play and the loss each keep a player from be
   assert.ok(tooClose(statsOf(close)));
   const offs = close.map((d, i) => (i % 10 ? d : {...d, f: 0.01}));
   assert.ok(!tooClose(statsOf(offs)));
-  const lossy = close.map(d => ({...d, lost: 0.2}));
+  const lossy = close.map(d => ({...d, lost: 0.4}));
   assert.ok(!tooClose(statsOf(lossy)));
   // The model's top play less often than the model takes it (90% here).
   const clear = close.map(d => ({...d, f: 0.9, top: 0.9}));

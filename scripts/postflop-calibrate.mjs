@@ -26,6 +26,9 @@ if (!file) {
   console.error('usage: node scripts/postflop-calibrate.mjs scores.jsonl [windows] [decisions]');
   process.exit(1);
 }
+// Thresholds to try instead of LIMITS', from the environment: e.g.
+// OFF_RATE=0.06 TOP_SLACK=0.05 node scripts/postflop-calibrate.mjs …
+for (const k of Object.keys(LIMITS)) if (process.env[k]) LIMITS[k] = Number(process.env[k]);
 const WINDOWS = Number(windowsArg) || 2000;
 const SIZE = Number(sizeArg) || 400;
 

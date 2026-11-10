@@ -241,7 +241,7 @@ const playerCols = t => [
   {key: 'pfLoss', label: 'Loss bb/100', num: true, cell: r => warnIf(r.pfLoss != null && r.pfLoss <= 100 * t.pfLossRate, r.pfLoss == null ? '—' : String(r.pfLoss))},
 ];
 
-const DEFAULT_T = {minDecisions: 300, topSlack: 0.02, offRate: 0.01, paceRatio: 1.2, evenSpread: 0.25, awayRate: 0.2, odds: 4, partnerOdds: 2.5, pfTopSlack: 0.03, pfOffRate: 0.04, pfLossRate: 0.06};
+const DEFAULT_T = {minDecisions: 300, topSlack: 0.02, offRate: 0.01, paceRatio: 1.2, evenSpread: 0.25, awayRate: 0.2, odds: 4, partnerOdds: 2.5, pfTopSlack: 0.06, pfOffRate: 0.07, pfLossRate: 0.25};
 
 // The Fair play page from /admin/fair-play's answer `x`; `state`: {club
 // (a code, or '' for all), sort}.

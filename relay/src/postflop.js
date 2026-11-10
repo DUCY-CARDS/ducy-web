@@ -52,14 +52,16 @@ export const LIMITS = {
   // hand review's own line for "one of its choices").
   OFF_P: 0.05,
   // As close as the model: at this share of such plays or fewer ...
-  OFF_RATE: 0.04,
+  OFF_RATE: 0.07,
   // ... the model's top play at least as often as it would take it, less
   // this ...
-  TOP_SLACK: 0.03,
+  TOP_SLACK: 0.06,
   // ... and, over MIN_VALUED Hold'em decisions or more, at most this many
-  // big blinds given up per decision.
+  // big blinds given up per decision. Loose: the review charges the model
+  // itself up to about 0.18 (its mixes and the sampled flop values), and
+  // the plays above tell players apart far better.
   MIN_VALUED: 150,
-  LOSS_RATE: 0.06,
+  LOSS_RATE: 0.25,
   // Hands sent to the judge at once, and at most per run (the rest wait for
   // the next run): each call is one Durable Object request, with its own
   // CPU limit (30 s).
