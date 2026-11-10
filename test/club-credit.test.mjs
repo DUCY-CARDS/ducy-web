@@ -14,6 +14,7 @@ import { creditNotices, creditRow, raiseCredit, setCredit } from '../src/club-cr
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import { answerAgent, assignToAgent, offerAgent, runAgent } from '../src/club-agents.js';
 import { drawnOn, ledgerOf, repaidBy } from '../src/club-money.js';
+import { command } from '../src/club-commands.js';
 
 const LIMITS = {min: 10, max: 1000};
 
@@ -26,6 +27,8 @@ function clubWith(...ids) {
     club.members[id] = {id, name: id, status: 'member', requestedAt: 0};
   }
   totals(club);
+  // The owner's float: chips on credit come out of it (#633).
+  command(club, 'vault_settle', {}, 0);
   club.ratholeHours = 0;
   issue(club, 'rex', 100000, 0);
   buyIn(club, 'rex', 'rex-table', 100000, {min: 1, max: 100000}, 0);
@@ -202,7 +205,9 @@ test('an agent can’t grant chips to a player of theirs at their credit limit',
   offerAgent(club, 'agent');
   answerAgent(club, 'agent', true);
   assignToAgent(club, 'ann', 'agent');
-  setCredit(club, 'ann', 100, 0);
+  // Her line is the agent's to set, not the owner's (#633).
+  assert.throws(() => setCredit(club, 'ann', 100, 0), /ann plays under agent: agent sets their credit/);
+  runAgent(club, 'agent', {op: 'credit', id: 'ann', amount: 100});
   requestChips(club, 'ann', 200, '', 1);
   assert.throws(() => runAgent(club, 'agent', {op: 'grant', id: 'ann'}), /at their credit limit/);
   runAgent(club, 'agent', {op: 'deny', id: 'ann'});
@@ -221,6 +226,27 @@ test('paying up: the host gives what was received, with a note (#454)', () => {
   assert.equal(available(ann(club)), 500);
   assert.ok(totals(club).conserved);
   assert.ok(checkOwnLedger(accountBody(club, 'ann').entries, 0));
+});
+
+test('a payment recorded: the debt is cleared, the float untouched, and the books add up (#633)', () => {
+  const club = clubWith('ann');
+  setCredit(club, 'ann', 500, 0);
+  const float = club.money.float;
+  buyIn(club, 'ann', 't1', 300, LIMITS, 1);
+  assert.equal(club.money.float, float - 300, 'her seat on credit came from the float');
+  play(club, 'ann', 100);
+  cashOut(club, 'ann', 2);
+  assert.equal(club.money.float, float - 200, 'what she left with went back');
+  assert.equal(ann(club).balance, -200);
+  assert.throws(() => command(club, 'record_payment', {id: 'ann', amount: 300}, 3), /ann owes 2\./);
+  command(club, 'record_payment', {id: 'ann', amount: 200, note: 'cash'}, 3);
+  assert.equal(ann(club).balance, 0);
+  assert.equal(club.money.float, float - 200, 'no chips moved');
+  const e = accountBody(club, 'ann').entries.at(-1);
+  assert.deepEqual([e.kind, e.amount, e.note], ['payment', 200, 'cash']);
+  assert.ok(checkOwnLedger(accountBody(club, 'ann').entries, 0));
+  const t = totals(club);
+  assert.deepEqual([t.paid, t.owedToClub, t.conserved], [200, 0, true]);
 });
 
 test('the overview: owed to the club and owed to players', () => {
@@ -250,7 +276,7 @@ test('notifications: a player at their limit asking, and a player who stood up o
   play(club, 'bob', 40);
   cashOut(club, 'bob', 3);
   assert.deepEqual(creditNotices(club), [
-    {kind: 'left_owing', member: 'bob', name: 'bob', owes: 60, owesNow: 60, table: 't1', at: 3, n: ledgerOf(club).at(-1).n},
+    {kind: 'left_owing', member: 'bob', name: 'bob', owes: 60, owesNow: 60, table: 't1', at: 3, n: ledgerOf(club).filter(e => e.member === 'bob').at(-1).n},
     {kind: 'at_limit', member: 'ann', name: 'ann', asked: 50, credit: 100, available: 0, table: 't1', at: 2},
   ]);
   issue(club, 'bob', 60, 4, 'cash');
@@ -281,6 +307,7 @@ test('over the wire: the member hears their limit and what is available, and ask
   await deliver((await hostReceive(club, verifier, await signMessage(a, {type: 'join', club: club.code, invite: club.invite, name: 'Ann'}))).replies);
   await deliver([approve(club, a.id)]);
   setCredit(club, a.id, 200, 0);
+  command(club, 'vault_settle', {}, 0);
   buyIn(club, a.id, 't1', 200, LIMITS, 1);
   const r = await hostReceive(club, verifier, await signMessage(a, {type: 'chip_request', club: club.code, amount: 100, table: 't1'}));
   await deliver(r.replies);

@@ -144,6 +144,20 @@ test.describe('club money', () => {
     await expect(page.locator('.pl-felt')).toBeVisible();
   };
   const settleRow = (owner, name) => owner.locator('.cl-settle tr', {hasText: name});
+  // What the owner's float holds now (Rules), in chips (#633).
+  const floatNow = async owner => {
+    await go(owner, 'clubs/rules');
+    return num((await owner.locator('.cl-float-now').innerText()).match(new RegExp(amount))[0]);
+  };
+  // The owner records `name`'s payment of what they owe, with a note (#633).
+  async function recordPayment(owner, name, n, note) {
+    await memberPage(owner, name);
+    await owner.locator('[data-cl="paid"]').click();
+    await expect(owner.locator('#cl-amt')).toHaveValue(String(n));
+    await owner.locator('form[data-chipform="paid"] input[name="note"]').fill(note);
+    await owner.locator('form[data-chipform="paid"] button[type=submit]').click();
+    await expect(owner.locator('form[data-chipform]')).toHaveCount(0);
+  }
 
   test('a credit player plays on credit and owes it; the owner records the payment, and pays out a winner, on Balances', async ({browser, watch}, info) => {
     const {owner, invite, code} = await clubWithTable(browser, watch);
@@ -161,9 +175,12 @@ test.describe('club money', () => {
     await chipMove(owner, 'Bo', 'give', 200, 'buy-in');
     await expect(bo.getByText('Balance 200')).toBeVisible();
 
-    // Both sit; Ava's 200 is all on credit.
+    // Both sit; Ava's 200 is all on credit, out of the float (#633).
+    const before = await floatNow(owner);
     await sit(ava);
+    await expect.poll(() => floatNow(owner)).toBe(before - 200);
     await sit(bo);
+    await expect.poll(() => floatNow(owner)).toBe(before - 200);
     // Bo bets every turn, and Ava folds to it: she loses at least a blind.
     let folded = false;
     for (let i = 0; i < 160 && !folded; i++) {
@@ -181,6 +198,8 @@ test.describe('club money', () => {
     await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
     await expect.poll(() => balanceOf(ava)).toBeLessThan(0);
     const owes = -(await balanceOf(ava));
+    // Standing up gave the float back what she left with; what she lost is owed.
+    await expect.poll(() => floatNow(owner)).toBe(before - owes);
     await expect(ava.locator('.cl-home-chips.owes')).toBeVisible();
     await fitsTheScreen(ava);
     await ava.screenshot({path: info.outputPath('ava-owes.png'), fullPage: true});
@@ -198,11 +217,16 @@ test.describe('club money', () => {
     await expect(owner.getByText('Adds up ✓')).toBeVisible();
     await fitsTheScreen(owner);
     await owner.screenshot({path: info.outputPath('balances-owes.png'), fullPage: true});
-    // Ava pays outside ducy; the owner records it as a give, with a note.
-    await chipMove(owner, 'Ava', 'give', owes, 'paid cash');
+    // Ava pays outside ducy; the owner records the payment, with a note.
+    // It clears her debt and moves no chips: the float stays as it was.
+    await recordPayment(owner, 'Ava', owes, 'paid cash');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('payment-recorded.png'), fullPage: true});
     await expect.poll(() => balanceOf(ava)).toBe(0);
+    expect(await floatNow(owner)).toBe(before - owes);
     await go(owner, 'clubs/settle');
     await expect(settleRow(owner, 'Ava')).toHaveCount(0);
+    await expect(owner.getByText('Adds up ✓')).toBeVisible();
     // She sees the payment in her chips, with its note.
     await ava.locator('[data-cl="mtab"][data-tab="chips"]').click();
     await expect(ava.getByText('paid cash')).toBeVisible();
@@ -240,19 +264,37 @@ test.describe('club money', () => {
     await ava.locator('[data-cl="mtab"][data-tab="players"]').click();
     const link = await ava.locator('input[data-aglink]').inputValue();
 
-    // Bo joins through her link; she lets him in.
+    // Bo joins through her link; she lets him in as a Credit player, with a 150 line.
     const bo = await join(browser, watch, link, code, 'Bo', async () => {
       await ava.locator('[data-cl="ag-approve"]').click();
-      await ava.locator('form[data-letin] button[type=submit]').click();
+      const form = ava.locator('form[data-letin]');
+      await form.locator('label', {has: ava.locator('input[value="credit"]')}).click();
+      await form.locator('input[name="credit"]').fill('150');
+      await form.locator('button[type=submit]').click();
     });
-    // Ava gives Bo a 200 line, on his link with her (#621).
+    // With credit, he isn't told to ask for chips (#633).
+    await expect(bo.locator('.cl-home-chips', {hasText: 'Credit limit 150'})).toBeVisible();
+    await expect(bo.getByText(/Ask the manager for chips/)).toHaveCount(0);
+    await fitsTheScreen(bo);
+    await bo.screenshot({path: info.outputPath('new-player-with-credit.png'), fullPage: true});
+    // Ava raises Bo's line to 200, on his link with her (#621); her list shows it (#633).
     await ava.locator('.cl-agent li', {hasText: 'Bo'}).locator('[data-cl="ag-credit"]').click();
     await ava.locator('form[data-agentform="credit"] [name=amount]').fill('200');
     await ava.locator('form[data-agentform="credit"] button[type=submit]').click();
     await expect(bo.locator('.cl-home-chips', {hasText: 'Credit limit 200'})).toBeVisible();
+    await expect(ava.locator('.cl-agent li', {hasText: 'Bo'}).locator('.cl-credit')).toHaveText('credit limit 200');
+    // The owner sees Bo's line but can't set it: it's Ava's (#633).
+    await memberPage(owner, 'Bo');
+    await expect(owner.locator('.mg-stat', {hasText: 'Credit limit'})).toContainText('200');
+    await expect(owner.locator('form[data-creditform]')).toHaveCount(0);
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('owner-agents-player.png'), fullPage: true});
+    // His chips on credit come out of the float, through Ava's link.
+    const before = await floatNow(owner);
     await sit(bo);
     await go(bo, `clubs/c/${encodeURIComponent(code)}`);
     await expect.poll(() => balanceOf(bo)).toBe(-200);
+    await expect.poll(() => floatNow(owner)).toBe(before - 200);
     await fitsTheScreen(bo);
     await bo.screenshot({path: info.outputPath('player-on-credit.png'), fullPage: true});
 

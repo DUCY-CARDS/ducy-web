@@ -20,7 +20,49 @@ fn example() -> Money {
     m.set_credit("marco", "priya", 2000).unwrap();
     m.set_credit("ann", "marco", 500).unwrap();
     m.give(CLUB, "ben", 1000, "", 0).unwrap();
+    // The owner's float, for chips on credit (ducy-web #633).
+    m.refill(20_000, "", 0).unwrap();
     m
+}
+
+#[test]
+fn chips_on_credit_come_from_the_float_and_go_back_to_it() {
+    let mut m = example();
+    // Priya's link with the club goes below zero: that's what the float gives.
+    let out = m.buy_in("ann", "t1", 500, 1).unwrap();
+    let f = out.last().unwrap();
+    assert_eq!(
+        (f.member.as_str(), f.kind, f.amount, f.tx, f.from.as_deref()),
+        ("float", EntryKind::Credit, -500, out[0].tx, Some("ann"))
+    );
+    assert_eq!(f.about.as_deref(), Some("t1"));
+    assert_eq!(m.float(), 19_500);
+    // Back with 200: the float gets it, and the 300 owed stays.
+    m.set_stack("ann", 200).unwrap();
+    let out = m.cash_out("ann", 0, 2).unwrap();
+    assert_eq!(out.last().unwrap().kind, EntryKind::CreditBack);
+    assert_eq!((m.float(), bal(&m, "priya", CLUB)), (19_700, -300));
+    // Ben's own chips don't touch it.
+    m.buy_in("ben", "t1", 1000, 3).unwrap();
+    assert_eq!(m.float(), 19_700);
+    // More than the float holds is refused, and nothing moves.
+    m.to_vault(19_600, "", 4).unwrap();
+    let before = m.ledger().len();
+    assert_eq!(
+        m.buy_in("ann", "t1", 200, 4).unwrap_err(),
+        MoneyError::Float { left: 100 }
+    );
+    assert_eq!(m.ledger().len(), before);
+    // A payment outside ducy clears what's owed and moves no chips.
+    assert_eq!(
+        m.record_payment("ann", "marco", 301, "cash", 5)
+            .unwrap_err(),
+        MoneyError::Owes { owes: 300 }
+    );
+    let e = m.record_payment("ann", "marco", 300, "cash", 5).unwrap();
+    assert_eq!((e.kind, e.balance), (EntryKind::Payment, 0));
+    assert_eq!(m.float(), 100);
+    assert!(m.audit().is_empty());
 }
 
 #[test]
@@ -29,9 +71,11 @@ fn a_buy_in_moves_every_link_on_the_path() {
     assert_eq!(m.path("ann").unwrap(), ["ann", "marco", "priya", CLUB]);
     assert_eq!(m.room("ann", 0).unwrap(), 500);
     let out = m.buy_in("ann", "t1", 500, 1).unwrap();
-    assert_eq!(out.len(), 3);
+    // Three links, and the float's part (#633).
+    assert_eq!(out.len(), 4);
     assert!(
-        out.iter()
+        out[..3]
+            .iter()
             .all(|e| e.amount == -500 && e.tx == out[0].tx && e.kind == EntryKind::BuyIn)
     );
     assert_eq!(

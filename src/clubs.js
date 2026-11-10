@@ -1008,6 +1008,8 @@ let chipForm = null;
 const FORM_TEXT = {
   give: m => ({label: `Give ${m.name}`, submit: 'Give', value: '', max: null, note: true}),
   take: m => ({label: `Take back from ${m.name} (has ${chips(m.balance)})`, submit: 'Take back', value: m.balance, max: m.balance, note: true}),
+  // What they owe, paid outside ducy (#633): no chips move.
+  paid: m => ({label: `Payment from ${m.name} (owes ${chips(-m.balance)})`, submit: 'Record', value: -m.balance, max: -m.balance, note: true}),
   grant: m => ({label: `Give ${m.name} (asked for ${chips(m.request?.amount)})`, submit: 'Give', value: m.request?.amount ?? '', max: null, note: false}),
   // Declining says why, if you like; the member sees it (#188).
   deny: m => ({label: `Decline ${m.name}’s request for ${chips(m.request?.amount)}`, submit: 'Decline', noAmount: true, note: true, notePlaceholder: 'Why (optional; they see it)'}),
@@ -1091,7 +1093,7 @@ function onSubmitIn(e) {
   const lif = e.target.closest('form[data-letin]');
   if (lif) {
     e.preventDefault();
-    const kind = lif.elements.kind.value === 'credit' ? 'credit' : 'cash';
+    const kind = lif.elements.kind?.value === 'credit' ? 'credit' : 'cash';
     const credit = kind === 'credit' ? parseChips(lif.elements.credit.value) : 0;
     if (kind === 'credit' && !(credit > 0)) { lif.elements.credit.focus(); failAt(lif.querySelector('[type=submit]'), 'Give a Credit player a credit line.'); return; }
     const [who, a, b] = lif.dataset.letin.split('|');
@@ -1255,7 +1257,7 @@ function onSubmitIn(e) {
   const id = f.dataset.id, kind = f.dataset.chipform;
   const amount = f.elements.amount ? parseChips(f.elements.amount.value) : 0;
   const why = f.elements.note?.value || '';
-  const op = {give: 'give', take: 'take', grant: 'grant', deny: 'deny', agent: 'offer_agent'}[kind];
+  const op = {give: 'give', take: 'take', paid: 'record_payment', grant: 'grant', deny: 'deny', agent: 'offer_agent'}[kind];
   // The form stays, busy, until it's done; refused, it says why (#544).
   if (op) hostAct(op, {id, amount, note: why}).then(ok => { if (ok && chipForm?.kind === kind && chipForm.id === id) { chipForm = null; render(); } });
 }
@@ -1393,7 +1395,8 @@ function connectMembership(mem) {
       if (before !== 'member' && mem.status === 'member') {
         justJoined.add(mem.code);
         // Approved: say so wherever you are (#185).
-        if (before) notice(`You’re in ${mem.name || mem.code}. Ask the manager for chips to play.`);
+        // Let in with a credit line (#633): nothing to ask for.
+        if (before) notice(msg.body?.credit > 0 ? `You’re in ${mem.name || mem.code}.` : `You’re in ${mem.name || mem.code}. Ask the manager for chips to play.`);
         // Let in at once (#631): on to the club's page.
         if (before === 'new' && location.hash === '#join') location.hash = clubHash(mem.code);
       }
@@ -2329,7 +2332,8 @@ function requestsHtml() {
     // What happens next (#185).
     if (m.status === 'pending' || m.status === 'new') {
       h += `<span class="pl-desc cl-next">Next: the manager lets you in, then gives you chips to play at the club’s tables. This page tells you as soon as you’re in${notifyOn() ? '' : '; to hear about it while you’re elsewhere, turn on notifications in Player settings'}.</span>`;
-    } else if (inNow) {
+    } else if (inNow && !m.credit && !m.balance) {
+      // Only with no chips and no credit (#633).
       h += `<span class="pl-desc cl-next">Next: ask the manager for chips on <a href="#${clubHash(m.code)}">the club’s page</a>, then sit at one of its tables.</span>`;
     } else if (m.status === 'declined') {
       h += '<span class="pl-desc cl-next">If that’s a mistake, ask the manager: they can let you in from a new invite link.</span>';
@@ -2788,13 +2792,17 @@ function memberPageHtml(id) {
   h += `<div class="pl-actions mg-acts"><button class="btn-small primary" data-cl="give" data-id="${esc(m.id)}">Give chips</button>`;
   const take = `<button class="btn-small" data-cl="take" data-id="${esc(m.id)}">Take back</button>`;
   h += m.balance > 0 ? take : offBtn(take, 'No chips');
+  // What they owe the club, paid outside ducy (#633).
+  const agent = underAgent(m);
+  if (m.balance < 0 && !agent) h += `<button class="btn-small" data-cl="paid" data-id="${esc(m.id)}">Record payment</button>`;
   h += memberMenuHtml(m) + '</div>';
   if (chipForm?.id === m.id) h += chipFormHtml(m);
   if (m.request) h += `<ul class="cl-list cl-needs">${askRowHtml(m)}</ul>`;
   // Their messages (#621), from when they asked to join.
   if (m.thread?.length) h += `<section class="mg-sec"><h2>Messages</h2>${ownerThreadHtml(m)}</section>`;
-  // Credit (#404): the limit (0 for none), and what it leaves them.
-  if (!OFF.has('credit') || c.credit) {
+  // Credit (#404): the limit (0 for none), and what it leaves them. A
+  // player under an agent gets theirs from the agent (#633).
+  if ((!OFF.has('credit') || c.credit) && !agent) {
     h += `<form class="mg-card" data-creditform="1" data-id="${esc(m.id)}"><b>Credit</b>`;
     // None, or the tables' buy-ins (as Give offers them), or Other (#544).
     const box = `<input class="pl-text" name="amount" type="number" inputmode="decimal" required min="0" step="${CHIP_STEP}" value="${esc(chipInput(c.credit))}" aria-label="Limit">`;
@@ -2811,6 +2819,10 @@ function memberPageHtml(id) {
   }
   return h;
 }
+
+// Whether `m` plays under an agent, who then gives their chips and sets their
+// credit (#633).
+const underAgent = m => !!m?.agentOf && club.members[m.agentOf]?.agent === 'yes';
 
 // (The owner's float's ledger entries are the member 'float', #589.)
 const memberNames = () => ({float: 'Float', ...Object.fromEntries(Object.values(club.members).map(m => [m.id, m.name]))});
@@ -3146,7 +3158,9 @@ function accountingHtml() {
   let h = '<table class="cl-acct"><tbody>';
   h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
   h += `<tr><th>Taken back</th><td>${chips(t.reclaimed)}</td></tr>`;
-  h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued - t.reclaimed)}</td></tr>`;
+  // Debts paid outside ducy (#633): chips on credit, paid for.
+  if (t.paid) h += `<tr><th>Debts paid</th><td>${chips(t.paid)}</td></tr>`;
+  h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued + (t.paid || 0) - t.reclaimed)}</td></tr>`;
   h += `<tr><th>In balances</th><td>${chips(t.balances)}</td></tr>`;
   h += `<tr><th>On tables</th><td>${chips(t.onTables)}</td></tr>`;
   if (t.inTourneys) h += `<tr><th>In tournaments</th><td>${chips(t.inTourneys)}</td></tr>`;
@@ -3255,9 +3269,13 @@ function clubNameForm(m) {
 let letIn = '';
 function letInHtml(to, dis = '') {
   let h = `<form class="mg-note-acts cl-letin" data-letin="${esc(to)}">`;
-  h += '<span class="pl-opts" role="radiogroup" aria-label="Player">';
-  h += `<label class="cc-btn"><input type="radio" name="kind" value="cash" checked> Cash</label><label class="cc-btn"><input type="radio" name="kind" value="credit"> Credit</label></span>`;
-  h += `<input class="pl-text cl-credit-in" name="credit" type="number" inputmode="decimal" min="0.01" step="${CHIP_STEP}" placeholder="Credit line" aria-label="Credit line">`;
+  // The owner letting in an agent's recruit: their credit is the agent's (#633).
+  const [who, id] = to.split('|');
+  if (!(who === 'o' && underAgent(club?.members[id]))) {
+    h += '<span class="pl-opts" role="radiogroup" aria-label="Player">';
+    h += `<label class="cc-btn"><input type="radio" name="kind" value="cash" checked> Cash</label><label class="cc-btn"><input type="radio" name="kind" value="credit"> Credit</label></span>`;
+    h += `<input class="pl-text cl-credit-in" name="credit" type="number" inputmode="decimal" min="0.01" step="${CHIP_STEP}" placeholder="Credit line" aria-label="Credit line">`;
+  }
   return h + `<button class="btn-small primary" type="submit"${dis}>Let in</button><button class="btn-small" type="button" data-cl="letin-cancel">Cancel</button></form>`;
 }
 
@@ -3481,7 +3499,10 @@ const KIND_TEXT = {give: 'Chips given', take_back: 'Chips taken back', buy_in: '
   // The owner's float (#589) and members' vaults (#579).
   refill: 'Float refilled', to_vault: 'Float to vault', vault_in: 'Into vault', vault_out: 'Out of vault',
   // Rake and time a player paid over a session (#449).
-  rake: 'Rake and time'};
+  rake: 'Rake and time',
+  // Chips on credit come from the float and go back to it; a debt paid
+  // outside ducy (#633).
+  credit: 'On credit', credit_back: 'Back from credit', payment: 'Payment'};
 
 // The names of what entries are about: tables, tournaments and promotions.
 const aboutNames = c => Object.fromEntries([...(c.tables || []), ...(c.tourneys || []), ...(c.promos?.list || [])].map(x => [x.id, x.name]));
@@ -3820,7 +3841,8 @@ function agentHtml(m, hostHere, {page = false} = {}) {
       h += `<li${x.new ? ' class="cl-new-row"' : ''}><span class="cl-name">${esc(x.name)}${x.new ? ' <span class="cl-new">New</span>' : ''}</span><span class="cl-chips">${signed(x.balance)}</span>`;
       // Their vault (#579): its chips, which a take back can reach after the balance.
       if (x.vault) h += `<span class="pl-meta">vault ${chips(x.vault)}</span>`;
-      if (x.credit) h += `<span class="pl-meta">credit ${chips(x.credit)}</span>`;
+      // Their credit limit (#633).
+      if (x.credit) h += `<span class="pl-meta cl-credit">credit limit ${chips(x.credit)}</span>`;
       // At a table (#428): which, and their stack there.
       if (x.seated) h += `<span class="cl-at">${esc(x.table || 'At a table')}${x.stack != null ? ` · ${chips(x.stack)}` : ''}</span>`;
       // How they've done at the tables (#190).
@@ -4026,6 +4048,7 @@ async function onClickIn(e) {
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
+  else if (act === 'paid') openChipForm('paid', b.dataset.id);
   else if (act === 'grant-other') openChipForm('grant', b.dataset.id);
   else if (act === 'cancel-form') { chipForm = null; render(); }
   else if (act === 'grant') { chipForm = null; hostAct('grant', {id: b.dataset.id}); }

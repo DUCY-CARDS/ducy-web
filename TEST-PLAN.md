@@ -61,8 +61,8 @@ A major release is any of these:
 | With Let everyone in on: in at once as Cash, New until the owner gives chips | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
-| A credit player plays on credit and owes it; Balances shows it, the owner records the payment, and pays out a winner | Club manager |
-| An agent's player on credit: what the owner, the agent and the player each see | Club manager |
+| A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
+| An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
@@ -105,8 +105,8 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
 | Tournament rake | `club-tourneys-ui.test`, `tourney-commands.test` | yes | C4 |
 | Requests and members: join, messages, give and take chips, remove | `club.test`, `club-chips.test`, `club-overview.test`, `club-log.test` | join, give | C5 |
-| Credit: limits, playing on credit, a request at the limit | `club-credit.test`, `club-credit-server.test` | yes | C9 |
-| Balances: who owes whom, settling both ways | `club-credit.test` | yes | C9 |
+| Credit: limits, playing on credit out of the float, a request at the limit, an agent's players' lines | `club-credit.test`, `club-credit-server.test`, ducy-club `book`, `host` and `tests/money.rs` | yes | C9 |
+| Balances: who owes whom, settling both ways, a payment recorded | `club-credit.test`, `club-credit-server.test` | yes | C9 |
 | Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
 | Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
@@ -274,11 +274,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **C9 Credit and Balances** (#404, #454; three browsers: owner, a credit player, a cash player)
 1. Owner: on a member's page, set a credit limit. Each save needs a recent passkey unlock. The member sees the limit, and can sit with it and no chips of their own. A raise bigger than a full buy-in shows in the owner's notices.
-2. The credit player loses some and stands up. They see a negative balance; the owner's Overview says they left owing, Members' Owes filter lists them, and Balances says they owe the club.
-3. They pay outside ducy. The owner records it with Give chips and a note (it comes from the float). Balances drops the row; the member sees the note in My chips.
-4. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
-5. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
-6. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first). The player on credit counts against the agent's own limit. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
+2. The credit player sits: the float on Rules drops by their buy-in (#633). With less in the float than the buy-in, they can't sit and are told the float is too low.
+3. The credit player loses some and stands up. What they left with goes back to the float. They see a negative balance; the owner's Overview says they left owing, Members' Owes filter lists them, and Balances says they owe the club.
+4. They pay outside ducy. The owner records it on their member page with Record payment and a note (a passkey unlock first). The float doesn't change. Balances drops the row and still adds up; the member sees the payment and note in My chips; Chips shows Debts paid.
+5. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
+6. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
+7. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first), and Your players shows each player's credit limit. The owner sees the line on the player's page but can't set or raise it. A player let in with a line isn't told to ask for chips. The player on credit counts against the agent's own limit, and their buy-in comes out of the float. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
 
 ## Manual: admin
 

@@ -78,6 +78,8 @@ pub struct Totals {
     pub issued: i64,
     /// Taken back.
     pub reclaimed: i64,
+    /// Debts paid outside ducy (#633): chips on credit, paid for.
+    pub paid: i64,
     /// On the club's links.
     pub balances: i64,
     /// In members' vaults (#579): owed them too, apart from their balances.
@@ -153,13 +155,15 @@ impl ClubState {
         Totals {
             issued: c.issued,
             reclaimed: c.reclaimed,
+            paid: c.paid,
             balances,
             in_vaults,
             on_tables,
             in_tourneys,
             owed_to_club: links.iter().map(|b| (-b).max(0)).sum(),
             owed_to_players: links.iter().map(|b| (*b).max(0)).sum::<i64>() + in_vaults,
-            conserved: c.issued - c.reclaimed == balances + in_vaults + on_tables + in_tourneys,
+            conserved: c.issued + c.paid - c.reclaimed
+                == balances + in_vaults + on_tables + in_tourneys,
         }
     }
 
@@ -250,7 +254,7 @@ impl ClubState {
         json!({
             "tablesActive": tables.iter().filter(|x| is_dealing(x.other.get("dealing"))).count(),
             "tables": tables.len(),
-            "chipsOut": t.issued - t.reclaimed,
+            "chipsOut": t.issued + t.paid - t.reclaimed,
             "members": count("all"),
             "joined": count("new"),
             "inactive": count("inactive"),
@@ -287,7 +291,9 @@ impl ClubState {
             let Some(q) = m.other.get("request").filter(|q| q.is_object()) else {
                 continue;
             };
-            if q.get("atLimit").and_then(Value::as_bool) == Some(true) {
+            // An agent's player's limit is the agent's to raise (#633).
+            let agents = m.agent_of.as_deref().is_some_and(|a| self.book.is_agent(a));
+            if q.get("atLimit").and_then(Value::as_bool) == Some(true) && !agents {
                 out.push(json!({
                     "kind": "at_limit", "member": m.id, "name": m.name, "asked": num(q.get("amount")),
                     "credit": self.book.credit(&m.id), "available": self.book.available(&m.id),
@@ -594,6 +600,8 @@ mod tests {
         c.book
             .set_credit("dee", Some(20_000), NOW - 2 * DAY)
             .unwrap();
+        // Chips on credit come from the float (#633).
+        c.book.money.refill(20_000, "", NOW - 2 * DAY).unwrap();
         c.book
             .chips_for_table("dee", "t1", Some(20_000), limits(), NOW - DAY)
             .unwrap();
@@ -674,6 +682,7 @@ mod tests {
             .request_chips("ann", Some(50_000), "for tonight", "", NOW - 4 * MIN)
             .unwrap();
         c.book.set_credit("dee", Some(20_000), NOW - DAY).unwrap();
+        c.book.money.refill(20_000, "", NOW - DAY).unwrap();
         c.book
             .chips_for_table("dee", "t1", Some(20_000), limits(), NOW - 20 * MIN)
             .unwrap();

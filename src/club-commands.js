@@ -29,6 +29,8 @@ export const HOSTED = new Set([
   'note_reply',
   // Let in at once (#631): the club server runs it after a join it let in.
   'admit',
+  // A payment of what a member owes, made outside ducy (#633).
+  'record_payment',
 ]);
 
 // The club's fields a command may change.

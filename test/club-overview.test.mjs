@@ -12,6 +12,7 @@ import { clearableKeys, managerNotices, raiseTo } from '../src/club-notices.js';
 import { buyIn, cashOut, ensureChips, issue, requestChips, setStack } from '../src/club-chips.js';
 import { newTable } from '../src/club-tables.js';
 import { setCredit } from '../src/club-credit.js';
+import { command } from '../src/club-commands.js';
 
 const NOW = Date.UTC(2026, 9, 25, 12);
 const MIN = 60_000;
@@ -25,6 +26,13 @@ function club() {
   add('dee', 'Dee');
   c.members.eve = {id: 'eve', name: 'Eve', status: 'pending', requestedAt: NOW - 5 * MIN};
   ensureChips(c);
+  return c;
+}
+
+// The owner's float, filled: chips on credit come out of it (#633).
+function withFloat(c) {
+  c.float = {size: 200_000, open: false};
+  command(c, 'vault_settle', {}, NOW - 50 * DAY);
   return c;
 }
 
@@ -126,7 +134,7 @@ test('the dealing clock runs only while dealing, and adds up', () => {
 });
 
 test('the overview: tables active, chips out, members, joined, inactive, owed each way', () => {
-  const c = club();
+  const c = withFloat(club());
   const t1 = newTable(c, {name: 'Main', sb: 100, bb: 200}, NOW);
   const t2 = newTable(c, {name: 'PLO', game: 'plo4', sb: 100, bb: 200}, NOW);
   t1.dealing = dealClock(null, true, NOW - 47 * MIN);
@@ -171,7 +179,7 @@ test('today’s tournaments: running ones, then today’s by start', () => {
 });
 
 test('notifications: each kind, newest first, with what its quick actions need', () => {
-  const c = club();
+  const c = withFloat(club());
   const t = newTable(c, {name: 'Main', sb: 100, bb: 200}, NOW);
   issue(c, 'ann', 10_000, NOW - DAY);
   requestChips(c, 'ann', 50_000, 'for tonight', NOW - 4 * MIN);
