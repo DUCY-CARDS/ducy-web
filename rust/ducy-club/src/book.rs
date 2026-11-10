@@ -584,7 +584,8 @@ impl Book {
         else {
             return refuse("The credit limit is a whole number of chips (0 for none).");
         };
-        if limit == self.credit(id) {
+        let was = self.credit(id);
+        if limit == was {
             return Ok(());
         }
         self.set_limit(id, limit, now)?;
@@ -594,8 +595,19 @@ impl Book {
             self.name(id),
             chip_text(limit)
         );
-        self.log_action(&host, &text, now, None);
+        self.log_credit(&host, &text, limit.saturating_sub(was), now);
         Ok(())
+    }
+
+    /// Logs a change to a credit limit. Credit lets a member play with
+    /// chips the float never gave (#623), so a raise of more than a give
+    /// would need a notice for is a notice to the owner too (#576).
+    fn log_credit(&mut self, by: &str, text: &str, raise: u64, now: u64) {
+        if raise > self.notice_from(now) {
+            self.log_notice(by, text, now, Some(raise as i64));
+        } else {
+            self.log_action(by, text, now, None);
+        }
     }
 
     /// The host answers a credit player's request at their limit by raising
@@ -625,7 +637,11 @@ impl Book {
             self.name(id),
             chip_text(limit)
         );
-        self.log_action(&host, &text, now, Some((limit - was) as i64));
+        if limit - was > self.notice_from(now) {
+            self.log_notice(&host, &text, now, Some((limit - was) as i64));
+        } else {
+            self.log_action(&host, &text, now, Some((limit - was) as i64));
+        }
         Ok(())
     }
 
@@ -1509,6 +1525,16 @@ mod tests {
         assert_eq!(b.credit("ann"), 5000);
         assert_eq!(b.get("ann", "answer").unwrap()["limit"], 5000);
         assert!(err(b.set_credit("ann", Some(-1), 5)).contains("whole number"));
+        // Small raises are just logged; one bigger than a full buy-in is a
+        // notice to the owner, as a give that size would be (#623).
+        assert!(b.log.iter().all(|l| l.get("notice").is_none()));
+        let big = 5000 + b.notice_from(6) as i64 + 1;
+        b.set_credit("ann", Some(big), 6).unwrap();
+        assert!(b.log.last().unwrap()["notice"].is_string());
+        assert_eq!(b.move_notices(7).len(), 1);
+        // Lowering it isn't.
+        b.set_credit("ann", Some(0), 8).unwrap();
+        assert!(b.log.last().unwrap().get("notice").is_none());
     }
 
     #[test]

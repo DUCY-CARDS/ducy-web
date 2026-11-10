@@ -25,7 +25,7 @@ export const MAX_CAP_BB = 1000;
 const plain = n => String(Math.round(Number(n)) / 100);
 
 // Whether the manager can set one: on in the beta, or the club has one already.
-export const chargeOn = club => !OFF.has('rake') || !!club?.charge || (club?.tables || []).some(t => t.charge);
+export const chargeOn = club => !OFF.has('cashRake') || !!club?.charge || (club?.tables || []).some(t => t.charge);
 
 // The fields: House (none, rake, time), and the settings of the one picked:
 // rake % and its cap in BB, or time in BB. `c`: the charge they start with.

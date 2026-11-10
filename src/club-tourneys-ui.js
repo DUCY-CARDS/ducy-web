@@ -474,7 +474,7 @@ export function hostTourneysHtml(club, live, ui, now = Date.now()) {
     const players = playerCount(t), entries = entryCount(t);
     h += `<li class="cl-tourney"><span class="cl-name">${esc(t.name)}</span><span class="cl-status">${STATUS[t.status]}</span>`;
     if (se && t.status === 'scheduled') h += `<span class="cl-badge">${esc(everyText(se))}</span>`;
-    h += `<span class="pl-meta">${esc(gameName(t.game))} · buy-in ${buyInText(t)}${t.added ? ` + ${club$(t.added)} added` : ''} · stack ${whole(t.stack)} · ${players}/${t.maxPlayers} players${entries !== players ? `, ${entries} entries` : ''} · pool ${club$(pool(t))}</span>`;
+    h += `<span class="pl-meta">${esc(gameName(t.game))} · buy-in ${buyInText(t)}${t.added ? ` + ${club$(t.added)} added` : ''} · stack ${whole(t.stack)} · ${players}/${t.maxPlayers} players${entries !== players ? `, ${entries} entries` : ''} · pool ${club$(pool(t))}${t.rake && entries ? ` · rake ${club$(entries * t.rake)}` : ''}</span>`;
     if (t.status === 'scheduled') h += `<span class="pl-meta">${now < t.opensAt ? `Registration opens ${until(t.opensAt, now)} · ` : ''}starts ${until(t.startsAt, now)} (${dateTime(t.startsAt)}) · at least ${t.minPlayers}</span>`;
     if (t.status === 'cancelled') h += `<span class="pl-meta">Cancelled${t.why ? `: ${esc(t.why)}` : ''}. Every buy-in was refunded.</span>`;
     if (t.status === 'scheduled' || t.status === 'running') {
