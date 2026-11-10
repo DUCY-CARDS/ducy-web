@@ -34,11 +34,15 @@ const room = m.run({op: 'buyIn', member: 'ann', table: 't1', amount: 600}, 0);
 assert.deepEqual(room.error, {code: 'room', member: 'ann', backer: 'marco', room: 500});
 assert.match(room.message, /room for 500/);
 assert.deepEqual(m.ledger(0), []);
+// Chips on credit come out of the owner's float (#633): none in it, none to sit with.
+assert.equal(m.run({op: 'buyIn', member: 'ann', table: 't1', amount: 500}, 0).error.code, 'float');
+ok({op: 'refill', amount: 10_000}, 0);
 
 // Buy in for 500, stand up with 800 having contributed 10 in rake.
 const buy = ok({op: 'buyIn', member: 'ann', table: 't1', amount: 500}, 1);
-assert.equal(buy.length, 3);
-assert.ok(buy.every(e => e.kind === 'buy_in' && e.amount === -500 && e.about === 't1'));
+assert.equal(buy.length, 4);
+assert.ok(buy.slice(0, 3).every(e => e.kind === 'buy_in' && e.amount === -500 && e.about === 't1'));
+assert.deepEqual([buy[3].member, buy[3].kind, buy[3].amount], ['float', 'credit', -500]);
 assert.deepEqual(m.session('ann'), {about: 't1', path: ['ann', 'marco', 'priya', 'club'], stack: 500, put: 500});
 ok({op: 'setStack', member: 'ann', stack: 800});
 const out = ok({op: 'cashOut', member: 'ann', contributed: 1000}, 2);
@@ -55,8 +59,9 @@ assert.equal(m.link('ann', 'marco').balance, -500);
 assert.equal(m.overdue('ann', 'marco', 1002), undefined);
 assert.equal(m.overdue('ann', 'marco', 1004), 1003);
 assert.equal(m.run({op: 'buyIn', member: 'ann', table: 't1', amount: 1}, 1004).error.code, 'overdue');
-const paid = ok({op: 'give', backer: 'marco', member: 'ann', amount: 500, note: 'Cash'}, 1005);
-assert.equal(paid[0].note, 'Cash');
+assert.equal(m.run({op: 'recordPayment', backer: 'marco', member: 'ann', amount: 501}, 1005).error.code, 'owes');
+const paid = ok({op: 'recordPayment', backer: 'marco', member: 'ann', amount: 500, note: 'Cash'}, 1005);
+assert.deepEqual([paid[0].kind, paid[0].note, paid[0].balance], ['payment', 'Cash', 0]);
 assert.equal(m.room('ann', 1005), 500);
 
 // Prizes and the ledger by link.
