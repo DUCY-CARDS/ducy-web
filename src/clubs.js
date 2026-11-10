@@ -1394,6 +1394,8 @@ function connectMembership(mem) {
         justJoined.add(mem.code);
         // Approved: say so wherever you are (#185).
         if (before) notice(`You’re in ${mem.name || mem.code}. Ask the manager for chips to play.`);
+        // Let in at once (#631): on to the club's page.
+        if (before === 'new' && location.hash === '#join') location.hash = clubHash(mem.code);
       }
       // Chips given to you, and a table opening, wherever you are (#193).
       const cname = mem.name || mem.code;
@@ -3043,6 +3045,11 @@ function rulesHtml() {
   }
   // New tables' rake or time (#449): none until the owner sets it.
   if (chargeOn(club)) h += clubChargeHtml(club, chargeNote);
+  // Let everyone in (#631): off, the manager or an agent lets each one in.
+  const all = club.letAllIn === true;
+  h += '<div class="pl-row"><span class="pl-label">Let everyone in</span><div class="pl-opts">';
+  h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${all === on ? ' on' : ''}" data-cl="let-all-in" data-on="${on ? 1 : 0}" aria-pressed="${all === on}">${text}</button>`).join('');
+  h += '</div></div>';
   h += floatRowsHtml();
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
@@ -4037,6 +4044,7 @@ async function onClickIn(e) {
   else if (act === 'vault-cancel') vaultAct(b, 'cancel', {out: Number(b.dataset.out)});
   else if (act === 'vault-wait') vaultAct(b, 'wait', {wait: Number(b.dataset.wait)});
   else if (act === 'code-join') hostAct('settings', {codeJoin: b.dataset.on === '1'});
+  else if (act === 'let-all-in') hostAct('settings', {letAllIn: b.dataset.on === '1'});
   else if (act === 'new-table') { tableForm = true; render(); root.querySelector('form[data-tableform] [name=name]')?.focus(); }
   else if (act === 'cancel-table') { tableForm = false; render(); }
   // The club's menu: offering a game, and no longer offering one.

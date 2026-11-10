@@ -96,6 +96,35 @@ test('asking with who you are: a thread both ways while pending, then let in as 
   assert.equal(club.members[bo.id].credit, 50000);
 });
 
+test('let everyone in: a request is a Cash member at once, New until chips, the thread kept (#631)', async () => {
+  const {host, club, verifier} = await setup();
+  const ann = await createIdentity();
+  command(club, 'settings', {letAllIn: true}, 1500);
+  assert.equal(club.letAllIn, true);
+  assert.equal(club.log.at(-1).text, 'Let everyone in: on');
+  const mem = newMembership(parseInvite(inviteLink(club, 'https://ducy.example/')));
+  const r = await hostReceive(club, verifier, await signMessage(ann, {...join(club), intro: 'Ann, Bo’s sister'}), 2000);
+  assert.equal(r.admitted, ann.id);
+  assert.equal(r.replies[0].body.status, 'member');
+  for (const x of r.replies) await playerReceive(mem, await signMessage(host, x.body));
+  assert.equal(mem.status, 'member');
+  assert.equal(mem.thread[0].text, 'Ann, Bo’s sister');
+  command(club, 'admit', {id: ann.id}, 2001);
+  assert.equal(club.members[ann.id].credit ?? 0, 0);
+  const n = managerNotices(club, {}, 2100).find(x => x.kind === 'new');
+  assert.equal(n.member, ann.id);
+  assert.equal(n.text, 'Ann, Bo’s sister');
+  // The owner replies; first chips end New.
+  command(club, 'note_reply', {id: ann.id, text: 'Welcome'}, 2200);
+  command(club, 'give', {id: ann.id, amount: 10000}, 2300);
+  assert.ok(!managerNotices(club, {}, 2400).some(x => x.kind === 'new'));
+  // Off again: the next one asks.
+  command(club, 'settings', {letAllIn: false}, 2500);
+  const bo = await createIdentity();
+  const b = await hostReceive(club, verifier, await signMessage(bo, {...join(club, club.invite, 'Bo'), intro: 'Bo'}), 2600);
+  assert.equal(b.replies[0].body.status, 'pending');
+});
+
 test('a wrong or revoked invite is refused; members are unaffected by revoking', async () => {
   const {club, verifier} = await setup();
   const ann = await createIdentity(), bob = await createIdentity();
