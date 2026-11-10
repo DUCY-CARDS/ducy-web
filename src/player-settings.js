@@ -19,6 +19,7 @@ import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { keepHands, memberName, recoverWithPasskey, renameMember, setKeepHands, hasClubs } from './clubs.js';
 import { enrol, exportable, fresh, list, prepare, remove, session, status, supported, unlock } from './passkey.js';
 import { demo } from './demo.js';
+import { mutedList, setMuted } from './chat-mute.js';
 import { SPADE_PATH, hubData } from './home.js';
 
 const NOTIFY_KEY = 'ducyNotify';
@@ -169,7 +170,15 @@ function render() {
   h += row('Game sounds', p.gameSounds ? 'On' : 'Off', 'pref-gameSounds');
   h += row('Four-colour deck', fourColor() ? 'On' : 'Off', 'fourcolor');
   if (hasClubs()) h += `<div class="ps-row"><span>Club hands kept</span><span class="ps-opts">${[100, 500, 2000].map(n => `<button class="cc-btn${keepHands() === n ? ' on' : ''}" data-ps="keep" data-n="${n}">${n}</button>`).join('')}</span></div>`;
-  h += '</section><section class="ps-section"><span class="ps-section-title">Your data</span>';
+  h += '</section>';
+  // Players whose table chat you muted (#616), only once there are some.
+  const muted = mutedList();
+  if (muted.length) {
+    h += '<section class="ps-section ps-muted"><span class="ps-section-title">Muted</span>';
+    h += muted.map(m => `<div class="ps-row"><span>${esc(m.name)}</span><button type="button" class="ps-val" data-ps="unmute" data-id="${esc(m.pid)}">Unmute</button></div>`).join('');
+    h += '</section>';
+  }
+  h += '<section class="ps-section"><span class="ps-section-title">Your data</span>';
   // The player ID, with backup and restore.
   h += `<div class="ps-row"><span>Player ID</span><code class="pl-pid" title="Clubs know you by this ID; it lives only in this browser">${me ? esc(showId(me.id)) : '…'}</code></div>`;
   h += `<div class="ps-row"><span>Back up this device</span><button type="button" class="ps-val" data-ps="backup"${me ? '' : ' disabled'}>Download</button></div>`;
@@ -221,6 +230,7 @@ async function onClick(e) {
   else if (a === 'keep') { setKeepHands(Number(b.dataset.n)); render(); }
   else if (a === 'avatar') { setTableAvatar(b.dataset.id); render(); el.querySelector('.ps-av.on')?.focus(); }
   else if (a === 'pick') { pickAvatar = !pickAvatar; render(); }
+  else if (a === 'unmute') { setMuted(b.dataset.id, '', false); render(); }
   else if (a.startsWith('pref-')) { cycleTablePref(a.slice(5)); render(); }
   else if (a.startsWith('pk-')) passkeyAct(a.slice(3), b.dataset.id);
   else if (a === 'fourcolor') {

@@ -1327,6 +1327,15 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-chat-log { height: 140px; overflow-y: auto; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 2px; }
 .pl-chat-log b { color: var(--fg-strong); font-weight: 600; }
 .pl-chat-empty { color: var(--fg-muted); }
+/* A name in the chat opens Mute (#616). */
+.pl-chat-who { all: unset; cursor: pointer; color: var(--fg-strong); font-weight: 600; }
+.pl-chat-who:hover, .pl-chat-who[aria-expanded="true"] { text-decoration: underline; }
+.pl-chat-who:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.pl-chat-log .pl-chat-mute { padding: 1px 8px; font-size: 12px; margin-left: 4px; }
+/* A seat's Mute (#616), in the seat-flag popover's place; a folded seat's
+   stays readable. */
+.pl-mpop { top: auto; bottom: calc(100% + 2px); min-width: 0; padding: 4px; text-align: center; }
+.pl-seat:has(.pl-mpop) { opacity: 1; }
 .pl-chat-send { display: flex; gap: 6px; }
 .pl-chat-send input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg); }
 .pl-chat-note { margin: 0; font-size: 12px; color: var(--amber); }
