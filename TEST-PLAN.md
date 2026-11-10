@@ -278,7 +278,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 3. They pay outside ducy. The owner records it with Give chips and a note (it comes from the float). Balances drops the row; the member sees the note in My chips.
 4. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
 5. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
-6. Agents: an agent's player on credit counts against the agent's own limit. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
+6. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first). The player on credit counts against the agent's own limit. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
 
 ## Manual: admin
 

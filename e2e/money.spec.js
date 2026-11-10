@@ -90,12 +90,13 @@ test.describe('club money', () => {
     return {owner, invite, code: new URL(invite).searchParams.get('club')};
   }
 
-  // `name` joins by `link` (making a passkey) and `approve` lets them in;
-  // their club page opens.
+  // `name` asks to join by `link`, saying who they are (#621), makes a
+  // passkey, and `approve` lets them in; their club page opens.
   async function join(browser, watch, link, code, name, approve) {
     const page = await newPage(browser, watch);
     await page.goto(link);
     await page.locator('form[data-joinform] input[name="name"]').fill(name);
+    await page.locator('form[data-joinform] textarea[name="intro"]').fill(`${name}, a friend`);
     await page.locator('form[data-joinform] button[type="submit"]').click();
     await page.locator('[data-cl="pass-enrol"]').click();
     await approve();
@@ -103,9 +104,13 @@ test.describe('club money', () => {
     await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
     return page;
   }
+  // Let in as a Cash player; the credit line comes after, on their page.
   const ownerApproves = owner => async () => {
     await go(owner, 'clubs/requests');
-    await owner.locator('[data-cl="approve"]').first().click();
+    await owner.locator('.cl-needs [data-cl="approve"]').first().click();
+    const form = owner.locator('.cl-needs form[data-letin]');
+    await form.locator('button[type=submit]').click();
+    await expect(form).toHaveCount(0);
   };
 
   // The owner on `name`'s member page.
@@ -238,9 +243,12 @@ test.describe('club money', () => {
     // Bo joins through her link; she lets him in.
     const bo = await join(browser, watch, link, code, 'Bo', async () => {
       await ava.locator('[data-cl="ag-approve"]').click();
+      await ava.locator('form[data-letin] button[type=submit]').click();
     });
-    // The owner gives Bo a 200 line, on his link with Ava.
-    await setCredit(owner, 'Bo', 200);
+    // Ava gives Bo a 200 line, on his link with her (#621).
+    await ava.locator('.cl-agent li', {hasText: 'Bo'}).locator('[data-cl="ag-credit"]').click();
+    await ava.locator('form[data-agentform="credit"] [name=amount]').fill('200');
+    await ava.locator('form[data-agentform="credit"] button[type=submit]').click();
     await expect(bo.locator('.cl-home-chips', {hasText: 'Credit limit 200'})).toBeVisible();
     await sit(bo);
     await go(bo, `clubs/c/${encodeURIComponent(code)}`);
