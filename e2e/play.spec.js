@@ -154,6 +154,75 @@ test('a friend joins a hosted game by its code', async ({browser, watch}) => {
   await fitsTheScreen(guest);
 });
 
+test('muting a player hides their chat for you only, and unmuting brings it back (#616)', async ({browser, watch}, info) => {
+  // At the project's screen size: 1280 wide, or a 375 phone.
+  const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
+  const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
+  const host = await open();
+  await host.goto(`/?relay=${RELAY}#host`);
+  await host.locator('#pl-name').fill('Hana');
+  await host.locator('[data-act="host"]').click();
+  await expect(host.locator('[data-act="copy"]')).toBeVisible();
+  const code = (await host.locator('body').innerText()).match(/[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}/)[0];
+  const guest = await open();
+  await guest.goto(`/?table=${code}&relay=${RELAY}#join`);
+  await guest.locator('form[data-joinform] input[name="name"]').fill('Gus');
+  await guest.locator('form[data-joinform] button[type="submit"]').click();
+  await expect(host.locator('.pl-seat', {hasText: 'Gus'})).toBeVisible();
+
+  const say = async (page, text) => {
+    await page.locator('.pl-chat-send input').fill(text);
+    await page.locator('.pl-chat-send button').click();
+  };
+  const hostLog = host.locator('.pl-chat-log');
+  await say(guest, 'hello from Gus');
+  await expect(hostLog).toContainText('hello from Gus');
+
+  // Mute from the name in the chat.
+  await hostLog.getByRole('button', {name: 'Gus'}).click();
+  await host.screenshot({path: info.outputPath('mute-chat-menu.png')});
+  await hostLog.getByRole('button', {name: 'Mute'}).click();
+  await expect(hostLog).not.toContainText('hello from Gus');
+  // Gus isn't told, and still sees their own line; the host's still reach them.
+  await say(guest, 'still here');
+  await say(host, 'hi all');
+  await expect(guest.locator('.pl-chat-log')).toContainText('still here');
+  await expect(guest.locator('.pl-chat-log')).toContainText('hi all');
+  await expect(hostLog).toContainText('hi all');
+  await expect(hostLog).not.toContainText('still here');
+
+  // Unmute from Gus's seat: their lines come back.
+  await host.locator('.pl-seat', {hasText: 'Gus'}).locator('.pl-plate').click();
+  await expect(host.locator('.pl-mpop')).toBeVisible();
+  await host.screenshot({path: info.outputPath('mute-chat-seat.png')});
+  await host.locator('.pl-mpop').getByRole('button', {name: 'Unmute'}).click();
+  await expect(hostLog).toContainText('hello from Gus');
+  await expect(hostLog).toContainText('still here');
+
+  // Muted again, the list under You unmutes too; it lasts a reload.
+  await host.locator('.pl-seat', {hasText: 'Gus'}).locator('.pl-plate').click();
+  await host.locator('.pl-mpop').getByRole('button', {name: 'Mute'}).click();
+  await expect(hostLog).not.toContainText('hello from Gus');
+  expect(Object.values(await host.evaluate(() => JSON.parse(localStorage.getItem('ducyChatMuted'))))).toEqual(['Gus']);
+  await host.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
+  const muted = host.locator('.ps-muted');
+  await expect(muted).toContainText('Gus');
+  await muted.screenshot({path: info.outputPath('mute-chat-you.png')});
+  await muted.getByRole('button', {name: 'Unmute'}).click();
+  await expect(muted).toHaveCount(0);
+  await expect(hostLog).toContainText('hello from Gus');
+  await fitsTheScreen(host);
+
+  // A guest mutes the host from their seat, as their own view seats them.
+  const guestLog = guest.locator('.pl-chat-log');
+  await guest.locator('.pl-seat', {hasText: 'Hana'}).locator('.pl-plate').click();
+  await guest.locator('.pl-mpop').getByRole('button', {name: 'Mute'}).click();
+  await expect(guestLog).not.toContainText('hi all');
+  await expect(guestLog).toContainText('still here');
+  await guest.screenshot({path: info.outputPath('mute-chat-guest.png')});
+  await fitsTheScreen(guest);
+});
+
 // A virtual passkey authenticator for `page` (Chromium's, over CDP): built
 // in, with user verification, and with PRF unless `prf` is false. WebKit
 // has none, so the club tests that need a passkey run in Chromium.

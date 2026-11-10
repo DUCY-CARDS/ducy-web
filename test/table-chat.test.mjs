@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from '../src/table-chat.js';
+import { chatPid, isMuted, mutedList, onMuteChange, readMuted, setMuted, shownChat } from '../src/chat-mute.js';
 
 test('a chat message is trimmed, flattened to one line and cut short', () => {
   assert.equal(cleanChat('  nice   hand\n\tsir  '), 'nice hand sir');
@@ -25,6 +26,55 @@ test('a guest reads only well-formed chat messages', () => {
   assert.equal(readChat({type: 'state'}), null);
   assert.equal(readChat(null), null);
   assert.equal(readChat({type: 'chat', text: 'hey'}).from, 'A player');
+});
+
+test('a chat line keeps its sender ID and seat when they look right (#616)', () => {
+  const id = 'AbCd1234';
+  assert.deepEqual(readChat({type: 'chat', from: 'Ann', text: 'hi', at: 5, pid: id, seat: 3}), {from: 'Ann', text: 'hi', at: 5, pid: id, seat: 3});
+  assert.equal(readChat({type: 'chat', from: 'Ann', text: 'hi', pid: 'bot:gto'}).pid, 'bot:gto');
+  const bad = readChat({type: 'chat', from: 'Ann', text: 'hi', pid: '<img src=x>', seat: 99});
+  assert.equal(bad.pid, undefined);
+  assert.equal(bad.seat, undefined);
+  assert.equal(readChat({type: 'chat', from: 'Ann', text: 'hi', pid: {}, seat: '2'}).pid, undefined);
+});
+
+// A localStorage stand-in.
+const memStore = () => { const m = new Map(); return {getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v))}; };
+
+test('muting hides a player’s lines by ID, on this device only (#616)', () => {
+  const store = memStore();
+  assert.deepEqual(readMuted(store), {});
+  setMuted('pidB', 'Bea', true, store);
+  const muted = readMuted(store);
+  assert.ok(isMuted('pidB', muted));
+  assert.ok(!isMuted('pidA', muted));
+  assert.ok(!isMuted(undefined, muted), 'a line without an ID always shows');
+  const log = [{from: 'Ann', text: '1', pid: 'pidA'}, {from: 'Bea', text: '2', pid: 'pidB'}, {from: 'Bea2', text: '3', pid: 'pidB'}, {from: 'Old', text: '4'}];
+  // By ID: Bea renamed is still muted; someone else called Bea isn't.
+  assert.deepEqual(shownChat(log, muted).map(m => m.text), ['1', '4']);
+  assert.deepEqual(mutedList(store), [{pid: 'pidB', name: 'Bea'}]);
+  setMuted('pidB', '', false, store);
+  assert.deepEqual(readMuted(store), {});
+  assert.deepEqual(shownChat(log, readMuted(store)).map(m => m.text), ['1', '2', '3', '4']);
+});
+
+test('the mute list survives bad storage and tells the table when it changes (#616)', () => {
+  const store = memStore();
+  store.setItem('ducyChatMuted', 'not json');
+  assert.deepEqual(readMuted(store), {});
+  store.setItem('ducyChatMuted', JSON.stringify({'ok_1': 'Cy', 'bad id!': 'x', n: 5}));
+  assert.deepEqual(readMuted(store), {ok_1: 'Cy'});
+  setMuted('bad id!', 'x', true, store);
+  assert.deepEqual(readMuted(store), {ok_1: 'Cy'}, 'not an ID: ignored');
+  let calls = 0;
+  const off = onMuteChange(() => calls++);
+  setMuted('pidZ', 'Zed', true, store);
+  setMuted('pidZ', 'Zed', false, store);
+  off();
+  setMuted('pidZ', 'Zed', true, store);
+  assert.equal(calls, 2);
+  assert.deepEqual(mutedList(store).map(m => m.name), ['Cy', 'Zed']);
+  assert.equal(chatPid('x'.repeat(65)), '');
 });
 
 test('the chat log keeps the newest messages', () => {

@@ -32,6 +32,7 @@ import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { defaultSeats, maxSeats, stayText } from './club-tables.js';
 import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
+import { isMuted, onMuteChange, readMuted, setMuted } from './chat-mute.js';
 import { fairPlayer } from './fair-check.js';
 import { readSeatFlags, seatMarks } from './club-fair-play.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
@@ -324,6 +325,12 @@ let chatUnread = 0;
 let chatLimit = null;
 let myChatLimit = null;
 let chatNote = '';
+// Muting (#616): the chat line whose name was tapped, the seat (as this view
+// numbers them) whose Mute is open, and a count of mute changes.
+let chatMenu = null;
+let mutePop = -1;
+let muteVersion = 0;
+let chatShownKey = '';
 
 function defaultSetup() {
   return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 40000, buyInV: 2, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY, friends: {...FRIENDS_DEFAULT}};
@@ -2138,8 +2145,25 @@ async function hostChat(client, g, data) {
   try { body = await openBox(g.key, data.enc); } catch { return; }
   const text = cleanChat(body?.text);
   if (!text || !chatLimit?.allow(client)) return;
-  postChat({from: g.name, text, at: Date.now()});
+  const pid = await guestPid(g, body.who);
+  const seat = guestsSeated.find(p => p.client_id === client)?.seat;
+  postChat({from: g.name, text, at: Date.now(), ...(pid ? {pid} : {}), ...(Number.isInteger(seat) ? {seat} : {})});
 }
+
+// The player ID on a guest's chat lines (#616), so others can mute them by
+// it: from their signed {type: 'chat_id', table} with each message, checked
+// once. '' without a good one (their lines can't be muted).
+async function guestPid(g, who) {
+  if (!who || typeof who !== 'object') return '';
+  if (g.whoSig && g.whoSig === who.sig) return g.pid;
+  const ok = !(await checkSignature(who)) && who.body?.type === 'chat_id' && who.body?.table === room;
+  g.whoSig = who.sig;
+  g.pid = ok ? String(who.from) : '';
+  return g.pid;
+}
+
+// Your own chat lines' ID and seat (the table's seat number).
+const myChatTag = () => ({...(me?.id ? {pid: me.id} : {}), seat: num(state?.seat)});
 
 // The host posts a chat line: on its own screen, and to every guest.
 function postChat(msg) {
@@ -2149,7 +2173,7 @@ function postChat(msg) {
 
 function addChatLine(msg) {
   chat = addChat(chat, msg);
-  if (setup.chat === false) chatUnread++;
+  if (setup.chat === false && !isMuted(msg.pid)) chatUnread++;
   syncChat();
 }
 
@@ -2162,20 +2186,22 @@ async function sendChat() {
   chatNote = '';
   if (mode === 'host') {
     box.value = '';
-    postChat({from: chatName(setup.name), text, at: Date.now()});
+    postChat({from: chatName(setup.name), text, at: Date.now(), ...myChatTag()});
     return;
   }
   // At a bot table it stays here, and a bot may answer.
   if (mode === 'solo') {
     box.value = '';
-    addChatLine({from: chatName(setup.name || 'You'), text, at: Date.now()});
+    addChatLine({from: chatName(setup.name || 'You'), text, at: Date.now(), ...myChatTag()});
     botChatReply(text);
     return;
   }
   // A guest's goes to the host, which sends it back to everyone, us too.
   if (!e2eGuest?.aes) { chatNote = 'Not connected to the table yet.'; syncChat(); return; }
   box.value = '';
-  net?.send({type: 'chat', enc: await seal(e2eGuest.aes, {text})});
+  // Signed once a table: the host puts our player ID on the line (#616).
+  if (me && !e2eGuest.who) e2eGuest.who = await signMessage(me, {type: 'chat_id', table: room});
+  net?.send({type: 'chat', enc: await seal(e2eGuest.aes, {text, ...(e2eGuest.who ? {who: e2eGuest.who} : {})})});
   syncChat();
 }
 
@@ -2214,7 +2240,7 @@ function botSpeak(seat, moment, {force = false, delay = 800, how = null} = {}) {
     // Gone from the table meanwhile, or another table now.
     if (mode !== 'solo' || tableBots.join() !== table || !state?.seats?.[seat]) return;
     botSay = {...botSay, [seat]: {text, until: Date.now() + SAY_MS, fresh: true}};
-    addChatLine({from: state.seats[seat].name, text, at: Date.now()});
+    addChatLine({from: state.seats[seat].name, text, at: Date.now(), pid: `bot:${seatId(seat)}`, seat});
     render();
     setTimeout(() => {
       if (!(botSay[seat]?.until <= Date.now())) return; // a newer line
@@ -2260,6 +2286,8 @@ function botChatReply(text) {
 
 function resetChat() {
   chat = [];
+  chatMenu = null;
+  mutePop = -1;
   chatUnread = 0;
   chatNote = '';
   chatLimit?.free();
@@ -2293,6 +2321,10 @@ function syncChat() {
       + '<button class="cc-btn" type="submit">Send</button></form><p class="pl-chat-note" hidden></p></div>';
     chatEl.addEventListener('submit', e => { e.preventDefault(); sendChat(); });
     chatEl.addEventListener('click', e => {
+      const who = e.target.closest('[data-chat-who]');
+      if (who) { const m = chat[+who.dataset.chatWho]; chatMenu = chatMenu === m ? null : m; syncChat(); return; }
+      const mute = e.target.closest('[data-chat-mute]');
+      if (mute) { const m = chat[+mute.dataset.chatMute]; if (m?.pid) setMuted(m.pid, m.from, true); return; }
       if (!e.target.closest('[data-chat="toggle"]')) return;
       setup.chat = setup.chat === false;
       if (setup.chat) chatUnread = 0;
@@ -2313,15 +2345,58 @@ function syncChat() {
   const note = chatEl.querySelector('.pl-chat-note');
   note.textContent = chatNote;
   note.hidden = !chatNote;
-  if (chatShown !== chat) {
+  const shownKey = `${muteVersion}:${chat.indexOf(chatMenu)}`;
+  if (chatShown !== chat || chatShownKey !== shownKey) {
     const log = chatEl.querySelector('.pl-chat-log');
     const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
-    log.innerHTML = chat.length
-      ? chat.map(m => `<div><b>${esc(m.from)}</b> ${esc(m.text)}</div>`).join('')
+    // Muted players' lines stay in the log, hidden (#616): unmuting shows them.
+    const muted = readMuted();
+    const lines = chat.map((m, i) => [m, i]).filter(([m]) => !isMuted(m.pid, muted));
+    log.innerHTML = lines.length
+      ? lines.map(([m, i]) => `<div>${chatWhoHtml(m, i)} ${esc(m.text)}${m === chatMenu ? ` <button type="button" class="cc-btn pl-chat-mute" data-chat-mute="${i}">Mute</button>` : ''}</div>`).join('')
       : '<div class="pl-chat-empty">Nothing yet. Say hello to the table.</div>';
     if (atEnd || chatShown === null) log.scrollTop = log.scrollHeight;
     chatShown = chat;
+    chatShownKey = shownKey;
   }
+}
+
+// A chat line's name: a button that offers Mute (#616), unless it's yours or
+// carries no player ID.
+function chatWhoHtml(m, i) {
+  if (!m.pid || m.pid === me?.id) return `<b>${esc(m.from)}</b>`;
+  return `<button type="button" class="pl-chat-who" data-chat-who="${i}" aria-expanded="${m === chatMenu}">${esc(m.from)}</button>`;
+}
+
+// ---- muting a player's chat (#616) ----
+// Tap a name in the chat, or a seat at a chat table, for Mute or Unmute.
+// Only this device hides their lines (chat-mute.js); nothing is sent.
+onMuteChange(() => { muteVersion++; chatMenu = null; syncChat(); if (seated && state && open) render(); });
+
+// The player at view seat `i`, as their chat lines name them: {pid, name},
+// or null if they haven't said anything here yet. Matched by the table's
+// seat number and their name, so a new player in the seat isn't them.
+function seatChatPid(i) {
+  const s = state;
+  const n = s?.seats?.length || 0;
+  const seat = s?.seats?.[i];
+  if (!n || !seat || seat.empty || i === 0) return null;
+  if (mode === 'solo') return {pid: `bot:${seatId(i)}`, name: seat.name};
+  const at = (num(s.seat) + i) % n;
+  const name = chatName(seat.name);
+  for (let k = chat.length - 1; k >= 0; k--) {
+    const m = chat[k];
+    if (m.seat === at && m.from === name && m.pid && m.pid !== me?.id) return {pid: m.pid, name: m.from};
+  }
+  return null;
+}
+
+function mutePopHtml(i) {
+  if (mutePop !== i) return '';
+  const who = seatChatPid(i);
+  if (!who) return '';
+  const on = isMuted(who.pid);
+  return `<div class="pl-fpop pl-mpop"><button type="button" class="cc-btn" data-mute-seat="${i}">${on ? 'Unmute' : 'Mute'}</button></div>`;
 }
 
 // An update for guest `to`, encrypted; without their key it isn't sent.
@@ -3628,7 +3703,7 @@ function renderTable() {
     }
     if (seat.sitting_out) {
       const why = num(seat.stack) === 0 ? 'Needs chips' : seat.away ? 'Away' : 'Sitting out';
-      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}${seatFlagHtml(s, i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
+      h += `<div class="pl-seat out${i === 0 ? ' hero' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">${avatarHtml(i)}${seatFlagHtml(s, i)}${mutePopHtml(i)}<div class="pl-plate"><b>${esc(seat.name)}</b><span>${c(seat.stack)}</span></div><div class="pl-note">${why}</div></div>`;
       return;
     }
     const cls = ['pl-seat', i === 0 ? 'hero' : '', seat.folded ? 'folded' : '', i === 0 && foldQueued ? 'prefold' : '', s.to_act === i ? 'acting' : '', s.complete && num(seat.won) > 0 ? 'winner' : ''].filter(Boolean).join(' ');
@@ -3636,7 +3711,7 @@ function renderTable() {
     const mucked = shows && !shows.has(i) && !seat.folded;
     const shown = (!mucked && seat.cards) || (seat.folded ? null : new Array(tableGame.cards).fill(null));
     h += `<div class="${cls}" style="left:${p.x}%;top:${p.y}%" data-seat="${i}">`;
-    h += avatarHtml(i) + seatFlagHtml(s, i);
+    h += avatarHtml(i) + seatFlagHtml(s, i) + mutePopHtml(i);
     if (shown) h += `<div class="pl-hole n${shown.length}">${shown.map(cardHtml).join('')}</div>`;
     // Its bet is paid out of its own chips (chips.js seatChips).
     const chips = chipsNow ? {stack: chipsNow.stacks[i], bet: chipsNow.bets[i]} : seatChips(num(seat.stack), num(seat.street_bet), bb);
@@ -3665,7 +3740,7 @@ function renderTable() {
   // What the bots just said (bot-chat.js), over their seats for a few
   // seconds: on the felt above every seat, never faded with a fold.
   for (const [i, say] of Object.entries(botSay)) {
-    if (!(say.until > Date.now()) || !s.seats[i]) continue;
+    if (!(say.until > Date.now()) || !s.seats[i] || isMuted(`bot:${seatId(+i)}`)) continue;
     const p = seatPos(+i, n);
     // The table is redrawn on every action: only the first drawing of a
     // line fades in, or it would flash each time.
@@ -4364,6 +4439,19 @@ function onClick(e) {
     render();
     if (fl) return;
   }
+  // A seat's Mute (#616): tap a player at a chat table; any other click closes it.
+  const mb = e.target.closest('[data-mute-seat]');
+  if (mb) {
+    const who = seatChatPid(+mb.dataset.muteSeat);
+    mutePop = -1;
+    if (who) setMuted(who.pid, who.name, !isMuted(who.pid));
+    render();
+    return;
+  }
+  const ms = !questTable && state && seated && chatTable() && !e.target.closest('button,a,input,[data-act]') && e.target.closest('.pl-seat[data-seat]');
+  const mi = ms ? +ms.dataset.seat : -1;
+  if (mi > 0 && seatChatPid(mi)) { mutePop = mutePop === mi ? -1 : mi; render(); return; }
+  if (mutePop >= 0) { mutePop = -1; render(); }
   // A one-off tournament's form and page (#394).
   if (view === 'host' && tourneyPage?.click(e)) return;
   // More options stays as it was left (it opens or closes after this click).
