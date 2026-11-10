@@ -20,8 +20,8 @@ A major release is any of these:
 | Part | Pages | Who uses it |
 |---|---|---|
 | **Main** | `/`: the front page (Friends, your clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
-| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: credit, Balances, rake, promotions, club services | No one in the beta; reachable by address only |
-| **Club manager** | `manage.html`: Overview, Tables, Tournaments, Requests, Members, a member's page, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
+| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: rake at cash tables, promotions, club services | No one in the beta; reachable by address only |
+| **Club manager** | `manage.html`: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
 | **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
 
 `sim.html` isn't published (`scripts/build-site.sh` doesn't ship it).
@@ -41,7 +41,7 @@ A major release is any of these:
 - **Browser tests:** `npm ci --prefix e2e`, then `npx playwright test` in `e2e/`. `E2E_CHANNEL=chrome` uses an installed Chrome. They serve the repo and start the dev relay with `TRIALS=off`.
 - **Rust:** `scripts/rust-checks.sh`.
 
-**What the browser tests cover** (`e2e/play.spec.js`, in Chromium and WebKit, desktop and 375 px):
+**What the browser tests cover** (`e2e/play.spec.js` and `e2e/money.spec.js`, in Chromium and WebKit, desktop and 375 px; the club tests that need a passkey run in Chromium only):
 
 | Test | Part |
 |---|---|
@@ -60,7 +60,10 @@ A major release is any of these:
 | The same through an agent's link: the agent replies, lets them in and gives chips | Club manager |
 | With Let everyone in on: in at once as Cash, New until the owner gives chips | Club manager |
 | A demo club opens, and its main pages draw | Club manager |
-| A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while rake is off in the beta) | Beta extras |
+| A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
+| A credit player plays on credit and owes it; Balances shows it, the owner records the payment, and pays out a winner | Club manager |
+| An agent's player on credit: what the owner, the agent and the player each see | Club manager |
+| A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
 
@@ -100,7 +103,10 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
 | Tables: new, offer a game, move, remove a player | `club-tables.test`, `move-table.test`, `remove-from-table.test`, `table-groups.test` | no | C3 |
 | Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
+| Tournament rake | `club-tourneys-ui.test`, `tourney-commands.test` | yes | C4 |
 | Requests and members: join, messages, give and take chips, remove | `club.test`, `club-chips.test`, `club-overview.test`, `club-log.test` | join, give | C5 |
+| Credit: limits, playing on credit, a request at the limit | `club-credit.test`, `club-credit-server.test` | yes | C9 |
+| Balances: who owes whom, settling both ways | `club-credit.test` | yes | C9 |
 | Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
 | Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
@@ -119,8 +125,6 @@ here and a browser test.
 | Study: equity, pre-flop ranges, charts, drills | `ranges.test`, `trainer-skills.test`, `charts.test`, `chart-skills.test`, `drills-no-repeat.test` | B3 |
 | Hand review and live feedback | `play-review.test` | B4 |
 | Bankroll Quest | `quest*.test` | B5 |
-| Credit, Balances | `club-credit.test`, `club-credit-server.test` | B6 |
-| Rake: tournaments' | `club-tourneys-ui.test` | B6 |
 | Rake or time at cash tables, each player's contributions | `club-rake.test`, ducy-club's `rake.rs` | B7 |
 | Promotions | `club-promos.test`, `club-promos-server.test` | B6 |
 | Club services | `club-services.test`, `relay-services.test` | B6 |
@@ -226,7 +230,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **C2 Pages**
 1. Visit every sidebar page at desktop and phone width. Each draws, with no empty page or dead menu item.
-2. None of the features `src/club-beta.js` turns off shows: no Promotions or Balances page, no Make agent, no Credit, no Rake in the wizard, no services. `#clubs/settle` and `#clubs/promos` open Overview.
+2. None of the features `src/club-beta.js` turns off shows: no Promotions page, no services. `#clubs/promos` opens Overview. Balances is in the sidebar, a member's page has Credit, and the tournament wizard asks for a rake.
 3. Edit club info and rules. A member sees the change, marked as updated.
 
 **C3 Tables**
@@ -236,6 +240,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 **C4 Tournaments**
 1. Walk the wizard to the end: game, buy-in, stack and players, blinds, payouts, repeats.
 2. Run one to a winner with two members. The prizes reach their balances, and History records it.
+3. With a rake: each entry costs the buy-in plus the rake, the pool is the buy-ins only, and the owner's row shows the rake taken. Cancelling it refunds both. After a finish, Chips' Taken back includes the rake.
 
 **C5 Members and chips**
 1. A player asks to join (M6): Needs you and Requests show their message, with Let in, Reply and Decline. Reply: they see it, and their answer shows in the thread.
@@ -266,6 +271,14 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 3. A player asks to join through the agent's invite link, with a message. The request reaches the agent with the message; the agent replies and the player sees it. The agent lets them in as Cash: they're the agent's player, New, with 0 chips. Another, let in as Credit with a line, can sit with it; the agent's Credit button changes the line later.
 4. The agent gives that player chips, then takes some back. Each needs a recent passkey unlock. The agent's balance goes down and up by the same amounts, and the owner's activity log shows each move.
 5. The agent can't give chips to a player who isn't theirs, and can't make tables.
+
+**C9 Credit and Balances** (#404, #454; three browsers: owner, a credit player, a cash player)
+1. Owner: on a member's page, set a credit limit. Each save needs a recent passkey unlock. The member sees the limit, and can sit with it and no chips of their own. A raise bigger than a full buy-in shows in the owner's notices.
+2. The credit player loses some and stands up. They see a negative balance; the owner's Overview says they left owing, Members' Owes filter lists them, and Balances says they owe the club.
+3. They pay outside ducy. The owner records it with Give chips and a note (it comes from the float). Balances drops the row; the member sees the note in My chips.
+4. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
+5. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
+6. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first). The player on credit counts against the agent's own limit. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
 
 ## Manual: admin
 
@@ -299,7 +312,7 @@ Run a row only when that feature is about to be turned on.
 - **B4:** hand review and live feedback. Turn each on and off. Review the grades on 10 hands.
 - **B5:** Bankroll Quest. A new run, winning, going broke, travel and records.
 - **B6:** each club feature in `src/club-beta.js`. First take it out of `OFF`. Then a manager can set it up, a member sees its effect, and the ledger adds up.
-- **B7:** rake and time at cash tables (#449), with `rake` out of `OFF`, at desktop and phone width.
+- **B7:** rake and time at cash tables (#449), with `cashRake` out of `OFF`, at desktop and phone width.
   1. Rules → Rake: "No rake" to start. Set 4.5% with a 2.5 BB cap: refused above 10% or at 0%; time below 0.05 or above 0.25 BB refused. New table → More options starts from it; set a table's own instead. Members see "Rake 4.5% · cap 2.5 BB" on the table before they sit, and the owner on the game's table cards and table rows.
   2. Play hands with two or three members: one that ends before the flop takes no rake (always); one that sees a flop does, in whole chips. A side pot and a run twice still pay out right. The hand log and the replay say "Rake …".
   3. Stand up: Chips → Rake and time shows each player's share today, over 7 days and in all, and per agent; the ledger has a "Rake and time" line from the house, and In the club still adds up.

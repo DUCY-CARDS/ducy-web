@@ -6,23 +6,28 @@ import { OFF } from '../src/club-beta.js';
 import { managerPage, pageHash, pageOff, shownNav } from '../src/club-nav.js';
 import { newDraft, hostTourneysHtml } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
+import { chargeOn } from '../src/club-rake.js';
 
 test('the unfinished features are off', () => {
-  assert.deepEqual([...OFF].sort(), ['balances', 'credit', 'promos', 'rake', 'services']);
+  assert.deepEqual([...OFF].sort(), ['cashRake', 'promos', 'services']);
 });
 
-test('agents are on: the owner can make one', () => {
-  assert.ok(!OFF.has('agents'));
+test('agents, credit, Balances and tournament rake are on (#623)', () => {
+  for (const f of ['agents', 'credit', 'balances', 'rake']) assert.ok(!OFF.has(f), f);
 });
 
-test('their pages leave the sidebar, and their addresses still parse', () => {
+test('rake at cash tables stays off, unless the club already has one (#449)', () => {
+  assert.equal(chargeOn({tables: []}), false);
+  assert.equal(chargeOn({charge: {percent: 500, capBB: 0, timeBB: 0}, tables: []}), true);
+});
+
+test('Promotions leaves the sidebar, Balances is in it, and their addresses still parse', () => {
   const shown = shownNav().flatMap(g => g.pages.map(([id]) => id));
-  for (const id of ['promos', 'settle']) {
-    assert.ok(!shown.includes(id));
-    assert.ok(pageOff(id));
-    assert.equal(managerPage(`#${pageHash(id)}`).page, id);
-  }
-  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
+  assert.ok(!shown.includes('promos'));
+  assert.ok(pageOff('promos'));
+  assert.ok(!pageOff('settle'));
+  for (const id of ['promos', 'settle']) assert.equal(managerPage(`#${pageHash(id)}`).page, id);
+  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'settle', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
   assert.ok(shownNav().every(g => g.pages.length), 'no empty group');
 });
 
@@ -31,8 +36,8 @@ const wizard = d => hostTourneysHtml({members: {}, tourneys: [], payoutTables: [
   wizard: {step: 1, d, editor: structureEditor({stack: 10000, presets: false}), edit: null},
 }, NOW);
 
-test('the tournament wizard asks for no rake, unless one is already set', () => {
+test('the tournament wizard asks for a rake', () => {
   const d = newDraft({}, NOW);
-  assert.doesNotMatch(wizard(d), /name="rake"/);
-  assert.match(wizard({...d, rake: 200}), /name="rake"/);
+  assert.match(wizard(d), /name="rake"/);
+  assert.match(wizard({...d, rake: 200}), /name="rakePick" value="200" checked/);
 });

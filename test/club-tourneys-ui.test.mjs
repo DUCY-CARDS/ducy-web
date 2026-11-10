@@ -10,9 +10,6 @@ import {
 } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 import { pickHtml, readPick } from '../src/amount-picks.js';
-import { OFF } from '../src/club-beta.js';
-
-OFF.clear();  // Rake stays tested while the beta hides it (#560).
 
 const NOW = 1_000_000_000;
 const structure = [{sb: 25, bb: 50, ante: 0, minutes: 10}, {break: true, minutes: 5}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
@@ -244,6 +241,10 @@ test('the Tournaments page: a repeating series is one card with its next start (
   assert.equal(h.match(/class="cl-tourney"/g).length, 2);
   assert.match(h, /cl-badge">Daily</);
   assert.match(h, /buy-in 10 \+ 1/);
+  // The rake taken so far (#623): none until someone enters.
+  assert.doesNotMatch(h, /· rake /);
+  const entered = {...club, tourneys: [t('b', {entries: [{member: 'x'}, {member: 'y'}]})]};
+  assert.match(hostTourneysHtml(entered, {}, {}, NOW), /pool 20 · rake 2</);
   assert.match(h, /data-cl="t-ask" data-act="edit" data-id="b"/);
   // Edit asks: this one or the whole series.
   h = hostTourneysHtml(club, {}, {ask: {id: 'b', act: 'edit'}}, NOW);
