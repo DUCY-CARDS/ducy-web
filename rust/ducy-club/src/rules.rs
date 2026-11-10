@@ -340,6 +340,8 @@ pub enum TableStatus {
 
 /// The most rake: 10%, in hundredths of a percent.
 pub const MAX_RAKE: u32 = 1000;
+/// The least time a hand: 0.05 of a big blind, in hundredths of one.
+pub const MIN_TIME_BB: u32 = 5;
 /// The most time a hand: a quarter of a big blind, in hundredths of one.
 pub const MAX_TIME_BB: u32 = 25;
 /// The largest cap: 1,000 big blinds, in hundredths of one.
@@ -360,7 +362,7 @@ pub struct Charge {
     #[serde(rename = "capBB")]
     pub cap_bb: u32,
     /// Time: what each player dealt in pays a hand, in hundredths of a big
-    /// blind, at most [`MAX_TIME_BB`].
+    /// blind, from [`MIN_TIME_BB`] to [`MAX_TIME_BB`].
     #[serde(rename = "timeBB")]
     pub time_bb: u32,
 }
@@ -373,7 +375,7 @@ impl Charge {
 
     /// A charge from `{percent, capBB, timeBB}` (null or `{}`: none),
     /// checked: rake above 0 and at most [`MAX_RAKE`], a cap of 0 (none) or
-    /// more, time above 0 and at most [`MAX_TIME_BB`], not both.
+    /// more, time from [`MIN_TIME_BB`] to [`MAX_TIME_BB`], not both.
     pub fn from_value(v: &Value) -> Result<Self, RuleError> {
         if v.is_null() {
             return Ok(Self::default());
@@ -403,8 +405,8 @@ impl Charge {
         if cap_bb > MAX_CAP_BB {
             return refuse("The rake cap is at most 1,000 big blinds.");
         }
-        if time_bb > MAX_TIME_BB {
-            return refuse("Time is at most ¼ of a big blind a hand.");
+        if time_bb > 0 && !(MIN_TIME_BB..=MAX_TIME_BB).contains(&time_bb) {
+            return refuse("Time is 0.05 to 0.25 of a big blind a hand.");
         }
         if percent > 0 && time_bb > 0 {
             return refuse("A table takes rake or time, not both.");

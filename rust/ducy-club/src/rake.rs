@@ -388,6 +388,7 @@ mod tests {
         for bad in [
             json!({"percent": 1001}),
             json!({"timeBB": 26}),
+            json!({"timeBB": 4}),
             json!({"percent": 500, "timeBB": 10}),
             json!({"percent": -1}),
             json!({"percent": 4.5}),
@@ -401,6 +402,7 @@ mod tests {
             .engine(200);
         assert_eq!((e.percent, e.cap, e.no_flop, e.time), (450, 500, true, 0));
         assert_eq!(ok(json!({"timeBB": 25})).unwrap().engine(200).time, 50);
+        assert_eq!(ok(json!({"timeBB": 5})).unwrap().time_bb, 5);
 
         // The club's: none, then 5% capped at 3 BB.
         let mut c = club(&[]);

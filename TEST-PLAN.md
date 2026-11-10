@@ -290,7 +290,7 @@ Run a row only when that feature is about to be turned on.
 - **B5:** Bankroll Quest. A new run, winning, going broke, travel and records.
 - **B6:** each club feature in `src/club-beta.js`. First take it out of `OFF`. Then a manager can set it up, a member sees its effect, and the ledger adds up.
 - **B7:** rake and time at cash tables (#449), with `rake` out of `OFF`, at desktop and phone width.
-  1. Rules → Rake: "No rake" to start. Set 4.5% with a 2.5 BB cap: refused above 10% or at 0%; time above ¼ BB refused. New table → More options starts from it; set a table's own instead. Members see "Rake 4.5% · cap 2.5 BB" on the table before they sit, and the owner on the game's table cards and table rows.
+  1. Rules → Rake: "No rake" to start. Set 4.5% with a 2.5 BB cap: refused above 10% or at 0%; time below 0.05 or above 0.25 BB refused. New table → More options starts from it; set a table's own instead. Members see "Rake 4.5% · cap 2.5 BB" on the table before they sit, and the owner on the game's table cards and table rows.
   2. Play hands with two or three members: one that ends before the flop takes no rake (always); one that sees a flop does, in whole chips. A side pot and a run twice still pay out right. The hand log and the replay say "Rake …".
   3. Stand up: Chips → Rake and time shows each player's share today, over 7 days and in all, and per agent; the ledger has a "Rake and time" line from the house, and In the club still adds up.
   4. An agent's Your players shows their players' rake and time, and no one else's.
