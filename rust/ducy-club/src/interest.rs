@@ -66,7 +66,7 @@ impl MenuGame {
             "maxBB": self.max_bb, "seats": self.seats, "turnSecs": self.turn_secs,
             "sitOutMins": self.sit_out_mins, "stayHands": self.stay_hands,
         });
-        self.charge.into_spec(&mut s);
+        s["charge"] = json!(self.charge);
         s
     }
 }

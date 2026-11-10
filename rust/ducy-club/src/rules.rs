@@ -338,95 +338,97 @@ pub enum TableStatus {
     Closed,
 }
 
-/// The most rake a table may take: 10%, in hundredths of a percent.
+/// The most rake: 10%, in hundredths of a percent.
 pub const MAX_RAKE: u32 = 1000;
+/// The most time a hand: a quarter of a big blind, in hundredths of one.
+pub const MAX_TIME_BB: u32 = 25;
+/// The largest cap: 1,000 big blinds, in hundredths of one.
+pub const MAX_CAP_BB: u32 = 100_000;
 
 /// What the club takes from each hand at a cash table (ducy-web #449): rake
-/// (a share of each pot, with a cap, maybe not before the flop) or time (a
-/// fixed charge from each player dealt in), never both. Ducy's engine takes
-/// it ([`ducy_play::Rake`]); none by default.
+/// (a share of each pot, maybe capped) or time (a fixed charge from each
+/// player dealt in), never both. A hand that ends before the flop is never
+/// raked ("no flop, no drop"). Amounts are in big blinds, so a club's
+/// default fits every stake. Ducy's engine takes it ([`ducy_play::Rake`]);
+/// none by default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default)]
 pub struct Charge {
-    /// Rake: the share of each pot, in hundredths of a percent (500 is 5%).
+    /// Rake: the share of each pot, in hundredths of a percent (450 is 4.5%).
     pub percent: u32,
-    /// The most rake from one hand, in hundredths of a chip; 0: no cap.
-    pub cap: u64,
-    /// No rake on a hand that ends before the flop.
-    pub no_flop: bool,
-    /// Time: what each player dealt in pays a hand, in hundredths.
-    pub time: u64,
+    /// The most rake from one hand, in hundredths of a big blind; 0: no cap.
+    #[serde(rename = "capBB")]
+    pub cap_bb: u32,
+    /// Time: what each player dealt in pays a hand, in hundredths of a big
+    /// blind, at most [`MAX_TIME_BB`].
+    #[serde(rename = "timeBB")]
+    pub time_bb: u32,
 }
 
 impl Charge {
     /// It takes nothing.
     pub fn is_none(&self) -> bool {
-        self.percent == 0 && self.time == 0
+        self.percent == 0 && self.time_bb == 0
     }
 
-    /// A table's charge from its settings (`{percent, cap, noFlop}` as
-    /// `rake`, or `time`), checked: rake up to [`MAX_RAKE`], a cap and time
-    /// within the table's maximum buy-in (`max`), not both.
-    pub fn from_spec(spec: &Value, max: u64) -> Result<Self, RuleError> {
-        let int = |v: Option<&Value>| -> Result<u64, RuleError> {
-            match v {
+    /// A charge from `{percent, capBB, timeBB}` (null or `{}`: none),
+    /// checked: rake above 0 and at most [`MAX_RAKE`], a cap of 0 (none) or
+    /// more, time above 0 and at most [`MAX_TIME_BB`], not both.
+    pub fn from_value(v: &Value) -> Result<Self, RuleError> {
+        if v.is_null() {
+            return Ok(Self::default());
+        }
+        if !v.is_object() {
+            return refuse("Not a valid rake.");
+        }
+        let int = |k: &str| -> Result<u32, RuleError> {
+            match v.get(k) {
                 None | Some(Value::Null) => Ok(0),
-                Some(v) => v
+                Some(x) => x
                     .as_u64()
                     .or_else(|| {
-                        v.as_f64()
-                            .filter(|f| f.fract() == 0.0 && *f >= 0.0 && *f <= 9e15)
+                        x.as_f64()
+                            .filter(|f| f.fract() == 0.0 && *f >= 0.0)
                             .map(|f| f as u64)
                     })
-                    .ok_or_else(|| RuleError("Rake and time are amounts of 0 or more.".into())),
+                    .filter(|n| *n <= u64::from(u32::MAX))
+                    .map(|n| n as u32)
+                    .ok_or_else(|| RuleError("Rake, its cap and time are amounts above 0.".into())),
             }
         };
-        let rake = spec.get("rake").filter(|r| r.is_object());
-        let percent = int(rake.and_then(|r| r.get("percent")))?;
-        let cap = int(rake.and_then(|r| r.get("cap")))?;
-        let no_flop = rake
-            .and_then(|r| r.get("noFlop"))
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-        let time = int(spec.get("time"))?;
-        if percent > u64::from(MAX_RAKE) {
-            return refuse(format!(
-                "Rake is at most {}%.",
-                plain_amount(u64::from(MAX_RAKE))
-            ));
+        let (percent, cap_bb, time_bb) = (int("percent")?, int("capBB")?, int("timeBB")?);
+        if percent > MAX_RAKE {
+            return refuse("Rake is more than 0% and at most 10%.");
         }
-        if percent > 0 && time > 0 {
+        if cap_bb > MAX_CAP_BB {
+            return refuse("The rake cap is at most 1,000 big blinds.");
+        }
+        if time_bb > MAX_TIME_BB {
+            return refuse("Time is at most ¼ of a big blind a hand.");
+        }
+        if percent > 0 && time_bb > 0 {
             return refuse("A table takes rake or time, not both.");
         }
-        if cap > max || time > max {
-            return refuse("The rake cap and time are at most the maximum buy-in.");
-        }
         Ok(Self {
-            percent: percent as u32,
-            cap: if percent > 0 { cap } else { 0 },
-            no_flop: percent > 0 && no_flop,
-            time,
+            percent,
+            cap_bb: if percent > 0 { cap_bb } else { 0 },
+            time_bb,
         })
     }
 
-    /// As ducy's engine takes it.
-    pub fn engine(&self) -> ducy_play::Rake {
+    /// As ducy's engine takes it at a big blind of `bb` (hundredths): the cap
+    /// and time in chips; time at least the smallest amount.
+    pub fn engine(&self, bb: u64) -> ducy_play::Rake {
+        let of_bb = |n: u32| u64::from(n) * bb / 100;
         ducy_play::Rake {
             percent: self.percent,
-            cap: self.cap,
-            no_flop: self.no_flop,
-            time: self.time,
-        }
-    }
-
-    /// As a table's settings give it ([`Charge::from_spec`]), into `spec`.
-    pub fn into_spec(&self, spec: &mut Value) {
-        if self.percent > 0 {
-            spec["rake"] =
-                json!({"percent": self.percent, "cap": self.cap, "noFlop": self.no_flop});
-        }
-        if self.time > 0 {
-            spec["time"] = self.time.into();
+            cap: of_bb(self.cap_bb),
+            no_flop: true,
+            time: if self.time_bb > 0 {
+                of_bb(self.time_bb).max(1)
+            } else {
+                0
+            },
         }
     }
 }
@@ -596,6 +598,10 @@ pub struct Club {
     /// A new table's hit-and-run rule, in hands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stay_hands: Option<Number>,
+    /// A new table's rake or time (#449), unless the table sets its own;
+    /// none by default.
+    #[serde(default, skip_serializing_if = "Charge::is_none")]
+    pub charge: Charge,
     /// The rathole rule's window, in hours.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rathole_hours: Option<Number>,
@@ -971,6 +977,7 @@ impl Club {
             tables: Vec::new(),
             sit_out_mins: None,
             stay_hands: None,
+            charge: Charge::default(),
             rathole_hours: None,
             waitlist: BTreeMap::new(),
             groups: vec![],
@@ -1527,8 +1534,9 @@ impl Club {
     }
 
     /// Adds a table from the host's choices (`{name, game, sb, bb, minBB,
-    /// maxBB, seats, turnSecs, sitOutMins, stayHands, rake, time}`, each
-    /// optional; [`Charge::from_spec`]), within the plan's `most` tables.
+    /// maxBB, seats, turnSecs, sitOutMins, stayHands, charge}`, each
+    /// optional; `charge` as [`Charge::from_value`] takes it, else the
+    /// club's), within the plan's `most` tables.
     pub fn new_table(
         &mut self,
         spec: &Value,
@@ -1574,7 +1582,11 @@ impl Club {
             return refuse(format!("Call time: 0 (off) to {MAX_STAY_HANDS} hands."));
         }
         let (sb, bb) = (sb as u64, bb as u64);
-        let charge = Charge::from_spec(spec, max_bb as u64 * bb)?;
+        // Its own rake or time, or else the club's.
+        let charge = match spec.get("charge") {
+            Some(c) => Charge::from_value(c)?,
+            None => self.charge,
+        };
         let given = cut(text_of(spec.get("name")).trim(), MAX_TABLE_NAME);
         let name = if given.is_empty() {
             self.default_table_name(g.id, sb, bb)
@@ -1627,7 +1639,9 @@ impl Club {
                     v["stayHands"] = t.stay_hands.into();
                 }
                 // What the club takes from each hand (#449), so members know.
-                t.charge.into_spec(&mut v);
+                if !t.charge.is_none() {
+                    v["charge"] = json!(t.charge);
+                }
                 // Must move (#501, #518): a main table, or the tables a
                 // must-move one feeds and its move order.
                 let g = self.group_label(&t.id);

@@ -168,6 +168,8 @@ fn setting_ok(k: &str, v: &Value) -> bool {
         "keepDays" => int(1, 3650),
         // Let people ask to join with the club code, no invite link (#393).
         "codeJoin" => v.is_boolean(),
+        // New tables' rake or time (#449).
+        "charge" => crate::rules::Charge::from_value(v).is_ok(),
         _ => false,
     }
 }
@@ -510,6 +512,10 @@ impl ClubState {
                     return Ok(out);
                 };
                 for (k, v) in values {
+                    if k == "charge" {
+                        // Why, in words (#449).
+                        crate::rules::Charge::from_value(v)?;
+                    }
                     if !setting_ok(k, v) {
                         return refuse(format!("Not a valid {k}."));
                     }
@@ -521,6 +527,11 @@ impl ClubState {
                         "stayHands" => self.book.club.stay_hands = v.as_number().cloned(),
                         "keepDays" => self.keep_days = v.as_number().cloned(),
                         "codeJoin" => self.book.club.code_join = v.as_bool(),
+                        "charge" => {
+                            self.book.club.charge = crate::rules::Charge::from_value(v)?;
+                            self.book
+                                .log_action(&actor, "Changed the club’s rake", now, None);
+                        }
                         _ => {}
                     }
                 }
