@@ -888,6 +888,10 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .tf-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 8px 12px; padding-top: 8px; }
 .tf-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--fg); }
 .tf-fields .pl-text { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+/* Rake or time (#449): only the house's pick shows its settings. */
+.tf-fields label[hidden] { display: none; }
+.tf-fields label.tf-check { flex-direction: row; align-items: center; align-self: end; min-height: 32px; }
+.cl-rake-table td { text-align: right; }
 .cl-more { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
 /* My clubs (#143): what needs you, the sub-tabs, ⋯ menus and the settings dialog. */
 .cl-needs { border: 1px solid var(--amber); border-radius: var(--radius); padding: 8px 12px; background: var(--amber-faint); }

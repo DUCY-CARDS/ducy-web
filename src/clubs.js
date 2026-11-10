@@ -45,7 +45,8 @@ import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import * as pk from './passkey.js';
 import { CHIP_OPS, VAULT_OPS } from './chip-moves.js';
-import { accountOf, playersOf } from './club-agents.js';
+import { accountOf, contributions, playersOf } from './club-agents.js';
+import { chargeFieldsHtml, chargeOn, chargeSpec, chargeText, contributionsHtml, readCharge, syncChargeFields } from './club-rake.js';
 import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, summary, tableSessions, totalsByMember } from './hand-replay.js';
@@ -423,6 +424,8 @@ function tableFormHtml({wizard = false, offer = false} = {}) {
   h += `<label>Sitting out<select class="pl-text" name="sitOutMins">${options(SIT_OUT_MINS, club?.sitOutMins ?? 10, m => (m ? `${m} min` : 'No limit'))}</select></label>`;
   const call = nearest(CALL_TIMES, club?.stayHands ?? 0);
   h += `<label>Call time<select class="pl-text" name="stayHands">${options(CALL_TIMES, call, n => (n ? `${n} hands` : 'Off'))}</select></label>`;
+  // Rake or time (#449).
+  if (chargeOn(club)) h += chargeFieldsHtml(last.charge);
   h += '</div></details>';
   h += `<div class="cl-formacts"><button class="btn-small primary" type="submit">${offer ? 'Offer' : 'Open table'}</button>`;
   h += wizard ? '<button class="btn-small" type="button" data-cl="wiz-invite">Skip for now</button>' : '<button class="btn-small" type="button" data-cl="cancel-table">Cancel</button>';
@@ -486,6 +489,7 @@ function syncTableForm(f, gameChanged) {
   const game = f.elements.game.value;
   if (gameChanged) f.querySelector('.tf-seats').innerHTML = seatsHtml(game, defaultSeats(game));
   f.elements.name.placeholder = formTableName(game, ...formBlinds(f));
+  syncChargeFields(f);
 }
 
 function submitTable(f) {
@@ -498,6 +502,9 @@ function submitTable(f) {
     sitOutMins: Number(v('sitOutMins')),
     stayHands: Number(v('stayHands')),
   };
+  // Rake or time (#449).
+  const charge = readCharge(f, bb);
+  Object.assign(settings, charge.spec);
   if (settings.maxBB < settings.minBB) {
     // Said in the form, so what was picked stays (#186).
     let n = f.querySelector('.tf-note');
@@ -506,7 +513,7 @@ function submitTable(f) {
     f.elements.maxBB.focus();
     return;
   }
-  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
+  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs, ...(f.elements.house ? {charge: charge.last} : {})});
   // The form stays open if the table can't be opened, so nothing is lost.
   // Offered, it goes on the club's menu instead.
   hostAct(f.dataset.offer ? 'offer_game' : 'new_table', {table: settings}).then(ok => {
@@ -815,7 +822,7 @@ function cashHtml() {
     for (const t of g.tables) {
       const n = counts[t.id] || 0;
       h += `<div class="mg-brow mg-bsub" role="row"><span role="cell" class="mg-bgame"><b>${esc(t.name)}</b> ${tableTag(g.group, t.id)}${t.status === 'closing' ? ' <span class="pl-meta">Closing</span>' : ''}</span>`;
-      h += `<span role="cell" class="pl-meta">${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}</span><span role="cell"></span><span role="cell"></span>`;
+      h += `<span role="cell" class="pl-meta">${chips(t.minBB * t.bb)}–${chips(t.maxBB * t.bb)}${chargeText(t) ? ` · <span class="cl-charge">${esc(chargeText(t))}</span>` : ''}</span><span role="cell"></span><span role="cell"></span>`;
       h += `<span role="cell" class="mg-num" data-label="Seated">${n} of ${t.seats}</span><span role="cell"></span>`;
       h += `<span role="cell" class="mg-bacts">${watchBtn(t.id)}</span></div>`;
     }
@@ -2755,8 +2762,10 @@ const statHtml = (label, value, cls = '') => `<div class="mg-stat"><span class="
 // balance after.
 function ledgerLineHtml(e, about = {}, names = {}, who = true) {
   const sign = e.amount < 0 ? '−' : '+';
-  const name = id => esc(names[id] || id);
-  return `<li><span class="pl-meta">${when(e.at)}</span> ${who ? `${name(e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.about && about[e.about] ? ` (${esc(about[e.about])})` : ''}${e.player ? ` · ${name(e.player)}` : ''} <strong>${sign}${chips(Math.abs(e.amount))}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${signed(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
+  const name = id => esc(names[id] || (id === 'house' ? 'House' : id));
+  // Rake and time (#449): the house's, from whoever paid it.
+  const by = e.player || e.from;
+  return `<li><span class="pl-meta">${when(e.at)}</span> ${who ? `${name(e.member)} · ` : ''}${esc(KIND_TEXT[e.kind] || e.kind)}${e.about && about[e.about] ? ` (${esc(about[e.about])})` : ''}${by ? ` · ${name(by)}` : ''} <strong>${sign}${chips(Math.abs(e.amount))}</strong>${e.note ? ` <span class="pl-meta">“${esc(e.note)}”</span>` : ''} <span class="pl-meta">→ ${signed(e.balance)}</span>${promoReplayBtn(e, club.code, 'host')}</li>`;
 }
 
 // The rest of what the host can do for a member, in a ⋯ menu (#143).
@@ -3055,6 +3064,8 @@ function accountingHtml() {
     for (const m of members) h += `<tr><th><a href="#${ph('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${signed(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
     h += '</tbody></table>';
   }
+  // Each player's rake and time (#449), and each agent's players'.
+  if (club.rakeBook) h += contributionsHtml(contributions(club), {link: id => `#${ph('member', id)}`});
   h += resultsHtml(ledger, names, about);
   if (ledger.length) {
     // Filtered by member, kind and what it was about, and exported as CSV (#188).
@@ -3345,7 +3356,9 @@ function myChipsHtml(m) {
 // The money model's entry kinds (club-money.js).
 const KIND_TEXT = {give: 'Chips given', take_back: 'Chips taken back', buy_in: 'Bought in', top_up: 'Topped up', refund: 'Refunded', cash_out: 'Cashed out', tourney_buy_in: 'Tournament buy-in', prize: 'Prize', rake_share: 'Rake share', void: 'Prize voided', opening: 'Opening balance',
   // The owner's float (#589) and members' vaults (#579).
-  refill: 'Float refilled', to_vault: 'Float to vault', vault_in: 'Into vault', vault_out: 'Out of vault'};
+  refill: 'Float refilled', to_vault: 'Float to vault', vault_in: 'Into vault', vault_out: 'Out of vault',
+  // Rake and time a player paid over a session (#449).
+  rake: 'Rake and time'};
 
 // The names of what entries are about: tables, tournaments and promotions.
 const aboutNames = c => Object.fromEntries([...(c.tables || []), ...(c.tourneys || []), ...(c.promos?.list || [])].map(x => [x.id, x.name]));
@@ -3564,7 +3577,10 @@ function memberTablesHtml(m, hostHere) {
     const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : free <= 0 ? 'Full' : '';
     h += `<li class="cl-tcard${here || !why ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
     h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
-    h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
+    h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span>`;
+    // Rake or time (#449), before you sit.
+    if (chargeText(t)) h += `<span class="cl-tcard-meta cl-charge">${esc(chargeText(t))}</span>`;
+    h += '</span>';
     if (r.rathole && r.rathole > t.min) h += `<span class="pl-meta cl-why">You left this table with ${chips(r.rathole)} less than ${m.rathole} h ago, so you buy back in with at least that.</span>`;
     // The hit-and-run rule, before you sit.
     if (t.stayHands > 0) h += `<span class="pl-meta cl-why">Call time ${t.stayHands} hands: once you’re up here, you play them before you can leave.</span>`;
@@ -3679,6 +3695,8 @@ function agentHtml(m, hostHere, {page = false} = {}) {
     }
     h += '</ul>';
   }
+  // Their players' rake and time (#449).
+  if (page) h += contributionsHtml(a.rake, {agent: true});
   return h + '</div>';
 }
 
@@ -3934,7 +3952,7 @@ async function onClickIn(e) {
   else if (act === 'game-open-table') {
     // Like its first table, or, not running, as the club offers it.
     const t = openTables(club).find(x => gameKey(x) === b.dataset.key) || (club.menu || []).find(x => x.key === b.dataset.key);
-    if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands}});
+    if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands, ...chargeSpec(t.charge)}});
   } else if (act === 'list-remove') hostAct('list_remove', {key: b.dataset.key, id: b.dataset.id});
   else if (act === 'mm-edit') { mustMoveForm = b.dataset.key; render(); }
   else if (act === 'mm-cancel') { mustMoveForm = ''; render(); }
@@ -4230,7 +4248,7 @@ export async function openClubs(el, v = 'clubs') {
     });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
-      if (f && ['game', 'blinds', 'blindsOther'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      if (f && ['game', 'blinds', 'blindsOther', 'house'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
       // What a tournament pays by (#424): Default or a club payout table.
       // A running one's asks first (#544).
       const pick = e.target.dataset?.paypick;

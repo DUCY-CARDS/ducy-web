@@ -18,6 +18,7 @@ pub mod money;
 pub mod oneoff;
 pub mod overview;
 pub mod promos;
+pub mod rake;
 pub mod registry;
 pub mod room;
 pub mod rules;

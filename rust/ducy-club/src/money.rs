@@ -15,8 +15,9 @@
 //!   minus its credit, or go through a link that is overdue.
 //! - **Cash-outs, refunds and prizes** move every link on the path back up.
 //! - **Rake and time** come off the table, so no link moves for them. What a
-//!   player contributed is shared up their path when they stand up: each
-//!   link gets its [share](Link::share) of it.
+//!   player contributed is booked when they stand up, as a
+//!   [`Rake`](EntryKind::Rake) entry of [`HOUSE`], and shared up their path:
+//!   each link gets its [share](Link::share) of it.
 //! - **Agencies** are agents run by several people. Their players are
 //!   served by whoever is on shift, through a link with that person; at a
 //!   shift change a seated player's session is [handed over](Money::handover).
@@ -44,6 +45,9 @@ pub const CLUB: &str = "club";
 /// The owner's float, as the member of its ledger entries (with [`CLUB`]).
 /// Not a player ID, so no member has it.
 pub const FLOAT: &str = "float";
+/// The rake and time the club has taken (ducy-web #449), as the member of
+/// their ledger entries (with [`CLUB`]). Not a player ID either.
+pub const HOUSE: &str = "house";
 /// The most chips one move can be.
 pub const MAX_CHIPS: u64 = 1_000_000_000_000;
 /// The longest note kept on an entry, in characters.
@@ -191,6 +195,9 @@ pub enum EntryKind {
     VaultIn,
     /// Chips out of a member's vault, back to their balance.
     VaultOut,
+    /// The rake and time a player paid at a table over a session (ducy-web
+    /// #449): chips the club took back. An entry of [`HOUSE`], `from` them.
+    Rake,
 }
 
 impl EntryKind {
@@ -206,6 +213,7 @@ impl EntryKind {
                 | Self::ToVault
                 | Self::VaultIn
                 | Self::VaultOut
+                | Self::Rake
         )
     }
 
@@ -239,6 +247,9 @@ pub struct Entry {
     pub note: Option<String>,
     /// What it was for: a table, a tournament, a promotion.
     pub about: Option<String>,
+    /// For a [`Rake`](EntryKind::Rake) entry, who paid it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 /// Why a move was refused. As JSON, `{code, …}`.
@@ -363,6 +374,10 @@ pub struct Money {
     /// The owner's float: chips the club can give now.
     #[serde(default, skip_serializing_if = "is_zero_i")]
     float: i64,
+    /// The rake and time booked at cash-outs (#449): what [`HOUSE`]'s
+    /// entries add up to.
+    #[serde(default, skip_serializing_if = "is_zero_i")]
+    house: i64,
 }
 
 fn is_zero_i(v: &i64) -> bool {
@@ -735,6 +750,7 @@ impl Money {
             balance: l.balance,
             note: why,
             about: about.map(Into::into),
+            from: None,
         };
         self.ledger.push(e.clone());
         e
@@ -836,9 +852,15 @@ impl Money {
             balance: self.float,
             note: why,
             about: None,
+            from: None,
         };
         self.ledger.push(e.clone());
         e
+    }
+
+    /// What the club has taken in rake and time from sessions that ended.
+    pub fn house(&self) -> u64 {
+        self.house.max(0) as u64
     }
 
     /// Tops the owner's float up by `amt` from their vault, which has no limit.
@@ -1064,7 +1086,23 @@ impl Money {
         }
         let shares = self.shares(path);
         let tx = self.tx();
-        let mut out = Vec::new();
+        // What they paid: the club's, an entry of the house's (#449).
+        self.house += contributed as i64;
+        let paid = Entry {
+            n: self.ledger.len() as u64 + 1,
+            at: now,
+            tx,
+            member: HOUSE.into(),
+            backer: CLUB.into(),
+            kind: EntryKind::Rake,
+            amount: contributed as i64,
+            balance: self.house,
+            note: None,
+            about: Some(about.into()),
+            from: path.first().cloned(),
+        };
+        self.ledger.push(paid.clone());
+        let mut out = vec![paid];
         for (w, s) in path.windows(2).zip(shares) {
             let a = (contributed as u128 * s as u128 / FULL_SHARE as u128) as i64;
             if a > 0 {
@@ -1267,6 +1305,15 @@ impl Money {
             .sum();
         if float != self.float {
             bad.push(format!("float: entries {float}, float {}", self.float));
+        }
+        let house: i64 = self
+            .ledger
+            .iter()
+            .filter(|e| e.member == HOUSE)
+            .map(|e| e.amount)
+            .sum();
+        if house != self.house {
+            bad.push(format!("house: entries {house}, rake {}", self.house));
         }
         let mut txs: BTreeMap<u64, i64> = BTreeMap::new();
         for e in self.ledger.iter().filter(|e| e.kind.is_path_move()) {

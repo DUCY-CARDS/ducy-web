@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::groups::{ASK_MS, Ask, GROUP_BY, GroupNews, MoveUp};
-use crate::rules::{Club, HOLD_MS, RuleError, Status, Table, refuse};
+use crate::rules::{Charge, Club, HOLD_MS, RuleError, Status, Table, refuse};
 
 /// A game on the club's menu.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,16 +53,21 @@ pub struct MenuGame {
     pub sit_out_mins: u32,
     /// The hit-and-run rule, in hands.
     pub stay_hands: u32,
+    /// Rake or time (#449).
+    #[serde(skip_serializing_if = "Charge::is_none")]
+    pub charge: Charge,
 }
 
 impl MenuGame {
     /// A table's settings for it, as [`Club::new_table`] takes them.
     pub fn spec(&self) -> Value {
-        json!({
+        let mut s = json!({
             "name": self.name, "game": self.game, "sb": self.sb, "bb": self.bb, "minBB": self.min_bb,
             "maxBB": self.max_bb, "seats": self.seats, "turnSecs": self.turn_secs,
             "sitOutMins": self.sit_out_mins, "stayHands": self.stay_hands,
-        })
+        });
+        self.charge.into_spec(&mut s);
+        s
     }
 }
 
@@ -115,6 +120,7 @@ impl Club {
             turn_secs: t.turn_secs,
             sit_out_mins: t.sit_out_mins,
             stay_hands: t.stay_hands,
+            charge: t.charge,
         });
         Ok(self.menu.last().expect("just added"))
     }

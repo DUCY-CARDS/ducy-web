@@ -940,7 +940,7 @@ function peelSteps(before, after) {
   const firstEvents = boards => {
     let seen = 0;
     return after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
-      if (e.type === 'award' || e.type === 'second_board') return false;
+      if (e.type === 'award' || e.type === 'rake' || e.type === 'time' || e.type === 'second_board') return false;
       if (e.type === 'board') { seen += 1; return seen <= boards; }
       return true;
     }));
@@ -952,7 +952,7 @@ function peelSteps(before, after) {
     const together = boards => {
       let seen = 0;
       return after.events.slice(0, known).concat(after.events.slice(known).filter(e => {
-        if (e.type === 'award') return false;
+        if (e.type === 'award' || e.type === 'rake' || e.type === 'time') return false;
         if (e.type === 'board') seen += 1;
         return e.type === 'board' || e.type === 'second_board' ? seen <= boards : true;
       }));
@@ -3447,6 +3447,9 @@ function eventText(e) {
     case 'runs': return e.count === 2 ? 'Running it twice' : 'Running it once';
     case 'second_board': return `${bombHand(state) ? 'Board 2' : 'Second run'}: ${e.cards.join(' ')}`;
     case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
+    // What a club table takes (#449).
+    case 'rake': return `Rake ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
+    case 'time': return `${who} ${v('pay')} ${c(e.amount)} time`;
     default: return '';
   }
 }

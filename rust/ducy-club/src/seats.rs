@@ -554,6 +554,24 @@ impl ClubState {
         s.players = serde_json::from_value(res.get("players").cloned().unwrap_or(json!([])))
             .map_err(|e| RuleError(e.to_string()))?;
         let mut changed = false;
+        let state = res.get("state").cloned().unwrap_or(Value::Null);
+        // A hand over: what each player paid the club in rake or time (#449),
+        // `{id: chips}`, booked once, before anyone who left is cashed out.
+        let hand = count(state.get("hand_number"));
+        if truthy(state.get("complete")) && hand > 0 && hand != s.recorded {
+            let paid: Vec<(String, u64)> = state
+                .get("rake")
+                .and_then(Value::as_object)
+                .map(|m| {
+                    m.iter()
+                        .map(|(id, v)| (id.clone(), count(Some(v))))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !self.book.rake_hand(tid, hand, &paid, now).is_empty() {
+                changed = true;
+            }
+        }
         // Chips people left with go back to their club balance.
         for d in list(res, "departed") {
             let id = d
@@ -613,7 +631,6 @@ impl ClubState {
             changed = true;
             out.chips(id);
         }
-        let state = res.get("state").cloned().unwrap_or(Value::Null);
         s.complete = truthy(state.get("complete"));
         s.hand_number = count(state.get("hand_number"));
         out.on_play = !s.complete;
@@ -879,6 +896,39 @@ mod tests {
         assert_eq!(c.book.balance("bob"), 970);
         assert!(c.seat_of("bob").is_none());
         assert_eq!(c.book.rathole_min("bob", T, 200), 70);
+    }
+
+    #[test]
+    fn a_hand_s_rake_is_booked_once_and_goes_with_whoever_leaves() {
+        let mut c = club(&["ann", "bob"], 0);
+        sit(&mut c, "ann", 100);
+        sit(&mut c, "bob", 100);
+        let mut s = Seating::default();
+        // Ann wins 36 of a 40 pot; the club takes 4, 2 from each.
+        let over = json!({"players": [player("ann", 0, 118), player("bob", 1, 78)],
+                          "state": {"complete": true, "hand_number": 1, "rake": {"ann": 2, "bob": 2}}});
+        let o = result(&mut c, &mut s, over.clone());
+        assert!(o.on_hand && o.save);
+        assert_eq!(
+            (seat(&c, "ann")["rake"].clone(), c.book.chips.reclaimed),
+            (json!(2), 4)
+        );
+        // The same result again isn't booked again.
+        result(&mut c, &mut s, over);
+        assert_eq!(c.book.chips.reclaimed, 4);
+        assert!(c.totals().conserved);
+        // The next hand, Bob leaves as it ends: his rake is booked first,
+        // then his session's goes in the ledger.
+        result(
+            &mut c,
+            &mut s,
+            json!({"players": [player("ann", 0, 126)], "departed": [{"client_id": "bob", "chips": 68}],
+                   "state": {"complete": true, "hand_number": 2, "rake": {"ann": 1, "bob": 1}}}),
+        );
+        assert_eq!(c.book.money.house(), 3);
+        assert_eq!(c.book.balance("bob"), 968);
+        assert!(c.totals().conserved, "{:?}", c.totals());
+        assert!(c.book.rake_adds_up());
     }
 
     #[test]

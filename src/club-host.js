@@ -248,8 +248,14 @@ export function createTableHost({
     }
     r.view = res.state;
     const {players, departed, refunds, playersIn, chipRequests} = res;
+    // What each player paid the club in the hand just over (#449), by id:
+    // the host's view has seats in order; who sits where is the players',
+    // or, for anyone who left with the hand's end, the last result's.
+    const idAt = seat => (players || []).find(p => p.seat === seat)?.client_id ?? r.seating.players.find(p => p.seat === seat)?.client_id;
+    const rake = {};
+    if (res.state.complete) (res.state.seats || []).forEach((s, i) => { if (s.rake > 0 && idAt(i)) rake[idAt(i)] = s.rake; });
     const step = seats(club(), r.seating, tid, 'result', {
-      res: {players, departed, refunds, playersIn, chipRequests, state: {complete: res.state.complete, hand_number: res.state.hand_number}},
+      res: {players, departed, refunds, playersIn, chipRequests, state: {complete: res.state.complete, hand_number: res.state.hand_number, rake}},
       holdMs,
     });
     if (step.onPlay) onPlay();
@@ -371,6 +377,8 @@ export function createTableHost({
       seats: t.seats, minBuyIn: min, maxBuyIn: max, sb: t.sb, bb: t.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0],
       game: t.game, turnMs: t.turnSecs * 1000, sitOutMs: (t.sitOutMins ?? 10) * 60_000,
       open: t.status === 'open', link: linkOk, idleMs, askMs, nextHandMs,
+      // Its rake or time (#449): ducy's engine takes it from each hand.
+      ...(t.charge ? {charge: t.charge} : {}),
     };
     let resumed = false;
     r.chain = (resume ? restore(t, r, config).catch(e => { console.warn(`table ${t.id}: not resumed:`, e); return false; }) : Promise.resolve(false))

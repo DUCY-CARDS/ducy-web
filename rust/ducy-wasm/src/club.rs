@@ -59,6 +59,9 @@ struct Config {
     bomb_every: u64,
     #[serde(default)]
     auto_deal: bool,
+    // A club table's rake or time (#449).
+    #[serde(default)]
+    charge: ducy_club::rules::Charge,
 }
 
 fn yes() -> bool {
@@ -108,7 +111,8 @@ pub struct ClubTable {
 #[wasm_bindgen]
 impl ClubTable {
     /// A new table `id`: `config` = {seats, minBuyIn, maxBuyIn, sb, bb, seed,
-    /// game, turnMs, sitOutMs, open, link, idleMs, askMs, nextHandMs}.
+    /// game, turnMs, sitOutMs, open, link, idleMs, askMs, nextHandMs,
+    /// charge} (`charge`: its rake or time, as the club keeps it).
     pub fn create(id: String, config: JsValue) -> Result<ClubTable, JsError> {
         let c: Config = serde_wasm_bindgen::from_value(config).map_err(err)?;
         let mut host = club_host(
@@ -120,6 +124,7 @@ impl ClubTable {
             c.seed,
             c.game.clone(),
             c.turn_ms,
+            c.charge.engine(),
         )?;
         host.set_sit_out_limit(c.sit_out_ms.unwrap_or(SIT_OUT_MS));
         Ok(ClubTable {

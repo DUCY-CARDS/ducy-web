@@ -93,7 +93,8 @@ export function handText(rec, frames = replayFrames(rec)) {
   }
   deal();
   lines.push('*** Summary ***');
-  lines.push(`Total pot ${c(rec.pot)}`);
+  // What the club took (#449): the pots' rake and everyone's time.
+  lines.push(`Total pot ${c(rec.pot)}${rec.rake ? ` | Rake ${c(rec.rake)}` : ''}`);
   const board = frames.at(-1).board;
   if (board?.length) lines.push(`Board [${board.join(' ')}]`);
   rec.seats.forEach((s, k) => {

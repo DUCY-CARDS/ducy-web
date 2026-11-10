@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "ducy"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "rand",
  "serde",
@@ -183,7 +183,7 @@ dependencies = [
 [[package]]
 name = "ducy-bots"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "ducy",
  "ducy-play",
@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "ducy-gto"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "ducy",
  "ducy-bots",
@@ -217,7 +217,7 @@ dependencies = [
 [[package]]
 name = "ducy-host"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "ducy",
  "ducy-play",
@@ -227,7 +227,7 @@ dependencies = [
 [[package]]
 name = "ducy-identity"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -254,7 +254,7 @@ dependencies = [
 [[package]]
 name = "ducy-play"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "ducy",
  "rand",
@@ -274,7 +274,7 @@ dependencies = [
 [[package]]
 name = "ducy-shuffle"
 version = "0.6.0"
-source = "git+https://github.com/allenpiscitello/ducy?rev=48480313337960c5533901db673d6505725ab952#48480313337960c5533901db673d6505725ab952"
+source = "git+https://github.com/allenpiscitello/ducy?rev=481066a12d88ef8b440549b979a0f4d953c530ae#481066a12d88ef8b440549b979a0f4d953c530ae"
 dependencies = [
  "curve25519-dalek",
  "ducy",
