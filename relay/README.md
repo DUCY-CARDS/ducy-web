@@ -100,6 +100,8 @@ runs the relay and could vouch for anyone.
 
 `src/worker.js` is a Worker with one Durable Object per room. The Workers free plan covers it.
 
+**ducy's judge** (`judge/`, #615) is a second Worker, `ducy-judge` (`ducy-judge-staging`, `ducy-judge-sandbox`). It scores club players' decisions after the flop with ducy's GTO models for the fair play check (`src/postflop.js`). The relay reaches its Durable Object `Judge` through the `JUDGE` binding, so the judge deploys first: the deploy workflows do that. It has no address of its own, keeps nothing, and fetches the models from the live site's `gto/`. Its wasm is `rust/ducy-judge`, built with `wasm-pack build --target web --out-dir pkg --no-typescript` and copied to `judge/wasm/`. Why a Durable Object: a plain Worker gets 10 ms of CPU per request on the free plan, and a Durable Object request gets 30 s. Scoring one hand takes about 1–3 s.
+
 **Automatically:** the live relay ships with the site in a release
 (`.github/workflows/deploy.yml`, "Deploy production", run by hand), after its
 tests pass. Every push to master deploys the staging relay. Both need two

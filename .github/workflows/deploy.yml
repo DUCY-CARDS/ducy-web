@@ -143,6 +143,25 @@ jobs:
           npm ci --prefix relay
           node --test test/relay-queue.test.mjs test/relay-club.test.mjs test/relay-admin.test.mjs test/admin-api.test.mjs test/registry.test.mjs test/club-room.test.mjs test/relay-reset.test.mjs test/stats.test.mjs
 
+      # ducy's judge (relay/judge/, #615): the relay binds to its Durable
+      # Object, so it goes first.
+      - name: Build the judge's WASM
+        run: |
+          cd rust/ducy-judge
+          wasm-pack build --target web --out-dir pkg --no-typescript
+          cd ../..
+          mkdir -p relay/judge/wasm
+          cp rust/ducy-judge/pkg/ducy_judge.js rust/ducy-judge/pkg/ducy_judge_bg.wasm relay/judge/wasm/
+
+      - name: Deploy the judge
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: relay/judge
+          wranglerVersion: "4"
+          command: deploy
+
       - name: Deploy the relay
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:

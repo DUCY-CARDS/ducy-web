@@ -13,6 +13,13 @@ class_name = "Room"
 name = "REGISTRY"
 class_name = "Registry"
 
+# ducy's judge (judge/, #615): the postflop fair play check's scoring, in a
+# Worker of its own, deployed first.
+[[durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+script_name = "ducy-judge"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
@@ -61,6 +68,11 @@ class_name = "Room"
 name = "REGISTRY"
 class_name = "Registry"
 
+[[env.staging.durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+script_name = "ducy-judge-staging"
+
 [env.staging.vars]
 ENVIRONMENT = "staging"
 ALLOWED_ORIGINS = "https://staging.ducy.cards"
@@ -83,6 +95,11 @@ class_name = "Room"
 [[env.sandbox.durable_objects.bindings]]
 name = "REGISTRY"
 class_name = "Registry"
+
+[[env.sandbox.durable_objects.bindings]]
+name = "JUDGE"
+class_name = "Judge"
+script_name = "ducy-judge-sandbox"
 
 [env.sandbox.vars]
 ENVIRONMENT = "sandbox"

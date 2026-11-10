@@ -21,6 +21,7 @@ export const SIGNALS = {
   near: 'Within 100 m', network: 'Same network', vpn: 'VPN', relay: 'Private relay', fake: 'Faked location',
   'gto-top': 'Top play', 'gto-off': 'Never-plays', 'gto-mix': 'Mixing', 'gto-sizes': 'Sizes',
   'gto-pace': 'Timing ratio', 'gto-even': 'Even timing', 'gto-away': 'Hidden tab', 'gto-jump': 'Jump',
+  'gto-post-top': 'Top play after flop', 'gto-post-off': 'Rare plays after flop', 'gto-post-loss': 'Loss after flop',
 };
 const UPPER = new Set(['folds', 'checks', 'dumps', 'partner']);
 const PROX = new Set(['near', 'network', 'vpn', 'relay', 'fake']);
@@ -52,6 +53,7 @@ export function strength(f) {
     const v = rate(f.after.top, f.after.n) - rate(f.before.top, f.before.n);
     return {value: v, text: `+${(100 * v).toFixed(1)} pts`};
   }
+  if (f.kind === 'gto-post-loss') return {value: f.bb ?? null, text: f.bb == null ? '—' : `${f.bb} bb/100`};
   const v = w ? rate(w.k, w.n) : null;
   return {value: v, text: pct(v)};
 }
@@ -62,7 +64,9 @@ export function numbers(f) {
   switch (f.kind) {
     case 'contest': return `${kn(w)}, ${int(f.expected)} expected`;
     case 'chips': return `${chipText(Math.abs(f.chips || 0))}`;
-    case 'gto-top': return `${kn(w)} · model ${pct(f.solver)} · club ${pct(f.club)}`;
+    case 'gto-top': case 'gto-post-top': return `${kn(w)} · model ${pct(f.solver)} · club ${pct(f.club)}`;
+    case 'gto-post-off': return `${kn(w)} · club ${pct(f.club)}`;
+    case 'gto-post-loss': return `${int(f.n)} valued · club ${f.club == null ? '—' : `${f.club} bb/100`}`;
     case 'gto-mix': return `${kn(w)} · model ${pct(f.solver)} · club ${pct(f.club)}`;
     case 'gto-off': case 'gto-sizes': case 'gto-away': return `${kn(w)} · club ${pct(f.club)}`;
     case 'gto-pace': return `${secs(f.hard)} / ${secs(f.clear)}${f.club ? ` · club ${secs(f.club.hard)} / ${secs(f.club.clear)}` : ''}`;
@@ -95,9 +99,10 @@ export function flagRows(clubs, code = '') {
 }
 
 // A player's numbers as the tables show them, from their summary line
-// (`a`: assist.js briefStats; `p`: hands with each seat flag).
+// (`a`: assist.js briefStats; `p`: hands with each seat flag; `pf`: after
+// the flop, postflop.js).
 export function playerNumbers(p) {
-  const a = p.a || {};
+  const a = p.a || {}, pf = p.pf || {};
   const paced = a.nClear >= 20 && a.nHard >= 20 && a.clear > 0;
   const evened = a.timed >= 40 && a.median > 0;
   return {
@@ -106,6 +111,8 @@ export function playerNumbers(p) {
     pace: paced ? r2(a.hard / a.clear) : null, even: evened ? r2(a.spread / a.median) : null,
     away: rate(a.away, a.awayKnown),
     vpn: p.p?.vpn ?? null, relay: p.p?.relay ?? null, fake: p.p?.fake ?? null,
+    pfN: pf.n ?? null, pfTop: rate(pf.top, pf.n), pfModel: rate(pf.exp, pf.n), pfOff: rate(pf.off, pf.n),
+    pfLoss: pf.valued ? Math.round((1000 * pf.lost) / pf.valued) / 10 : null,
   };
 }
 
@@ -226,9 +233,15 @@ const playerCols = t => [
   {key: 'pace', label: 'Timing ratio', num: true, cell: r => warnIf(r.pace != null && r.pace <= t.paceRatio, times(r.pace))},
   {key: 'even', label: 'Evenness', num: true, cell: r => warnIf(r.even != null && r.even <= t.evenSpread, times(r.even))},
   {key: 'away', label: 'Hidden tab', num: true, cell: r => warnIf(r.away != null && r.away >= t.awayRate, pct(r.away))},
+  // After the flop (#615).
+  {key: 'pfN', label: 'After flop', num: true, cell: r => int(r.pfN)},
+  {key: 'pfTop', label: 'Top play', num: true, cell: r => warnIf(r.pfTop != null && r.pfModel != null && r.pfTop >= r.pfModel - t.pfTopSlack, pct(r.pfTop))},
+  {key: 'pfModel', label: 'Model', num: true, cell: r => pct(r.pfModel)},
+  {key: 'pfOff', label: 'Rare plays', num: true, cell: r => warnIf(r.pfOff != null && r.pfOff <= t.pfOffRate, pct(r.pfOff))},
+  {key: 'pfLoss', label: 'Loss bb/100', num: true, cell: r => warnIf(r.pfLoss != null && r.pfLoss <= 100 * t.pfLossRate, r.pfLoss == null ? '—' : String(r.pfLoss))},
 ];
 
-const DEFAULT_T = {minDecisions: 300, topSlack: 0.02, offRate: 0.01, paceRatio: 1.2, evenSpread: 0.25, awayRate: 0.2, odds: 4, partnerOdds: 2.5};
+const DEFAULT_T = {minDecisions: 300, topSlack: 0.02, offRate: 0.01, paceRatio: 1.2, evenSpread: 0.25, awayRate: 0.2, odds: 4, partnerOdds: 2.5, pfTopSlack: 0.06, pfOffRate: 0.07, pfLossRate: 0.25};
 
 // The Fair play page from /admin/fair-play's answer `x`; `state`: {club
 // (a code, or '' for all), sort}.
