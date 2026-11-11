@@ -64,9 +64,15 @@ export async function openPlayerSettings() {
   pkChecked = false;
   if (me && supported() && relayUrl()) {
     prepare().catch(() => {});
-    // Drawn again only when there's something to add (a redraw would lose a
-    // file being chosen).
-    status(me.id).then(st => { if (!st.enrolled) { pkChecked = true; if (!idForm) render(); return; } pkEnrolled = true; if (session(me.id)) return showKeys(); render(); }).catch(() => {});
+    // Only the passkey rows are redrawn, so a file being chosen and an open
+    // backup or restore form survive (#650).
+    status(me.id).then(async st => {
+      if (st.enrolled) {
+        pkEnrolled = true;
+        if (session(me.id)) pkList = await list(me.id);
+      } else pkChecked = true;
+      drawPasskeys();
+    }).catch(() => {});
   }
 }
 
@@ -129,6 +135,16 @@ async function passkeyAct(act, id) {
 export async function restoreBackupFile(file) {
   await openPlayerSettings();
   await chooseBackup(file);
+}
+
+function pkRowsHtml() {
+  return passkeyRows({checked: pkChecked, enrolled: pkEnrolled, list: pkList, busy: pkBusy});
+}
+
+// Redraws just the passkey rows, leaving the rest of the dialog as it is.
+function drawPasskeys() {
+  const box = el && !el.hidden && el.querySelector('[data-ps-pk]');
+  if (box) box.innerHTML = pkRowsHtml();
 }
 
 function close() {
@@ -197,7 +213,7 @@ function render() {
   h += `<p class="ps-hint">${RESTORE_WARNING}</p>`;
   // Passkeys (#575): bring an account back with one; and, once unlocked,
   // this account's, each removable (a lost device).
-  if (supported()) h += passkeyRows({checked: pkChecked, enrolled: pkEnrolled, list: pkList, busy: pkBusy});
+  if (supported()) h += `<div class="ps-pk" data-ps-pk>${pkRowsHtml()}</div>`;
   // Notifications (#145): only if this browser has them.
   if ('Notification' in window) {
     const denied = Notification.permission === 'denied';

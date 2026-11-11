@@ -355,15 +355,22 @@ test.describe('a club member', () => {
     for (const c of await auth.credentials()) await againAuth.add(c);
     again.on('dialog', d => d.accept());
     // A page with the gear (the front page has none).
+    // The relay's passkey status answers only after a file is chosen (#650):
+    // its answer redraws just the passkey rows, keeping the restore form.
+    let answer;
+    const held = new Promise(r => { answer = r; });
+    await again.route('**/passkey/status', async route => { await held; await route.continue(); });
     await again.goto(`/?relay=${url}#join`);
     await again.locator('[data-pt=player]').first().click();
     // Once its player ID has loaded: the dialog draws again then.
     await expect(again.locator('#pset .pl-pid')).not.toHaveText('…');
-    // And once the relay has said this new ID has no passkey (#646): that
-    // redraws the dialog, which would drop a file being chosen.
-    await expect(again.locator('#pset [data-ps="pk-first"]')).toBeVisible();
     await again.locator('#pset input[data-ps="file"]').setInputFiles(file);
+    await expect(again.locator('#pset [data-psform="restore"]')).toBeVisible();
     await again.locator('#pset [name=pw]').fill(pw);
+    answer();
+    await expect(again.locator('#pset [data-ps="pk-first"]')).toBeVisible();
+    await expect(again.locator('#pset [name=pw]')).toHaveValue(pw);
+    await again.unroute('**/passkey/status');
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
     await again.waitForEvent('load');
     // Settled after the reload, so leaving doesn't cut a download short.

@@ -229,7 +229,7 @@ function clubsTile(clubs) {
 
 // What Play offers: a code to join, clubs and the bots.
 function playTiles(d) {
-  let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
+  let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Clubs</span></span>';
   // Enter a code (#393): a club's, or its invite link.
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button></form>';
   h += '<p class="v3-join-note" data-v3note role="status" hidden></p></div>';
