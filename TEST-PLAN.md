@@ -21,7 +21,7 @@ A major release is any of these:
 |---|---|---|
 | **Main** | `/`: the front page (Friends, your clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
 | **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: rake at cash tables, promotions, club services | No one in the beta; reachable by address only |
-| **Club manager** | `manage.html`: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
+| **Club manager** | club.ducy.cards (#637; staging: club-staging.ducy.cards), its own site; `manage.html` on a local page: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
 | **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
 
 `sim.html` isn't published (`scripts/build-site.sh` doesn't ship it).
@@ -41,7 +41,7 @@ A major release is any of these:
 - **Browser tests:** `npm ci --prefix e2e`, then `npx playwright test` in `e2e/`. `E2E_CHANNEL=chrome` uses an installed Chrome. They serve the repo and start the dev relay with `TRIALS=off`.
 - **Rust:** `scripts/rust-checks.sh`.
 
-**What the browser tests cover** (`e2e/play.spec.js` and `e2e/money.spec.js`, in Chromium and WebKit, desktop and 375 px; the club tests that need a passkey run in Chromium only):
+**What the browser tests cover** (`e2e/play.spec.js`, `e2e/money.spec.js` and `e2e/club-site.spec.js`, in Chromium and WebKit, desktop and 375 px; the club tests that need a passkey run in Chromium only):
 
 | Test | Part |
 |---|---|
@@ -64,6 +64,7 @@ A major release is any of these:
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
+| The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager; the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
 
@@ -112,6 +113,8 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | History and hand replays | `hand-replay.test` | no | C5 |
 | Agents: make one, their invite, their players' requests and chips | `club-agents.test` | join, give | C8 |
 | Demo clubs | `demo-club.test` | yes | C7 |
+| The club site: its build and deploy (open on live, password kept on staging and sandbox, skipped without a folder, the live deploy leaves it alone), each relay allowing it | `club-site.test` | – | C10 |
+| One passkey on both sites: the first visit's sign-in brings the same player ID, never a vouch there; club running and agents' commands only from a club site with a session made there | `sites.test`, `relay-club.test` | first visit | C10 |
 
 ### Beta extras
 
@@ -231,7 +234,7 @@ M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-be
 ## Manual: club manager
 
 **C1 Starting a club**
-1. Nothing in the player app or the club manager links to starting a club. Without a grant, `manage.html#clubs/new` (by address only) refuses to start a club and shows your ID.
+1. Nothing in the player app or the club manager links to starting a club. Without a grant, the club site's `#clubs/new` (by address only) refuses to start a club and shows your ID.
 2. Grant that ID on admin.ducy.cards (Staging → Clubs). Starting the club now works, and its owner is asked to prove a backup.
 
 **C2 Pages**
@@ -286,6 +289,15 @@ M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-be
 5. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
 6. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
 7. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first), and Your players shows each player's credit limit. The owner sees the line on the player's page but can't set or raise it. A player let in with a line isn't told to ask for chips. The player on credit counts against the agent's own limit, and their buy-in comes out of the float. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
+
+**C10 The club site** (#637; on staging, club-staging.ducy.cards, then live)
+1. Open club-staging.ducy.cards in a browser that has a player with a passkey on staging.ducy.cards: Sign in → Use your passkey brings the same player ID (Player settings shows it) and their clubs. No new ID was made.
+2. A passkey that has never unlocked a club on staging.ducy.cards since it was made, with no copy: the club site says to unlock once on staging.ducy.cards first, and moves nothing. After that unlock, signing in on the club site works.
+3. I'm new to ducy: a new player ID; Set up a passkey works; starting a club from a one-time link (#636) works there.
+4. As owner on the club site: give chips, set credit, refill the float. As an agent: give chips. Each works.
+5. On staging.ducy.cards, as the same player: no manager pages; the player app's manager links open the club site. A member's own chip ask works from staging.ducy.cards.
+6. A demo club on the club site: switching to a player and back works (its players' pages are `app.html`); `app.html` without a demo goes to staging.ducy.cards.
+7. At 375 px: the sign-in and the manager fit the screen.
 
 ## Manual: admin
 
