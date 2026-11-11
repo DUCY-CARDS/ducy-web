@@ -14,7 +14,8 @@ import { managerOnly, movesChips } from '../src/chip-moves.js';
 import { siteOk } from '../relay/src/unlock.js';
 import { passkeys, rpIdFor } from '../relay/src/passkeys.js';
 import { createIdentity, signMessage } from '../src/identity.js';
-import { softPasskey } from './relay-helper.mjs';
+import { relayClient, softPasskey } from './relay-helper.mjs';
+import { spawn } from 'node:child_process';
 
 const haveWasm = existsSync(fileURLToPath(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)));
 const at = (href) => { const u = new URL(href); return {hostname: u.hostname, hash: u.hash}; };
@@ -105,4 +106,50 @@ test('one passkey for every site: the same relying party, and each session keeps
   assert.equal(out.status, 400);
   assert.equal((await pk.status(ann.id)).enrolled, true, 'nothing moved');
   assert.equal((await pk.status(fresh.id)).enrolled, false);
+});
+
+test('the relay: a club is made and run from the club site only; a player joins from ducy.cards', {skip: !haveWasm && 'no wasm build'}, async t => {
+  const PORT = 21000 + Math.floor(Math.random() * 1000);
+  const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: {...process.env, ALLOWED_ORIGINS: 'https://ducy.cards,https://club.ducy.cards', CLUB_ORIGINS: 'https://club.ducy.cards'},
+  });
+  await new Promise(resolve => server.stdout.once('data', resolve));
+  t.after(() => server.kill());
+  const clubSite = relayClient(PORT, {origin: 'https://club.ducy.cards'});
+  const owner = await createIdentity(), ann = await createIdentity();
+  await clubSite.passkeyOf(owner);
+  const app = clubSite.as('https://ducy.cards');
+  const code = 'CDDC-STEW';
+
+  // Not from ducy.cards, even with the owner's key and passkey.
+  const wrong = app.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await wrong.ready;
+  wrong.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Wrong Door'}));
+  assert.deepEqual(await wrong.next('club_site'), {type: 'club_site', reason: 'Clubs are run on the club site.'});
+  wrong.ws.close();
+  await wrong.closed;
+
+  const o = clubSite.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Front Door'}));
+  const made = await o.next('club_created');
+
+  // Ann joins from ducy.cards: a player's message, so it goes through.
+  const a = app.open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a.ready;
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  assert.equal((await a.next('status')).body.status, 'pending');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1}));
+  assert.equal((await o.next('owner_result')).body.error, '');
+  assert.equal((await a.next('status')).body.status, 'member');
+  o.ws.close();
+  await o.closed;
+
+  // The owner's commands from ducy.cards are refused.
+  const o2 = app.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o2.ready;
+  o2.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'give', args: {id: ann.id, amount: 300}, id: 2}));
+  assert.equal((await o2.next('club_site')).type, 'club_site');
+  for (const c of [a, o2]) { c.ws.close(); await c.closed; }
 });

@@ -47,9 +47,12 @@ export async function softPasskey() {
 }
 
 // The dev relay on `port`: its passkey API, and player connections.
-export function relayClient(port) {
+// `origin` (#637): the page it acts as, for its requests, connections and
+// sign-ins; by default none, and sign-ins as a local page.
+export function relayClient(port, {origin = ''} = {}) {
+  const signAs = origin ? {origin, rpId: 'ducy.cards'} : {};
   const post = async (op, body) => {
-    const r = await fetch(`http://localhost:${port}/passkey/${op}`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body || {})});
+    const r = await fetch(`http://localhost:${port}/passkey/${op}`, {method: 'POST', headers: {'content-type': 'application/json', ...(origin ? {origin} : {})}, body: JSON.stringify(body || {})});
     return {status: r.status, body: await r.json()};
   };
   const challenge = async () => (await post('challenge')).body.challenge;
@@ -69,7 +72,7 @@ export function relayClient(port) {
   // of theirs).
   async function session(ident, p = null) {
     p ||= await passkeyOf(ident);
-    const r = await post('unlock', await p.sign(await challenge()));
+    const r = await post('unlock', await p.sign(await challenge(), signAs));
     if (r.status !== 200) throw new Error(r.body.error);
     return r.body.token;
   }
@@ -89,7 +92,7 @@ export function relayClient(port) {
   // passkey session (of `passkey`, when given); `ready` resolves once
   // that's done (or once open).
   function open(path, ident = null, {unlock = true, passkey = null} = {}) {
-    const ws = new WebSocket(`ws://localhost:${port}${path}`);
+    const ws = new WebSocket(`ws://localhost:${port}${path}`, origin ? {origin} : {});
     const inbox = [], waiting = [];
     let readyFn, failFn;
     const ready = new Promise((res, rej) => { readyFn = res; failFn = rej; });
@@ -118,5 +121,9 @@ export function relayClient(port) {
     return {ws, closed, closedWith, next, ready, send: obj => ws.send(JSON.stringify(obj))};
   }
 
-  return {post, challenge, passkeyOf, session, addPasskey, open};
+  // The same relay as a page on another origin, sharing these passkeys
+  // (one passkey for every ducy.cards site, #637).
+  const as = o => { const c = relayClient(port, {origin: o}); c.share(passkeysOf); return c; };
+  const share = m => { for (const [k, v] of m) passkeysOf.set(k, v); };
+  return {post, challenge, passkeyOf, session, addPasskey, open, as, share};
 }

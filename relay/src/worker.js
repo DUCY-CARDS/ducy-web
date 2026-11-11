@@ -65,7 +65,7 @@ import { serviceHttp, serviceInRoom } from './service-http.js';
 import { clubCodes, resetRefusal } from './reset.js';
 import { passkeys } from './passkeys.js';
 import { mustProve, newChallenge, proves } from './prove.js';
-import { check as unlockCheck, unlockedNow } from './unlock.js';
+import { CLUB_SITE_REPLY, check as unlockCheck, siteOk, unlockedNow } from './unlock.js';
 import { LIVE_STALE_MS, liveGames, stats } from './stats.js';
 import { cfAnalytics } from './cf-analytics.js';
 import { judgeVia } from './postflop.js';
@@ -284,7 +284,8 @@ async function route(req, env) {
     if (req.method !== 'POST' || !ok) return Response.json({error: 'forbidden'}, {status: 403, headers: cors});
     const raw = await req.text();
     if (raw.length > 32 * 1024) return Response.json({error: 'too big'}, {status: 413, headers: cors});
-    const res = await registryOf(env).fetch(`https://registry/passkey/${pko[1]}`, {method: 'POST', body: raw});
+    // The page's origin goes along (allowed above): a session keeps it (#637).
+    const res = await registryOf(env).fetch(`https://registry/passkey/${pko[1]}`, {method: 'POST', body: raw, headers: {'x-ducy-origin': origin || ''}});
     return new Response(res.body, {status: res.status, headers: {'content-type': 'application/json', ...cors}});
   }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
@@ -312,7 +313,8 @@ export class Registry {
     this.env = env;
     this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(env));
     // Passkeys (#575): pages on ALLOWED_ORIGINS only.
-    this.pk = passkeys({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {origins: (env.ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)});
+    // Club sites (#637): sessions keep where they were made, and no vouching there.
+    this.pk = passkeys({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {origins: originsOf(env.ALLOWED_ORIGINS), clubOrigins: originsOf(env.CLUB_ORIGINS)});
     // Usage counts (#601).
     this.stats = stats({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, {admins: ADMIN_IDS});
     // Each club's fair play summaries (#612).
@@ -350,7 +352,7 @@ export class Registry {
     const pko = path.match(/^\/passkey\/([a-z]+)$/);
     if (pko) {
       loadEngine();
-      const out = await this.pk.http(pko[1], body);
+      const out = await this.pk.http(pko[1], body, req.headers.get('x-ducy-origin') || '');
       return Response.json(out.body, {status: out.status});
     }
     if (path === '/passkey-session') return Response.json({session: await this.pk.session(String(body.token || ''), body.club || null)});
@@ -760,7 +762,8 @@ export class Room {
         const challenge = newChallenge();
         // The club keeps a hashed snapshot of the connection for ducy's
         // checks (#582): kept on the socket until it's proven.
-        server.serializeAttachment({proof: challenge, conn: connOf(req)});
+        // And its page's origin: only a club site runs a club (#637).
+        server.serializeAttachment({proof: challenge, conn: connOf(req), origin: req.headers.get('Origin') || ''});
         server.send(JSON.stringify({type: 'prove', challenge}));
       } else await this.arrived(server, id, connOf(req));
     } else {
@@ -948,6 +951,8 @@ export class Room {
         if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
         if (g.reply) ws.send(JSON.stringify(g.reply));
         if (!g.pass) return;
+        // Running a club only from a club site, with a session made there (#637).
+        if (!siteOk(m, g.u, a.origin, originsOf(this.env.CLUB_ORIGINS))) { ws.send(JSON.stringify(CLUB_SITE_REPLY)); return; }
         // Counted as active (#601), as well as on connecting: the player
         // who just made the club connected before it was one.
         if (club) this.notePlayer(id, c.code);
