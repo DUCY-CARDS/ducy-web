@@ -195,7 +195,7 @@ test('clubs: a grant shows its one-time link once; Wipe all clubs takes the envi
   await expect(page.getByText('Not used')).toBeVisible();
   await expect(page.getByRole('button', {name: 'New link'})).toBeVisible();
   await fits(page);
-  await page.screenshot({path: info.outputPath('grant.png'), fullPage: true});
+  await shot(page, 'grant', info);
   expect(sent.find(s => s.path === '/admin/grant').data).toEqual({id: 'id-new', note: 'Thursdays', limits: null});
 
   // Wipe: off until the environment's name is typed exactly.

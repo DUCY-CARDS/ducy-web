@@ -46,7 +46,8 @@ const test = base.extend({
 });
 // The sites here are https://…ducy.cards and a test's relay is on localhost:
 // Chromium would keep a public site from reaching it (local network access).
-test.use({launchOptions: {args: ['--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults']}});
+// (Chromium's switch only: WebKit won't start with it.)
+test.use({launchOptions: async ({browserName}, use) => use(browserName === 'chromium' ? {args: ['--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults']} : {})});
 
 const fitsTheScreen = async page => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
