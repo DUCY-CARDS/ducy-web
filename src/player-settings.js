@@ -18,6 +18,7 @@ import { cycleTablePref, setTableAvatar, setTableName, tableAvatar, tableName, t
 import { PLAYER_AVATARS, avatarUrl } from './avatars.js';
 import { keepHands, memberName, recoverWithPasskey, renameMember, setKeepHands, hasClubs } from './clubs.js';
 import { enrol, exportable, fresh, list, prepare, remove, session, status, supported, unlock } from './passkey.js';
+import { passkeyRows } from './passkey-rows.js';
 import { demo } from './demo.js';
 import { mutedList, setMuted } from './chat-mute.js';
 import { SPADE_PATH, hubData } from './home.js';
@@ -60,17 +61,20 @@ export async function openPlayerSettings() {
   // Passkeys (#575): a challenge ready for a prompt, and this account's.
   pkList = null;
   pkEnrolled = false;
+  pkChecked = false;
   if (me && supported() && relayUrl()) {
     prepare().catch(() => {});
     // Drawn again only when there's something to add (a redraw would lose a
     // file being chosen).
-    status(me.id).then(st => { if (!st.enrolled) return; pkEnrolled = true; if (session(me.id)) return showKeys(); render(); }).catch(() => {});
+    status(me.id).then(st => { if (!st.enrolled) { pkChecked = true; if (!idForm) render(); return; } pkEnrolled = true; if (session(me.id)) return showKeys(); render(); }).catch(() => {});
   }
 }
 
 // ---- passkeys (#575) ----
 
 let pkList = null, pkEnrolled = false, pkBusy = false;
+// Whether the relay has said this account has no passkey yet (#646).
+let pkChecked = false;
 
 async function showKeys() {
   pkList = await list(me.id);
@@ -94,6 +98,12 @@ async function passkeyAct(act, id) {
     } else if (act === 'show') {
       await unlock(me);
       await showKeys();
+    } else if (act === 'first') {
+      // The relay takes a first passkey without a session (#646).
+      await enrol(me, myName());
+      pkEnrolled = true;
+      await showKeys();
+      note = 'Passkey added.';
     } else if (act === 'add') {
       if (!fresh(me.id)) await unlock(me);
       await enrol(me, myName());
@@ -187,16 +197,7 @@ function render() {
   h += `<p class="ps-hint">${RESTORE_WARNING}</p>`;
   // Passkeys (#575): bring an account back with one; and, once unlocked,
   // this account's, each removable (a lost device).
-  if (supported() && !pkEnrolled) h += `<div class="ps-row"><span>Restore with a passkey</span><button type="button" class="ps-val" data-ps="pk-recover"${pkBusy ? ' disabled' : ''}>Sign in</button></div>`;
-  if (pkList) {
-    h += '<div class="ps-row"><span>Passkeys</span><button type="button" class="ps-val" data-ps="pk-add"' + (pkBusy ? ' disabled' : '') + '>Add</button></div><ul class="ps-keys">';
-    for (const c of pkList) {
-      h += `<li><span>${esc(c.name)}${c.current ? ' <span class="pl-meta">(this one)</span>' : ''}<span class="pl-meta"> · added ${esc(new Date(c.at).toLocaleDateString())}</span></span>`;
-      if (pkList.length > 1) h += `<button type="button" class="link-btn" data-ps="pk-remove" data-id="${esc(c.credId)}"${pkBusy ? ' disabled' : ''}>Remove</button>`;
-      h += '</li>';
-    }
-    h += '</ul>';
-  } else if (pkEnrolled) h += `<div class="ps-row"><span>Passkeys</span><button type="button" class="ps-val" data-ps="pk-show"${pkBusy ? ' disabled' : ''}>Unlock</button></div>`;
+  if (supported()) h += passkeyRows({checked: pkChecked, enrolled: pkEnrolled, list: pkList, busy: pkBusy});
   // Notifications (#145): only if this browser has them.
   if ('Notification' in window) {
     const denied = Notification.permission === 'denied';

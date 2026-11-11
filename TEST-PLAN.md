@@ -64,6 +64,7 @@ A major release is any of these:
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
+| A first passkey from You → Passkeys → Add, with no unlock (#646); it then lists as this one, and opening You again offers no first Add | Club manager |
 | The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager (Chromium; a browser without passkeys goes straight on); the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
@@ -227,6 +228,7 @@ M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-be
 5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open the You page → Restore with a passkey → Sign in. The same player ID comes back (compare it on the You page), with the same clubs and balances, and no new join request.
 6. Recovery without PRF: on a device whose passkey manager doesn't support PRF (iPhone before iOS 18, some third-party managers), do step 5. The device keeps its own player ID; the clubs list the member under it, with the same name and balance, and the owner's activity log says "Moved … to a new ID (ducy vouched)". Note which devices took which path.
 7. A second device's own passkey: on the recovered device, You → Passkeys → Add. Both passkeys list, with their device and date.
+7b. A first passkey from You (#646): with a player ID that has none (e.g. made before passkeys), You → Passkeys → Add. The device asks once, no unlock first; the passkey then lists as this one. Do it on ducy.cards and on club.ducy.cards after "I'm new to ducy".
 8. A lost device: from the other device, You → Passkeys → Remove the first one. On the first device, the next unlock is refused, and a club page it had open stops working within 5 minutes.
 9. Backups: with a passkey, You → Back up this device asks for the passkey before the file downloads, and the file restores (M7).
 10. Staging and live: a passkey made on staging.ducy.cards is offered on ducy.cards too (same `ducy.cards` relying party) but the live relay doesn't know it, so it's refused there: expected.

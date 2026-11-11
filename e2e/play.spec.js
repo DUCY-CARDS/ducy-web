@@ -331,6 +331,30 @@ async function authenticator(page, {prf = true} = {}) {
 }
 const needsPasskeys = browserName => test.skip(browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
 
+// A first passkey from You (#646): no unlock, since there's none to unlock
+// with; it then lists as this one.
+test('a first passkey is added from You', async ({page, watch, browserName}, info) => {
+  needsPasskeys(browserName);
+  const auth = await authenticator(page);
+  await watch(page).goto(`/?relay=${RELAY}`);
+  await page.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
+  const add = page.locator('[data-ps="pk-first"]');
+  await expect(add).toBeVisible();
+  await expect(page.locator('[data-ps="pk-recover"]')).toBeVisible();
+  await add.click();
+  await expect(page.getByText('Passkey added.')).toBeVisible();
+  await expect(page.locator('.ps-keys li')).toHaveCount(1);
+  await expect(page.locator('.ps-keys')).toContainText('(this one)');
+  await expect(page.locator('[data-ps="pk-first"], [data-ps="pk-recover"]')).toHaveCount(0);
+  expect(await auth.credentials()).toHaveLength(1);
+  await shotIn(browserName, info)(page.locator('.ps'), 'first-passkey.png');
+  await fitsTheScreen(page);
+  // Opened again: enrolled, so Unlock or the list, never a first Add.
+  await page.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
+  await expect(page.locator('[data-ps="pk-add"], [data-ps="pk-show"]')).toHaveCount(1);
+  await expect(page.locator('[data-ps="pk-first"]')).toHaveCount(0);
+});
+
 // Asking to join (#621): a name and who you are.
 async function askToJoin(page, name, intro = `${name}, a friend of the owner`) {
   await page.locator('form[data-joinform] input[name="name"]').fill(name);
