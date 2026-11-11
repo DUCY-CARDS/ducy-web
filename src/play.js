@@ -1,16 +1,12 @@
 // Playing in the Play section (play-section.js, #138): no-limit Hold'em or
-// pot-limit Omaha (4, 5 or 6 cards) against ducy's personality bots, a
-// friends table, or a club's table (clubs.js seats you through joinTableVia).
+// pot-limit Omaha (4, 5 or 6 cards) against ducy's personality bots, or a
+// club's table (clubs.js seats you through joinTableVia).
 // The engine (ducy-wasm's BotTable) runs the hand; this file only draws the
 // table, paces the bots' actions, and sends the player's decisions. The table
 // runs in a worker (play-worker.js) so the page stays responsive while a bot
 // thinks. Each finished hand also feeds the stats tracker (play-stats.js).
-// With friends (play-net.js), the host's tab runs the table (ducy's table
-// runner, as a club's tables run, #462) and relays each player their own
-// view; a guest's tab only draws the views it
-// receives and sends its actions to the host. A friends table has no bots:
-// seats stay empty until people join, and chips are real, handed out by the
-// host on request within the table's buy-in limits.
+// At a club's table the club runs the hand; this tab only draws the views it
+// receives and sends its actions.
 // Heads-up against the GTO bot is training: both players start every hand
 // with 100 BB, and in Hold'em each finished hand's decisions are reviewed
 // against the bot's strategy (play-review.js) in the background. PLO4, PLO5
@@ -20,26 +16,20 @@
 
 import { countHand, recordHand, rates, pct, afText, ADVERTISED, statsAtTable, withoutPeople } from './play-stats.js';
 import { emptyTotals, addReview, addTotals, per100, bbText, mixCost, mixRows, isYourPlay, isVariant, FLAGGED, GRADE_LABEL } from './play-review.js';
-import { clientId, connect, joinLink, newCode, relayUrl } from './play-net.js';
-import { checkSignature, loadIdentity, signMessage } from './identity.js';
-import { isPublicKey, newKeyPair, open as openBox, seal, sharedKey } from './e2e.js';
-import { dropTable, getTable, putTable } from './table-store.js';
+import { loadIdentity } from './identity.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
 import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
 import { returnUncalled, shownPots } from './pots.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
-import { defaultSeats, maxSeats, stayText } from './club-tables.js';
-import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from './table-chat.js';
+import { stayText } from './club-tables.js';
+import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat } from './table-chat.js';
 import { isMuted, onMuteChange, readMuted, setMuted } from './chat-mute.js';
-import { fairPlayer } from './fair-check.js';
 import { readSeatFlags, seatMarks } from './club-fair-play.js';
 import { handMoments, lineFor, replyMoment, speaks } from './bot-chat.js';
 import { LEAVE_CHANCE, REGULARS_SEATS, betweenHands, pickRegulars, startBank } from './regulars.js';
 import { nextBigBlind } from './leave-bb.js';
-import { atTable, cashOut, cashStandings, give, handBack, newLedger, standingsCsv } from './oneoff-standings.js';
-import { download, fileName, standingsHtml } from './oneoff-standings-ui.js';
 import {
   checkMilestones, clockText as questClock, gameMinutes, leave as questLeave, loadQuest, newQuest, newRun, recordHand as questRecordHand,
   saveQuest, setStack as questSetStack, sitDown as questSitDown, syncClock, topUp as questTopUp,
@@ -131,11 +121,6 @@ const GAMES = [
   {id: 'plo4-bomb', label: 'Bomb pot', name: 'Omaha bomb pot · two boards', cards: 4, pl: true, bomb: true, sb: 200, bb: 500, buyIn: 50000},
 ];
 const gameOf = id => GAMES.find(g => g.id === id) || GAMES[0];
-// A friends table: its name, game, blinds, seats in all (the host's
-// included) and the buy-in limits in big blinds (min and max, in chips, are
-// minBB × bb and maxBB × bb). Chips are hundredths (chip-format.js): 100/200
-// shows as 1/2.
-const FRIENDS_DEFAULT = {title: '', game: 'nlhe', sb: 100, bb: 200, seats: 9, minBB: 50, maxBB: 200, bomb: false, bombEvery: 25};
 // Bomb pots every few hands (an option at any table): everyone antes a big
 // blind, no preflop betting, two boards. Every 25 hands unless changed.
 const BOMB_EVERY = 25;
@@ -148,10 +133,7 @@ function bombField(on, every, attr, id) {
   if (on) h += `<div class="sg-nums"><label class="pf-num">Every <input class="pl-text" type="number" id="${id}" min="2" max="1000" step="1" value="${every}"> hands</label></div><p class="pl-desc">Everyone antes a big blind, there’s no preflop betting, and two boards are dealt.</p>`;
   return h + '</div>';
 }
-const TABLE_SIZES = [2, 3, 4, 5, 6, 7, 8, 9];
-const FRIENDS_BLINDS = [[100, 200], [200, 500], [500, 1000], [2500, 5000]];
 const BOT_BLINDS = [[100, 200], [500, 1000], [2500, 5000]];
-const MAX_CHIPS = 1e11;
 // An amount from the engine, for the screen: cash chips divided by 100,
 // tournament chips whole (wholeChips, set for a club tournament's tables).
 let wholeChips = false;
@@ -206,8 +188,6 @@ let gto6Available = false;
 let gto6Ready = false;
 const GTO_IDS = [GTO.id, GTO6.id, ...Object.values(GTO_PLOS).map(p => p.bot.id)];
 let setupNote = '';
-// The code a private game's setup shows, and its table opens with (#566).
-let nextCode = '';
 let seated = false; // a table is in play
 let botToAct = false;
 let busy = false; // a request to the table is in flight
@@ -270,14 +250,11 @@ let liveOpen = new Set();
 let sessionReview = emptyTotals();
 let allReview = loadReviewTotals();
 let statsSort = {key: 'seat', dir: 1};
-// Multiplayer: 'solo' against bots, 'host' running a table for friends, or
-// 'guest' at someone else's table.
+// 'solo' against bots, or 'guest' at a club's table.
 let mode = 'solo';
-let net = null; // relay connection
-let statHand = ''; // `${session}:${hand}` last counted at the relay (#601)
-let room = ''; // table code
-// A friends table's name (#152): the host's, sent to each player.
-let hostTitle = '';
+let net = null; // the club table's connection
+let room = ''; // the table's label
+// The table's name, as the club sends it.
 let tableTitle = '';
 let netNote = ''; // connection status, e.g. "Reconnecting…"
 let noteUntil = 0; // keep netNote on screen until then (a refused chip request)
@@ -295,36 +272,24 @@ let turnEnds = 0; // when the acting person's time runs out (Date.now() ms)
 const HURRY_MS = 5000;
 let soundTurn = '';
 let hurried = 0;
-// A hosted table's clock stops while the host can't reach the relay or none
-// of the people seated is connected, so an outage doesn't fold everyone:
-// no turn runs out and no hand is dealt until someone is back (the table
-// runner's, #462).
-let linkOk = false;
-const guestsOnline = new Set();
-let guestsSeated = [];
-let clockStopped = 0; // when the clock stopped (Date.now() ms), or 0
-let openSeats = 0;
-// The host's side of a friends table: who's in, chip requests, limits.
-let hostInfo = {playersIn: 0, chipRequests: [], buyIn: null, hostPendingChips: 0};
-// A guest's chips at a friends table: {min, max, requested, approved}.
+// Your chips at a club table: {min, max, requested, approved}.
 let myChips = null;
-// A guest's own seat (#70): {sitting_out, waiting_for_big_blind, missed_small_blind,
-// missed_big_blind, outEnds}, from the host's updates.
+// Your own seat at a club table (#70): {sitting_out, waiting_for_big_blind,
+// missed_small_blind, missed_big_blind, outEnds}, from the club's updates.
 let mySeat = null;
-let chipAsk = 0; // the amount in a guest's request box
-// Your answer to running it twice, at a bot table or as the host: {hand, yes}.
-// (A guest's comes back from the host in its seat status.)
+let chipAsk = 0; // the amount in the Add chips box
+// Your answer to running it twice at a bot table: {hand, yes}. (At a club
+// table it comes back from the club in your seat status.)
 let myRunAnswer = null;
-let lastView = null; // a guest's last view from the host
+let lastView = null; // the last view from the club table
 let errView = null; // the tab netNote is about, after leaving a table
 // This browser's player identity for clubs (identity.js), loaded on open.
 let me = null;
-// Chat at a friends table (table-chat.js): the messages on screen, how many
-// came in while the chat was hidden, and flood control (the host's for
-// everyone, and your own; made at a table, once the wasm is loaded).
+// Chat at a bot table (table-chat.js): the messages on screen, how many came
+// in while the chat was hidden, and flood control (made at a table, once
+// the wasm is loaded).
 let chat = [];
 let chatUnread = 0;
-let chatLimit = null;
 let myChatLimit = null;
 let chatNote = '';
 // Muting (#616): the chat line whose name was tapped, the seat (as this view
@@ -335,7 +300,7 @@ let muteVersion = 0;
 let chatShownKey = '';
 
 function defaultSetup() {
-  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 40000, buyInV: 2, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY, friends: {...FRIENDS_DEFAULT}};
+  return {game: 'nlhe', count: 5, bots: [], sb: 100, bb: 200, buyIn: 40000, buyInV: 2, chips: 'cents', hud: true, statsScope: 'session', sounds: true, gameSounds: true, autoDeal: true, gtoAutoDeal: false, autoDealV: 2, dealSecs: 1, name: '', avatar: '', turnSecs: 30, review: true, live: false, runTwice: 'ask', chat: true, bomb: false, bombEvery: BOMB_EVERY};
 }
 
 // Running it twice: ask each time, or always answer twice or once. Asking
@@ -377,7 +342,7 @@ function loadSetup() {
     if (s && Array.isArray(s.bots)) {
       // Saved before chips were hundredths: its blinds and buy-in would show
       // a hundred times too small, so they start over.
-      if (s.chips !== 'cents') { delete s.sb; delete s.bb; delete s.buyIn; delete s.friends; }
+      if (s.chips !== 'cents') { delete s.sb; delete s.bb; delete s.buyIn; }
       // Saved before auto-deal was on by default (and off at GTO tables).
       if (s.autoDealV !== 2) { delete s.autoDeal; delete s.gtoAutoDeal; }
       // Saved when the default buy-in was 100 BB: it's 200 BB now. A buy-in
@@ -386,7 +351,7 @@ function loadSetup() {
         if (s.bb && s.buyIn === 100 * s.bb) s.buyIn = 200 * s.bb;
         s.buyInV = 2;
       }
-      return {...defaultSetup(), ...s, friends: {...FRIENDS_DEFAULT, ...(s.friends || {})}};
+      return {...defaultSetup(), ...s};
     }
   } catch {}
   return defaultSetup();
@@ -470,9 +435,8 @@ function fillBots() {
 }
 
 // This module's part of each Play tab (play-section.js, #138):
-//   'play'  the bots, and a friends table you can resume
+//   'play'  the bots
 //   'ladder' the heads-up ladder (#212), and its games
-//   'host'  start a friends table (a temporary game)
 //   'join'  only why joining a table didn't work (the form is the section's)
 //   'clubs' nothing
 // Seated at any table, the Play tab shows it.
@@ -480,25 +444,14 @@ let view = 'play';
 
 function renderSetup() {
   let h = '';
-  // A one-off cash game just over (#403): its final standings come first.
-  const err = (netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '') + (['play', 'host', 'join'].includes(view) ? finalStandingsHtml() : '');
-  if (view === 'play') h = err + resumeHtml() + botsSetupHtml();
+  const err = netNote ? `<p class="pl-desc pl-neterr">${esc(netNote)}</p>` : '';
+  if (view === 'play') h = err + botsSetupHtml();
   else if (view === 'ladder') h = err + ladderHtml();
-  // Start a game (Play, #209): a table for friends.
-  else if (view === 'host') h = err + resumeHtml() + (relayUrl() ? friendsSetupHtml() : '<p class="pl-meta">Games with friends need ducy’s relay, which isn’t set up here.</p>');
   else if (view === 'join') h = err;
   // Bankroll quest (#299, #303): its lobby.
   else if (view === 'quest') h = err + questLobbyPage();
   root.hidden = !h;
   root.innerHTML = h ? `<div class="pl-wrap">${h}</div>` : '';
-}
-
-// A friends table this browser hosted that stopped mid-hand (#117).
-function resumeHtml() {
-  if (!savedTable || mode === 'host') return '';
-  const ago = Math.max(1, Math.round((Date.now() - savedTable.at) / 60_000));
-  let h = `<section class="cl-card pl-resume"><h2>Your game ${esc(savedTable.room)}</h2><p>It stopped ${ago < 60 ? `${ago} min` : `${Math.round(ago / 60)} h`} ago with a hand in progress. Resume it, and players rejoin with the same code.</p>`;
-  return h + '<div class="pl-actions"><button class="tr-start" data-act="resumehost">Resume game</button><button class="btn-small" data-act="forgethost">Discard</button></div></section>';
 }
 
 function optsRow(label, items) {
@@ -512,7 +465,7 @@ const optBtn = (on, attr, value, text) => `<button class="cc-btn${on ? ' on' : '
 // bot) is the advanced option, folded away whenever you arrive.
 function botsSetupHtml() {
   fillBots();
-  // V3 (#225): Start a game's cream form, with the game and Sit down up
+  // V3 (#225): the cream form, with the game and Sit down up
   // front and choosing opponents folded away.
   let h = '<div class="pl-head"><h1>Play the Regulars</h1></div>';
   h += '<div class="pl-setup sg-form rg-form">';
@@ -808,87 +761,6 @@ function ladderOverHtml() {
   return {status: `<span class="pl-result ld-over ${o.won ? 'won' : 'lost'}">${text}</span>`, button: `<button class="tr-start" data-act="ladder-next">${label}</button>`};
 }
 
-// A table for friends (#152), on one form since V3 (#225): your name the
-// first time, the game, blinds (presets or any values), seats, buy-in and
-// an optional name. No bots; seats stay empty until people join, and everyone
-// asks the host for chips within the buy-in. Turns use the default time.
-let fstep = 1;
-let fnote = '';
-const FRIENDS_TURN_SECS = 30;
-
-// A one-off tournament (#394): private-tourney-room.js draws its form and,
-// while there is one, its page on Start a game, takes its clicks first, and
-// takes over a join whose code turns out to be a tournament's. `page` =
-// {active(), html(), setupHtml(lead), click(e), change(e), join({code, name,
-// hostId})}. Returns a redraw.
-let tourneyPage = null;
-export function setTourneyPage(page) {
-  tourneyPage = page;
-  return () => render();
-}
-
-// V3 (#225): everything on one form, with the invite panel beside it.
-function friendsSetupHtml() {
-  const f = setup.friends;
-  const chip = (on, attr, value, text) => `<button type="button" class="sg-chip${on ? ' on' : ''}" ${attr}="${value}" aria-pressed="${on}">${text}</button>`;
-  const field = (label, body) => `<div class="sg-field"><span class="sg-label">${label}</span>${body}</div>`;
-  let h = '<div class="pl-head"><h1>Start a private game</h1></div>';
-  // Your name, the first time; after that it's in Player settings (#144).
-  let lead = setup.name ? '' : field('Your name', '<input class="pl-text" id="pl-name" maxlength="20" placeholder="What others see">');
-  // A cash game, or a one-off tournament (#394), whose form is its own.
-  const tourney = f.kind === 'tourney' && !!tourneyPage;
-  if (tourneyPage) lead += field('Kind', `<div class="sg-chips">${chip(!tourney, 'data-fkind', 'cash', 'Cash game')}${chip(tourney, 'data-fkind', 'tourney', 'Tournament')}</div>`);
-  if (tourney) return h + tourneyPage.setupHtml(lead);
-  h += '<div class="sg-wrap"><div class="sg-form">' + lead;
-  h += field('Game',`<div class="sg-chips">${GAMES.filter(g => !g.bomb).map(g => chip(f.game === g.id, 'data-fgame', g.id, g.id === 'nlhe' ? 'Hold’em' : `Omaha ${g.cards}`)).join('')}</div>`);
-  const preset = FRIENDS_BLINDS.find(([sb, bb]) => sb === f.sb && bb === f.bb);
-  let blinds = `<div class="sg-chips">${FRIENDS_BLINDS.map(([sb, bb]) => chip(preset?.[1] === bb && !f.customBlinds, 'data-fblinds', `${sb}/${bb}`, `${chipText(sb)}/${chipText(bb)}`)).join('')}${chip(!preset || !!f.customBlinds, 'data-fblinds', 'custom', 'Custom')}</div>`;
-  if (!preset || f.customBlinds) {
-    blinds += `<div class="sg-nums"><label class="pf-num">Small <input class="pl-text" type="number" id="pf-sb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.sb)}"></label>`;
-    blinds += `<label class="pf-num">Big <input class="pl-text" type="number" id="pf-bb" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.bb)}"></label></div>`;
-  }
-  h += field('Blinds', blinds);
-  // No more seats than the game can deal to (PLO6: 6).
-  h += field('Seats', `<div class="sg-chips">${TABLE_SIZES.filter(n => n <= maxSeats(f.game)).map(n => chip(f.seats === n, 'data-fseats', n, n)).join('')}</div>`);
-  h += field('Buy-in', `<div class="sg-nums"><label class="pf-num">Min <input class="pl-text" type="number" id="pf-min" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.minBB * f.bb)}"></label><label class="pf-num">Max <input class="pl-text" type="number" id="pf-max" min="0.01" step="${CHIP_STEP}" value="${chipInput(f.maxBB * f.bb)}"></label></div>`);
-  h += bombField(!!f.bomb, bombEvery(f.bombEvery), 'data-fbomb', 'pf-bombevery');
-  h += field('Name it', `<input class="pl-text" id="pf-title" maxlength="40" placeholder="${esc(setup.name ? `${setup.name}’s game` : 'Friday night poker')}" value="${esc(f.title)}">`);
-  if (fnote) h += `<p class="pl-desc pl-neterr">${esc(fnote)}</p>`;
-  h += '<button class="tr-start sg-open" data-act="host">Open the table</button></div>';
-  // The table's code and link, ready to share (#566); they work once the
-  // table is open. The link is to this site (staging's, on staging).
-  const code = (nextCode ||= newCode());
-  h += '<aside class="sg-invite"><span class="sg-invite-title">Invite your friends</span>';
-  h += `<div class="sg-code">${esc(code)}</div><p class="sg-note">They enter it on Play, or open the link, once the table is open.</p>`;
-  h += `<p class="pl-meta sg-link">${esc(joinLink(code, me?.id))}</p><div class="pl-actions"><button class="btn-small primary" data-act="copy-setup">${setupCopied ? 'Copied' : 'Copy link'}</button></div></aside></div>`;
-  return h;
-}
-
-// Reads the step's fields into the setup; returns what's wrong, if anything.
-function readFriendsStep() {
-  const f = setup.friends;
-  const val = id => root.querySelector('#' + id);
-  readNameInput();
-  if (val('pf-title')) f.title = val('pf-title').value.trim().slice(0, 40);
-  if (val('pf-bombevery')) f.bombEvery = bombEvery(val('pf-bombevery').value);
-  if (!setup.name) return 'Enter your name: it’s what the others see.';
-  if (val('pf-sb')) {
-    const sb = parseChips(val('pf-sb').value), bb = parseChips(val('pf-bb').value);
-    if (!(sb >= 1 && bb >= sb && bb <= MAX_CHIPS)) return 'Blinds are amounts like 1 or 0.25: a small blind of at least 0.01, and a big blind at least that.';
-    f.sb = sb;
-    f.bb = bb;
-  }
-  if (val('pf-min')) {
-    const min = parseChips(val('pf-min').value), max = parseChips(val('pf-max').value);
-    if (!(min >= f.bb)) return `The minimum buy-in must be at least the big blind (${chipText(f.bb)}).`;
-    if (!(max >= min && max <= MAX_CHIPS)) return 'The maximum buy-in must be at least the minimum.';
-    f.minBB = min / f.bb;
-    f.maxBB = max / f.bb;
-  }
-  saveSetup();
-  return '';
-}
-
 // ---- table ----
 
 // Sends one request to the table and returns its {state, botToAct}, or null
@@ -898,7 +770,7 @@ async function request(op, ...args) {
   busy = true;
   const mine = session;
   try {
-    const snap = await (mode === 'host' ? hostRequest(op, ...args) : call(op, ...args));
+    const snap = await call(op, ...args);
     return mine === session ? snap : null;
   } catch (e) {
     console.warn(e);
@@ -1049,7 +921,7 @@ function show(snap) {
     // A newer state is already on screen (results can arrive out of order).
     if (snap.seq < shownSeq) { pace(); return; }
     shownSeq = snap.seq;
-    turnEnds = snap.turnMsLeft != null ? (clockStopped || Date.now()) + num(snap.turnMsLeft) : 0;
+    turnEnds = snap.turnMsLeft != null ? Date.now() + num(snap.turnMsLeft) : 0;
   }
   // The Bankroll Challenge's generic players show their own names, not
   // their family's (a style is for you to read).
@@ -1071,10 +943,8 @@ function show(snap) {
   ladderKeep(state);
   ladderOfferCheck();
   regularsCheck();
-  // The host ended the game during a hand (#403): now it's over.
-  if (mode === 'host' && endAfterHand && betweenHandsNow(state)) { endGame(); return; }
   if (armRunChoice()) return;
-  // A club or friends table deals on its own: leave as soon as the hand
+  // A club table deals on its own: leave as soon as the hand
   // before your big blind is over.
   if (mode === 'guest' && leaveIfBigBlind()) return;
   if (state.complete || state.seats[0].folded) foldQueued = false;
@@ -1109,11 +979,10 @@ function togglePrefold() {
   render();
 }
 
-// "Leave before my big blind" (leave-bb.js): at bot tables and club or
-// friends tables you're dealt in at. Not for a host (leaving ends the table
-// for everyone) or a heads-up challenge game.
+// "Leave before my big blind" (leave-bb.js): at bot tables and club tables
+// you're dealt in at. Not for a heads-up challenge game.
 function canLeaveAtBB() {
-  return !!state && seated && !watching && !ladder && mode !== 'host' && !state.seats[0]?.sitting_out;
+  return !!state && seated && !watching && !ladder && !state.seats[0]?.sitting_out;
 }
 
 // Whether the next hand would make you the big blind.
@@ -1938,17 +1807,7 @@ async function sitDown({bots, game, buyIn, sb, bb, gto, stacks = null, regs = fa
 }
 
 async function nextHand() {
-  if (mode === 'guest') return; // the host deals
-  // A friends table: its runner deals, from the next fair-deal round.
-  if (mode === 'host') {
-    if (hostInfo.playersIn < 2) return; // no one to deal to
-    cancelDeal();
-    raiseTo = 0;
-    foldQueued = false;
-    holds.delete('user');
-    hostRun({type: 'deal'});
-    return;
-  }
+  if (mode === 'guest') return; // the club deals
   // A ladder game that's over deals no more (ladder-next goes on), and one
   // waits for your answer to raising the stakes.
   if (ladder?.over || ladder?.offer) return;
@@ -1991,8 +1850,7 @@ function cancelDeal() {
 // auto-deal is on, and nothing is pausing it; otherwise cancels it.
 function armDeal() {
   cancelDeal();
-  if (mode === 'host') { hostCountdown(); return; }
-  // A hosted table waits for the host's first deal; guests never deal.
+  // A club table deals on its own.
   if (!open || !seated || !state || !state.complete || !autoDealOn() || holds.size || mode === 'guest' || !num(state.hand_number) || ladder?.over || ladder?.offer) { syncDeal(); return; }
   dealAt = performance.now() + 1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1);
   const mine = session;
@@ -2055,8 +1913,7 @@ setInterval(() => {
 async function pace() {
   clearTimeout(timer);
   paceAt = performance.now();
-  // A friends table's runner moves for anyone away.
-  if (!open || !seated || !botToAct || mode === 'host') return;
+  if (!open || !seated || !botToAct) return;
   if (busy) { timer = setTimeout(pace, 150); return; }
   const started = performance.now();
   const mine = session;
@@ -2096,87 +1953,10 @@ async function act(kind, amount = 0) {
   return true;
 }
 
-// ---- multiplayer ----
-
-// ---- encrypted updates at a friends table (e2e.js) ----
-// The relay forwards everything, so every update to a guest (which has
-// their hole cards) is encrypted with a key only the host and that guest
-// share. The host signs its key with its player identity and the invite
-// link names the host (?host=ID), so a guest can tell the relay didn't swap
-// it; a guest who typed the code instead trusts the first host key it gets.
-let e2eHost = null; // host: {keys, guests: Map(client → {key, sends, inbox})}
-let e2eGuest = null; // guest: {keys, aes, aesFor, hostId, inbox}
-
-const e2eContext = (client, hostPub, guestPub) => ({context: `table:${room}`, hostId: '', playerId: client, hostPub, playerPub: guestPub});
-
-function hostGuest(client) {
-  let g = e2eHost.guests.get(client);
-  if (!g) e2eHost.guests.set(client, (g = {key: null, sends: Promise.resolve(), inbox: Promise.resolve()}));
-  return g;
-}
-
-// The host's signed key, for a guest who just connected.
-async function sendHostKey(client) {
-  const key = (await e2eHost.keys).pub;
-  const body = {type: 'host_key', table: room, key};
-  net?.send({to: client, data: me ? await signMessage(me, body) : body});
-}
-
-// A message from guest `client`, in the order it arrived: their key first
-// (derive the shared key), then their commands for the table.
-function hostIncoming(client, data) {
-  const g = hostGuest(client);
-  g.inbox = g.inbox.then(async () => {
-    if (data?.type === 'e2e_key') {
-      if (!isPublicKey(data.key)) return;
-      const hk = await e2eHost.keys;
-      g.key = await sharedKey(hk, data.key, e2eContext(client, hk.pub, data.key));
-      // The game's name, now that it can go encrypted (#152).
-      if (hostTitle) sendToGuest(client, {type: 'table', name: hostTitle});
-      return;
-    }
-    // Chat never reaches the table engine (table-chat.js).
-    if (data?.type === 'chat') { await hostChat(client, g, data); return; }
-    // The name a guest joined with is the one on their chat lines.
-    if (data?.type === 'join') g.name = chatName(data.name);
-    hostRun({type: 'cmd', id: client, cmd: data, online: guestsOnline.has(client)});
-  }).catch(e => console.warn(e));
-}
-
-// A guest's chat message: opened with their key, checked, and sent on to
-// everyone with their name on it. Only someone who has joined can chat, and
-// only a few messages at a time.
-async function hostChat(client, g, data) {
-  if (!g.key || !g.name || !data.enc) return;
-  let body;
-  try { body = await openBox(g.key, data.enc); } catch { return; }
-  const text = cleanChat(body?.text);
-  if (!text || !chatLimit?.allow(client)) return;
-  const pid = await guestPid(g, body.who);
-  const seat = guestsSeated.find(p => p.client_id === client)?.seat;
-  postChat({from: g.name, text, at: Date.now(), ...(pid ? {pid} : {}), ...(Number.isInteger(seat) ? {seat} : {})});
-}
-
-// The player ID on a guest's chat lines (#616), so others can mute them by
-// it: from their signed {type: 'chat_id', table} with each message, checked
-// once. '' without a good one (their lines can't be muted).
-async function guestPid(g, who) {
-  if (!who || typeof who !== 'object') return '';
-  if (g.whoSig && g.whoSig === who.sig) return g.pid;
-  const ok = !(await checkSignature(who)) && who.body?.type === 'chat_id' && who.body?.table === room;
-  g.whoSig = who.sig;
-  g.pid = ok ? String(who.from) : '';
-  return g.pid;
-}
+// ---- chat at a bot table (table-chat.js) ----
 
 // Your own chat lines' ID and seat (the table's seat number).
 const myChatTag = () => ({...(me?.id ? {pid: me.id} : {}), seat: num(state?.seat)});
-
-// The host posts a chat line: on its own screen, and to every guest.
-function postChat(msg) {
-  addChatLine(msg);
-  for (const [to, g] of e2eHost?.guests || []) if (g.key) sendToGuest(to, {type: 'chat', ...msg});
-}
 
 function addChatLine(msg) {
   chat = addChat(chat, msg);
@@ -2184,37 +1964,21 @@ function addChatLine(msg) {
   syncChat();
 }
 
-// Sends what's typed in the chat box.
-async function sendChat() {
+// Sends what's typed in the chat box: it stays here, and a bot may answer.
+function sendChat() {
   const box = chatEl?.querySelector('input');
   const text = cleanChat(box?.value);
   if (!text) return;
   if (!myChatLimit?.allow('me')) { chatNote = 'Slow down a little: a few messages at a time.'; syncChat(); return; }
   chatNote = '';
-  if (mode === 'host') {
-    box.value = '';
-    postChat({from: chatName(setup.name), text, at: Date.now(), ...myChatTag()});
-    return;
-  }
-  // At a bot table it stays here, and a bot may answer.
-  if (mode === 'solo') {
-    box.value = '';
-    addChatLine({from: chatName(setup.name || 'You'), text, at: Date.now(), ...myChatTag()});
-    botChatReply(text);
-    return;
-  }
-  // A guest's goes to the host, which sends it back to everyone, us too.
-  if (!e2eGuest?.aes) { chatNote = 'Not connected to the table yet.'; syncChat(); return; }
+  if (mode !== 'solo') return;
   box.value = '';
-  // Signed once a table: the host puts our player ID on the line (#616).
-  if (me && !e2eGuest.who) e2eGuest.who = await signMessage(me, {type: 'chat_id', table: room});
-  net?.send({type: 'chat', enc: await seal(e2eGuest.aes, {text, ...(e2eGuest.who ? {who: e2eGuest.who} : {})})});
-  syncChat();
+  addChatLine({from: chatName(setup.name || 'You'), text, at: Date.now(), ...myChatTag()});
+  botChatReply(text);
 }
 
-// Chat is for friends tables (the host and players who joined with the code),
-// and bot tables, where the bots talk (bot-chat.js).
-const chatTable = () => mode === 'host' || (mode === 'guest' && joinedByCode && !watching) || (mode === 'solo' && botChatOn());
+// Chat is for bot tables, where the bots talk (bot-chat.js).
+const chatTable = () => mode === 'solo' && botChatOn();
 
 // Bot talk (bot-chat.js): what each bot seat is saying (shown over the seat
 // for SAY_MS, and in the chat), the hand each last spoke after, and the last
@@ -2297,9 +2061,7 @@ function resetChat() {
   mutePop = -1;
   chatUnread = 0;
   chatNote = '';
-  chatLimit?.free();
   myChatLimit?.free();
-  chatLimit = chatLimiter();
   myChatLimit = chatLimiter();
   const box = chatEl?.querySelector('input');
   if (box) box.value = '';
@@ -2406,492 +2168,11 @@ function mutePopHtml(i) {
   return `<div class="pl-fpop pl-mpop"><button type="button" class="cc-btn" data-mute-seat="${i}">${on ? 'Unmute' : 'Mute'}</button></div>`;
 }
 
-// An update for guest `to`, encrypted; without their key it isn't sent.
-function sendToGuest(to, data) {
-  const g = e2eHost?.guests.get(to);
-  if (!g?.key) { console.warn('table: no key for', to, '- update not sent'); return; }
-  g.sends = g.sends.then(async () => { net?.send({to, data: {enc: await seal(g.key, data)}}); }).catch(e => console.warn(e));
-}
-
-// A guest's incoming message, in order: the host's key, then encrypted
-// updates. Relay notices (host_gone) come in the clear; anything else
-// unencrypted is ignored, since only the host can make an update that opens.
-function guestIncoming(m) {
-  // The code is a one-off tournament's (#394): its page takes the join over.
-  if (m?.type === 'tourney_room' && joinedByCode && tourneyPage) {
-    const to = {code: room, name: setup.name, hostId: e2eGuest.hostId};
-    leaveTable();
-    tourneyPage.join(to);
-    return;
-  }
-  e2eGuest.inbox = e2eGuest.inbox.then(async () => {
-    if (m?.type === 'host_key' || m?.body?.type === 'host_key') {
-      const signed = !!m.sig;
-      if (signed && (await checkSignature(m) || (e2eGuest.hostId && m.from !== e2eGuest.hostId))) { console.warn('table: a host key that isn’t from the host; ignored'); return; }
-      if (!signed && e2eGuest.hostId) { console.warn('table: an unsigned host key; ignored'); return; }
-      const hostPub = signed ? m.body.key : m.key;
-      if (!isPublicKey(hostPub) || hostPub === e2eGuest.aesFor) return;
-      const gk = await e2eGuest.keys;
-      e2eGuest.aes = await sharedKey(gk, hostPub, e2eContext(clientId(), hostPub, gk.pub));
-      e2eGuest.aesFor = hostPub;
-      return;
-    }
-    if (m?.enc) {
-      if (!e2eGuest.aes) return;
-      let update;
-      try { update = await openBox(e2eGuest.aes, m.enc); } catch { console.warn('table: an update didn’t decrypt; ignored'); return; }
-      guestMessage(update);
-      return;
-    }
-    if (m?.type === 'host_gone') guestMessage(m);
-  }).catch(e => console.warn(e));
-}
-
-// ---- the friends table's host (#462) ----
-//
-// The host's table runs on ducy's table runner (ClubTable.friends, in the
-// worker's club-engine.js), as a club's tables do: it deals each hand from a
-// fair-deal round, moves for anyone away, runs the turn clock, stops it while
-// no one can be reached, and waits for everyone after a restart. This tab
-// feeds it events (players' messages, who's connected, the host's own moves)
-// and carries out each step: the save, the messages, and waking it when it
-// asks. The host deals the first hand; after that, auto-deal deals the rest.
-
-const HOST_TABLE = 'friends'; // the table's id in the worker
-let hostChain = Promise.resolve(); // runner events, one at a time
-let hostWake = null; // the timer that wakes the runner
-let hostDealAt = 0; // when the runner deals next (Date.now() ms), or 0
-let hostAuto = null; // the auto-deal it was last told: {on, afterMs}
-let hostPaused = false; // a resumed table waiting for its people
-
-// Sends the runner an event, after any before it, and carries out its step.
-// Resolves to the last engine result, or null if the host's own move didn't
-// count. `draw`: show the result (not for the host's own moves, which
-// their caller shows). `gift`: chips the ledger counts as given once taken
-// ({id, name, amount}).
-function hostRun(ev, {draw = true, gift = null} = {}) {
-  const mine = session;
-  const p = hostChain.then(async () => {
-    if (mine !== session || mode !== 'host') return null;
-    const step = await call('runnerEvent', HOST_TABLE, ev);
-    return mine === session ? hostStep(step, {draw, gift}) : null;
-  });
-  hostChain = p.catch(e => console.warn('table:', e));
-  return p;
-}
-
-async function hostStep(step, {draw, gift}) {
-  let last = null, refused = false;
-  for (const a of step.actions) {
-    if (a.type === 'engine') {
-      const r = a.res;
-      // Saved before anyone is told, so a resumed table is never behind what
-      // players were shown (#117).
-      keepLedger(r);
-      await saveHostTable(r, step.paused);
-      for (const m of r.out) sendToGuest(m.to, m.data);
-      guestsSeated = r.players || [];
-      openSeats = r.openSeats;
-      hostInfo = {
-        playersIn: r.playersIn ?? 0,
-        chipRequests: r.chipRequests || [],
-        buyIn: r.buyIn ? {min: num(r.buyIn.min), max: num(r.buyIn.max)} : null,
-        hostPendingChips: num(r.hostPendingChips || 0),
-      };
-      last = r;
-    } else if (a.type === 'send') sendToGuest(a.to, a.update);
-    else if (a.type === 'refused') refused = true;
-  }
-  if (gift && !refused && ledger) give(ledger, gift.id, gift.name, num(gift.amount));
-  // A hand finished: the relay counts it for ducy's admin site (#601). Just
-  // that it happened; nothing about it.
-  const hn = num(last?.state?.hand_number);
-  if (last?.state?.complete && hn && statHand !== `${session}:${hn}`) {
-    statHand = `${session}:${hn}`;
-    net?.send({stat: 'hand'});
-  }
-  sendStandings();
-  const changed = hostTimers(step);
-  if (draw && last && last.seq !== shownSeq) show(last);
-  else if (changed) render();
-  return refused ? null : last;
-}
-
-// The runner's timers: its next wake-up, the next deal, and the clock on
-// screen, which stands still while the runner's does. Returns whether the
-// clock stopped or started, or a resumed table went on.
-function hostTimers(step) {
-  clearTimeout(hostWake);
-  hostWake = step.wake != null ? setTimeout(() => { hostWake = null; hostRun({type: 'wake'}); }, Math.max(0, step.wake - Date.now())) : null;
-  hostDealAt = step.dealAt ?? 0;
-  let changed = false;
-  if (hostPaused !== step.paused) {
-    if (!step.paused) netNote = '';
-    hostPaused = step.paused;
-    changed = true;
-  }
-  if (step.stopped !== !!clockStopped) {
-    if (step.stopped) clockStopped = Date.now();
-    else { if (turnEnds) turnEnds += Date.now() - clockStopped; clockStopped = 0; }
-    changed = true;
-  }
-  armDeal();
-  return changed;
-}
-
-// The host's own request (request()): act or answer running it twice. Away
-// players' moves are the runner's.
-function hostRequest(op, ...args) {
-  if (op === 'act') return hostRun({type: 'host', cmd: {type: 'act', kind: args[0], amount: num(args[1])}}, {draw: false});
-  if (op === 'runTwice') return hostRun({type: 'host', cmd: {type: 'run_twice', yes: !!args[0]}}, {draw: false});
-  return Promise.resolve(null);
-}
-
-// Auto-deal as the host has it now: on unless it's off, paused, or the
-// first hand is still to deal; the runner restarts its wait when it changes.
-// Between hands, the countdown on the Next hand button follows the runner's.
-function hostCountdown() {
-  const on = autoDealOn() && !holds.size && !!state && num(state.hand_number) > 0;
-  const afterMs = Math.round(1000 * (DEAL_DELAYS.includes(setup.dealSecs) ? setup.dealSecs : 1));
-  if (hostAuto?.on !== on || hostAuto?.afterMs !== afterMs) {
-    hostAuto = {on, afterMs};
-    hostDealAt = 0;
-    hostRun({type: 'autoDeal', on, afterMs});
-  }
-  if (!hostDealAt || !state?.complete) { syncDeal(); return; }
-  dealAt = performance.now() + (hostDealAt - Date.now());
-  const mine = session;
-  const tick = () => {
-    if (mine !== session) return;
-    const left = dealAt - performance.now();
-    if (left <= 0) { dealTimer = null; syncDeal(); return; }
-    dealTimer = setTimeout(tick, left - (Math.ceil(left / 1000) - 1) * 1000);
-    syncDeal();
-  };
-  tick();
-}
-
-// The host approves a chip request: the ledger counts them as given.
-function hostApprove(seat) {
-  const req = hostInfo.chipRequests.find(x => x.seat === seat);
-  const who = guestsSeated.find(p => p.seat === seat);
-  hostRun({type: 'chips', seat, ok: true}, {gift: req && who ? {id: who.client_id, name: req.name, amount: req.amount} : null});
-}
-
-// The host's own chips, within the table's limits.
-function hostChips(amount) {
-  hostRun({type: 'host', cmd: {type: 'chips', amount}}, {gift: {id: HOST_KEY, name: setup.name, amount}});
-}
-
-// The runner stops: no more wake-ups.
-function hostStop() {
-  clearTimeout(hostWake);
-  hostWake = null;
-  hostDealAt = 0;
-  hostAuto = null;
-  hostPaused = false;
-  call('runnerDrop', HOST_TABLE).catch(() => {});
-}
-
-// ---- a one-off cash game's standings (#403) ----
-//
-// The host keeps what it gave each player (ledger, oneoff-standings.js),
-// what they left with, and what they have at the table, and sends everyone
-// the standings as they change. Ending the game (the host's End game, after
-// the hand in play) sends the final standings, which everyone keeps on
-// screen with the standings and a download. Nothing carries over to another
-// game.
-
-let ledger = null; // the host's
-let guestStandings = null; // a guest's: the rows the host sent
-let endAfterHand = false; // the host ends the game once this hand is over
-let finalStandings = null; // after a game: {title, rows, me}
-let standingsOpen = false;
-document.addEventListener('toggle', e => { if (e.target.matches?.('[data-standings]')) standingsOpen = e.target.open; }, true);
-
-const HOST_KEY = 'host'; // the host's row in the ledger (relay ids are UUIDs)
-const betweenHandsNow = s => !!s && (s.complete || !num(s.hand_number));
-
-// After each engine result: chips handed back, taken away, and between
-// hands everyone's chips. (Chips given are counted as they're taken: see
-// hostRun's `gift`.)
-function keepLedger(r) {
-  if (!ledger || !r?.state) return;
-  const seats = r.state.seats || [];
-  for (const x of r.refunds || []) handBack(ledger, x.client_id, num(x.chips));
-  for (const x of r.departed || []) cashOut(ledger, x.client_id, num(x.chips));
-  if (betweenHandsNow(r.state)) {
-    atTable(ledger, [
-      {id: HOST_KEY, name: seats[0]?.name, chips: num(seats[0]?.stack || 0) + num(r.hostPendingChips || 0)},
-      ...(r.players || []).map(p => ({id: p.client_id, name: seats[p.seat]?.empty ? '' : seats[p.seat]?.name, chips: num(p.chips)})),
-    ]);
-  }
-}
-
-// The rows from the host, checked.
-function readStandings(rows) {
-  const n = v => (Number.isSafeInteger(Number(v)) ? Number(v) : 0);
-  return (Array.isArray(rows) ? rows : []).slice(0, 100).map(r => ({id: String(r?.id || '').slice(0, 8), name: String(r?.name || '?').slice(0, 20), given: n(r?.given), now: n(r?.now), net: n(r?.net)}));
-}
-
-// The rows as guest `to` sees them: no one's relay id, theirs marked 'me'.
-const rowsFor = (rows, to) => rows.map((r, i) => ({id: r.id === to ? 'me' : `p${i}`, name: r.name, given: r.given, now: r.now, net: r.net}));
-
-// Everyone connected is sent the standings when they change, or when they
-// haven't had them yet (`final`: the game is over).
-function sendStandings(final = false) {
-  if (!ledger || mode !== 'host') return;
-  const rows = cashStandings(ledger);
-  const json = JSON.stringify(rows);
-  for (const [to, g] of e2eHost?.guests || []) {
-    if (!g.key || (g.standings === json && !final)) continue;
-    g.standings = json;
-    sendToGuest(to, {type: 'standings', rows: rowsFor(rows, to), final});
-  }
-}
-
-// The host ends the game: the final standings go to everyone, then the table closes.
-async function endGame() {
-  endAfterHand = false;
-  if (ledger && state && betweenHandsNow(state)) {
-    atTable(ledger, [{id: HOST_KEY, name: setup.name, chips: num(state.seats[0].stack) + hostInfo.hostPendingChips}, ...guestsSeated.map(p => ({id: p.client_id, chips: num(p.chips)}))]);
-  }
-  if (ledger) {
-    finalStandings = {title: hostTitle, rows: cashStandings(ledger), me: HOST_KEY};
-    sendStandings(true);
-    await Promise.all([...(e2eHost?.guests.values() || [])].map(g => g.sends));
-    await new Promise(r => setTimeout(r, 300)); // (the last messages go before the close)
-  }
-  ledger = null;
-  forgetSavedTable();
-  leaveTable();
-  // Back to Start a private game, the final standings at its top.
-  if (location.hash !== '#host') location.hash = 'host';
-}
-
-// The standings under the table: what each was given and has now.
-function cashStandingsHtml() {
-  const rows = mode === 'host' && ledger ? cashStandings(ledger) : mode === 'guest' && joinedByCode ? guestStandings : null;
-  if (!rows?.length) return '';
-  const me = mode === 'host' ? HOST_KEY : 'me';
-  return `<div class="pl-chips"><details class="oo-details" data-standings${standingsOpen ? ' open' : ''}><summary><b>Standings</b></summary><div class="oo-body">${standingsPart(rows, me)}</div></details></div>`;
-}
-
-function standingsPart(rows, me) {
-  return standingsHtml(rows, [['Given', r => r.given], ['Chips', r => r.now]], c, me);
-}
-
-// After a game: its final standings, until closed.
-function finalStandingsHtml() {
-  const f = finalStandings;
-  if (!f) return '';
-  let h = `<section class="cl-card oo-card"><h2>${esc(f.title || 'Final standings')}</h2>${standingsPart(f.rows, f.me)}`;
-  return h + '<div class="pl-actions"><button class="btn-small primary" data-act="standings-csv">Download</button><button class="btn-small" data-act="standings-close">Close</button></div></section>';
-}
-
-function downloadStandings() {
-  const f = finalStandings;
-  if (!f) return;
-  const csv = standingsCsv(f.rows, [], [
-    ['Player', r => r.name], ['Given', r => chipInput(r.given)], ['Chips', r => chipInput(r.now)], ['Net', r => chipInput(r.net)],
-  ], chipInput);
-  download(fileName(f.title), csv);
-}
-
-async function hostTable() {
-  fnote = readFriendsStep();
-  if (fnote) { render(); return; }
-  setupNote = '';
-  const f = setup.friends;
-  forgetSavedTable();
-  // The host starts with 100 BB, kept within the table's limits.
-  const min = Math.round(f.minBB * f.bb), max = Math.round(f.maxBB * f.bb);
-  const hostChips = Math.max(min, Math.min(max, 100 * f.bb));
-  const bombs = f.bomb ? bombEvery(f.bombEvery) : 0;
-  const config = {
-    seats: Math.min(f.seats, maxSeats(f.game)), hostName: setup.name, hostChips, minBuyIn: min, maxBuyIn: max,
-    sb: f.sb, bb: f.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0], game: f.game, turnMs: FRIENDS_TURN_SECS * 1000, bombEvery: bombs,
-    link: false,
-  };
-  const mine = session;
-  // The code the setup showed (#566); the next setup shows a new one.
-  const code = nextCode || newCode();
-  nextCode = '';
-  setupCopied = false;
-  startHosting(code, f.game, () => call('runnerFriends', HOST_TABLE, config)).then(ok => {
-    if (!ok && mine === session) leaveTable('That table couldn’t be started.');
-  });
-  hostTitle = f.title || `${setup.name}’s game`;
-  tableBombs = bombs;
-  fstep = 1;
-  give(ledger, HOST_KEY, setup.name, hostChips);
-  // The table shows on the Play tab.
-  location.hash = 'play';
-}
-
-// Hosting a friends table with code `code`: the relay connection, keys and
-// the table's runner, made by `create` (a new table, hostTable, or one
-// resumed, resumeHosting); it's told about everyone connected from then on.
-// Resolves to whether the runner could be made.
-function startHosting(code, game, create) {
-  tableGame = gameOf(game);
-  tableBombs = 0;
-  hostGame = game;
-  mode = 'host';
-  hostInfo = {playersIn: 1, chipRequests: [], buyIn: null, hostPendingChips: 0};
-  ledger = newLedger();
-  endAfterHand = false;
-  finalStandings = null;
-  resetChat();
-  gtoTable = false;
-  review = null;
-  live = {hand: 0, items: []};
-  myRunAnswer = null;
-  sessionStats = {};
-  recordedHand = 0;
-  room = code;
-  netNote = '';
-  shownSeq = -1;
-  seated = true;
-  state = null;
-  raiseTo = 0;
-  foldQueued = false;
-  const mine = session;
-  e2eHost = {keys: newKeyPair(), guests: new Map()};
-  linkOk = false;
-  guestsOnline.clear();
-  guestsSeated = [];
-  clockStopped = 0;
-  // The runner first: every event waits for it.
-  const made = Promise.resolve().then(create).then(() => true, e => { console.warn(e); return false; });
-  hostChain = made;
-  hostRun({type: 'state'});
-  const presence = (id, on) => hostRun({type: 'presence', id, on});
-  net = connect(room, 'host', null, {
-    // The relay tells us again who's connected.
-    onOpen() {
-      if (mine !== session) return;
-      for (const id of guestsOnline) presence(id, false);
-      guestsOnline.clear();
-    },
-    onMessage(m) {
-      if (mine !== session) return;
-      if (m.event === 'open') { guestsOnline.add(m.from); presence(m.from, true); sendHostKey(m.from); }
-      else if (m.event === 'close') { guestsOnline.delete(m.from); presence(m.from, false); hostRun({type: 'disconnected', id: m.from}); }
-      else if (m.data) hostIncoming(m.from, m.data);
-    },
-    onStatus(t) { netNote = t; render(); },
-    onFail(t) { leaveTable(t); },
-    // Drawn at once (#566): a new table's clock stands still with no one else
-    // there, so the runner's step alone wouldn't redraw "can't reach the relay".
-    onHealth(ok) { if (mine !== session) return; linkOk = ok; hostRun({type: 'link', ok}); render(); },
-  }, {heartbeat: true, persistent: true});
-  startClock();
-  return made;
-}
-
-// ---- resuming a friends table (#117) ----
-//
-// After every change the host's table is saved in this browser (with
-// the runner's save: every card of the hand in progress, so only this
-// page reads it). If the page closes or the browser restarts, the setup
-// screen offers to resume: the table comes back under the same code, so
-// players' pages, which keep reconnecting, find it again. The runner waits
-// until everyone seated is back, or a minute, after which whoever is
-// missing counts as disconnected. Leaving the table forgets it.
-
-const SAVED = ['friends', 'host']; // its table-store key
-const SAVED_FOR_MS = 24 * 3600_000; // older saves aren't offered
-let savedTable = null; // {json, room, game, seq, at}, if there's one to offer
-let hostGame = ''; // the game being hosted, saved with the table
-let savedSeq = -1, noSave = false; // the last state saved; the engine can't save
-
-getTable(...SAVED).then(rec => {
-  if (rec && Date.now() - rec.at < SAVED_FOR_MS) { savedTable = rec; render(); }
-}).catch(() => {});
-
-// Saves the hosted table when its state changed, but not while a resumed
-// one waits for its people. A table that can't be saved (storage blocked)
-// just plays on, as before.
-async function saveHostTable(r, paused) {
-  if (mode !== 'host' || noSave || r.seq == null || r.seq === savedSeq || paused) return;
-  try {
-    const json = await call('runnerSave', HOST_TABLE);
-    if (json == null) { noSave = true; return; }
-    await putTable(...SAVED, {json, room, game: hostGame, title: hostTitle, seq: r.seq, at: Date.now(), ledger});
-    savedSeq = r.seq;
-  } catch (e) {
-    console.warn('table: not saved:', e);
-  }
-}
-
-function forgetSavedTable() {
-  savedTable = null;
-  savedSeq = -1;
-  noSave = false;
-  dropTable(...SAVED).catch(() => {});
-}
-
-async function resumeHosting() {
-  const rec = savedTable;
-  if (!rec) return;
-  readNameInput();
-  setupNote = '';
-  savedTable = null;
-  savedSeq = rec.seq;
-  noSave = false;
-  const mine = session;
-  const made = startHosting(rec.room, rec.game, () => call('runnerRestoreFriends', HOST_TABLE, rec.json, {link: false}));
-  hostTitle = rec.title || '';
-  // The standings so far come back with it (#403).
-  if (rec.ledger?.players) ledger = rec.ledger;
-  netNote = 'Resumed: play goes on once everyone is back (at most a minute).';
-  location.hash = 'play';
-  if (await made || session !== mine) return;
-  forgetSavedTable();
-  leaveTable('That table couldn’t be resumed. Host a new one.');
-}
-
-// Joins the friends table `code` as `name` (the Join tab). `hostId`, from
-// the link, is the host's player ID the table's encryption key is checked
-// against. The table then shows on the Play tab; if joining fails, the Join
-// tab says why.
-export function joinTable({code, name, hostId = ''}) {
-  if (seated) leaveTable();
-  setup.name = String(name || '').trim().slice(0, 20);
-  saveSetup();
-  startGuest(code);
-  joinedByCode = true;
-  friendsFair = fairPlayer();
-  const mine = session;
-  e2eGuest = {keys: newKeyPair(), aes: null, aesFor: '', hostId, inbox: Promise.resolve()};
-  net = connect(code, 'guest', clientId(), {
-    // Our key first, then the join, so the host can encrypt from the start.
-    async onOpen() {
-      const key = (await e2eGuest.keys).pub;
-      net.send({type: 'e2e_key', key});
-      net.send({type: 'join', name: setup.name});
-    },
-    onMessage(m) { if (mine === session) guestIncoming(m); },
-    onStatus(t) { netNote = t; render(); },
-    onFail(t) { leaveTable(t); },
-    // Once in, keep trying through an outage: the host holds the seat and
-    // the hand waits (a wrong code still fails at once).
-  }, {persistent: true});
-  startClock();
-  if (location.hash !== '#play') location.hash = 'play';
-  else render();
-}
-let joinedByCode = false; // at a table joined with its code (joinTable)
-// Its fair deals (fair-check.js): this page's side.
-let friendsFair = null;
-
 // Where the table you're at belongs in the navigation (#209): bots under
-// Train, a friends table under Play, a club's table under Clubs; null when
-// you're not at one.
-export const tableGroup = () => (!seated ? null : mode === 'solo' ? 'train' : mode === 'host' || joinedByCode || !clubTable ? 'play' : 'clubs');
+// Train, a club's table under Clubs; null when you're not at one.
+export const tableGroup = () => (!seated ? null : mode === 'solo' ? 'train' : 'clubs');
 
-// The name this browser plays friends tables as (Player settings, #144).
+// The name this browser plays as (Player settings, #144).
 export const tableName = () => setup.name;
 export function setTableName(n) {
   setup.name = String(n || '').trim().slice(0, 20);
@@ -2921,8 +2202,7 @@ export function setTableAvatar(id) {
   render();
 }
 
-// Sits down at a table reached some other way than a table code: a club
-// table (clubs.js). `open(handlers)` returns {send(command), close()} and
+// Sits down at a club table (clubs.js). `open(handlers)` returns {send(command), close()} and
 // calls handlers.onMessage(update) for each update from the table's host,
 // handlers.onStatus(text) and handlers.onFail(reason). Leaving the table
 // calls `onLeave`.
@@ -2931,8 +2211,6 @@ let leaveHook = null;
 // act on, and the hands aren't added to your stats.
 // `banner()`: a line to show above the felt while seated (a club's running
 // promotions, #278), or ''.
-// `club`: false for a one-off tournament's table (#394), which belongs under
-// Play and isn't a club's.
 // `seatTools` (watching a club table, #414): {rows() → [{key, name, stack,
 // note, buttons, items: [[tool, label]]}], run(key, tool)}, the players and
 // what the watcher can do to each.
@@ -2944,12 +2222,11 @@ let leaveHook = null;
 // 0), ask(amount) (asks the manager, from the table), cancel()}. Its chips
 // panel then adds straight from what's available, or asks the manager when
 // nothing is.
-export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, club = true, seatTools = null, credit = null, mustMove = null} = {}) {
+export function joinTableVia(open, {label = '', onLeave = null, watch = false, onHand = null, whole = false, banner = null, seatTools = null, credit = null, mustMove = null} = {}) {
   if (seated) leaveTable();
   startGuest(label);
   mustMoveHook = mustMove;
   moveOrderOpen = false;
-  clubTable = club;
   seatToolsHook = seatTools;
   seatToolsOpen = '';
   creditHook = credit;
@@ -2961,7 +2238,7 @@ export function joinTableVia(open, {label = '', onLeave = null, watch = false, o
   hookedHand = 0;
   leaveHook = onLeave;
   // Shows the clubs' testing notice above the table (style.css).
-  if (club) document.body.classList.add('club-table');
+  document.body.classList.add('club-table');
   const mine = session;
   net = open({
     onMessage(m) { if (mine === session) guestMessage(m); },
@@ -2999,7 +2276,6 @@ function seatFlagHtml(s, i) {
 }
 const FLAG_SVG = '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M3 1h1.6v14H3zM5.4 2h8l-2 3.2 2 3.3h-8z"/></svg>';
 let seatToolsHook = null; // joinTableVia's seatTools
-let clubTable = true; // joinTableVia's `club`
 let handHook = null, hookedHand = 0; // joinTableVia's onHand(view), and the last hand it saw
 let bannerHook = null; // joinTableVia's banner()
 let mustMoveHook = null; // joinTableVia's mustMove()
@@ -3050,14 +2326,11 @@ const ordinalText = n => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', '
 
 function startGuest(code) {
   mode = 'guest';
-  guestStandings = null;
-  finalStandings = null;
   bannerHook = null;
   mustMoveHook = null;
   celebration = null;
   resetChat();
   wholeChips = false;
-  joinedByCode = false;
   myChips = null;
   mySeat = null;
   stayLeft = 0;
@@ -3086,24 +2359,6 @@ function guestMessage(m) {
   // A club table's seat flags from the relay (#581): {seat: [kind]}, by the
   // table's own seat numbers.
   if (m.type === 'seat_flags') { seatFlags = readSeatFlags(m); render(); return; }
-  // A fair deal at a friends table (#136, #462): this page's part of the
-  // host's round.
-  if (m.type === 'fair' && joinedByCode) {
-    friendsFair?.message(m, cmd => net?.send(cmd));
-    return;
-  }
-  if (m.type === 'chat') { const msg = readChat(m); if (msg && chatTable()) addChatLine(msg); return; }
-  // A one-off cash game's standings (#403); final: the host ended the game.
-  if (m.type === 'standings' && joinedByCode) {
-    guestStandings = readStandings(m.rows);
-    if (m.final) {
-      finalStandings = {title: tableTitle || room, rows: guestStandings, me: 'me'};
-      leaveTable('The host ended the game.');
-      return;
-    }
-    render();
-    return;
-  }
   // Idle at a club table (#421): "Still here?" until you answer, or it's gone.
   if (m.type === 'idle') {
     idleAsk = !m.done;
@@ -3135,7 +2390,7 @@ function guestMessage(m) {
     // Our action didn't count (e.g. the turn moved on): back to the last view.
     if (lastView) { state = lastView; render(); }
   } else if (m.type === 'host_gone') {
-    netNote = clubTable && !joinedByCode ? 'Reconnecting to the club…' : 'The host is reconnecting…';
+    netNote = 'Reconnecting to the club…';
     render();
   }
 }
@@ -3163,25 +2418,20 @@ if (typeof document !== 'undefined') {
 }
 const wasAway = () => typeof document !== 'undefined' && (document.hidden || !document.hasFocus() || (turnSince > 0 && awayAt >= turnSince));
 
-// Sends the action to the host; the next view shows the result.
+// Sends the action to the club; the next view shows the result.
 function guestAct(kind, amount) {
   if (!state?.legal) return false;
-  net?.send({type: 'act', seq: shownSeq, kind, amount, ...(clubTable ? {away: wasAway()} : {})});
+  net?.send({type: 'act', seq: shownSeq, kind, amount, away: wasAway()});
   raiseTo = 0;
   state = {...state, legal: null};
   render();
   return true;
 }
 
-// Stats follow ids: at a shared table you are 'you' wherever you sit, and
-// friends are kept by name.
+// Stats follow ids: at a club table you are 'you' wherever you sit, and
+// the others are kept by name (and never counted: statsAtTable).
 function withStatIds(view) {
   return {...view, seats: view.seats.map((x, i) => ({...x, id: i === 0 ? 'you' : x.human ? 'friend:' + x.name : x.id}))};
-}
-
-function readNameInput() {
-  const el = root.querySelector('#pl-name');
-  if (el) setup.name = el.value.trim().slice(0, 20);
 }
 
 // Ticks the turn clocks on screen, and sounds the alert when 5 seconds
@@ -3248,16 +2498,16 @@ function turnChime() {
 function hurryAlert() {
   // Once per deadline; the deadline moves a little with each update, so only
   // a real extension (a time bank) counts as a new one.
-  if ((hurried && turnEnds <= hurried + 2000) || !soundTurn || !myTurn() || !turnEnds || clockStopped) return;
+  if ((hurried && turnEnds <= hurried + 2000) || !soundTurn || !myTurn() || !turnEnds) return;
   const left = turnEnds - Date.now();
   if (left > HURRY_MS || left <= 0) return;
   hurried = turnEnds;
   if (soundsOn()) hurrySound();
 }
 
-// The time bank (at a friends or club table with a turn clock): on your
-// turn, a button adds what's in it to your clock; what you don't use goes
-// back in, and each hand puts 5 s back, up to a minute.
+// The time bank (at a club table with a turn clock): on your turn, a button
+// adds what's in it to your clock; what you don't use goes back in, and each
+// hand puts 5 s back, up to a minute.
 function timeBankHtml() {
   if (mode !== 'guest' || watching || !turnEnds || mySeat?.time_bank_ms == null) return '';
   if (mySeat.time_bank_on) return ' <span class="pl-meta pl-bank on">· time bank on</span>';
@@ -3272,8 +2522,7 @@ function useTimeBank() {
 
 function clockText() {
   if (!turnEnds) return '';
-  const left = Math.max(0, Math.ceil((turnEnds - (clockStopped || Date.now())) / 1000)) + 's';
-  return clockStopped ? left + ' (paused)' : left;
+  return Math.max(0, Math.ceil((turnEnds - Date.now()) / 1000)) + 's';
 }
 
 function leaveTable(note = '') {
@@ -3286,15 +2535,10 @@ function leaveTable(note = '') {
   lastSummary = null;
   clearTimeout(timer);
   cancelDeal();
-  if (mode === 'host') hostStop();
   clearInterval(clockTimer);
-  clockStopped = 0;
   if (mode === 'guest' && !watching) net?.send({type: 'leave'});
-  ledger = null;
-  endAfterHand = false;
   watching = false;
   seatToolsHook = null;
-  clubTable = true;
   creditHook = null;
   handHook = null;
   net?.close();
@@ -3314,31 +2558,11 @@ function leaveTable(note = '') {
   netNote = note;
   const hook = leaveHook;
   leaveHook = null;
-  const byCode = joinedByCode;
-  joinedByCode = false;
-  errView = note ? (byCode ? 'join' : view) : null;
+  errView = note ? view : null;
   document.body.classList.remove('club-table');
   if (hook) hook(note);
-  // Joining with a code didn't work: back to the Join tab, which says why.
-  if (!hook && byCode && note && location.hash !== '#join') location.hash = 'join';
   // Redraw even when the address stays the same (a club table's onLeave
   // goes to #play, often already there).
-  else render();
-}
-
-// The setup's link (#566): copied, or shown selected for copying by hand.
-let setupCopied = false;
-async function copySetupLink() {
-  try { await navigator.clipboard.writeText(joinLink(nextCode, me?.id)); setupCopied = true; } catch { setupCopied = false; }
-  render();
-  if (!setupCopied) {
-    const p = root.querySelector('.sg-link');
-    if (p) getSelection().selectAllChildren(p);
-  }
-}
-
-async function copyLink() {
-  try { await navigator.clipboard.writeText(joinLink(room, me?.id)); netNote = 'Link copied'; } catch { netNote = joinLink(room, me?.id); }
   render();
 }
 
@@ -3645,9 +2869,8 @@ function renderTable() {
     `<button type="button" class="pl-menu-item" data-act="${act}"${on == null ? '' : ` aria-pressed="${on}"`}${title ? ` title="${title}"` : ''}><span>${label}</span>${on == null ? '' : `<b>${on ? 'On' : 'Off'}</b>`}</button>`;
   h += '<span class="pl-tools">';
   h += `<details class="pl-menu"${tableMenuOpen ? ' open' : ''}><summary aria-label="Table settings">⋯</summary><div class="pl-menu-list">`;
-  // At someone else's table (a club's, a friend's) or one being watched,
-  // its host deals the next hand: a club table always on its own, 3 s
-  // after the last (#476). Nothing here would change that.
+  // At a club's table, or one being watched, the club deals the next hand
+  // on its own, 3 s after the last (#476). Nothing here would change that.
   const dealsHere = mode !== 'guest' && !watching;
   if (dealsHere && !alwaysAuto()) h += item('autodeal', 'Auto-deal', autoDealOn());
   if (dealsHere && autoDealOn()) h += `<button type="button" class="pl-menu-item" data-act="dealdelay" title="How long the last hand stays up before the next is dealt"><span>Time between hands</span><b>${setup.dealSecs}s</b></button>`;
@@ -3669,7 +2892,7 @@ function renderTable() {
   h += '</div></details>';
   // Up at a club table with the hit-and-run rule: the button says how long.
   const stay = mode === 'guest' && !watching && stayLeft > 0;
-  h += `<button class="pl-leave" data-act="leave"${stay ? ` title="${esc(stayText(stayLeft))}"` : ''}>${watching ? 'Stop watching' : mode === 'host' ? (endAfterHand ? 'End now' : 'End game') : stay ? `Leave in ${stayLeft} ${stayLeft === 1 ? 'hand' : 'hands'}` : 'Leave'}</button></span></div>`;
+  h += `<button class="pl-leave" data-act="leave"${stay ? ` title="${esc(stayText(stayLeft))}"` : ''}>${watching ? 'Stop watching' : stay ? `Leave in ${stayLeft} ${stayLeft === 1 ? 'hand' : 'hands'}` : 'Leave'}</button></span></div>`;
   // A club table's promotions, or a quest table's room, clock and bankroll.
   if (questTable && !(celebration && Date.now() < celebration.until)) h += questBarHtml();
   else if (mode === 'guest' || questTable) h += promoLineHtml();
@@ -3767,7 +2990,6 @@ function renderTable() {
   h += leaveBBHtml();
   h += chipsHtml();
   h += seatToolsHtml();
-  h += cashStandingsHtml();
   h += liveHtml();
   h += reviewHtml();
   h += ladderReviewHtml();
@@ -3823,7 +3045,7 @@ function controlsHtml() {
   } else if (s.complete) {
     const winners = s.seats.map((x, i) => ({...x, i})).filter(x => num(x.won) > 0);
     const text = winners.map(w => `${esc(w.name)} ${w.i === 0 ? 'win' : 'wins'} ${c(w.won)}`).join(', ');
-    // Before the first hand of a hosted table there's no result yet.
+    // Before a club table's first hand there's no result yet.
     status = `<span class="pl-result">${num(s.hand_number) ? `${text}${s.showdown ? '' : ' (no showdown)'}` : 'Waiting for players'}</span>`;
     if (ladder?.over) {
       const o = ladderOverHtml();
@@ -3836,9 +3058,7 @@ function controlsHtml() {
       fold = o.fold;
       raise = o.raise;
     } else if (mode === 'guest') {
-      status += ` <span class="pl-meta">· ${clubTable && !joinedByCode ? 'Next hand soon' : 'The host deals the next hand'}</span>`;
-    } else if (mode === 'host' && hostInfo.playersIn < 2) {
-      status += ' <span class="pl-meta">· Dealing needs two players with chips</span>';
+      status += ' <span class="pl-meta">· Next hand soon</span>';
     } else {
       const label = num(s.hand_number) ? nextLabel() : 'Deal';
       // Against the bots nothing is shown: the hand comes on its own.
@@ -3954,11 +3174,9 @@ function allInTo() {
   return num(me.street_bet) + num(me.stack);
 }
 
-// ---- chips at a friends table ----
+// ---- chips at a club table ----
 
-// The host's panel: chip requests to approve, the people seated (to remove),
-// and the host's own top-up. A guest's: their chips and a request.
-// Sitting out at a friends or club table (#70): a Sit out button, and while
+// Sitting out at a club table (#70): a Sit out button, and while
 // out, how to come back. Missed blinds are posted at once (one small blind
 // dead, one big blind live) or by waiting for the big blind.
 function sitOutHtml() {
@@ -3987,7 +3205,6 @@ function outClockText() {
 }
 
 function chipsHtml() {
-  if (mode === 'host' && hostInfo.buyIn) return hostChipsHtml();
   if (mode === 'guest' && myChips) return creditHook ? clubChipsHtml() : guestChipsHtml();
   return '';
 }
@@ -4040,38 +3257,6 @@ function clubChipsHtml() {
   return h + `<button class="tr-btn yes" data-act="askmgr" data-label="Ask for">Ask for ${c(v)}</button></div>`;
 }
 
-function hostChipsHtml() {
-  const {min, max} = hostInfo.buyIn;
-  let h = '<div class="pl-chips">';
-  if (hostInfo.chipRequests.length) {
-    h += '<div class="pl-chips-head"><b>Chip requests</b></div><ul class="pl-chip-list">';
-    for (const r of hostInfo.chipRequests) {
-      h += `<li><span><b>${esc(r.name)}</b> asks for ${c(r.amount)} chips <span class="pl-meta">(has ${c(r.stack)})</span></span>`;
-      h += `<span class="pl-chip-acts"><button class="tr-btn yes" data-approve="${r.seat}">Approve</button><button class="tr-btn" data-deny="${r.seat}">Deny</button></span></li>`;
-    }
-    h += '</ul>';
-  }
-  const people = state.seats.map((x, i) => ({...x, i})).filter(x => x.i > 0 && x.human && !x.empty);
-  if (people.length) {
-    h += '<div class="pl-chips-head"><b>Players</b></div><ul class="pl-chip-list">';
-    for (const p of people) {
-      const note = p.away ? ' · away' : p.sitting_out ? (num(p.stack) === 0 ? ' · needs chips' : ' · sitting out') : '';
-      h += `<li><span>${esc(p.name)} <span class="pl-meta">${c(p.stack)} chips${note}</span></span><button class="link-btn" data-remove="${p.i}">Remove</button></li>`;
-    }
-    h += '</ul>';
-  }
-  const mine = num(state.seats[0].stack) + hostInfo.hostPendingChips;
-  const room = max - mine;
-  h += '<div class="pl-chips-head"><b>Your chips</b>';
-  h += `<span class="pl-meta">${c(state.seats[0].stack)}${hostInfo.hostPendingChips ? ` (+${c(hostInfo.hostPendingChips)} next hand)` : ''} · stacks ${c(min)}–${c(max)} after a top-up</span></div>`;
-  if (room > 0) {
-    const lo = Math.max(1, min - mine);
-    const v = Math.max(lo, Math.min(room, chipAsk || room));
-    h += `<div class="pl-chip-ask"><input class="pl-text" type="number" id="pl-chipamt" min="${chipInput(lo)}" max="${chipInput(room)}" step="${CHIP_STEP}" value="${chipInput(v)}" aria-label="Chips to add"><button class="tr-btn" data-act="hostchips">Add chips</button></div>`;
-  }
-  return h + '</div>';
-}
-
 function guestChipsHtml() {
   const {min, max, requested, approved} = myChips;
   const stack = num(state.seats[0].stack) + approved;
@@ -4095,14 +3280,9 @@ function chipAmount() {
 }
 
 function netBarHtml() {
-  const title = mode === 'host' ? hostTitle : tableTitle;
-  let h = `<span class="pl-meta">${title ? `<b>${esc(title)}</b> · ` : ''}Table <b>${esc(room)}</b>`;
-  if (mode === 'host') h += ` · ${openSeats} empty seat${openSeats === 1 ? '' : 's'}</span><button class="link-btn" data-act="copy">Copy link</button>`;
-  else h += '</span>';
+  let h = `<span class="pl-meta">${tableTitle ? `<b>${esc(tableTitle)}</b> · ` : ''}Table <b>${esc(room)}</b></span>`;
   if (netNote) h += `<span class="pl-meta pl-neterr">${esc(netNote)}</span>`;
   if (mode === 'guest' && idleAsk) h += '<span class="pl-idle" role="alert"><b>Still here?</b><button class="tr-btn yes" data-act="stillhere">Stay</button></span>';
-  // (Alone at the table there's nothing to pause.)
-  if (mode === 'host' && clockStopped && (!linkOk || guestsSeated.length)) h += `<span class="pl-meta pl-neterr">${linkOk ? 'Paused: no one else is connected.' : 'Paused: can’t reach the relay.'} No one is folded or timed out meanwhile.</span>`;
   return h;
 }
 
@@ -4111,17 +3291,11 @@ function render() {
   document.body.classList.toggle('pl-seated', seated);
   syncChat();
   if (!open) return;
-  // In a one-off tournament (#394), Start a game is its page, at its table or not.
-  if (view === 'host' && tourneyPage?.active()) {
-    root.hidden = false;
-    root.innerHTML = `<div class="pl-wrap">${tourneyPage.html()}</div>`;
-    return;
-  }
   // A ladder game shows on the Ladder tab as well as Bots.
   if (seated && view !== 'play' && !(ladder && view === 'ladder') && !(questTable && view === 'quest')) {
     // At a table, the other tabs can't start another one.
     root.hidden = view === 'clubs';
-    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join or start another.</p><div class="pl-actions"><a class="tr-start" href="#${ladder ? 'ladder' : questTable ? 'quest' : 'play'}">Back to the table</a></div></section></div>`;
+    root.innerHTML = view === 'clubs' ? '' : `<div class="pl-wrap"><section class="cl-card"><p class="pl-desc">You’re at a table${room ? ` (${esc(room)})` : ''}. Leave it to join another.</p><div class="pl-actions"><a class="tr-start" href="#${ladder ? 'ladder' : questTable ? 'quest' : 'play'}">Back to the table</a></div></section></div>`;
     return;
   }
   root.hidden = false;
@@ -4464,8 +3638,6 @@ function onClick(e) {
   const mi = ms ? +ms.dataset.seat : -1;
   if (mi > 0 && seatChatPid(mi)) { mutePop = mutePop === mi ? -1 : mi; render(); return; }
   if (mutePop >= 0) { mutePop = -1; render(); }
-  // A one-off tournament's form and page (#394).
-  if (view === 'host' && tourneyPage?.click(e)) return;
   // More options stays as it was left (it opens or closes after this click).
   const more = e.target.closest('summary[data-more]');
   if (more) { setup.moreOpen = !more.parentElement.open; saveSetup(); return; }
@@ -4508,12 +3680,10 @@ function onClick(e) {
     render();
     return;
   }
-  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-fgame],[data-fblinds],[data-fseats],[data-fmin],[data-fmax],[data-approve],[data-deny],[data-remove],[data-rev],[data-live],[data-lad],[data-bomb],[data-fbomb],[data-fkind]');
+  const el = e.target.closest('[data-pgame],[data-count],[data-blinds],[data-buyin],[data-turn],[data-act],[data-size],[data-scope],[data-sort],[data-rev],[data-live],[data-lad],[data-bomb]');
   if (!el) return;
   const d = el.dataset;
-  if (d.fkind) { readFriendsStep(); setup.friends.kind = d.fkind; fnote = ''; saveSetup(); render(); return; }
   if (d.bomb) { setup.bomb = d.bomb === 'on'; saveSetup(); render(); return; }
-  if (d.fbomb) { readFriendsStep(); setup.friends.bomb = d.fbomb === 'on'; fnote = ''; saveSetup(); render(); return; }
   if (d.rev != null) {
     const i = +d.rev;
     if (reviewOpen.has(i)) reviewOpen.delete(i); else reviewOpen.add(i);
@@ -4532,35 +3702,6 @@ function onClick(e) {
     render();
     return;
   }
-  const f = setup.friends;
-  if (d.fgame || d.fblinds || d.fseats) {
-    readFriendsStep();
-    // Picking a game picks its usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6).
-    if (d.fgame && d.fgame !== f.game) { f.game = d.fgame; f.seats = defaultSeats(f.game); }
-    if (d.fseats) f.seats = +d.fseats;
-    f.seats = Math.min(f.seats, maxSeats(f.game));
-    // A preset keeps the buy-in in big blinds; Custom shows the two fields.
-    if (d.fblinds === 'custom') f.customBlinds = true;
-    else if (d.fblinds) { [f.sb, f.bb] = d.fblinds.split('/').map(Number); f.customBlinds = false; }
-    fnote = '';
-    saveSetup();
-    render();
-    return;
-  }
-  if (d.act === 'fnext' || d.act === 'fback') {
-    fnote = d.act === 'fnext' ? readFriendsStep() : '';
-    if (!fnote) fstep = Math.max(1, Math.min(3, fstep + (d.act === 'fnext' ? 1 : -1)));
-    render();
-    return;
-  }
-  if (d.approve != null) { hostApprove(+d.approve); return; }
-  if (d.deny != null) { hostRun({type: 'chips', seat: +d.deny, ok: false}); return; }
-  if (d.remove != null) {
-    const who = state?.seats[+d.remove]?.name || 'this player';
-    if (confirm(`Remove ${who} from the table? They fold out of this hand, and their chips leave with them.`)) hostRun({type: 'remove', seat: +d.remove});
-    return;
-  }
-  if (d.act === 'hostchips') { chipAsk = chipAmount(); hostChips(chipAsk); return; }
   if (d.act === 'askchips' || d.act === 'addchips') { chipAsk = chipAmount(); chipsOpen = false; net?.send({type: 'request_chips', amount: chipAsk}); return; }
   // A club table with nothing available: the manager is asked (#404).
   if (d.act === 'addopen') { chipsOpen = true; chipAsk = 0; render(); return; }
@@ -4608,7 +3749,7 @@ function onClick(e) {
     render();
   }
   else if (el.dataset.buyin) { setup.buyIn = +el.dataset.buyin * setup.bb; render(); }
-  else if (el.dataset.turn) { readNameInput(); setup.turnSecs = +el.dataset.turn; render(); }
+  else if (el.dataset.turn) { setup.turnSecs = +el.dataset.turn; render(); }
   else if (el.dataset.size) { raiseTo = +el.dataset.size; render(); }
   else if (el.dataset.act === 'shuffle') { setup.bots = []; render(); }
   else if (el.dataset.act === 'sit') startTable();
@@ -4635,14 +3776,6 @@ function onClick(e) {
     // A club table's hit-and-run rule: up, you play its hands first.
     if (mode === 'guest' && !watching && stayLeft > 0) { netNote = stayText(stayLeft); noteUntil = Date.now() + 6000; render(); return; }
     if (ladder && !ladder.over && state && !state.complete && !confirm('Leave in the middle of a hand? It folds this hand; the game picks up later with the chips you have behind.')) return;
-    // The host ends the game for everyone (#403): after the hand in play,
-    // so no chips are in a pot; again, at once.
-    if (mode === 'host') {
-      if (!endAfterHand && !confirm('End the game for everyone?')) return;
-      if (endAfterHand || betweenHandsNow(state)) endGame();
-      else { endAfterHand = true; render(); }
-      return;
-    }
     leaveTable();
   }
   else if (el.dataset.act === 'ladder-play') startLadderGame();
@@ -4660,13 +3793,6 @@ function onClick(e) {
     ladderNote = '';
     render();
   }
-  else if (el.dataset.act === 'standings-csv') downloadStandings();
-  else if (el.dataset.act === 'standings-close') { finalStandings = null; render(); }
-  else if (el.dataset.act === 'resumehost') resumeHosting();
-  else if (el.dataset.act === 'forgethost') { forgetSavedTable(); render(); }
-  else if (el.dataset.act === 'host') hostTable();
-  else if (el.dataset.act === 'copy') copyLink();
-  else if (el.dataset.act === 'copy-setup') copySetupLink();
   else if (el.dataset.act === 'prefold') togglePrefold();
   else if (el.dataset.act === 'runtwice' || el.dataset.act === 'runonce') runChoice(el.dataset.act === 'runtwice');
   else if (['fold', 'check', 'call', 'allin', 'bet', 'raise'].includes(el.dataset.act) && slotGuard(el)) return;
@@ -4715,7 +3841,6 @@ function onInput(e) {
 }
 
 function onChange(e) {
-  if (view === 'host' && tourneyPage?.change(e)) return;
   if (e.target.dataset.bot != null) { setup.bots[+e.target.dataset.bot] = e.target.value; render(); }
 }
 
@@ -4817,8 +3942,6 @@ export async function openPlay(el, shortcut, v = 'play') {
     document.addEventListener('keydown', onKey);
     document.addEventListener('visibilitychange', onVisibility);
   }
-  // Coming to Start a game starts at its first step.
-  if (v === 'host' && (view !== 'host' || !open)) { fstep = 1; fnote = ''; }
   // Coming to Play the Regulars: random Regulars, with choosing your own
   // folded away until you open it again (#225).
   if (v === 'play' && (view !== 'play' || !open)) setup.moreOpen = false;

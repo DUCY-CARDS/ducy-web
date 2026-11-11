@@ -1,11 +1,11 @@
-// Fair deals and private cards (#136, #580). Every hand at a club or friends
-// table is dealt from a seed the players' pages helped make (commit, then
+// Fair deals and private cards (#136, #580). Every hand at a club table
+// is dealt from a seed the players' pages helped make (commit, then
 // reveal), and a page that never answers doesn't hold the table up. After a
 // hand a player's page has its own cards, the board and the cards shown
 // down, and nothing more: no deal's seed (from which every seat's cards
 // could be dealt out again) and no folded hand. Checked at a club table
-// (club-host.js), at a club on the relay (club-room.js, as the Worker runs
-// it) and at a friends table (its host's runner, as play.js runs it).
+// (club-host.js) and at a club on the relay (club-room.js, as the Worker
+// runs it).
 // Needs the wasm build in wasm/.
 // Run with: node --test test/fair-deal.test.mjs
 import test from 'node:test';
@@ -53,8 +53,6 @@ function watchedTables(seeds) {
   return {
     create: (id, c) => wrap(ducy.ClubTable.create(id, c)),
     restore: (id, json, c, now) => wrap(ducy.ClubTable.restore(id, json, c, now)),
-    friends: (id, c) => wrap(ducy.ClubTable.friends(id, c)),
-    restoreFriends: (id, json, c, now) => wrap(ducy.ClubTable.restoreFriends(id, json, c, now)),
   };
 }
 
@@ -362,50 +360,4 @@ test('only the relay’s hand-records.js reads full hand records, and nothing se
   assert.match(text('relay/judge/wrangler.toml'), /^workers_dev = false$/m);
   // The engine's every-seat cards: only the club's room asks for them.
   assert.deepEqual(files.filter(f => /runnerCards|\.holeCards\(/.test(text(f))), ['src/club-engine.js', 'src/club-host.js']);
-});
-
-test('at a friends table, no guest gets a seed or anyone else’s folded cards, the host’s included', async () => {
-  const seeds = new Set();
-  const {ops} = clubEngine(watchedTables(seeds));
-  const T = 'friends';
-  // As play.js's host runs it, with auto-deal on; the host's own seat checks,
-  // or folds to a bet.
-  ops.runnerFriends(T, {seats: 4, hostName: 'Hana', hostChips: 200, minBuyIn: 40, maxBuyIn: 400, sb: 1, bb: 2, seed: 7, game: 'nlhe', turnMs: 3000, autoDeal: true, nextHandMs: 300});
-  const guests = {gus: {got: [], fair: fairPlayer(), play: checkFold}, ivy: {got: [], fair: fairPlayer(), play: checkCall}};
-  let chain = Promise.resolve(), wakeT = null, done = false;
-  const run = ev => (chain = chain.then(() => (done ? null : apply(ops.runnerEvent(T, ev)))).catch(e => console.warn(e)));
-  function deliver(to, u) {
-    const g = guests[to];
-    if (!g) return;
-    u = JSON.parse(JSON.stringify(u));
-    g.got.push(u);
-    if (u.type === 'fair') g.fair.message(u, cmd => run({type: 'cmd', id: to, cmd, online: true}));
-    else if (u.type === 'state' && u.view.legal && !u.view.complete) run({type: 'cmd', id: to, cmd: {type: 'act', seq: u.seq, ...g.play(u.view.legal)}, online: true});
-  }
-  function apply(step) {
-    for (const a of step.actions) {
-      if (a.type === 'engine') {
-        for (const m of a.res.out) deliver(m.to, m.data);
-        for (const r of a.res.chipRequests || []) run({type: 'chips', seat: r.seat, ok: true});
-        const v = a.res.state;
-        if (!v.complete && v.to_act === 0 && v.legal) run({type: 'host', cmd: {type: 'act', ...checkFold(v.legal)}});
-      } else if (a.type === 'send') deliver(a.to, a.update);
-    }
-    timers.clear(wakeT);
-    if (step.wake != null) wakeT = timers.set(() => run({type: 'wake'}), Math.max(0, step.wake - Date.now()));
-  }
-  for (const [id, name] of [['gus', 'Gus'], ['ivy', 'Ivy']]) {
-    run({type: 'presence', id, on: true});
-    run({type: 'cmd', id, cmd: {type: 'join', name}, online: true});
-    run({type: 'cmd', id, cmd: {type: 'request_chips', amount: 200}, online: true});
-  }
-  await until('three hands', () => finished(guests.ivy.got) >= 3, 120_000);
-  done = true;
-  timers.clear(wakeT);
-  await chain;
-  let folds = 0;
-  for (const [name, g] of Object.entries(guests)) folds += checkPrivate(name, g.got, seeds);
-  assert.ok(folds > 0, 'someone folded, and no guest saw those cards');
-  for (const g of Object.values(guests)) assert.ok(g.got.some(u => u.type === 'fair' && u.step === 'reveal'), 'each guest helped make the seeds');
-  ops.runnerDrop(T);
 });

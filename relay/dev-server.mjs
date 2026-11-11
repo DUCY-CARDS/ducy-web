@@ -48,12 +48,11 @@ const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
 const MAX_GUESTS = 16;
 const MAX_MESSAGE = 64 * 1024;
-// Messages kept for an absent host (guests that connect with queue=1).
+// Messages kept for a club moving here (guests that connect with queue=1).
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_DAYS = 7;
 // Messages a second per connection, in bursts of up to BURST (as in the Worker).
 const RATE = Number(process.env.RELAY_RATE || 20), BURST = Number(process.env.RELAY_BURST || 50);
-const HOST_RATE = 200, HOST_BURST = 500;
 
 // A token bucket per socket: false when it's sending too fast.
 function allow(ws, rate, burst, now = Date.now()) {
@@ -66,7 +65,7 @@ function allow(ws, rate, burst, now = Date.now()) {
 }
 const port = Number(process.argv[2] || process.env.PORT || 8787);
 
-// code → {host, guests: Map(id → {ws, queue}), queued: [{n, from, data, at}], next,
+// code → {guests: Map(id → {ws, queue}), queued: [{n, from, data, at}], next,
 //   store (an always-on club's storage), club (its server, once open), chain}
 const rooms = new Map();
 
@@ -74,13 +73,13 @@ const send = (ws, obj) => { try { ws.send(JSON.stringify(obj)); } catch {} };
 
 function roomFor(code) {
   let room = rooms.get(code);
-  if (!room) rooms.set(code, (room = {host: null, guests: new Map(), queued: [], next: 1, store: new Map(), club: null, chain: Promise.resolve()}));
+  if (!room) rooms.set(code, (room = {guests: new Map(), queued: [], next: 1, store: new Map(), club: null, chain: Promise.resolve()}));
   room.queued = room.queued.filter(q => Date.now() - q.at < QUEUE_DAYS * 864e5);
   return room;
 }
 
 function dropIfEmpty(code, room) {
-  if (!room.host && !room.guests.size && !room.queued.length && !room.store.has('club')) rooms.delete(code);
+  if (!room.guests.size && !room.queued.length && !room.store.has('club')) rooms.delete(code);
 }
 
 // An always-on club's storage, kept in memory while this relay runs.
@@ -205,31 +204,7 @@ const ADMINS = adminsFrom(JSON.parse(readFileSync(process.env.ADMINS_FILE || new
 const usage = stats(storageOf({store: new Map()}), {admins: new Set(ADMINS.keys())});
 const STATS_AHEAD_MS = Number(process.env.RELAY_STATS_AHEAD_MS || 0);
 const statNow = () => Date.now() + STATS_AHEAD_MS;
-const GAME_GAP_MS = 10 * 60_000;
 
-// A host connected (#601): a new friends game, unless the last one's host
-// is back within GAME_GAP_MS. Players already waiting join it.
-// code → {guests, endedAt}: kept when the room goes, for a host coming back.
-const games = new Map();
-function gameHosted(code, room) {
-  const now = Date.now();
-  const g = games.get(code);
-  if (!g || (g.endedAt && now - g.endedAt > GAME_GAP_MS)) {
-    games.set(code, {guests: new Set(), endedAt: null});
-    usage.note({kind: 'game'}, statNow());
-  } else g.endedAt = null;
-  for (const gid of room.guests.keys()) gameGuest(code, gid);
-}
-function gameGuest(code, id) {
-  const g = games.get(code);
-  if (!g || g.endedAt || g.guests.has(id) || g.guests.size >= 64) return;
-  g.guests.add(id);
-  usage.note({kind: 'gamePlayer'}, statNow());
-}
-function gameEnded(code) {
-  const g = games.get(code);
-  if (g && !g.endedAt) g.endedAt = Date.now();
-}
 // A player in a club: counted once a day per room.
 function notePlayer(room, id, code) {
   const day = new Date(statNow()).toISOString().slice(0, 10);
@@ -240,17 +215,12 @@ function notePlayer(room, id, code) {
 }
 // What's live now, for the admin site.
 async function liveNow() {
-  const out = {rooms: 0, players: 0, games: 0, clubTables: 0};
+  const out = {rooms: 0, players: 0, clubTables: 0};
   for (const [code, room] of rooms) {
-    if (room.store.has('club')) {
-      const online = [...room.guests.keys()].filter(id => !ADMINS.has(id)).length;
-      if (online) { out.rooms++; out.players += online; }
-      if (room.club) out.clubTables += (await (await clubOf(room, code)).adminInfo()).tables.filter(t => t.running).length;
-    } else if (room.host) {
-      out.rooms++;
-      out.games++;
-      out.players += 1 + room.guests.size;
-    }
+    if (!room.store.has('club')) continue;
+    const online = [...room.guests.keys()].filter(id => !ADMINS.has(id)).length;
+    if (online) { out.rooms++; out.players += online; }
+    if (room.club) out.clubTables += (await (await clubOf(room, code)).adminInfo()).tables.filter(t => t.running).length;
   }
   return out;
 }
@@ -285,7 +255,7 @@ async function admin(req, res, url) {
       const room = rooms.get(code);
       if (what === 'info') {
         const club = room ? await clubOf(room, code) : null;
-        return {online: room?.guests.size || 0, host: !!room?.host, queued: room?.queued.length || 0, club: club ? await club.adminInfo() : null};
+        return {online: room?.guests.size || 0, queued: room?.queued.length || 0, club: club ? await club.adminInfo() : null};
       }
       return (room && await adminView(storageOf(room), what, params)) || {};
     },
@@ -339,13 +309,13 @@ const http = createServer(async (req, res) => {
     res.end();
     return;
   }
-  // What a code is (#393): a club, a game with its host here, or nothing (#566).
+  // What a code is (#393): a club, or nothing.
   const look = url.pathname.match(/^\/code\/([^/]+)$/);
   if (look && req.method === 'GET') {
     const code = decodeURIComponent(look[1]);
     const out = (v, status = 200) => { res.writeHead(status, {'content-type': 'application/json', 'access-control-allow-origin': '*'}); res.end(JSON.stringify(v)); };
     if (!CODE.test(code)) return out({error: 'bad code'}, 400);
-    if (!(await reg.has(code))) return out({kind: rooms.get(code)?.host ? 'game' : 'none'});
+    if (!(await reg.has(code))) return out({kind: 'none'});
     return out(codeInfo(rooms.get(code)?.store.get('club'), (url.searchParams.get('invite') || '').slice(0, 64)));
   }
   const svc = url.pathname.match(/^\/club\/([^/]+)\/service$/);
@@ -380,64 +350,28 @@ wss.on('connection', (ws, req) => {
   const queue = url.searchParams.get('queue') === '1';
   // Its page's origin: only a club site runs a club (#637).
   ws.origin = req.headers.origin || '';
-  if (role === 'host') {
-    const room = roomFor(code);
-    if (room.host) return ws.close(4001, 'the table already has a host');
-    if (room.store.has('club')) return ws.close(4001, 'this club runs on the relay');
-    room.host = ws;
-    // Guests waiting in queue mode, then whatever they left while the host was away.
-    for (const [gid, g] of room.guests) { send(ws, {from: gid, event: 'open'}); send(g.ws, {type: 'host_back'}); }
-    for (const q of room.queued) send(ws, {from: q.from, data: q.data, queued: q.n});
-    gameHosted(code, room);
-    let handStatAt = 0;
-    ws.on('message', data => {
-      if (!allow(ws, HOST_RATE, HOST_BURST)) return ws.close(4008, 'too many messages');
-      const pong = pingReply(String(data));
-      if (pong) return ws.send(pong);
-      let msg;
-      try { msg = JSON.parse(data); } catch { return; }
-      if (msg && typeof msg.to === 'string') { const g = room.guests.get(msg.to); if (g) send(g.ws, msg.data); }
-      else if (msg && Number.isSafeInteger(msg.ack)) room.queued = room.queued.filter(q => q.n !== msg.ack);
-      // A hand finished at the host's table (#601): counted, never forwarded.
-      else if (msg?.stat === 'hand' && Date.now() - handStatAt >= 3000) {
-        handStatAt = Date.now();
-        usage.note({kind: 'hand'}, statNow());
-      }
+  // Only guests: no tab hosts a table or a tournament here (#643).
+  if (role !== 'guest') return ws.close(4000, 'bad role');
+  if (!ID.test(id)) return ws.close(4000, 'bad id');
+  const existing = rooms.get(code);
+  const isClub = !!existing?.store.has('club');
+  if (!queue && !isClub) return ws.close(4004, 'no such club');
+  const room = roomFor(code);
+  // A paused club, or a trial that's ended (#265): only its owner gets in.
+  // Checked before the connection counts, with its messages held meanwhile.
+  if (isClub) {
+    const held = [];
+    const hold = d => held.push(d);
+    ws.on('message', hold);
+    reg.status(code).then(st => {
+      ws.off('message', hold);
+      if (st.blocked && id !== st.record?.owner) return ws.close(4003, st.blocked.slice(0, 120));
+      proveFirst(ws, code, id, held, () => guest(ws, room, code, id, queue, isClub, []));
     });
-    ws.on('close', () => {
-      if (room.host !== ws) return;
-      room.host = null;
-      gameEnded(code);
-      for (const [gid, g] of room.guests) {
-        send(g.ws, {type: 'host_gone'});
-        if (!g.queue) { g.ws.close(4002, 'the host left'); room.guests.delete(gid); }
-      }
-      dropIfEmpty(code, room);
-    });
-  } else if (role === 'guest') {
-    if (!ID.test(id)) return ws.close(4000, 'bad id');
-    const existing = rooms.get(code);
-    const isClub = !!existing?.store.has('club');
-    if (!existing?.host && !queue && !isClub) return ws.close(4004, 'no such table');
-    const room = roomFor(code);
-    // A paused club, or a trial that's ended (#265): only its owner gets in.
-    // Checked before the connection counts, with its messages held meanwhile.
-    if (isClub) {
-      const held = [];
-      const hold = d => held.push(d);
-      ws.on('message', hold);
-      reg.status(code).then(st => {
-        ws.off('message', hold);
-        if (st.blocked && id !== st.record?.owner) return ws.close(4003, st.blocked.slice(0, 120));
-        proveFirst(ws, code, id, held, () => guest(ws, room, code, id, queue, isClub, []));
-      });
-      return;
-    }
-    if (mustProve({queue, club: isClub})) proveFirst(ws, code, id, [], () => guest(ws, room, code, id, queue, isClub, []));
-    else guest(ws, room, code, id, queue, isClub, []);
-  } else {
-    ws.close(4000, 'bad role');
+    return;
   }
+  if (mustProve({queue, club: isClub})) proveFirst(ws, code, id, [], () => guest(ws, room, code, id, queue, isClub, []));
+  else guest(ws, room, code, id, queue, isClub, []);
 });
 
 // A club connection proves it holds its player's key before it counts
@@ -474,9 +408,6 @@ function guest(ws, room, code, id, queue, isClub, held) {
     if (isClub) {
       notePlayer(room, id, code);
       inRoom(room, async () => (await clubOf(room, code)).message({from: id, event: 'open'}));
-    } else if (room.host) {
-      send(room.host, {from: id, event: 'open'});
-      gameGuest(code, id);
     } else {
       send(ws, {type: 'host_away'});
       // A club whose storage was lost comes back from its backup (#97), with
@@ -532,11 +463,10 @@ function guest(ws, room, code, id, queue, isClub, held) {
           try {
             if (msg.from !== id) throw new Error('The request must come from you.');
             if (type === 'create_club') {
-              if (room.host || room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
+              if (room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
               send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name)))});
               await clubOf(room, code);
             } else {
-              if (room.host) throw new Error('The club is still open in a tab as its host. Close it there first.');
               // A club that already existed isn't temporary (#395).
               send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name, {temporary: false})))});
               const c = await clubOf(room, code);
@@ -551,11 +481,7 @@ function guest(ws, room, code, id, queue, isClub, held) {
         });
         return;
       }
-      if (room.host) {
-        let msg;
-        try { msg = JSON.parse(data); } catch { return; }
-        send(room.host, {from: id, data: msg});
-      } else if (queue && !enqueue(room, id, String(data))) {
+      if (queue && !enqueue(room, id, String(data))) {
         send(ws, {type: 'queue_full'});
       }
     });
@@ -563,7 +489,6 @@ function guest(ws, room, code, id, queue, isClub, held) {
       if (room.guests.get(id)?.ws !== ws) return; // replaced
       room.guests.delete(id);
       if (room.club) inRoom(room, async () => (await room.club).message({from: id, event: 'close'}));
-      else if (room.host) send(room.host, {from: id, event: 'close'});
       dropIfEmpty(code, room);
     });
   }

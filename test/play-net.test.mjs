@@ -1,4 +1,4 @@
-// Relay addresses and invite links for multiplayer (src/play-net.js).
+// Relay addresses and code lookups for the clubs (src/play-net.js).
 // Run with: node --test test/play-net.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ function at(url) {
   globalThis.location = new URL(url);
 }
 at('https://ducy.example/');
-const { wsUrl, relayUrl, joinLink, lookupCode, normCode } = await import('../src/play-net.js');
+const { wsUrl, relayUrl, lookupCode, normCode } = await import('../src/play-net.js');
 
 const SITE_RELAY = 'wss://ducy-relay.ducy.workers.dev';
 
@@ -28,23 +28,14 @@ test('the site relay is the default', () => {
   store.clear();
   at('https://ducy.example/#play');
   assert.equal(relayUrl(), SITE_RELAY);
-  // Invite links don't need to name it.
-  at('https://ducy.example/#play');
-  const link = new URL(joinLink('ABCD-EFGH'));
-  assert.equal(link.searchParams.get('table'), 'ABCD-EFGH');
-  assert.equal(link.searchParams.get('relay'), null);
-  assert.equal(link.hash, '#join');
 });
 
-test('?relay= is remembered, carried in invite links, and ?relay=default clears it', () => {
+test('?relay= is remembered, and ?relay=default clears it', () => {
   store.clear();
   at('https://ducy.example/?relay=http://localhost:8787#play');
   assert.equal(relayUrl(), 'ws://localhost:8787');
   at('https://ducy.example/#play'); // later visits remember it
   assert.equal(relayUrl(), 'ws://localhost:8787');
-  const link = new URL(joinLink('ABCD-EFGH'));
-  assert.equal(link.searchParams.get('relay'), 'ws://localhost:8787');
-  assert.equal(normCode(link.searchParams.get('table')), 'ABCD-EFGH');
   at('https://ducy.example/?relay=default#play');
   assert.equal(relayUrl(), SITE_RELAY);
   at('https://ducy.example/#play');
@@ -56,15 +47,17 @@ test('looking up a code asks the relay over http, and trusts only what it should
   at('https://ducy.example/?relay=ws://localhost:8787#lobby');
   const asked = [];
   const answer = (body, ok = true) => async url => { asked.push(url); return {ok, json: async () => body}; };
-  assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'game'})), {kind: 'game'});
+  assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'none'})), {kind: 'none'});
   assert.equal(asked[0], 'http://localhost:8787/code/ABCD-EFGH');
+  // Friends tables are gone (#643): a relay that says "game" isn't believed.
+  assert.equal(await lookupCode('ABCD-EFGH', answer({kind: 'game'})), null);
   assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'club', ask: false})), {kind: 'club', ask: false});
   assert.deepEqual(await lookupCode('ABCD-EFGH', answer({kind: 'none'})), {kind: 'none'});
   assert.equal(await lookupCode('ABCD-EFGH', answer({kind: 'what'})), null);
   assert.equal(await lookupCode('ABCD-EFGH', answer({}, false)), null);
   assert.equal(await lookupCode('ABCD-EFGH', async () => { throw new Error('offline'); }), null);
   at('https://ducy.example/?relay=default#lobby');
-  await lookupCode('ABCD-EFGH', answer({kind: 'game'}));
+  await lookupCode('ABCD-EFGH', answer({kind: 'none'}));
   assert.equal(asked.at(-1), 'https://ducy-relay.ducy.workers.dev/code/ABCD-EFGH');
 });
 

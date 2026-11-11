@@ -67,7 +67,7 @@ html.browser-old body > :not(.browser-update) { display: none !important; }
 body:is(.mode-trainer, .mode-play) .beta-notice { display: block; }
 body .beta-notice.clubs-notice { display: none; }
 /* The play money note: on Join, Host and My clubs, and at a club table. */
-body.mode-play:is(.tab-join, .tab-host, .tab-clubs, .club-table) .clubs-notice { display: block; }
+body.mode-play:is(.tab-join, .tab-clubs, .club-table) .clubs-notice { display: block; }
 /* The link to the privacy policy (#554): under every page but a table in play.
    The landing page fills the screen, so there it sits in the page's own margin. */
 .site-foot { padding: 14px 20px; font-size: 12px; text-align: center; }
@@ -814,12 +814,8 @@ body.mode-play :is(.toolbar, .table-wrap, .eq-layout) { display: none; }
 .psec[data-tab="join"] .pt-join { order: 0; }
 .psec[data-tab="join"] .play { order: 1; }
 .psec[data-tab="join"] .clubs { order: 2; }
-.psec[data-tab="host"] .play { order: 0; }
-.psec[data-tab="host"] .clubs { order: 1; }
 /* At a table, the Play tab is the table. */
 body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
-/* Start a game (V3, #225): one page, its form and invite panel side by side. */
-.psec[data-tab="host"] .pl-wrap { max-width: 1040px; }
 /* Play the Regulars (V3, #225): the same cream form, with choosing opponents
    folded away inside it. */
 .sg-form.rg-form { flex: none; max-width: 640px; }
@@ -835,7 +831,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .rg-form .btn-small { background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
 .rg-form .cl-more { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 
-/* Join a game (V3, #225): Start a game's cream form (.sg-form). */
+/* Join a game (V3, #225): the cream form (.sg-form). */
 .sg-form.pj-form { flex: none; max-width: 480px; }
 .pj-field { display: flex; flex-direction: column; gap: 8px; }
 .pj-field .pl-text { width: 100%; box-sizing: border-box; }
@@ -1316,7 +1312,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-stats-table td small { color: var(--fg-muted); }
 .pl-stats-table tr.hero th { color: var(--teal); }
 .pl-log { max-height: 140px; overflow-y: auto; font-family: var(--font-data); font-size: 11px; color: var(--fg-muted); border-top: 1px solid var(--border); padding-top: 8px; }
-/* Chat at a friends table (play.js): after the table on a phone, floating at
+/* Chat at a bot table (play.js): after the table on a phone, floating at
    the bottom right on a wide screen. */
 .pl-chat { max-width: 980px; margin: 0 auto 20px; padding: 0 20px; box-sizing: border-box; }
 .pl-chat[hidden] { display: none; }
@@ -1466,7 +1462,7 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .pl-seat.empty .pl-plate b { color: var(--fg-muted); font-weight: 500; }
 .pl-seat.out { opacity: 0.6; }
 
-/* Chips at a friends table: requests, players, top-ups. */
+/* Sitting out and chips at a club table. */
 .pl-sitout { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .pl-sitout.on { border: 1px solid var(--amber); background: var(--amber-faint); border-radius: var(--radius); padding: 10px; }
 .pl-sitout-acts { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1657,7 +1653,7 @@ button.tw-step:hover .tw-name { color: var(--fg-strong); }
 .ph-choice span { font-size: 13px; color: var(--fg-muted); }
 .ph-choice:hover, .ph-choice:focus-visible { border-color: var(--teal); background: var(--teal-faint); }
 .ph-back { margin: 0; }
-/* Start a game's number fields (blinds, buy-in) */
+/* Number fields in a form (bomb pots) */
 .pf-num { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
 .pf-num .pl-text { width: 96px; }
 /* A new request, on whichever tab is showing (#152) */
@@ -1965,7 +1961,6 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 .v3-join button, .v3-btn-red { border: 0; border-radius: 12px; padding: 14px 20px; font: 600 16px var(--v3-text); cursor: pointer; text-decoration: none; }
 .v3-join button { background: var(--v3-cream); color: var(--v3-felt); }
 .v3-btn-red { background: var(--v3-red); color: var(--v3-red-ink) !important; }
-.v3-or { color: var(--v3-muted); }
 /* The beta's front page (#551): Ducybot's games, and the play money note. */
 .v3-bot-games { display: flex; flex-wrap: wrap; gap: 10px; }
 .v3-fine { margin: 0; color: var(--v3-cream-dim); font-size: 14px; }
@@ -2208,8 +2203,7 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .eq-bar > div.lead { background: #c9472f; }
 @media (max-width: 640px) { .eq-layout { padding: 0 12px 20px; } .eq-side { max-width: none; margin-top: 0; } .game-btn { padding: 8px 13px; font-size: 13px; } }
 
-/* Start a game (play.js, V3 #225): one cream form, the invite panel beside it. */
-.sg-wrap { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+/* The cream form (play.js and play-section.js, V3 #225). */
 .sg-form { flex: 1 1 420px; min-width: 0; background: #f3e7c9; color: #1d3a2c; border-radius: 20px; padding: 24px 26px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 8px 0 #0f2219; }
 .sg-field { display: flex; flex-direction: column; gap: 8px; }
 .sg-label { font-weight: 600; }
@@ -2222,47 +2216,6 @@ html:not(.four-color) .eq-c.s-d { color: #c8403a; } html:not(.four-color) .eq-c.
 .sg-form .pl-text[type=number] { width: 7em; }
 .sg-form .pl-neterr { color: #9b2a1c; }
 .sg-open { align-self: flex-start; padding: 14px 26px; font-size: 17px; border-radius: 14px; }
-.sg-invite { flex: 1 1 300px; min-width: 0; background: var(--bg-inset); border: 2px solid var(--fg-strong); border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 12px; color: var(--fg-muted); }
-.sg-invite-title { font-family: var(--font-display); font-size: 24px; color: var(--fg-strong); }
-.sg-code { font-family: var(--font-display); font-size: 28px; letter-spacing: 0.08em; color: var(--fg-muted); background: var(--bg); border: 2px dashed var(--border); border-radius: 12px; padding: 12px 16px; text-align: center; }
-.sg-note { font-size: 14px; }
-.sg-link { margin: 0; overflow-wrap: anywhere; user-select: all; }
-/* A one-off tournament (#394): its form's blind levels scroll sideways on a
-   phone; its page is the same cream card, the code beside it. */
-.pz-editor { overflow-x: auto; max-width: 100%; }
-:is(.pz-form, .pz-page) :is(.ts-levels th, .pl-meta, .pl-desc:not(.pl-neterr), .pl-label) { color: #4d5f55; }
-.pz-form .ts-levels .pl-text { width: 72px; padding: 4px 6px; font-size: 14px; }
-.pz-levels > summary { cursor: pointer; font-size: 14px; }
-.pz-levels .pz-editor { margin-top: 10px; }
-:is(.pz-form, .pz-page) :is(.cc-btn, .btn-small) { color: #1d3a2c; border-color: #c9b98f; background: #fffaf0; }
-.pz-places td:nth-child(2) { text-align: left; font-family: var(--font-ui); }
-.pz-form .cc-btn.on { background: #1d3a2c; border-color: #1d3a2c; color: #f3e7c9; }
-.pz-page :is(.cl-acct th, .cl-acct td, .cl-standings) { color: #1d3a2c; }
-.pz-status { margin: 0; font-size: 16px; }
-.pz-live { margin: 0; }
-.pz-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.pz-players li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.pz-places .pz-me td, .pz-places .pz-me th { font-weight: 700; }
-.pz-code { color: var(--fg-strong); border-style: solid; -webkit-user-select: all; user-select: all; }
-.pz-link { word-break: break-all; margin: 0; }
-/* Prizes in points, the host's boxes in place of the amounts (#403). */
-.pz-prizes td { white-space: nowrap; }
-.pz-prizes .pl-text { width: 96px; padding: 4px 6px; font-size: 14px; text-align: right; }
-.pz-prizes .link-btn { margin-left: 6px; }
-.pz-totals { margin: 0; }
-/* A one-off game's standings and who owes whom (#403). */
-.oo-standings th:first-child { text-align: left; }
-.oo-standings .oo-me th, .oo-standings .oo-me td { font-weight: 700; }
-.oo-up { color: #7fd69a !important; }
-.oo-down { color: #f2907f !important; }
-.pz-page .oo-up { color: var(--green) !important; }
-.pz-page .oo-down { color: var(--red) !important; }
-.oo-amt { font-family: var(--font-data); margin-left: 6px; }
-.pl-chips .oo-standings { min-width: 0; width: 100%; }
-.oo-details > summary { cursor: pointer; color: var(--fg-strong); }
-.oo-body { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.oo-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
-.oo-card h2 { margin: 0; }
 
 /* Practice (trainer.js, V3 #225): score bar marked at 90, the spade, the
    question over the hand, and the last hand's line. */

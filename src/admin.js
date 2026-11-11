@@ -154,8 +154,7 @@ async function show() {
 // ---- overview (#601) ----
 
 const METRICS = [
-  ['active', 'Active players'], ['newPlayers', 'New players'], ['games', 'Friends games'],
-  ['playersPerGame', 'Players per game', 1], ['hands', 'Hands'], ['clubsActive', 'Clubs active'], ['clubHands', 'Club hands'],
+  ['active', 'Active players'], ['newPlayers', 'New players'], ['clubsActive', 'Clubs active'], ['clubHands', 'Club hands'],
 ];
 const CF_METRICS = [
   ['requests', 'Requests'], ['errors', 'Errors'], ['cpuP50', 'CPU time, median (ms)', 2], ['cpuP99', 'CPU time, 99th percentile (ms)', 1], ['doRequests', 'Durable Object requests'],
@@ -200,7 +199,7 @@ async function overviewHtml() {
   const [vers, st, cf] = await Promise.all([versions(), api('/admin/stats'), api('/admin/cloudflare').catch(e => ({enabled: true, days: [], errors: [e.message]}))]);
   let h = versionsHtml(vers);
   const n = st.now || {};
-  h += `<section><h2>Now</h2><div class="tiles">${tile('Live rooms', n.rooms)}${tile('Players connected', n.players)}${tile('Friends games', n.games)}${tile('Club tables', n.clubTables)}</div></section>`;
+  h += `<section><h2>Now</h2><div class="tiles">${tile('Live rooms', n.rooms)}${tile('Players connected', n.players)}${tile('Club tables', n.clubTables)}</div></section>`;
   h += `<div class="row"><div class="seg" role="group" aria-label="View"><button data-view="charts" aria-pressed="${!asTable}">Charts</button><button data-view="table" aria-pressed="${asTable}">Table</button></div></div>`;
   h += dailyHtml('Last 30 days', st.days || [], METRICS);
   if (cf?.enabled) {

@@ -1,6 +1,6 @@
 // The payout table editor (#424): rows by the number of entries, each with
-// its places' shares as percentages, for club payout tables (clubs.js) and
-// a one-off tournament's own (private-tourney-room.js). HTML builders, form
+// its places' shares as percentages, for club payout tables (clubs.js).
+// HTML builders, form
 // readers and the draft's changes; the callers own the draft and the clicks.
 //
 // A draft: {rows: [{from, places: [basis points | null]}], cols}, as typed

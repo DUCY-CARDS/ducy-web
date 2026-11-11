@@ -1,7 +1,7 @@
-// The host's heartbeat to the relay (src/play-net.js connect) and how a
+// A club connection through an outage (src/play-net.js connect) and how a
 // club's tables stop their clocks when no one can be reached (src/club-host.js).
 // Run with: node --test test/heartbeat.test.mjs
-import test, { mock } from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 
@@ -20,64 +20,23 @@ class FakeSocket {
 }
 globalThis.WebSocket = FakeSocket;
 
-const { connect, PING_MS, SILENT_MS } = await import('../src/play-net.js');
+const { connect } = await import('../src/play-net.js');
 
-function host(opts = {}) {
+function member(opts = {}) {
   const log = {health: [], messages: [], fails: []};
-  const net = connect('ABCD-EFGH', 'host', null, {
+  const net = connect('ABCD-EFGH', 'guest', 'ann', {
     onOpen() {},
     onMessage: m => log.messages.push(m),
     onStatus() {},
     onFail: r => log.fails.push(r),
     onHealth: ok => log.health.push(ok),
-  }, {heartbeat: true, persistent: true, ...opts});
+  }, {queue: true, persistent: true, ...opts});
   return {net, log, ws: () => sockets.at(-1)};
 }
 
-test('the host pings the relay and is healthy while pongs come back', t => {
+test('a persistent connection keeps reconnecting through a long outage', t => {
   t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
-  const {net, log, ws} = host();
-  assert.equal(net.healthy(), false, 'not healthy before the socket opens');
-  ws().open();
-  assert.deepEqual(log.health, [true]);
-  for (let i = 0; i < 10; i++) {
-    t.mock.timers.tick(PING_MS);
-    const ping = ws().sent.at(-1);
-    assert.equal(ping.type, 'ping');
-    ws().message({type: 'pong', t: ping.t});
-  }
-  assert.deepEqual(log.health, [true], 'answered pings keep it healthy');
-  assert.equal(log.messages.length, 0, 'pongs are not passed on');
-  net.close();
-});
-
-test('silence from the relay makes the host unhealthy, and a pong brings it back', t => {
-  t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
-  const {net, log, ws} = host();
-  ws().open();
-  t.mock.timers.tick(PING_MS);
-  ws().message({type: 'pong'}); // this relay answers pings
-  // The socket stays "open" but nothing comes back (a half-dead link).
-  t.mock.timers.tick(SILENT_MS + PING_MS);
-  assert.deepEqual(log.health, [true, false]);
-  assert.equal(net.healthy(), false);
-  ws().message({type: 'pong'});
-  assert.deepEqual(log.health, [true, false, true]);
-  net.close();
-});
-
-test('a relay that never answers pings: the socket state alone decides', t => {
-  t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
-  const {net, log, ws} = host();
-  ws().open();
-  t.mock.timers.tick(SILENT_MS * 5);
-  assert.deepEqual(log.health, [true], 'an older relay without pongs is not taken for an outage');
-  net.close();
-});
-
-test('a persistent host keeps reconnecting through a long outage', t => {
-  t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
-  const {net, log, ws} = host();
+  const {net, log, ws} = member();
   ws().open();
   const first = sockets.length;
   for (let i = 0; i < 12; i++) {
@@ -89,15 +48,15 @@ test('a persistent host keeps reconnecting through a long outage', t => {
   assert.deepEqual(log.health, [true, false]);
   ws().open();
   assert.deepEqual(log.health, [true, false, true]);
-  // "In use" still fails at once.
-  ws().drop(4001);
+  // Sending too fast still fails at once.
+  ws().drop(4008);
   assert.equal(log.fails.length, 1);
   net.close();
 });
 
 test('without persistent, the old give-up after six tries stands', t => {
   t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
-  const {log, ws} = host({persistent: false});
+  const {log, ws} = member({persistent: false});
   ws().open();
   for (let i = 0; i < 7; i++) { ws().drop(); t.mock.timers.tick(64_000); }
   assert.deepEqual(log.fails, ['Lost the connection.']);

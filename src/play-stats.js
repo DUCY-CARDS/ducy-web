@@ -114,8 +114,7 @@ export function afText(r) {
 // VPIP / PFR for each personality in no-limit Hold'em, as measured in
 // ducy-play's README (6-handed, 1,500 hands), for comparison.
 // Stats are for bot tables only (`mode` 'solo'). At a table of people (a
-// club's cash table or tournament, a friends table, a one-off tournament)
-// nothing is shown or counted, so nothing about them builds up here.
+// club's cash table or tournament) nothing is shown or counted, so nothing about them builds up here.
 export const statsAtTable = mode => mode === 'solo';
 
 // Stats kept from before, without the people in them (friends tables kept

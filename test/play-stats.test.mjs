@@ -167,9 +167,7 @@ test('net and bb/100 add up across hands; stats follow the id, not the seat', ()
 
 test('stats are kept at bot tables only, not at tables of people (#625)', () => {
   assert.equal(statsAtTable('solo'), true);
-  // A friends table or one-off tournament you host; a club table, club
-  // tournament or someone else's game you joined (or watch).
-  assert.equal(statsAtTable('host'), false);
+  // A club table or club tournament (or one you watch).
   assert.equal(statsAtTable('guest'), false);
   assert.equal(statsAtTable(undefined), false);
 });

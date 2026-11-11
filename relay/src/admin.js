@@ -21,7 +21,7 @@
 //   /admin/log                    the admin log: every admin action
 //   /admin/errors                 what pages reported going wrong (#552)
 //   /admin/stats                  usage (#601): {days (the last 30, stats.js),
-//                                 now: {rooms, players, games, clubTables}}
+//                                 now: {rooms, players, clubTables}}
 //   /admin/cloudflare             Cloudflare's numbers for this relay, if its
 //                                 token is set (cf-analytics.js)
 //   /admin/fair-play              every club's latest fair play summary

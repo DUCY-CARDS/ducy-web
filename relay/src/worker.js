@@ -1,49 +1,39 @@
-// Relays multiplayer messages for ducy's #play and #clubs pages. Each code is
-// a room (one Durable Object); the host's tab and each player's tab hold a
-// WebSocket to it. The relay knows nothing about poker: it forwards
-//   host  → {to, data}  as data to that guest
-//   guest → data        as {from, data} to the host
-// and tells the host when a guest connects or drops ({from, event}). When
-// the host drops, guests get {type: 'host_gone'} and are disconnected, so
-// they reconnect once the host is back.
+// Relays messages for ducy's clubs. Each code is a room (one Durable
+// Object); each always-on club runs in its room, and its members' tabs hold a
+// WebSocket to it as guests. Nothing else is hosted here: a tab can't host a
+// table or a tournament (#643), and `role=host` is refused (4000).
 //
 // Queue mode (guest connects with queue=1, used by clubs): the guest may
-// connect while the host is away ({type: 'host_away'}) and stays connected
-// when the host leaves. Its messages while the host is away are stored (a few
-// per guest, for up to 7 days) and delivered when the host connects as
-// {from, data, queued: n}; the host sends {ack: n} to delete each one. Queued
-// guests get {type: 'host_back'} when the host arrives.
+// connect before the room is a club ({type: 'host_away'}). Its messages
+// meanwhile are stored (a few per guest, for up to 7 days) and go to the club
+// once one moves here (import_club).
 //
 // Heartbeat: {type: "ping", t} from anyone is answered with {type: "pong", t}.
 //
 // Always-on clubs (#93, club-room.js): a guest alone in an empty room may
 // send a signed {type: 'create_club', club: code, name}; the room then is
 // that club's host, for good. It answers {type: 'club_created', hostId,
-// invite} (or {type: 'club_error', reason}), runs the club itself with
-// members connecting as guests, and refuses hosts (4001).
+// invite} (or {type: 'club_error', reason}), and runs the club itself with
+// members connecting as guests.
 //
-// Close codes: 4000 bad request, 4001 the room already has a host, 4002 the
-// host left, 4003 the club is paused or its trial ended (#265; the reason
-// says which), 4004 no such table, 4008 sending too fast, 4009 replaced by a
-// newer connection with the same id, 4029 the room is full.
+// Close codes: 4000 bad request, 4003 the club is paused or its trial ended
+// (#265; the reason says which), 4004 no such club, 4008 sending too fast,
+// 4009 replaced by a newer connection with the same id, 4029 the room is full.
 //
 // The super admin's API (#265, #401): POST /admin/…, each request signed by
 // a key listed in admins.json (bundled at build time). admin.js has the
 // routes and the checks. Pages on ALLOWED_ORIGINS or ADMIN_ORIGINS (the
 // admin site, #601) may call it.
 //
-// Usage counts (#601, stats.js): rooms tell the registry when a friends
-// game starts, gains a player or finishes a hand (the host's tab sends
-// {stat: 'hand'}, never forwarded), and when a club gets a player or
-// finishes a hand. The registry keeps totals per day; the admin site reads
-// them with /admin/stats.
+// Usage counts (#601, stats.js): rooms tell the registry when a club gets a
+// player or finishes a hand. The registry keeps totals per day; the admin
+// site reads them with /admin/stats.
 //
 // What a code is (#393), for Play's Enter a code, public:
 //   GET /code/<code>   {kind: 'club', ask, name, hostId} for an always-on
 //                      club (name and hostId only when it lets people ask
 //                      to join with the code: club-room.js codeInfo), else
-//                      {kind: 'game'} (a friends table with its host
-//                      connected), else {kind: 'none'} (#566)
+//                      {kind: 'none'}
 //
 // Services (src/club-services.js, service-http.js): an always-on club's
 // outside servers send
@@ -66,7 +56,7 @@ import { clubCodes, resetRefusal } from './reset.js';
 import { passkeys } from './passkeys.js';
 import { mustProve, newChallenge, proves } from './prove.js';
 import { CLUB_SITE_REPLY, check as unlockCheck, siteOk, unlockedNow } from './unlock.js';
-import { LIVE_STALE_MS, liveGames, stats } from './stats.js';
+import { stats } from './stats.js';
 import { cfAnalytics } from './cf-analytics.js';
 import { judgeVia } from './postflop.js';
 import { initSync } from '../../wasm/ducy_wasm.js';
@@ -90,8 +80,6 @@ const MAX_IMPORT = 1024 * 1024;
 // one that sends faster is closed (4008), so a single client can't use up
 // the account's quota for everyone (#103).
 const RATE = 20, BURST = 50;
-// A host sends one message per player per change, at every table it runs.
-const HOST_RATE = 200, HOST_BURST = 500;
 
 // A token bucket kept on the socket itself, so it survives hibernation.
 function allow(ws, rate, burst, now = Date.now()) {
@@ -126,12 +114,6 @@ function connOf(req) {
 
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
-// A host back within this long carries on the same friends game (#601),
-// after a reload or a dropped connection.
-const GAME_GAP_MS = 10 * 60_000;
-// A friends game's hands are counted at most this often (the host's tab
-// says when one finished).
-const HAND_STAT_MS = 3000;
 // How often the registry looks for unused temporary clubs to delete (#395).
 const CLEANUP_EVERY_MS = 6 * 3600e3;
 
@@ -146,15 +128,14 @@ const ADMIN_IDS = new Set(ADMINS.keys());
 const originsOf = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
 
 // What's live now (#601): each club's players and running tables (its
-// room's /admin/now), and the friends games the registry was told of.
+// room's /admin/now).
 async function liveNow(env, reg) {
-  const [list, {games}] = await Promise.all([reg('/list'), reg('/live-list')]);
+  const list = await reg('/list');
   const clubs = await Promise.all(list.clubs.map(c => roomOf(env, c.code).fetch(`https://room/admin/now/${encodeURIComponent(c.code)}`).then(r => r.json()).catch(() => ({online: 0, tables: 0}))));
   const busy = clubs.filter(c => c.online > 0);
   return {
-    rooms: busy.length + games.length,
-    players: busy.reduce((s, c) => s + c.online, 0) + games.reduce((s, g) => s + g.players, 0),
-    games: games.length,
+    rooms: busy.length,
+    players: busy.reduce((s, c) => s + c.online, 0),
     clubTables: clubs.reduce((s, c) => s + (c.tables || 0), 0),
   };
 }
@@ -259,7 +240,7 @@ async function route(req, env) {
     return new Response(res.body, {headers: {'content-type': 'application/json', ...(cors ? {'access-control-allow-origin': cors} : {})}});
   }
   // What a code is (#393): a club (the registry knows it, its room says
-  // what it may tell), or else a game.
+  // what it may tell), or nothing.
   const look = url.pathname.match(/^\/code\/([^/]+)$/);
   if (look && req.method === 'GET') {
     const origin = req.headers.get('Origin');
@@ -268,8 +249,7 @@ async function route(req, env) {
     const code = decodeURIComponent(look[1]);
     if (!CODE.test(code)) return new Response(JSON.stringify({error: 'bad code'}), {status: 400, headers});
     const {has} = await registryOf(env).fetch('https://registry/has', {method: 'POST', body: JSON.stringify({code})}).then(r => r.json());
-    // Not a club: a game while its host is connected, else nothing (#566).
-    if (!has) return new Response((await roomOf(env, code).fetch(`https://room/hosted/${encodeURIComponent(code)}`)).body, {headers});
+    if (!has) return new Response(JSON.stringify({kind: 'none'}), {headers});
     const invite = (url.searchParams.get('invite') || '').slice(0, 64);
     const res = await roomOf(env, code).fetch(`https://room/lookup/${encodeURIComponent(code)}?invite=${encodeURIComponent(invite)}`);
     return new Response(res.body, {headers});
@@ -387,15 +367,6 @@ export class Registry {
       else if (path === '/fair-play-list') return Response.json({clubs: await this.fp.list()});
       else if (path === '/fair-play-history') return Response.json({weeks: await this.fp.history(String(body.id || ''))});
       else if (path === '/stats') return Response.json({days: await this.stats.days(Math.min(90, Math.max(1, Number(body.days) || 30)))});
-      else if (path === '/live') {
-        const all = (await this.state.storage.get('liveGames')) || {};
-        const code = String(body.code || '');
-        if (Number.isSafeInteger(body.players) && body.players > 0) all[code] = {players: body.players, at: Date.now()};
-        else delete all[code];
-        for (const [k, g] of Object.entries(all)) if (Date.now() - g.at >= LIVE_STALE_MS) delete all[k];
-        await this.state.storage.put('liveGames', all);
-      }
-      else if (path === '/live-list') return Response.json({games: liveGames((await this.state.storage.get('liveGames')) || {})});
       else return new Response('not found', {status: 404});
       return Response.json({ok: true});
     } catch (e) {
@@ -537,7 +508,6 @@ export class Room {
     const club = await this.club(code).catch(() => null);
     return Response.json({
       online: new Set(this.state.getWebSockets('guest').map(g => this.guestId(g))).size,
-      host: !!this.host(),
       queued: (await this.queued()).length,
       club: club ? await club.adminInfo() : null,
     });
@@ -647,7 +617,7 @@ export class Room {
     const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
     const others = this.state.getWebSockets('guest').some(g => this.guestId(g) !== id);
     try {
-      if (!code || this.host() || others || (await this.queued()).length) throw new Error('That club code is in use.');
+      if (!code || others || (await this.queued()).length) throw new Error('That club code is in use.');
       if (env?.from !== id) throw new Error('The request must come from you.');
       const made = await createClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name}));
       ws.send(JSON.stringify({type: 'club_created', ...made}));
@@ -657,14 +627,12 @@ export class Room {
     }
   }
 
-  // A browser-run club's host moves it here (#98). Members may be connected
-  // (waiting for the host); the host's own hosting connection must be gone.
-  // What they left while the host was away goes to the club straight after.
+  // A club moves here (#98). Members may be connected (waiting for it); what
+  // they left meanwhile goes to the club straight after.
   async importHere(ws, id, env) {
     const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
     try {
       if (!code) throw new Error('Not a club room.');
-      if (this.host()) throw new Error('The club is still open in a tab as its host. Close it there first.');
       if (env?.from !== id) throw new Error('The request must come from you.');
       // A club that already existed isn't temporary (#395).
       const made = await importClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name, temporary: false}));
@@ -704,8 +672,6 @@ export class Room {
       const out = await adminView(this.storage(), view[1], {reveal: url.searchParams.get('reveal') === 'true', id: url.searchParams.get('id') || ''});
       return Response.json(out || {});
     }
-    // Whether a game's host is here (#566), from the Worker.
-    if (url.pathname.startsWith('/hosted/')) return Response.json({kind: this.host() ? 'game' : 'none'});
     // What anyone may learn from the club's code (#393), from the Worker.
     if (url.pathname.startsWith('/lookup/')) return Response.json(codeInfo(await this.state.storage.get('club'), url.searchParams.get('invite') || ''));
     // A service's request, from the Worker (serviceHttp checked its shape).
@@ -726,49 +692,35 @@ export class Room {
       server.close(code, reason);
       return new Response(null, {status: 101, webSocket: client});
     };
-    const host = this.host();
+    // Only guests: no tab hosts a table or a tournament here (#643).
+    if (role !== 'guest') return refuse(4000, 'bad role');
+    if (!ID.test(id)) return refuse(4000, 'bad id');
     const club = await this.club(code);
-    if (role === 'host') {
-      if (host) return refuse(4001, 'the table already has a host');
-      if (club) return refuse(4001, 'this club runs on the relay');
-      this.state.acceptWebSocket(server, ['host']);
-      for (const g of this.state.getWebSockets('guest')) {
-        if (this.unproven(g)) continue;
-        server.send(JSON.stringify({from: this.guestId(g), event: 'open'}));
-        g.send(JSON.stringify({type: 'host_back'}));
-      }
-      for (const q of await this.queued()) server.send(JSON.stringify({from: q.from, data: q.data, queued: q.n}));
-      await this.gameHosted(code).catch(e => console.warn('stats:', e));
-    } else if (role === 'guest') {
-      if (!ID.test(id)) return refuse(4000, 'bad id');
-      if (!host && !queue && !club) return refuse(4004, 'no such table');
-      // A paused club, or a trial that's ended (#265): only its owner gets in.
-      if (club) {
-        const st = await this.status(code);
-        if (st.blocked && id !== st.record?.owner) return refuse(4003, st.blocked.slice(0, 120));
-        this.noteActive(code);
-      }
-      // A club connection proves it holds the player's key first (#577,
-      // prove.js): until then it replaces no one, and only an older
-      // unproven one of the same ID goes.
-      const proving = mustProve({queue, club});
-      for (const old of this.state.getWebSockets('g:' + id)) {
-        if (!proving || this.unproven(old)) old.close(4009, 'replaced');
-      }
-      if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
-      const tags = ['guest', 'g:' + id, 'c:' + code];
-      this.state.acceptWebSocket(server, queue ? [...tags, 'queue'] : tags);
-      if (proving) {
-        const challenge = newChallenge();
-        // The club keeps a hashed snapshot of the connection for ducy's
-        // checks (#582): kept on the socket until it's proven.
-        // And its page's origin: only a club site runs a club (#637).
-        server.serializeAttachment({proof: challenge, conn: connOf(req), origin: req.headers.get('Origin') || ''});
-        server.send(JSON.stringify({type: 'prove', challenge}));
-      } else await this.arrived(server, id, connOf(req));
-    } else {
-      return refuse(4000, 'bad role');
+    if (!queue && !club) return refuse(4004, 'no such club');
+    // A paused club, or a trial that's ended (#265): only its owner gets in.
+    if (club) {
+      const st = await this.status(code);
+      if (st.blocked && id !== st.record?.owner) return refuse(4003, st.blocked.slice(0, 120));
+      this.noteActive(code);
     }
+    // A club connection proves it holds the player's key first (#577,
+    // prove.js): until then it replaces no one, and only an older
+    // unproven one of the same ID goes.
+    const proving = mustProve({queue, club});
+    for (const old of this.state.getWebSockets('g:' + id)) {
+      if (!proving || this.unproven(old)) old.close(4009, 'replaced');
+    }
+    if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
+    const tags = ['guest', 'g:' + id, 'c:' + code];
+    this.state.acceptWebSocket(server, queue ? [...tags, 'queue'] : tags);
+    if (proving) {
+      const challenge = newChallenge();
+      // The club keeps a hashed snapshot of the connection for ducy's
+      // checks (#582): kept on the socket until it's proven.
+      // And its page's origin: only a club site runs a club (#637).
+      server.serializeAttachment({proof: challenge, conn: connOf(req), origin: req.headers.get('Origin') || ''});
+      server.send(JSON.stringify({type: 'prove', challenge}));
+    } else await this.arrived(server, id, connOf(req));
     return new Response(null, {status: 101, webSocket: client});
   }
 
@@ -782,18 +734,14 @@ export class Room {
     return this.state.getWebSockets('g:' + id).filter(g => !this.unproven(g));
   }
 
-  // Guest `ws` (player `id`) counts from now: the club or the host hears
-  // they're here, or they hear the host is away.
+  // Guest `ws` (player `id`) counts from now: the club hears they're here,
+  // or, with no club here yet, they hear so.
   async arrived(ws, id, conn = ws.deserializeAttachment()?.conn) {
     const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
     const club = await this.club(code);
-    const host = this.host();
     if (club) {
       this.notePlayer(id, code);
       await club.message({from: id, event: 'open', conn});
-    } else if (host) {
-      host.send(JSON.stringify({from: id, event: 'open'}));
-      await this.gameGuest(id).catch(e => console.warn('stats:', e));
     } else ws.send(JSON.stringify({type: 'host_away'}));
   }
 
@@ -811,50 +759,6 @@ export class Room {
     if (this.noted.has(id)) return;
     this.noted.add(id);
     this.stat({kind: 'player', id, code});
-  }
-
-  // A host connected: a new friends game, unless it's the last one's host
-  // back within GAME_GAP_MS. Players already waiting join it.
-  async gameHosted(code) {
-    const s = this.state.storage, now = Date.now();
-    const g = await s.get('game');
-    if (!g || (g.endedAt && now - g.endedAt > GAME_GAP_MS)) {
-      await s.put('game', {code, start: now, guests: [], endedAt: null});
-      this.stat({kind: 'game'});
-    } else if (g.endedAt) await s.put('game', {...g, endedAt: null});
-    for (const gw of this.state.getWebSockets('guest')) await this.gameGuest(this.guestId(gw));
-    await this.gameLive();
-  }
-
-  // Player `id` (a tab's own ID, not a player ID) joined the game: counted
-  // the first time.
-  async gameGuest(id) {
-    const s = this.state.storage;
-    const g = await s.get('game');
-    if (!g || g.endedAt || !id) return;
-    if (!g.guests.includes(id) && g.guests.length < 64) {
-      g.guests.push(id);
-      await s.put('game', g);
-      this.stat({kind: 'gamePlayer'});
-    }
-    await this.gameLive();
-  }
-
-  // How many are in the game now, for the admin site's Now; null: it ended.
-  // `leaving`: a guest socket closing, not counted.
-  async gameLive(ended = false, leaving = null) {
-    const g = await this.state.storage.get('game');
-    if (!g?.code) return;
-    const players = ended || !this.host() ? null : 1 + new Set(this.state.getWebSockets('guest').filter(w => w !== leaving).map(w => this.guestId(w))).size;
-    await this.registry('/live', {code: g.code, players}).catch(e => console.warn('stats:', e));
-  }
-
-  async gameEnded() {
-    const s = this.state.storage;
-    const g = await s.get('game');
-    if (!g || g.endedAt) return;
-    await s.put('game', {...g, endedAt: Date.now()});
-    await this.gameLive(true);
   }
 
   // A proof from unproven connection `ws` (#577): it counts, replacing any
@@ -882,16 +786,12 @@ export class Room {
     this.registry('/used', {minutes: 0, code}).catch(e => console.warn(e));
   }
 
-  host(except = null) {
-    return this.state.getWebSockets('host').find(ws => ws !== except) || null;
-  }
-
   guestId(ws) {
     const tag = this.state.getTags(ws).find(t => t.startsWith('g:'));
     return tag ? tag.slice(2) : null;
   }
 
-  // Stored messages for the host, oldest first, dropping expired ones.
+  // Stored messages for a club moving here, oldest first, dropping expired ones.
   async queued() {
     const all = [...(await this.state.storage.list({prefix: 'q:'})).values()];
     const old = all.filter(q => Date.now() - q.at >= QUEUE_MS);
@@ -911,13 +811,11 @@ export class Room {
   }
 
   async webSocketMessage(ws, msg) {
-    const host = this.state.getTags(ws).includes('host');
-    if (!allow(ws, host ? HOST_RATE : RATE, host ? HOST_BURST : BURST)) { ws.close(4008, 'too many messages'); return; }
+    if (!allow(ws, RATE, BURST)) { ws.close(4008, 'too many messages'); return; }
     if (typeof msg !== 'string' || msg.length > MAX_IMPORT) return;
     // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
     if (msg.length > MAX_MESSAGE && !msg.includes('"import_club"')) return;
-    // A heartbeat from either side: answered here, never forwarded or queued,
-    // so a host can tell its link to the relay is alive.
+    // A heartbeat: answered here, never passed on or queued.
     const pong = pingReply(msg);
     if (pong) { ws.send(pong); return; }
     const id = this.guestId(ws);
@@ -962,29 +860,9 @@ export class Room {
         else if (m?.body?.type === 'import_club') await this.importHere(ws, id, m);
         return;
       }
-      const host = this.host();
-      if (host) {
-        let m;
-        try { m = JSON.parse(msg); } catch { return; }
-        host.send(JSON.stringify({from: id, data: m}));
-      } else if (this.state.getTags(ws).includes('queue') && !(await this.enqueue(id, msg))) {
+      if (this.state.getTags(ws).includes('queue') && !(await this.enqueue(id, msg))) {
         ws.send(JSON.stringify({type: 'queue_full'}));
       }
-      return;
-    }
-    if (!this.state.getTags(ws).includes('host')) return;
-    let m;
-    try { m = JSON.parse(msg); } catch { return; }
-    if (m && typeof m.to === 'string') {
-      const out = JSON.stringify(m.data);
-      for (const g of this.guests(m.to)) g.send(out);
-    } else if (m && Number.isSafeInteger(m.ack)) {
-      await this.state.storage.delete('q:' + String(m.ack).padStart(12, '0'));
-    } else if (m?.stat === 'hand') {
-      // A hand finished at the host's table (#601): counted, never forwarded.
-      if (Date.now() - (this.handStatAt || 0) < HAND_STAT_MS) return;
-      this.handStatAt = Date.now();
-      this.stat({kind: 'hand'});
     }
   }
 
@@ -1004,17 +882,7 @@ export class Room {
       if (this.unproven(ws)) return;
       // A newer connection with the same id took over: not a disconnect.
       if (this.guests(id).some(g => g !== ws)) return;
-      if (this.clubP) { this.clubP.then(c => c.message({from: id, event: 'close'})).catch(e => console.warn(e)); return; }
-      this.host()?.send(JSON.stringify({from: id, event: 'close'}));
-      if (this.host()) this.gameLive(false, ws).catch(e => console.warn('stats:', e));
-    } else if (this.state.getTags(ws).includes('host') && !this.host(ws)) {
-      this.gameEnded().catch(e => console.warn('stats:', e));
-      for (const g of this.state.getWebSockets('guest')) {
-        try {
-          g.send(JSON.stringify({type: 'host_gone'}));
-          if (!this.state.getTags(g).includes('queue')) g.close(4002, 'the host left');
-        } catch {}
-      }
+      this.clubP?.then(c => c.message({from: id, event: 'close'})).catch(e => console.warn(e));
     }
   }
 }

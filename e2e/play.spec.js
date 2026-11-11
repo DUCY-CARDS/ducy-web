@@ -1,5 +1,5 @@
-// What the beta offers, in real browsers (#553): the front page, bots, a game
-// with friends, and clubs. Every test fails on an uncaught error, on anything
+// What the beta offers, in real browsers (#553): the front page, bots, and
+// clubs. Every test fails on an uncaught error, on anything
 // logged as an error, and on a page wider than the screen.
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -36,14 +36,15 @@ async function playOutAHand(page) {
   await expect(over).toBeVisible();
 }
 
-test('the front page offers friends, clubs and the Regulars, and nothing else', async ({page, watch}) => {
+test('the front page offers a club code, clubs and the Regulars, and nothing else', async ({page, watch}) => {
   await watch(page).goto('/');
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
-  await expect(page.getByLabel('Game or club code')).toBeVisible();
+  await expect(page.getByLabel('Club code')).toBeVisible();
   await expect(page.getByRole('link', {name: 'Play the Regulars'})).toBeVisible();
   await expect(page.locator('form[data-v3join] button[type=submit]')).toBeVisible();
-  // No Start a game in the beta (#635).
+  // No Start a game (#635, #643).
   await expect(page.getByText('Start a game')).toHaveCount(0);
+  await expect(page.locator('a[href="#host"]')).toHaveCount(0);
   // No clubs yet: no clubs tile, and no page of them (#611).
   await expect(page.getByText(/Private clubs|Start a club|Create your own club/)).toHaveCount(0);
   await expect(page.getByText(/play money|Still in development/i)).toHaveCount(0);
@@ -52,45 +53,37 @@ test('the front page offers friends, clubs and the Regulars, and nothing else', 
   await fitsTheScreen(page);
 });
 
-test('#host lands on Join a game in the beta (#635)', async ({page, watch}) => {
+test('#host is gone: no Start a game page, even with ?on=startGame (#643)', async ({page, watch}) => {
   watch(page);
   for (const width of [1280, 375]) {
     await page.setViewportSize({width, height: 800});
-    await page.goto(`/?relay=${RELAY}#host`);
-    await expect(page).toHaveURL(/#join$/);
-    await expect(page).toHaveTitle(/Join a game/);
-    await expect(page.getByText('Start a game')).toHaveCount(0);
+    await page.goto(`/?relay=${RELAY}&on=startGame#host`);
+    await expect(page.locator('#pl-name, .sg-code, [data-act="host"]')).toHaveCount(0);
+    await expect(page.getByText(/Start a (private )?game/)).toHaveCount(0);
     await fitsTheScreen(page);
   }
 });
 
-// The friends tables below need Start a game, off in the beta: ?on=startGame turns it on.
-test('a code with no game behind it says so on the front page (#566)', async ({page, watch}) => {
-  await watch(page).goto(`/?relay=${RELAY}`);
-  await page.getByLabel('Game or club code').fill('ZZZZ-ZZZZ');
-  await page.locator('form[data-v3join] button[type=submit]').click();
-  await expect(page.getByText('No game or club with that code.')).toBeVisible();
+test('an old friends-table link opens no table (#643)', async ({page, watch}) => {
+  await watch(page).goto(`/?table=ABCD-EFGH&relay=${RELAY}#join`);
+  await expect(page.getByRole('heading', {name: 'Join a game'})).toBeVisible();
+  await expect(page.locator('form[data-joinform]')).toHaveCount(0);
+  await expect(page.locator('.pl-felt')).toHaveCount(0);
+  await fitsTheScreen(page);
 });
 
-test('a private game shows its code before it opens, and opens with it (#566)', async ({page, watch}) => {
-  await watch(page).goto(`/?relay=${RELAY}&on=startGame#host`);
-  const shown = (await page.locator('.sg-code').innerText()).trim();
-  expect(shown).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
-  // Its link, to this site, with the same code.
-  const link = new URL((await page.locator('.sg-link').innerText()).trim());
-  expect(link.origin).toBe(new URL(page.url()).origin);
-  expect(link.searchParams.get('table')).toBe(shown);
-  await page.locator('#pl-name').fill('Hana');
-  await page.locator('[data-act="host"]').click();
-  await expect(page.getByText(shown).first()).toBeVisible();
-  await expect(page.getByText(/can’t reach the relay/)).toHaveCount(0, {timeout: 10_000});
+test('a code with no club behind it says so on the front page (#566, #643)', async ({page, watch}) => {
+  await watch(page).goto(`/?relay=${RELAY}`);
+  await page.getByLabel('Club code').fill('ZZZZ-ZZZZ');
+  await page.locator('form[data-v3join] button[type=submit]').click();
+  await expect(page.getByText('No club with that code.')).toBeVisible();
 });
 
 test('with no clubs, the front page takes a club code, and #clubs is the front page (#564, #611)', async ({page, watch}) => {
   await watch(page).goto('/#clubs');
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
-  await page.getByLabel('Game or club code').fill('not a code');
+  await page.getByLabel('Club code').fill('not a code');
   await page.locator('form[data-v3join] button[type=submit]').click();
   await expect(page.getByText('That isn’t a code or a link.', {exact: false})).toBeVisible();
   await fitsTheScreen(page);
@@ -168,145 +161,12 @@ test('the Regulars’ table keeps its stats on the seats and its stats table (#6
   await fitsTheScreen(page);
 });
 
-test('a friends table shows no player stats, and keeps none (#625)', async ({browser, watch, browserName}, info) => {
-  const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
-  const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
-  const host = await open();
-  // Stats an earlier version kept at a friends table: the people's go.
-  const c = {hands: 4, vpip: 2, pfr: 1, threeBetChances: 0, threeBets: 0, aggressive: 0, calls: 0, folds: 0, facedBets: 0, foldsToBets: 0, sawFlop: 0, showdowns: 0, showdownsWon: 0, net: 0, netBB: 0};
-  await host.addInitScript(k => { if (!sessionStorage.seeded) { localStorage.setItem('ducyPlayStats', JSON.stringify({v: 1, games: {nlhe: {you: k, doug_poker: k, 'friend:Gus': k}}})); sessionStorage.seeded = '1'; } }, c);
-  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
-  await host.locator('#pl-name').fill('Hana');
-  await host.locator('[data-act="host"]').click();
-  await expect(host.locator('[data-act="copy"]')).toBeVisible();
-  const code = (await host.locator('body').innerText()).match(/[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}/)[0];
-  const guest = await open();
-  await guest.goto(`/?table=${code}&relay=${RELAY}#join`);
-  await guest.locator('form[data-joinform] input[name="name"]').fill('Gus');
-  await guest.locator('form[data-joinform] button[type="submit"]').click();
-  await expect(host.locator('.pl-seat', {hasText: 'Gus'})).toBeVisible();
-  // Gus asks for chips, and Hana gives them.
-  await guest.locator('[data-act="askchips"]').click();
-  await host.locator('[data-approve]').first().click();
-
-  // A hand played out, both of them checking or calling.
-  const result = host.locator('.pl-result', {hasText: /wins?\b/});
-  for (let i = 0; i < 160 && !(await result.isVisible()); i++) {
-    for (const p of [host, guest]) {
-      const act = p.locator('[data-act="next"], [data-act="check"], [data-act="call"]').first();
-      if (await act.isVisible()) await act.click().catch(() => {});
-    }
-    await host.waitForTimeout(250);
-  }
-  await expect(result).toBeVisible();
-  for (const page of [host, guest]) {
-    expect(await statsShownOn(page)).toEqual({hud: 0, table: 0, items: 0});
-    await fitsTheScreen(page);
-  }
-  await shotIn(browserName, info)(host, 'stats-friends-host.png');
-  await shotIn(browserName, info)(guest, 'stats-friends-guest.png');
-  // Nothing counted: Gus is gone from the host's, the rest as it was; the guest has none.
-  const kept = page => page.evaluate(() => JSON.parse(localStorage.getItem('ducyPlayStats') || 'null')?.games ?? null);
-  expect(await kept(host)).toEqual({nlhe: {you: c, doug_poker: c}});
-  expect(await kept(guest)).toBeNull();
-});
-
 test('the heads-up challenge deals a hand, with no review', async ({page, watch}) => {
   await watch(page).goto('/#ladder');
   await page.locator('[data-act="ladder-play"]').click();
   await playOutAHand(page);
   await expect(page.getByText('Loading the hand review')).toHaveCount(0);
   await fitsTheScreen(page);
-});
-
-test('a friend joins a hosted game by its code', async ({browser, watch}) => {
-  const open = async () => watch(await (await browser.newContext()).newPage());
-  const host = await open();
-  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
-  await host.locator('#pl-name').fill('Hana');
-  await host.locator('[data-act="host"]').click();
-  await expect(host.locator('[data-act="copy"]')).toBeVisible();
-  await fitsTheScreen(host);
-  const code = (await host.locator('body').innerText()).match(/[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}/)[0];
-
-  const guest = await open();
-  await guest.goto(`/?table=${code}&relay=${RELAY}#join`);
-  await guest.locator('form[data-joinform] input[name="name"]').fill('Gus');
-  await guest.locator('form[data-joinform] button[type="submit"]').click();
-  await expect(host.getByText('Gus').first()).toBeVisible();
-  await expect(guest.getByText('Hana').first()).toBeVisible();
-  await fitsTheScreen(guest);
-});
-
-test('muting a player hides their chat for you only, and unmuting brings it back (#616)', async ({browser, watch, browserName}, info) => {
-  // Screenshots in Chromium only: WebKit's CSP refuses the style a screenshot adds.
-  const shot = (target, name) => (browserName === 'chromium' ? target.screenshot({path: info.outputPath(name)}) : null);
-  // At the project's screen size: 1280 wide, or a 375 phone.
-  const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
-  const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
-  const host = await open();
-  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
-  await host.locator('#pl-name').fill('Hana');
-  await host.locator('[data-act="host"]').click();
-  await expect(host.locator('[data-act="copy"]')).toBeVisible();
-  const code = (await host.locator('body').innerText()).match(/[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}/)[0];
-  const guest = await open();
-  await guest.goto(`/?table=${code}&relay=${RELAY}#join`);
-  await guest.locator('form[data-joinform] input[name="name"]').fill('Gus');
-  await guest.locator('form[data-joinform] button[type="submit"]').click();
-  await expect(host.locator('.pl-seat', {hasText: 'Gus'})).toBeVisible();
-
-  const say = async (page, text) => {
-    await page.locator('.pl-chat-send input').fill(text);
-    await page.locator('.pl-chat-send button').click();
-  };
-  const hostLog = host.locator('.pl-chat-log');
-  await say(guest, 'hello from Gus');
-  await expect(hostLog).toContainText('hello from Gus');
-
-  // Mute from the name in the chat.
-  await hostLog.getByRole('button', {name: 'Gus'}).click();
-  await shot(host, 'mute-chat-menu.png');
-  await hostLog.getByRole('button', {name: 'Mute'}).click();
-  await expect(hostLog).not.toContainText('hello from Gus');
-  // Gus isn't told, and still sees their own line; the host's still reach them.
-  await say(guest, 'still here');
-  await say(host, 'hi all');
-  await expect(guest.locator('.pl-chat-log')).toContainText('still here');
-  await expect(guest.locator('.pl-chat-log')).toContainText('hi all');
-  await expect(hostLog).toContainText('hi all');
-  await expect(hostLog).not.toContainText('still here');
-
-  // Unmute from Gus's seat: their lines come back.
-  await host.locator('.pl-seat', {hasText: 'Gus'}).locator('.pl-plate').click();
-  await expect(host.locator('.pl-mpop')).toBeVisible();
-  await shot(host, 'mute-chat-seat.png');
-  await host.locator('.pl-mpop').getByRole('button', {name: 'Unmute'}).click();
-  await expect(hostLog).toContainText('hello from Gus');
-  await expect(hostLog).toContainText('still here');
-
-  // Muted again, the list under You unmutes too; it lasts a reload.
-  await host.locator('.pl-seat', {hasText: 'Gus'}).locator('.pl-plate').click();
-  await host.locator('.pl-mpop').getByRole('button', {name: 'Mute'}).click();
-  await expect(hostLog).not.toContainText('hello from Gus');
-  expect(Object.values(await host.evaluate(() => JSON.parse(localStorage.getItem('ducyChatMuted'))))).toEqual(['Gus']);
-  await host.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
-  const muted = host.locator('.ps-muted');
-  await expect(muted).toContainText('Gus');
-  await shot(muted, 'mute-chat-you.png');
-  await muted.getByRole('button', {name: 'Unmute'}).click();
-  await expect(muted).toHaveCount(0);
-  await expect(hostLog).toContainText('hello from Gus');
-  await fitsTheScreen(host);
-
-  // A guest mutes the host from their seat, as their own view seats them.
-  const guestLog = guest.locator('.pl-chat-log');
-  await guest.locator('.pl-seat', {hasText: 'Hana'}).locator('.pl-plate').click();
-  await guest.locator('.pl-mpop').getByRole('button', {name: 'Mute'}).click();
-  await expect(guestLog).not.toContainText('hi all');
-  await expect(guestLog).toContainText('still here');
-  await shot(guest, 'mute-chat-guest.png');
-  await fitsTheScreen(guest);
 });
 
 // A virtual passkey authenticator for `page` (Chromium's, over CDP): built
@@ -499,6 +359,9 @@ test.describe('a club member', () => {
     await again.locator('[data-pt=player]').first().click();
     // Once its player ID has loaded: the dialog draws again then.
     await expect(again.locator('#pset .pl-pid')).not.toHaveText('…');
+    // And once the relay has said this new ID has no passkey (#646): that
+    // redraws the dialog, which would drop a file being chosen.
+    await expect(again.locator('#pset [data-ps="pk-first"]')).toBeVisible();
     await again.locator('#pset input[data-ps="file"]').setInputFiles(file);
     await again.locator('#pset [name=pw]').fill(pw);
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
