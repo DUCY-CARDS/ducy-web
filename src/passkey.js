@@ -20,6 +20,7 @@
 
 import { exportIdentity, importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
 import { relayUrl } from './play-net.js';
+import { isSubsite } from './sites.js';
 
 export const FRESH_MS = 5 * 60_000;
 export const IDLE_MS = 4 * 3600e3;
@@ -265,13 +266,20 @@ export async function exportable(ident) {
 // With a copy it can open, that player ID comes back to this browser (the
 // page should reload). Without, the relay vouches: this browser's own ID
 // takes over the old one's clubs. Resolves to {id, clubs, vouched}.
-export async function recover() {
+//
+// On a subdomain site (club.ducy.cards, sites.js isSubsite, #637) the relay
+// never vouches: opening another of ducy's sites isn't losing a device, and
+// a vouch there would move the player's clubs to that site's fresh ID. Only
+// the copy brings the player over; without one it throws NO_COPY.
+export const NO_COPY = 'This passkey can’t bring your account here yet. Unlock a club with it once on ducy.cards, then try again.';
+export async function recover({vouch = !isSubsite()} = {}) {
   const v = await signIn();
   if (v.copy && v.prf) {
     const ident = await lockDown(await openCopy(v.copy, v.prf).then(async i => { await saveIdentity(i); return i; }));
     started(ident.id, v.credId, v.token);
     return {id: ident.id, clubs: v.clubs || {}, vouched: false};
   }
+  if (!vouch) throw new Error(NO_COPY);
   const me = await loadIdentity();
   if (me.id === v.id) { started(me.id, v.credId, v.token); return {id: me.id, clubs: v.clubs || {}, vouched: false}; }
   const env = await signMessage(me, {type: 'passkey_vouch', challenge: await takeChallenge(), token: v.token});

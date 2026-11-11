@@ -2,11 +2,15 @@
 # Assemble the deployable site into OUT_DIR with every asset under
 # v/<version>/, so a page only ever loads files from a single release.
 #
-#   OUT_DIR/index.html, manage.html, privacy.html, admins.json, favicon.svg,
+#   OUT_DIR/index.html, privacy.html, admins.json, favicon.svg,
 #     apple-touch-icon.png, icon-192.png, icon-512.png, manifest.webmanifest, .htaccess
 #   OUT_DIR/v/<version>/src/*.js, style.css, avatars/*.svg
 #   OUT_DIR/v/<version>/wasm/ducy_wasm.js, ducy_wasm_bg.wasm
 #   OUT_DIR/v/<version>/relay/src/club-room.js, registry.js (a demo club's)
+#
+# The club manager (manage.html) is a site of its own, club.ducy.cards
+# (build-club.sh, #637): it's made here, with DUCY_SITE=club, and left out
+# of the player app's build.
 #
 # Only index.html, manage.html (the club manager) and privacy.html are rewritten (to point
 # at v/<version>/src/). The admin page is a site of its own (build-admin.sh,
@@ -164,5 +168,8 @@ DUCY_REV="$(scripts/ducy-rev.sh 2>/dev/null || true)"
   cat gto-pins.json
   printf '}\n'
 } > "$OUT/version.json"
+
+# The club manager is the club site's (build-club.sh), not the player app's.
+[ "${DUCY_SITE:-}" = club ] || rm "$OUT/manage.html"
 
 echo "Built release $VERSION ($DUCY_ENV) in $OUT"

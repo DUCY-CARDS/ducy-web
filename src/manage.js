@@ -1,6 +1,7 @@
-// The club manager (manage.html): a page of its own for running a club or
-// helping run one, apart from the player app (index.html), where people
-// join clubs and play. It loads only the club code (clubs.js in its
+// The club manager (manage.html): the club site, club.ducy.cards (#637),
+// for running a club or helping run one, apart from the player app
+// (index.html, ducy.cards), where people join clubs and play. On a local
+// page it's manage.html beside index.html. It loads only the club code (clubs.js in its
 // 'manage' mode): the club you run (its tables, members, chips, promotions,
 // history and settings), the clubs where you're an agent,
 // and starting or restoring a club.
@@ -15,10 +16,12 @@
 
 // First, so a demo club's storage (#406) is in place before anything reads storage.
 import './error-report.js';
-import './demo.js';
+import { demo } from './demo.js';
 import init from '../wasm/ducy_wasm.js';
 import { closeClubs, openClubs, setClubsMode, setShowTable } from './clubs.js';
 import { closePlay, openPlay, tableGroup } from './play.js';
+import { firstVisit } from './site-signin.js';
+import { playerUrl } from './sites.js';
 
 // ducy's engine before anything is shown: player IDs, signatures (#460) and
 // the club's views all use it.
@@ -30,6 +33,13 @@ try {
 
 setClubsMode('manage');
 const root = document.getElementById('clubs');
+// The wordmark goes to the player app, on its own site.
+const mark = document.querySelector('.wordmark');
+if (mark) mark.href = playerUrl('');
+// The club site's first visit (#637): the player's passkey brings their
+// player ID over before anything makes a new one.
+document.body.classList.remove('booting');
+if (!demo) await firstVisit(root);
 const playRoot = document.getElementById('mg-play');
 // Watching a table (#73): the table view opens here, not in the player app
 // (manage.html has no #play of its own otherwise).

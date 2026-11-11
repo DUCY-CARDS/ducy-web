@@ -124,6 +124,15 @@ jobs:
           DUCY_SHA="$(echo "${{ steps.ducy.outputs.rev }}" | cut -c1-8)"
           scripts/build-admin.sh "${SHA::8}-${DUCY_SHA}" _admin
 
+      # The club site (club.ducy.cards, #637): the club manager, from the
+      # same release and the site's WASM.
+      - name: Build the club site
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          DUCY_SHA="$(echo "${{ steps.ducy.outputs.rev }}" | cut -c1-8)"
+          scripts/build-club.sh "${SHA::8}-${DUCY_SHA}" _club
+
       # The relay: the clubs-only build (#463), which never runs the bot
       # tables or the GTO bots, so the Worker loads less and starts faster.
       # The site is already built, so wasm/ can take it.
@@ -180,6 +189,13 @@ jobs:
 
       - name: Deploy the site via rsync
         run: scripts/deploy.sh _site "${{ secrets.SSH_DEPLOY_TARGET }}"
+
+      # The club site (#637), right after the site, whose manage.html now
+      # sends managers there: into the club.ducy.cards subdomain's folder,
+      # open (passkeys guard it); skipped with a warning while the folder
+      # doesn't exist (scripts/deploy-club.sh).
+      - name: Deploy the club site
+        run: scripts/deploy-club.sh _club "${{ secrets.SSH_DEPLOY_TARGET }}/club"
 
       # The GTO bots' models are published as releases of the ducy repo
       # (assets cards.bin and blueprint.bin): gto-hunl-<name> for heads-up

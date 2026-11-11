@@ -13,7 +13,7 @@ import { fairPlayStore } from './src/fair-play-admin.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './src/backup.js';
 import { serviceHttp, serviceInRoom } from './src/service-http.js';
 import { passkeys } from './src/passkeys.js';
-import { check as unlockCheck, unlockedNow } from './src/unlock.js';
+import { CLUB_SITE_REPLY, check as unlockCheck, siteOk, unlockedNow } from './src/unlock.js';
 import { mustProve, newChallenge, proves } from './src/prove.js';
 import { stats } from './src/stats.js';
 import { cfAnalytics } from './src/cf-analytics.js';
@@ -106,7 +106,9 @@ const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
 const fairPlay = fairPlayStore(storageOf({store: new Map()}));
 
 // Passkeys (#575), in memory: pages on ALLOWED_ORIGINS, else local ones.
-const pk = passkeys(storageOf({store: new Map()}), {origins: String(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)});
+// CLUB_ORIGINS (#637): the club sites, as the Worker's; empty, anywhere.
+const CLUB_ORIGINS = String(process.env.CLUB_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+const pk = passkeys(storageOf({store: new Map()}), {origins: String(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean), clubOrigins: CLUB_ORIGINS});
 
 // The club in `room` as passkeys.js remembers it for player `id`'s recovery.
 const clubFor = (room, id) => {
@@ -357,7 +359,7 @@ const http = createServer(async (req, res) => {
     for await (const chunk of req) { raw += chunk; if (raw.length > 32 * 1024) break; }
     let body = null;
     try { body = JSON.parse(raw); } catch {}
-    const out = req.method === 'POST' ? await pk.http(pko[1], body) : {status: 405, body: {error: 'POST'}};
+    const out = req.method === 'POST' ? await pk.http(pko[1], body, req.headers.origin || '') : {status: 405, body: {error: 'POST'}};
     res.writeHead(out.status, head);
     res.end(JSON.stringify(out.body));
     return;
@@ -376,6 +378,8 @@ wss.on('connection', (ws, req) => {
   const role = url.searchParams.get('role');
   const id = url.searchParams.get('id') || '';
   const queue = url.searchParams.get('queue') === '1';
+  // Its page's origin: only a club site runs a club (#637).
+  ws.origin = req.headers.origin || '';
   if (role === 'host') {
     const room = roomFor(code);
     if (room.host) return ws.close(4001, 'the table already has a host');
@@ -516,6 +520,8 @@ function guest(ws, room, code, id, queue, isClub, held) {
           if (g.movedFrom && club) await club.vouchedMove(g.movedFrom, id);
           if (g.reply) send(ws, g.reply);
           if (!g.pass) return;
+          // Running a club only from a club site, with a session made there (#637).
+          if (!siteOk(msg, g.u, ws.origin, CLUB_ORIGINS)) return send(ws, CLUB_SITE_REPLY);
           // Counted as active (#601), as well as on connecting: the player
           // who just made the club connected before it was one.
           if (club) notePlayer(room, id, code);

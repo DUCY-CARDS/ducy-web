@@ -3,11 +3,13 @@
 | | Live | Staging | Sandbox |
 |---|---|---|---|
 | Site | ducy.cards | staging.ducy.cards | sandbox.ducy.cards |
+| Club site (#637) | club.ducy.cards | club-staging.ducy.cards | club-sandbox.ducy.cards |
+| Its folder | `public_html/club` | `public_html/club-staging` | `public_html/club-sandbox` |
 | Relay (Worker) | `ducy-relay` | `ducy-relay-staging` | `ducy-relay-sandbox` |
 | Judge (Worker, #615) | `ducy-judge` | `ducy-judge-staging` | `ducy-judge-sandbox` |
 | Deploys | a release, by hand, after approval (`deploy.yml`) | every push to master (`staging.yml`) | by hand, any branch (`sandbox.yml`) |
 | Data | kept, backed up | kept, no backups | wiped Mondays and on request |
-| Password | no | yes | yes |
+| Password | no (club site: no) | yes (club site: yes) | yes (club site: yes) |
 
 Each relay is its own Worker, so its own Durable Objects: staging and
 sandbox clubs never touch live ones. Each site has its own browser storage,
@@ -16,6 +18,9 @@ so testers get a separate player ID on each.
 The admin site, **admin.ducy.cards**, is one site for all three: it reads
 each relay's admin API (signed with a key in `admins.json`) and each site's
 `version.json`. See [The admin site](#the-admin-site).
+
+Each environment's club manager is a site of its own: see
+[The club site](#the-club-site).
 
 ## What's running where
 
@@ -38,7 +43,8 @@ commit in one run.
 4. The run builds and tests, deploys the relay, then the site and the bot
    models, then tags the commit `vYYYY.MM.DD` (`vYYYY.MM.DD.2`, `.3` for
    later releases that day) and makes a GitHub release with notes from the
-   PRs since the last one. Last, it deploys the admin site (below).
+   PRs since the last one. The club site goes up right after the site, and
+   the admin site last (both below).
 
 If the commit already has a release tag, it's redeployed under that tag
 and no new one is made.
@@ -68,6 +74,9 @@ the one `gto/*current.json` points at.
    `scripts/build-site.sh`), into the subdomain's folder:
    `scripts/deploy-env.sh` uploads it to `SSH_DEPLOY_TARGET/<environment>`.
 3. **A check** that the site answers 401 (password protected).
+4. **The club site** (below) into `SSH_DEPLOY_TARGET/club-<environment>`,
+   keeping that folder's password as for the site, then the same 401 check.
+   Skipped with a warning while the folder doesn't exist.
 
 **Password protection:** DirectAdmin protects each subdomain's folder with
 Auth lines in its `.htaccess`. `deploy-env.sh` copies those lines into the
@@ -104,6 +113,57 @@ queued messages, which expire in 7 days anyway. The relay answers `/reset`
 only where `RESETTABLE = "on"` (the sandbox alone) and with a `RESET_TOKEN`
 secret; the workflow sets a fresh random token for each run and replaces it
 afterwards.
+
+## The club site
+
+club.ducy.cards (#637): the club manager, where owners and agents run their
+clubs (Needs you, Members, Rules, Chips, Balances, Tables, Your players,
+Fair play). ducy.cards keeps what players need: joining a club, the tables,
+My chips, the lobby. Built by `scripts/build-club.sh` from the same release
+as the site: `manage.html` becomes its `index.html`.
+
+**Deploys** with each release, right after the site:
+`scripts/deploy-club.sh` uploads it to `SSH_DEPLOY_TARGET/club`, the
+subdomain's folder (DirectAdmin names a subdomain's folder after it, as it
+did `admin/`). Staging and sandbox deploy theirs to `club-staging/` and
+`club-sandbox/`. With no folder, the step is skipped with a warning saying
+what to create. The live deploy (`scripts/deploy.sh`) leaves all three
+folders alone.
+
+**Open on live:** no folder password. Owners and agents sign in with
+passkeys, and the upload replaces the folder's `.htaccess`, so a password
+set in DirectAdmin wouldn't last anyway. Staging's and the sandbox's are
+password-protected like their sites (the deploy keeps the folder's Auth
+lines and never uploads to a folder without them).
+
+**One passkey for both:** passkeys belong to `ducy.cards` (the WebAuthn
+relying party for every subdomain), so a player's passkey works on both
+sites. The club site has its own browser storage, so its first visit asks
+for the passkey before making a new player ID (`src/site-signin.js`): the
+relay's copy of the player's key, opened with the passkey (PRF), brings the
+same player ID over. The relay never vouches for a club site (no moving
+anyone's clubs to its fresh ID); a passkey without a copy yet gets one at
+its next unlock on ducy.cards.
+
+**Running a club only there:** each relay takes club running (making or
+moving a club, the owner's connection and commands, an agent's commands)
+only from a connection on a club site with a passkey session made on a
+club site (`CLUB_ORIGINS` in `relay/wrangler.toml`; `relay/src/unlock.js`
+`siteOk`). A player's own messages (asking for chips, their vault) still
+come from ducy.cards. The player app has no club manager page; its manager
+links go to the club site.
+
+**Demo clubs** play every part in one window, so on one site: on the club
+site, their players' pages are its `app.html`, which sends anyone not in
+a demo to ducy.cards.
+
+**Before the first deploy:**
+1. Live: DirectAdmin → Subdomains → `club` (folder `public_html/club`), no
+   password protection, with a certificate (Let's Encrypt) for
+   club.ducy.cards.
+2. Staging: the same for `club-staging` (folder `public_html/club-staging`),
+   password-protected like `staging/`. Sandbox: `club-sandbox` likewise.
+   Until they exist, their deploys just warn.
 
 ## The admin site
 

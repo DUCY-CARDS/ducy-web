@@ -32,7 +32,13 @@ new_sqlite_classes = ["Registry"]
 # Comma-separated page origins allowed to connect, e.g. "https://ducy.example".
 # Empty allows any origin. The site only, so other pages can't use the relay (#103);
 # a page opened from elsewhere (e.g. localhost) uses a local relay instead.
-ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards"
+# The club site (club.ducy.cards, #637) is one of them.
+ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards,https://club.ducy.cards"
+# The club sites (#637): only they run clubs (make or move one, the owner's
+# connection and commands, an agent's commands), with a passkey session
+# made there, and the relay never vouches for them (unlock.js siteOk,
+# passkeys.js). Empty: anywhere (a local relay).
+CLUB_ORIGINS = "https://club.ducy.cards"
 # The admin site (#601): may call /admin/ only.
 ADMIN_ORIGINS = "https://admin.ducy.cards"
 # Always-on clubs (#98, #265): at most this many per owner, and in all,
@@ -75,7 +81,8 @@ script_name = "ducy-judge-staging"
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
-ALLOWED_ORIGINS = "https://staging.ducy.cards"
+ALLOWED_ORIGINS = "https://staging.ducy.cards,https://club-staging.ducy.cards"
+CLUB_ORIGINS = "https://club-staging.ducy.cards"
 ADMIN_ORIGINS = "https://admin.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
@@ -103,7 +110,8 @@ script_name = "ducy-judge-sandbox"
 
 [env.sandbox.vars]
 ENVIRONMENT = "sandbox"
-ALLOWED_ORIGINS = "https://sandbox.ducy.cards"
+ALLOWED_ORIGINS = "https://sandbox.ducy.cards,https://club-sandbox.ducy.cards"
+CLUB_ORIGINS = "https://club-sandbox.ducy.cards"
 ADMIN_ORIGINS = "https://admin.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"

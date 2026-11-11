@@ -63,6 +63,7 @@ import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow } from './pay
 import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
+import { clubUrl, playerUrl, siteOf } from './sites.js';
 import { OFF } from './club-beta.js';
 import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
@@ -114,10 +115,15 @@ let mode = 'play';
 export function setClubsMode(m) {
   mode = m === 'manage' ? 'manage' : 'play';
 }
-const managerHref = hash => `manage.html${hash ? `#${hash}` : ''}`;
-const playerHref = hash => `./${hash ? `#${hash}` : ''}`;
+// The club manager is a site of its own, club.ducy.cards, and the player
+// app is ducy.cards (#637, sites.js); on a local page, manage.html and
+// index.html side by side. A demo club stays on its one site: on the club
+// site its players' pages are app.html (build-club.sh).
+const managerHref = hash => clubUrl(hash);
+const playerBase = () => (demo && siteOf(location.hostname) === 'club' ? 'app.html' : playerUrl(''));
+const playerHref = hash => `${playerBase()}${hash ? `#${hash}` : ''}`;
 // Invite links open the player app, even when made on the club manager.
-const appBase = () => new URL('./', location.href).href;
+const appBase = () => new URL(playerBase(), location.href).href;
 // Why the last create failed (the relay down or full), and the name it was
 // for: the form says so and offers to try again. Clubs are always on
 // (#152): none runs in a browser tab (#580).
@@ -1747,7 +1753,7 @@ let historyTable = {}; // `${club}|${who}` → table filter ('' for all)
 // opens in a tab of the player app.
 const replay = new Replayer({
   onChange: () => render(),
-  equityLink: hash => (mode === 'manage' ? {href: `index.html${hash}`, target: '_blank'} : {href: hash, target: ''}),
+  equityLink: hash => (mode === 'manage' ? {href: `${playerBase()}${hash}`, target: '_blank'} : {href: hash, target: ''}),
 });
 
 async function storeHand(rec, keep) {
