@@ -1047,9 +1047,9 @@ async function seedHands(page) {
 }
 
 test('a member replays their hands, steps by keys, and takes a spot to the equity calculator (#592)', async ({page, watch, browserName}, info) => {
-  // Try a demo club is off for the beta (#636): its list, opened directly.
-  await watch(page).goto('/manage.html#clubs');
-  await page.evaluate(() => import('/src/demo.js').then(m => m.showDemoList()));
+  // Try a demo club is off for the beta (#636): ?on=demoClub shows it.
+  await watch(page).goto('/manage.html?on=demoClub#clubs');
+  await page.locator('[data-cl="demo"]').click();
   // A small demo club, quick to set up.
   await page.locator('[data-demo-start="credit"]').click();
   await expect(page.locator('.mg-side')).toBeAttached();
@@ -1111,8 +1111,8 @@ test('a member replays their hands, steps by keys, and takes a spot to the equit
 });
 
 test('a demo club opens, and its main pages draw', async ({page, watch}) => {
-  await watch(page).goto('/manage.html#clubs');
-  await page.evaluate(() => import('/src/demo.js').then(m => m.showDemoList()));
+  await watch(page).goto('/manage.html?on=demoClub#clubs');
+  await page.locator('[data-cl="demo"]').click();
   await page.locator('[data-demo-start="busy"]').click();
   // Starting one changes the address, then reloads: the manager shows after that.
   await expect(page.locator('.mg-side')).toBeAttached();

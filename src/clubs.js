@@ -63,7 +63,7 @@ import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
 import { clubUrl, playerUrl, siteOf } from './sites.js';
-import { OFF } from './club-beta.js';
+import { isOff, OFF } from './club-beta.js';
 import { grantToken as grantOf, managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
@@ -2238,7 +2238,7 @@ function managerHtml() {
   // #clubs/start/<token>, and nothing else links to it. A demo club starts
   // here too; Try a demo club is off for the beta (club-beta.js).
   const starting = !own && (demo || !!grantToken());
-  const tryDemo = !own && !demo && !OFF.has('demoClub');
+  const tryDemo = !own && !demo && !isOff('demoClub');
   if (starting || tryDemo) h += `<div class="cl-club-acts">${starting ? createHtml() : ''}${tryDemo ? demoCardHtml() : ''}</div>`;
   return h + footHtml();
 }

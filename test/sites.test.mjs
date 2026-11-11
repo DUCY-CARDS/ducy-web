@@ -15,6 +15,7 @@ import { siteOk } from '../relay/src/unlock.js';
 import { passkeys, rpIdFor } from '../relay/src/passkeys.js';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { relayClient, softPasskey } from './relay-helper.mjs';
+import { adminFetch, granter, testAdmin } from './admin-helper.mjs';
 import { spawn } from 'node:child_process';
 
 const haveWasm = existsSync(fileURLToPath(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)));
@@ -68,7 +69,7 @@ test('first visit: a subdomain with no player ID yet asks for the passkey first;
 
 const owner = (type, op) => ({body: {type, op}});
 test('what only a club site sends: running a club, and an agent\'s commands; a player\'s own chip asks go anywhere', () => {
-  for (const t of ['create_club', 'import_club', 'owner_hello', 'owner_cmd', 'agent_cmd']) assert.ok(managerOnly(owner(t, 'give')), t);
+  for (const t of ['create_club', 'owner_hello', 'owner_cmd', 'agent_cmd']) assert.ok(managerOnly(owner(t, 'give')), t);
   for (const m of [owner('chip_request'), owner('vault', 'out'), owner('join'), owner('agent_reply'), {}, null]) assert.ok(!managerOnly(m));
   assert.ok(movesChips(owner('chip_request')), 'still needs a fresh unlock');
   const club = ['https://club.ducy.cards'];
@@ -108,11 +109,12 @@ test('one passkey for every site: the same relying party, and each session keeps
   assert.equal((await pk.status(fresh.id)).enrolled, false);
 });
 
-test('the relay: a club is made and run from the club site only; a player joins from ducy.cards', {skip: !haveWasm && 'no wasm build'}, async t => {
+test('the relay: a club is made (with its grant, #636) and run from the club site only; a player joins from ducy.cards', {skip: !haveWasm && 'no wasm build'}, async t => {
   const PORT = 21000 + Math.floor(Math.random() * 1000);
+  const admin = await testAdmin();
   const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {
     stdio: ['ignore', 'pipe', 'inherit'],
-    env: {...process.env, ALLOWED_ORIGINS: 'https://ducy.cards,https://club.ducy.cards', CLUB_ORIGINS: 'https://club.ducy.cards'},
+    env: {...process.env, ALLOWED_ORIGINS: 'https://ducy.cards,https://club.ducy.cards', CLUB_ORIGINS: 'https://club.ducy.cards', ADMINS_FILE: admin.file},
   });
   await new Promise(resolve => server.stdout.once('data', resolve));
   t.after(() => server.kill());
@@ -122,18 +124,31 @@ test('the relay: a club is made and run from the club site only; a player joins 
   const app = clubSite.as('https://ducy.cards');
   const code = 'CDDC-STEW';
 
-  // Not from ducy.cards, even with the owner's key and passkey.
+  const grant = await granter(PORT, admin.ident)(owner.id);
+  // Not from ducy.cards, even with the owner's key, passkey and grant.
   const wrong = app.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await wrong.ready;
-  wrong.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Wrong Door'}));
+  wrong.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Wrong Door', grant}));
   assert.deepEqual(await wrong.next('club_site'), {type: 'club_site', reason: 'Clubs are run on the club site.'});
   wrong.ws.close();
   await wrong.closed;
+  // Refused before the grant was looked at: it's still unused.
+  const invites = async () => (await adminFetch(PORT, admin.ident)('/admin/clubs')).body.invites;
+  assert.equal((await invites())[owner.id].used, false);
+
+  // From the club site, but without the grant: refused, and nothing made.
+  const bare = clubSite.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await bare.ready;
+  bare.send(await signMessage(owner, {type: 'create_club', club: code, name: 'No Grant'}));
+  assert.match((await bare.next('club_error')).reason, /isn’t for this player ID/);
+  bare.ws.close();
+  await bare.closed;
 
   const o = clubSite.open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Front Door'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Front Door', grant}));
   const made = await o.next('club_created');
+  assert.equal((await invites())[owner.id].code, code);
 
   // Ann joins from ducy.cards: a player's message, so it goes through.
   const a = app.open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);

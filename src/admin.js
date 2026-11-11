@@ -8,7 +8,8 @@
 // Views, by the page's hash: #overview (the default: versions everywhere,
 // what's live now, the last 30 days as small charts or a table, and
 // Cloudflare's numbers when the relay has its token), #clubs (usage, grants
-// and their one-time links, #636, the club list, and Wipe all clubs),#club=<code> (everything the club stores,
+// and their one-time links, #636, the club list, and Wipe all clubs),
+// #club=<code> (everything the club stores,
 // read-only), #people, #person=<id> (their activity in every club), #log
 // (the admin log), #errors (what pages reported going wrong, #552), #fair
 // (every club's fair play numbers, #612, admin-fair-play.js) and
@@ -24,6 +25,7 @@ import { chipText } from './chip-format.js';
 import { ago as agoText } from './time-ago.js';
 import { chartHtml, fmt, wire } from './admin-charts.js';
 import { fairHtml, historyHtml, nextSort } from './admin-fair-play.js';
+import { siteHost } from './sites.js';
 
 // ducy's engine first: signing (the JSON a request is signed over) and
 // player IDs use it (identity.js, #460).
@@ -243,9 +245,14 @@ function clubsHtml() {
 // its one-time link is shown here once, to copy and send. Unused links can
 // be taken back, or replaced by a new one.
 let granted = null; // {id, link}: the grant just made, until the next one
+// On the environment's club site (#637: only a club site may make a club),
+// e.g. https://club.ducy.cards/#clubs/start/<token>; on a local relay,
+// manage.html beside this page.
 function grantLink(token) {
-  const page = `${env.site}/manage.html${localRelay ? `?relay=${encodeURIComponent(localRelay)}` : ''}`;
-  return `${page}#clubs/start/${token}`;
+  const hash = `#clubs/start/${token}`;
+  const club = siteHost('club', new URL(env.site).hostname);
+  if (club) return `https://${club}/${hash}`;
+  return `${location.origin}/manage.html${localRelay ? `?relay=${encodeURIComponent(localRelay)}` : ''}${hash}`;
 }
 function grantsHtml() {
   const rows = Object.entries(data.invites || {}).sort(([, a], [, b]) => (b.at || 0) - (a.at || 0));

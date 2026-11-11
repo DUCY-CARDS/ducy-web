@@ -151,3 +151,66 @@ test('fair play: open flags, players, pairs and averages across clubs; sorting; 
   expect(await page.locator('body').innerText()).not.toMatch(/\b[2-9TJQKA][shdc]\b/);
   expect(problems).toEqual([]);
 });
+
+test('clubs: a grant shows its one-time link once; Wipe all clubs takes the environment’s name (#636)', async ({page}, info) => {
+  const problems = [];
+  page.on('pageerror', e => problems.push(`uncaught: ${e.message}`));
+  page.on('console', m => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
+  const TOKEN = 'T'.repeat(40) + '_-x';
+  const sent = [];
+  let invites = {'id-old': {at: Date.UTC(2026, 10, 1), note: 'Owls', limits: null, usedAt: Date.UTC(2026, 10, 2), code: 'AAAA-BBBB', used: true}};
+  let clubs = [{code: 'AAAA-BBBB', name: 'Owls', owner: 'id-old', limits: {tables: 2, tourneysPerDay: 1}, lastActive: Date.UTC(2026, 10, 9), days: {}, minutes: 0}];
+  await page.route(`${RELAY}/**`, async route => {
+    const cors = {'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST'};
+    if (route.request().method() === 'OPTIONS') return route.fulfill({status: 204, headers: cors});
+    const path = new URL(route.request().url()).pathname;
+    const body = route.request().postDataJSON();
+    if (body) sent.push({path, data: body.body?.data, signed: !!(body.sig && body.body?.path === path)});
+    let out;
+    if (path === '/usage') out = {clubs: clubs.length, limits: {total: 25}, days: []};
+    else if (path === '/admin/clubs') out = {clubs, grants: {}, invites, trials: {}, limits: {perOwner: 3, total: 25}};
+    else if (path === '/admin/grant') {
+      invites = {...invites, [body.body.data.id]: {at: Date.now(), note: body.body.data.note, limits: null, usedAt: null, code: null, used: false}};
+      out = {at: Date.now(), note: body.body.data.note, maxClubs: 0, token: TOKEN};
+    } else if (path === '/admin/wipe') {
+      out = body.body.data.confirm === 'local' ? {clubs: clubs.length} : {error: 'Type local to wipe this relay’s clubs.'};
+      if (!out.error) { clubs = []; invites = {}; }
+    } else out = {error: 'not here'};
+    await route.fulfill({status: out.error ? 400 : 200, contentType: 'application/json', headers: cors, body: JSON.stringify(out)});
+  });
+  page.on('dialog', d => d.accept());
+  await page.goto(`/admin.html?relay=${encodeURIComponent(RELAY)}#clubs`);
+  await expect(page.getByRole('heading', {name: 'Who may create clubs'})).toBeVisible();
+  await expect(page.locator('#g-max')).toHaveCount(0);
+  await expect(page.getByText('Used')).toBeVisible();
+  await fits(page);
+
+  // Granting shows the link, on this local page's manager with its relay, once.
+  await page.locator('#g-id').fill('id-new');
+  await page.locator('#g-note').fill('Thursdays');
+  await page.locator('#grant').click();
+  const link = page.locator('#g-link');
+  await expect(link).toHaveValue(new RegExp(`/manage\\.html\\?relay=${encodeURIComponent(RELAY).replace(/[.%]/g, '\\$&')}#clubs/start/${TOKEN}$`));
+  await expect(page.getByRole('button', {name: 'Copy'})).toBeVisible();
+  await expect(page.getByText('Not used')).toBeVisible();
+  await expect(page.getByRole('button', {name: 'New link'})).toBeVisible();
+  await fits(page);
+  await page.screenshot({path: info.outputPath('grant.png'), fullPage: true});
+  expect(sent.find(s => s.path === '/admin/grant').data).toEqual({id: 'id-new', note: 'Thursdays', limits: null});
+
+  // Wipe: off until the environment's name is typed exactly.
+  const wipe = page.locator('#wipe');
+  await expect(wipe).toBeDisabled();
+  await page.locator('#w-confirm').fill('Local');
+  await expect(wipe).toBeDisabled();
+  await page.locator('#w-confirm').fill('local');
+  await expect(wipe).toBeEnabled();
+  await wipe.click();
+  await expect(page.locator('#status')).toHaveText('Wiped 1 club on Local.');
+  await expect(page.getByText('No clubs yet')).toBeVisible();
+  await expect(page.locator('#g-link')).toHaveCount(0);
+  await fits(page);
+  expect(sent.filter(s => s.path === '/admin/wipe').map(s => s.data)).toEqual([{confirm: 'local'}]);
+  expect(sent.every(s => s.path === '/usage' || s.signed)).toBe(true);
+  expect(problems).toEqual([]);
+});

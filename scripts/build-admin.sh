@@ -28,7 +28,7 @@ for f in wasm/ducy_wasm.js wasm/ducy_wasm_bg.wasm; do
 done
 
 # The page's modules: admin.js and everything it imports, in src/.
-FILES=(admin.js admin.css admin-charts.js admin-fair-play.js club-fair-play.js identity.js chip-format.js time-ago.js browser-check.js)
+FILES=(admin.js admin.css admin-charts.js admin-fair-play.js club-fair-play.js identity.js chip-format.js time-ago.js browser-check.js sites.js)
 
 rm -rf "$OUT"
 REL="$OUT/v/$VERSION"
