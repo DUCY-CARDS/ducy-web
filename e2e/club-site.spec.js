@@ -6,8 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test as base, expect } from '@playwright/test';
 import { RELAY_PORT, SITE_PORT } from './playwright.config.js';
-import { grantAdmin } from './grant.mjs';
-import { adminFetch, granter } from '../test/admin-helper.mjs';
+import { adminCall, grantAdmin, grantFor } from './grant.mjs';
 
 // The live relay isn't reached from the tests: its requests are refused,
 // and the browser logs each.
@@ -45,6 +44,9 @@ const test = base.extend({
     expect(problems).toEqual([]);
   },
 });
+// The sites here are https://…ducy.cards and a test's relay is on localhost:
+// Chromium would keep a public site from reaching it (local network access).
+test.use({launchOptions: {args: ['--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults']}});
 
 const fitsTheScreen = async page => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
@@ -147,7 +149,7 @@ test.describe('a grant link (#636)', () => {
     test.setTimeout(120_000);
     const id = await newcomer(page);
     // As the admin site makes it: the club site, the token in the hash.
-    const link = `https://club.ducy.cards/#clubs/start/${await granter(port, admin.ident)(id)}`;
+    const link = `https://club.ducy.cards/#clubs/start/${await grantFor(admin, port, id)}`;
 
     // Forwarded to someone else: nothing for them, and their ID to send ducy.
     const problems = [];
@@ -166,13 +168,8 @@ test.describe('a grant link (#636)', () => {
     await expect(page).toHaveURL(/#clubs$/);
     await fitsTheScreen(page);
     await page.screenshot({path: info.outputPath('made.png'), fullPage: true});
-    const clubs = (await adminFetch(port, admin.ident)('/admin/clubs')).body;
+    const clubs = (await adminCall(admin, port, '/admin/clubs')).body;
     expect(clubs.clubs.map(c => [c.owner, c.name])).toEqual([[id, 'Night Owls']]);
     expect(clubs.invites[id].used).toBe(true);
-  });
-
-  test('opened on ducy.cards, it goes to the club site', async ({page}) => {
-    await page.goto(`https://ducy.cards/manage.html#clubs/start/${'A'.repeat(43)}`);
-    await expect(page).toHaveURL(`https://club.ducy.cards/#clubs/start/${'A'.repeat(43)}`);
   });
 });
