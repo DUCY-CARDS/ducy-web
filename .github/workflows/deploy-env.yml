@@ -2,7 +2,8 @@ name: Deploy an environment
 
 # Deploys one commit to staging or sandbox (DEPLOY.md): first the relay
 # (Worker ducy-relay-<environment>, after its tests), then the site, built
-# for that relay, to <environment>.ducy.cards. Called by staging.yml and
+# for that relay, to <environment>.ducy.cards, and its club manager to
+# club-<environment>.ducy.cards (#637). Called by staging.yml and
 # sandbox.yml. The live site and relay deploy with deploy.yml, by hand.
 #
 # Uses the repository secrets the live deploys use: CLOUDFLARE_API_TOKEN,
@@ -172,6 +173,8 @@ jobs:
         run: |
           SHA="$(git rev-parse HEAD)"
           scripts/build-site.sh "${SHA::8}-${DUCY_REV::8}" _site
+          # The club manager's site (#637), for club-<environment>.ducy.cards.
+          scripts/build-club.sh "${SHA::8}-${DUCY_REV::8}" _club
 
       - name: Set up SSH
         run: |
@@ -197,3 +200,22 @@ jobs:
               exit 1
             fi
           done
+
+      # The club site (#637) into club-<environment>.ducy.cards' folder,
+      # keeping its password as the site's: skipped with a warning while
+      # the folder doesn't exist (scripts/deploy-club.sh).
+      - name: Deploy the club site
+        id: club
+        run: scripts/deploy-club.sh _club "${{ secrets.SSH_DEPLOY_TARGET }}/club-${{ inputs.environment }}"
+
+      - name: Check the club site
+        if: steps.club.outputs.deployed == 'true'
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+        run: |
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://club-$ENV_NAME.ducy.cards/version.json")"
+          echo "/version.json: $CODE"
+          if [ "$CODE" != 401 ]; then
+            echo "expected 401 (password protected) from https://club-$ENV_NAME.ducy.cards/version.json" >&2
+            exit 1
+          fi
