@@ -57,7 +57,10 @@ const NIGHT = {name: 'Night Owls', href: '#clubs/c/ABCD-EFGH', who: 'Member'};
 const MINE = {name: 'Back Room', href: 'manage.html#clubs/own', who: 'You run it'};
 test('with no clubs, the front page has no clubs tile: its code box joins one (#611)', () => {
   const h = hubHtml('home', {...hubData(store()), clubs: []});
-  assert.doesNotMatch(h, /v3-clubs|href="#clubs|>Clubs<|Private clubs/);
+  assert.doesNotMatch(h, /v3-clubs|href="#clubs|Private clubs/);
+  // The join tile is headed Clubs (#650), its button Join.
+  assert.match(h, /v3-tile-name">Clubs<\/span><\/span><form class="v3-join"/);
+  assert.match(h, /<button type="submit">Join<\/button>/);
   assert.match(h, /Club code/);
 });
 
