@@ -7,10 +7,6 @@ AddType application/manifest+json .webmanifest
 
 # The admin page moved to its own site (#601).
 RewriteRule ^admin\.html$ https://admin.ducy.cards/ [L,R=301]
-# So did the club manager (#637): club.ducy.cards (build-site.sh names
-# staging's and the sandbox's own). The address's #page goes along.
-RewriteRule ^manage\.html$ https://club.ducy.cards/ [L,R=302]
-
 # Safari 15 and every browser on iOS 15 (#442): see the policy below. Set with
 # mod_rewrite, which the host runs (SetEnvIf had no effect there).
 # Safari 15 on a Mac or an iPad asking for the desktop site, but not Chrome or

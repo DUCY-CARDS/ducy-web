@@ -18,6 +18,13 @@ export const CHIP_OPS = new Set([
 // Putting chips in and cancelling a take-out keep them in, so needn't.
 export const VAULT_OPS = new Set(['out', 'wait']);
 
+// What only the club site sends (#637, relay/src/unlock.js siteOk): making
+// a club or moving one to the relay, the owner's connection and commands,
+// and an agent's commands. A player's own messages (asking for chips,
+// their vault) come from the player app.
+export const MANAGER_TYPES = new Set(['create_club', 'import_club', 'owner_hello', 'owner_cmd', 'agent_cmd']);
+export const managerOnly = m => MANAGER_TYPES.has(m?.body?.type);
+
 // Whether signed message `m` (identity.js's envelope) moves chips: a member
 // asking for chips or taking them out of their vault, an agent's command,
 // or an owner's chip command.

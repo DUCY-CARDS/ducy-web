@@ -21,6 +21,7 @@
 // localStorage (ducyDemo), is still on (its record: demo-state.js).
 
 import { separateStorage } from './profile.js';
+import { siteOf } from './sites.js';
 import { useLocalRelay } from './play-net.js';
 import { chipText } from './chip-format.js';
 import { inviteLink, newMembership } from './club.js';
@@ -110,8 +111,12 @@ function reset() {
   go(managerUrl('clubs'));
 }
 
-const managerUrl = hash => new URL(`manage.html#${hash}`, location.href).href;
-const playerUrl = hash => new URL(`./#${hash}`, location.href).href;
+// A demo stays on the site it started on (#637): on the club site, its
+// players' pages are app.html there (build-club.sh); on a local page,
+// manage.html and index.html.
+const onClubSite = () => siteOf(location.hostname) === 'club';
+const managerUrl = hash => new URL(onClubSite() ? `./#${hash}` : `manage.html#${hash}`, location.href).href;
+const playerUrl = hash => new URL(onClubSite() ? `app.html#${hash}` : `./#${hash}`, location.href).href;
 // To `url` with a fresh page, even when only its hash differs.
 function go(url) {
   history.replaceState(null, '', url);

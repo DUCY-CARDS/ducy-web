@@ -15,9 +15,9 @@
 // room that runs a club, or is asked to become one, checks.
 
 import { FRESH_MS, IDLE_MS } from './passkeys.js';
-import { movesChips } from '../../src/chip-moves.js';
+import { managerOnly, movesChips } from '../../src/chip-moves.js';
 
-export { movesChips };
+export { managerOnly, movesChips };
 
 // How often a connection's session is checked again, so a passkey removed
 // (a lost device) stops its connections too.
@@ -40,7 +40,18 @@ export function gate(m, u, now = Date.now()) {
 // as activity or checking its session again: for a reading the page sends
 // on its own (a location, #581), which mustn't keep an idle connection
 // unlocked. Such a message from a connection that isn't is dropped quietly.
-export const unlockedNow = (u, now = Date.now()) => !!u && now - u.seen <= IDLE_MS && now - u.checked <= RECHECK_MS;
+// Whether message `m`, unlocked as `u`, may go on from a connection whose
+// page is `origin` (#637): running a club (managerOnly: making or moving
+// one, the owner's connection and commands, an agent's commands) only from
+// a club site, `clubOrigins`, with a session made there too. With none
+// (a local relay), anywhere.
+export function siteOk(m, u, origin, clubOrigins = []) {
+  if (!clubOrigins.length || !managerOnly(m)) return true;
+  return clubOrigins.includes(origin) && clubOrigins.includes(u?.origin);
+}
+export const CLUB_SITE_REPLY = {type: 'club_site', reason: 'Clubs are run on the club site.'};
+
+export const unlockedNow =(u, now = Date.now()) => !!u && now - u.seen <= IDLE_MS && now - u.checked <= RECHECK_MS;
 
 // Runs the gate for message `m` from player `id`: `u` is the connection's
 // unlock, `session(token)` the relay's check ({id, at, movedFrom, device}
@@ -54,7 +65,9 @@ export async function check(m, u, id, session, now = Date.now()) {
     const s = await session(token).catch(() => null);
     if (!s || s.id !== id) return {pass: false, u: null, reply: {type: 'locked', reason: 'Unlock with your passkey.'}};
     // `device`: which passkey (passkeys.js session), for a club's refills (#589).
-    u = {token, at: s.at, device: s.device || '', seen: now, checked: now};
+    // `origin`: the page the session was made on (#637: club sites only
+    // run clubs).
+    u = {token, at: s.at, device: s.device || '', origin: s.origin || '', seen: now, checked: now};
     if (g === 'unlock') return {pass: false, u, reply: {type: 'unlocked', at: s.at}, movedFrom: s.movedFrom || null};
     g = gate(m, u, now);
   }

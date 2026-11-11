@@ -4,6 +4,8 @@ import { profile } from './profile.js';
 import { reportError } from './error-report.js';
 // And a demo club's (#406), for the person you are in it.
 import './demo.js';
+// On the club site, only for a demo (#637).
+import './app-guard.js';
 import init, { HoldemGame, OmahaGame, OmahaHiLoGame, OmahaBombPotGame, OmahaRangeSampler } from '../wasm/ducy_wasm.js';
 import { EquityJob, emptyEquityTotals, mergeEquityTotals, rangeExactCost, bombPotDealTotals } from '../wasm/ducy_wasm.js';
 import { RANGE_PRESETS, PRESET_GROUPS, presetRangeText } from './presets.js';

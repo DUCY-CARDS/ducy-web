@@ -136,16 +136,26 @@ set in DirectAdmin wouldn't last anyway. Staging's and the sandbox's are
 password-protected like their sites (the deploy keeps the folder's Auth
 lines and never uploads to a folder without them).
 
-**Its own origin**, so its own browser storage: the keys that move chips
-live only there, and each relay takes chip and credit moves only from a
-club site (`CLUB_ORIGINS` in `relay/wrangler.toml`). Passkeys made there
-belong to the club site alone (WebAuthn rpId `club.ducy.cards`), so a
-ducy.cards page can't use them or bring a manager's key over. An owner who
-also plays makes a passkey on each site.
+**One passkey for both:** passkeys belong to `ducy.cards` (the WebAuthn
+relying party for every subdomain), so a player's passkey works on both
+sites. The club site has its own browser storage, so its first visit asks
+for the passkey before making a new player ID (`src/site-signin.js`): the
+relay's copy of the player's key, opened with the passkey (PRF), brings the
+same player ID over. The relay never vouches for a club site (no moving
+anyone's clubs to its fresh ID); a passkey without a copy yet gets one at
+its next unlock on ducy.cards.
 
-**Redirects:** `manage.html` on ducy.cards goes to club.ducy.cards
-(`.htaccess`; staging's and the sandbox's to theirs), keeping the
-`#page`, and the player app's manager links go there too.
+**Running a club only there:** each relay takes club running (making or
+moving a club, the owner's connection and commands, an agent's commands)
+only from a connection on a club site with a passkey session made on a
+club site (`CLUB_ORIGINS` in `relay/wrangler.toml`; `relay/src/unlock.js`
+`siteOk`). A player's own messages (asking for chips, their vault) still
+come from ducy.cards. The player app has no club manager page; its manager
+links go to the club site.
+
+**Demo clubs** play every part in one window, so on one site: on the club
+site, their players' pages are its `app.html`, which sends anyone not in
+a demo to ducy.cards.
 
 **Before the first deploy:**
 1. Live: DirectAdmin → Subdomains → `club` (folder `public_html/club`), no

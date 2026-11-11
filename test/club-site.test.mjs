@@ -28,22 +28,20 @@ function build(env = 'production') {
 }
 const file = (dir, f) => readFileSync(join(dir, f), 'utf8');
 
-test('the build: the club manager as the page, on the same release, with its own redirect', {skip: !haveWasm && 'no wasm build'}, () => {
+test('the build: the club manager as the page, on the same release; the player app only for demos', {skip: !haveWasm && 'no wasm build'}, () => {
   const out = build();
   const page = file(out, 'index.html');
   assert.match(page, /src="v\/test-1\/src\/manage\.js"/);
   assert.match(page, /href="v\/test-1\/src\/style\.css"/);
-  assert.match(page, /<a class="wordmark" href="https:\/\/ducy\.cards\/"/, 'the player app is on ducy.cards');
   assert.doesNotMatch(page, /Content-Security-Policy|localhost|env-strip/);
   assert.ok(!existsSync(join(out, 'manage.html')));
-  assert.ok(!existsSync(join(out, 'charts')), 'the player app\'s chart data isn\'t here');
+  assert.match(file(out, 'app.html'), /src="v\/test-1\/src\/main\.js"/, 'a demo\'s players');
   assert.ok(existsSync(join(out, 'privacy.html')));
   assert.ok(existsSync(join(out, 'v/test-1/src/clubs.js')));
   assert.ok(existsSync(join(out, 'v/test-1/wasm/ducy_wasm_bg.wasm')));
   const h = file(out, '.htaccess');
   assert.match(h, /Header set Content-Security-Policy "[^"]*connect-src 'self' wss:\/\/ducy-relay\.ducy\.workers\.dev/);
-  assert.match(h, /^RewriteRule \^manage\\\.html\$ \/ \[L,R=302\]$/m, 'an old manage.html address comes to the page');
-  assert.doesNotMatch(h, /https:\/\/club\.ducy\.cards/);
+  assert.doesNotMatch(h, /manage\\\.html/);
   assert.doesNotMatch(h, /AuthUserFile|Require/, 'never password-protected by the build');
   assert.match(h, /X-Robots-Tag "noindex, nofollow"/);
   const v = JSON.parse(file(out, 'version.json'));
@@ -51,26 +49,20 @@ test('the build: the club manager as the page, on the same release, with its own
   assert.equal(v.environment, 'production');
 });
 
-test('the build for staging: its relay, its strip, and its player app', {skip: !haveWasm && 'no wasm build'}, () => {
+test('the build for staging: its relay and its strip',{skip: !haveWasm && 'no wasm build'}, () => {
   const out = build('staging');
   const page = file(out, 'index.html');
   assert.match(page, /class="env-strip"/);
-  assert.match(page, /<a class="wordmark" href="https:\/\/staging\.ducy\.cards\/"/);
   assert.match(file(out, '.htaccess'), /wss:\/\/ducy-relay-staging\.ducy\.workers\.dev/);
   assert.doesNotMatch(file(out, '.htaccess'), /club-staging\.ducy\.cards/);
   assert.equal(JSON.parse(file(out, 'version.json')).environment, 'staging');
 });
 
-test('the main site sends manage.html to its club site: live, staging, sandbox', {skip: !haveWasm && 'no wasm build'}, () => {
-  assert.match(read('.htaccess'), /^RewriteRule \^manage\\\.html\$ https:\/\/club\.ducy\.cards\/ \[L,R=302\]$/m);
-  for (const [env, host] of [['production', 'club.ducy.cards'], ['staging', 'club-staging.ducy.cards'], ['sandbox', 'club-sandbox.ducy.cards']]) {
-    const out = join(mkdtempSync(join(tmpdir(), 'ducy-site-')), 'site');
-    const vars = env === 'production' ? {} : {DUCY_ENV: env, RELAY_HOST: `ducy-relay-${env}.ducy.workers.dev`};
-    execFileSync('scripts/build-site.sh', ['test-1', out], {cwd: ROOT, stdio: 'pipe', env: {...process.env, ...vars}});
-    const h = file(out, '.htaccess');
-    assert.ok(h.includes(`RewriteRule ^manage\\.html$ https://${host}/ [L,R=302]`), env);
-    assert.equal((h.match(/RewriteRule \^manage/g) || []).length, 1, env);
-  }
+test('the player app\'s build has no club manager', {skip: !haveWasm && 'no wasm build'}, () => {
+  const out = join(mkdtempSync(join(tmpdir(), 'ducy-site-')), 'site');
+  execFileSync('scripts/build-site.sh', ['test-1', out], {cwd: ROOT, stdio: 'pipe'});
+  assert.ok(existsSync(join(out, 'index.html')));
+  assert.ok(!existsSync(join(out, 'manage.html')));
 });
 
 // A host folder as rsync sees it: public_html, maybe with the club's folder.

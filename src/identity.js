@@ -282,6 +282,12 @@ function tx(mode, run) {
 
 const record = i => ({alg: i.alg, privateKey: i.privateKey, publicKey: i.publicKey, seq: i.seq});
 
+// Whether this site has an identity yet, without making one (a subdomain's
+// first visit signs in first: site-signin.js, #637).
+export async function hasIdentity() {
+  return !!(await tx('readonly', s => s.get(KEY)));
+}
+
 // This browser's identity, created on first use. Two tabs opening at once
 // agree on one: the second add() fails and both read the stored one.
 export async function loadIdentity() {

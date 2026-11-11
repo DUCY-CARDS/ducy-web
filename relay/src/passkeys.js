@@ -134,8 +134,19 @@ export async function checkAssertion(cred, a, {challengeOk, origins = []}) {
   return count;
 }
 
-// The passkeys of the relay: `origins` as for originOk.
-export function passkeys(storage, {origins = [], now: clock = () => Date.now()} = {}) {
+// The page origin passkey sign-in `a` was made on (its client data, which
+// the authenticator signs), or ''.
+export function assertionOrigin(a) {
+  try { return String(JSON.parse(dec.decode(unb64url(a?.clientDataJSON))).origin || ''); } catch { return ''; }
+}
+
+// The passkeys of the relay: `origins` as for originOk. `clubOrigins` (the
+// relay's CLUB_ORIGINS, #637): the club sites. Each session keeps the
+// origin it was made on (a sign-in's signed client data; an enrolment's
+// request), so a room can tell a club site's session from the player
+// app's; and the relay never vouches for a page on a club site, so opening
+// it never moves someone's clubs to its fresh player ID.
+export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = () => Date.now()} = {}) {
   const get = async id => (await storage.get(`pk:${id}`)) || {creds: [], clubs: {}};
   const put = (id, rec) => storage.put(`pk:${id}`, rec);
 
@@ -174,11 +185,11 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
     return s;
   }
   const fresh = s => !!s && clock() - s.at <= FRESH_MS;
-  async function startSession(id, credId) {
+  async function startSession(id, credId, origin = '') {
     const all = await sessions();
     const token = random(32);
     const now = clock();
-    all[token] = {id, credId, at: now, used: now};
+    all[token] = {id, credId, at: now, used: now, origin: String(origin || '')};
     await storage.put('pkSessions', all);
     return token;
   }
@@ -204,8 +215,9 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
 
     // Attaches a passkey to the signer's player ID: {type: 'passkey_enrol',
     // challenge, credId, spki, alg, name}. Another one after the first
-    // needs a session of theirs from the last FRESH_MS (`token`).
-    async enrol(env) {
+    // needs a session of theirs from the last FRESH_MS (`token`). `origin`:
+    // the page's, from its request.
+    async enrol(env, origin = '') {
       const b = await signed(env, 'passkey_enrol');
       const id = env.from;
       const rec = await get(id);
@@ -225,7 +237,7 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
       await put(id, rec);
       await storage.put(`pkcred:${credId}`, id);
       // Made just now, with the player's key: a session, as a sign-in starts.
-      return {ok: true, token: await startSession(id, credId)};
+      return {ok: true, token: await startSession(id, credId, origin)};
     },
 
     // A passkey sign-in {credId, clientDataJSON, authenticatorData,
@@ -240,7 +252,7 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
       if (!cred) throw new Error('This passkey isn’t known here. It may have been removed.');
       cred.count = await checkAssertion(cred, a, {challengeOk: useChallenge, origins});
       await put(id, rec);
-      const token = await startSession(id, credId);
+      const token = await startSession(id, credId, assertionOrigin(a));
       return {token, id, at: clock(), copy: cred.copy || null, movedTo: rec.movedTo || null, clubs: rec.clubs || {}};
     },
 
@@ -289,10 +301,13 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
     // takes over from the player of session `token` (a passkey sign-in from
     // the last FRESH_MS): {type: 'passkey_vouch', challenge, token}. Their
     // passkeys and clubs move to the new ID; the old one can't unlock again.
-    async vouch(env) {
+    // Never for a page on a club site (#637), nor with a session made on one.
+    async vouch(env, origin = '') {
+      if (clubOrigins.includes(origin)) throw new Error('Clubs move to a new device only on ducy.cards.');
       const b = await signed(env, 'passkey_vouch');
       const s = await live(b.token);
       if (!fresh(s)) throw new Error('Sign in with your passkey first.');
+      if (clubOrigins.includes(s.origin)) throw new Error('Clubs move to a new device only on ducy.cards.');
       const from = s.id, to = env.from;
       if (from === to) throw new Error('That’s this player ID already.');
       const old = await get(from), now = await get(to);
@@ -334,21 +349,22 @@ export function passkeys(storage, {origins = [], now: clock = () => Date.now()} 
           await put(s.id, rec);
         }
       }
-      return {id: s.id, at: s.at, movedFrom: rec.movedFrom || null, device: await deviceOf(s.credId)};
+      return {id: s.id, at: s.at, movedFrom: rec.movedFrom || null, device: await deviceOf(s.credId), origin: s.origin || ''};
     },
 
-    // Answers POST /passkey/<op> with `body`: {status, body}.
-    async http(op, body) {
+    // Answers POST /passkey/<op> with `body`, from a page on `origin`:
+    // {status, body}.
+    async http(op, body, origin = '') {
       try {
         let v;
         if (op === 'challenge') v = await this.challenge();
         else if (op === 'status') v = await this.status(String(body?.id || ''));
-        else if (op === 'enrol') v = await this.enrol(body?.env);
+        else if (op === 'enrol') v = await this.enrol(body?.env, origin);
         else if (op === 'unlock') v = await this.unlock(body);
         else if (op === 'copy') v = await this.saveCopy(body?.env);
         else if (op === 'list') v = await this.list(body?.token);
         else if (op === 'remove') v = await this.remove(body?.token, String(body?.credId || ''));
-        else if (op === 'vouch') v = await this.vouch(body?.env);
+        else if (op === 'vouch') v = await this.vouch(body?.env, origin);
         else return {status: 404, body: {error: 'not found'}};
         return {status: 200, body: v};
       } catch (e) {
