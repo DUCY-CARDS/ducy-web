@@ -7,6 +7,8 @@ export const CHIP_OPS = new Set([
   'give', 'take', 'grant', 'set_credit', 'raise_credit', 'remove',
   'approve_award', 'void_award', 'offer_agent', 'revoke_agent', 'assign_agent',
   'service_add', 'service_update',
+  // Recording a payment of what a member owes clears it (#633).
+  'record_payment',
   // The owner's float (#589): refilling it, approving a refill from another
   // device, cancelling one, and its size.
   'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise',

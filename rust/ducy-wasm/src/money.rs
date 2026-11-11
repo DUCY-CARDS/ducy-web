@@ -120,6 +120,20 @@ enum Op {
         stack: u64,
         put: u64,
     },
+    /// The owner's float topped up (chips on credit come out of it, #633).
+    Refill {
+        amount: u64,
+        #[serde(default)]
+        note: String,
+    },
+    /// What `member` owed `backer`, paid outside ducy (#633).
+    RecordPayment {
+        backer: String,
+        member: String,
+        amount: u64,
+        #[serde(default)]
+        note: String,
+    },
 }
 
 /// A club's links, sessions and ledger.
@@ -258,6 +272,15 @@ impl ClubMoney {
                 stack,
                 put,
             } => none(m.open_session(&member, &table, stack, put)),
+            Op::Refill { amount, note } => m.refill(amount, &note, now).map(|e| vec![e]),
+            Op::RecordPayment {
+                backer,
+                member,
+                amount,
+                note,
+            } => m
+                .record_payment(&member, &backer, amount, &note, now)
+                .map(|e| vec![e]),
         };
         to_js(&match r {
             Ok(entries) => json!({"ok": true, "entries": entries}),

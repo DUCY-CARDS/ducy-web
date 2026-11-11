@@ -29,6 +29,14 @@
 //!   from its owner's [float](Money::float), a fixed amount topped up from
 //!   the owner's vault, which has no limit. The float's moves are in the
 //!   ledger too, as entries of [`FLOAT`] with the club.
+//! - **Credit draws on the float** (ducy-web #633): a move down a path that
+//!   takes the club's link below zero (a buy-in on credit, the player's
+//!   own or their agent's) takes those chips from the float, in the same
+//!   transaction, and is refused if the float can't cover them. A move back
+//!   up returns chips to the float until the link is back at zero; what's
+//!   owed stays on the link. So the float caps the chips in play. A
+//!   [payment](Money::record_payment) of what's owed, made outside ducy,
+//!   clears the debt and moves no chips.
 //! - **Members' vaults** (ducy-web #579): a member keeps chips aside on
 //!   their link ([`Link::vault`]): put in and taken out, each an entry, so
 //!   the link's entries still add up to its balance, and the vault to what
@@ -198,6 +206,17 @@ pub enum EntryKind {
     /// The rake and time a player paid at a table over a session (ducy-web
     /// #449): chips the club took back. An entry of [`HOUSE`], `from` them.
     Rake,
+    /// Chips from the owner's float for a move that takes the club's link
+    /// on a path below zero: a buy-in on credit (ducy-web #633). An entry of
+    /// [`FLOAT`], in the move's transaction.
+    Credit,
+    /// Chips back to the owner's float from a move up a path whose club
+    /// link is below zero: a credit player standing up (#633). The debt
+    /// stays on the link. An entry of [`FLOAT`].
+    CreditBack,
+    /// What a member owed their backer, paid outside ducy (#633): the debt
+    /// is cleared, and no chips move.
+    Payment,
 }
 
 impl EntryKind {
@@ -214,6 +233,9 @@ impl EntryKind {
                 | Self::VaultIn
                 | Self::VaultOut
                 | Self::Rake
+                | Self::Credit
+                | Self::CreditBack
+                | Self::Payment
         )
     }
 
@@ -324,6 +346,11 @@ pub enum MoneyError {
         /// What there is.
         has: u64,
     },
+    /// A payment of more than the member owes.
+    Owes {
+        /// What they owe.
+        owes: u64,
+    },
 }
 
 impl fmt::Display for MoneyError {
@@ -354,6 +381,7 @@ impl fmt::Display for MoneyError {
             Self::Kind => write!(f, "The club pays prizes and refunds."),
             Self::Float { left } => write!(f, "The float has {left}."),
             Self::Vault { has } => write!(f, "There's {has}."),
+            Self::Owes { owes } => write!(f, "They owe {owes}."),
         }
     }
 }
@@ -761,6 +789,95 @@ impl Money {
         self.next_tx
     }
 
+    // The balance of the club's link on `path`: its last, up to the club.
+    fn club_balance(&self, path: &[String]) -> i64 {
+        let n = path.len();
+        if n < 2 {
+            return 0;
+        }
+        self.link(&path[n - 2], &path[n - 1])
+            .map_or(0, |l| l.balance)
+    }
+
+    /// What a move of `amt` down `path` takes from the owner's float (#633):
+    /// the part that takes the club's link below zero. Chips on credit come
+    /// out of the float like any chips the club hands out, so the float caps
+    /// the chips in play.
+    pub fn credit_draw(&self, path: &[String], amt: u64) -> u64 {
+        amt.saturating_sub(self.club_balance(path).max(0) as u64)
+    }
+
+    // What a move of `amt` up `path` puts back in the float: the part that
+    // brings the club's link back up toward zero.
+    fn credit_back(&self, path: &[String], amt: u64) -> u64 {
+        amt.min((-self.club_balance(path)).max(0) as u64)
+    }
+
+    // Refused if the float can't cover `draw`.
+    fn float_covers(&self, draw: u64) -> Result<(), MoneyError> {
+        if draw > self.float() {
+            return Err(MoneyError::Float { left: self.float() });
+        }
+        Ok(())
+    }
+
+    // A move along `path` and, in its transaction, the float's part of it:
+    // `float` chips out of it (below zero) or back in (above).
+    fn move_with_float(
+        &mut self,
+        path: &[String],
+        kind: EntryKind,
+        change: i64,
+        float: i64,
+        now: u64,
+        about: Option<&str>,
+    ) -> Vec<Entry> {
+        let mut out = self.move_path(path, kind, change, now, about);
+        if float != 0 {
+            let tx = out.first().map_or(self.next_tx, |e| e.tx);
+            let k = if float < 0 {
+                EntryKind::Credit
+            } else {
+                EntryKind::CreditBack
+            };
+            // For whose seat, and what about.
+            self.record_float(k, float, (tx, now), None);
+            let e = self.ledger.last_mut().expect("just added");
+            e.about = about.map(Into::into);
+            e.from = path.first().cloned();
+            out.push(e.clone());
+        }
+        out
+    }
+
+    // A move of `amt` down `path`, drawing on the float for what's on
+    // credit; refused if the float can't cover it.
+    fn move_down(
+        &mut self,
+        path: &[String],
+        kind: EntryKind,
+        amt: u64,
+        now: u64,
+        about: Option<&str>,
+    ) -> Result<Vec<Entry>, MoneyError> {
+        let draw = self.credit_draw(path, amt);
+        self.float_covers(draw)?;
+        Ok(self.move_with_float(path, kind, -(amt as i64), -(draw as i64), now, about))
+    }
+
+    // A move of `amt` up `path`, the float getting back what was on credit.
+    fn move_up(
+        &mut self,
+        path: &[String],
+        kind: EntryKind,
+        amt: u64,
+        now: u64,
+        about: Option<&str>,
+    ) -> Vec<Entry> {
+        let back = self.credit_back(path, amt);
+        self.move_with_float(path, kind, amt as i64, back as i64, now, about)
+    }
+
     // Moves every link on `path` by `change`.
     fn move_path(
         &mut self,
@@ -958,7 +1075,9 @@ impl Money {
         ))
     }
 
-    /// Sits `member` at a table with `amt` club chips, down their path.
+    /// Sits `member` at a table with `amt` club chips, down their path. What
+    /// takes the club's link below zero comes out of the owner's float
+    /// ([`Self::credit_draw`]); refused if the float can't cover it.
     pub fn buy_in(
         &mut self,
         member: &str,
@@ -966,13 +1085,13 @@ impl Money {
         amt: u64,
         now: u64,
     ) -> Result<Vec<Entry>, MoneyError> {
-        let a = amount(amt)?;
+        amount(amt)?;
         if self.sessions.contains_key(member) {
             return Err(MoneyError::Seated);
         }
         let path = self.path(member)?;
         self.check(&path, amt, now)?;
-        let out = self.move_path(&path, EntryKind::BuyIn, -a, now, Some(table));
+        let out = self.move_down(&path, EntryKind::BuyIn, amt, now, Some(table))?;
         self.sessions.insert(
             member.into(),
             Session {
@@ -987,11 +1106,11 @@ impl Money {
 
     /// Adds `amt` to a seated player's stack, down the session's path.
     pub fn top_up(&mut self, member: &str, amt: u64, now: u64) -> Result<Vec<Entry>, MoneyError> {
-        let a = amount(amt)?;
+        amount(amt)?;
         let s = self.sessions.get(member).ok_or(MoneyError::NotSeated)?;
         let (path, table) = (s.path.clone(), s.about.clone());
         self.check(&path, amt, now)?;
-        let out = self.move_path(&path, EntryKind::TopUp, -a, now, Some(&table));
+        let out = self.move_down(&path, EntryKind::TopUp, amt, now, Some(&table))?;
         let s = self.sessions.get_mut(member).unwrap();
         s.stack += amt;
         s.put += amt;
@@ -1005,12 +1124,12 @@ impl Money {
         amt: u64,
         now: u64,
     ) -> Result<Vec<Entry>, MoneyError> {
-        let a = amount(amt)?;
+        amount(amt)?;
         let s = self.sessions.get_mut(member).ok_or(MoneyError::NotSeated)?;
         s.stack = s.stack.saturating_sub(amt);
         s.put = s.put.saturating_sub(amt);
         let (path, table) = (s.path.clone(), s.about.clone());
-        Ok(self.move_path(&path, EntryKind::Refund, a, now, Some(&table)))
+        Ok(self.move_up(&path, EntryKind::Refund, amt, now, Some(&table)))
     }
 
     /// The table reports a seated player's stack.
@@ -1024,6 +1143,8 @@ impl Money {
 
     /// Stands `member` up: their stack goes back up the session's path, and
     /// each link gets its share of the rake and time they `contributed`.
+    /// While the club's link is below zero, the chips go back to the owner's
+    /// float, and what's owed stays.
     /// With nothing left, the cash-out is still recorded, at 0, so the
     /// ledger shows the session ended.
     pub fn cash_out(
@@ -1044,13 +1165,7 @@ impl Money {
     fn close(&mut self, s: &Session, contributed: u64, now: u64) -> Vec<Entry> {
         let mut out = Vec::new();
         if s.stack > 0 {
-            out = self.move_path(
-                &s.path,
-                EntryKind::CashOut,
-                s.stack as i64,
-                now,
-                Some(&s.about),
-            );
+            out = self.move_up(&s.path, EntryKind::CashOut, s.stack, now, Some(&s.about));
         }
         out.extend(self.rake_shares(&s.path, contributed, now, &s.about));
         out
@@ -1140,10 +1255,14 @@ impl Money {
         }
         let mut out = self.close(&old, contributed, now);
         if old.stack > 0 {
-            out.extend(self.move_path(
+            // On the float as a buy-in, never refused: the chips are on
+            // the table already.
+            let draw = self.credit_draw(&path, old.stack);
+            out.extend(self.move_with_float(
                 &path,
                 EntryKind::BuyIn,
                 -(old.stack as i64),
+                -(draw as i64),
                 now,
                 Some(&old.about),
             ));
@@ -1162,10 +1281,10 @@ impl Money {
         amt: u64,
         now: u64,
     ) -> Result<Vec<Entry>, MoneyError> {
-        let a = amount(amt)?;
+        amount(amt)?;
         let path = self.path(member)?;
         self.check(&path, amt, now)?;
-        Ok(self.move_path(&path, EntryKind::TourneyBuyIn, -a, now, Some(tourney)))
+        self.move_down(&path, EntryKind::TourneyBuyIn, amt, now, Some(tourney))
     }
 
     /// Something the club pays `member` (a [`Prize`](EntryKind::Prize) or a
@@ -1181,9 +1300,36 @@ impl Money {
         if !matches!(kind, EntryKind::Prize | EntryKind::Refund) {
             return Err(MoneyError::Kind);
         }
-        let a = amount(amt)?;
+        amount(amt)?;
         let path = self.path(member)?;
-        Ok(self.move_path(&path, kind, a, now, Some(about)))
+        Ok(self.move_up(&path, kind, amt, now, Some(about)))
+    }
+
+    /// `member` paid `backer` `amt` of what they owe, outside ducy: the
+    /// link comes up toward zero and no chips move (#633). The float isn't
+    /// touched: the chips it gave on credit are with whoever won them.
+    pub fn record_payment(
+        &mut self,
+        member: &str,
+        backer: &str,
+        amt: u64,
+        why: &str,
+        now: u64,
+    ) -> Result<Entry, MoneyError> {
+        let a = amount(amt)?;
+        let owes = (-self.link_mut(member, backer)?.balance).max(0) as u64;
+        if amt > owes {
+            return Err(MoneyError::Owes { owes });
+        }
+        let tx = self.tx();
+        Ok(self.record(
+            (member, backer),
+            EntryKind::Payment,
+            a,
+            (tx, now),
+            note(why),
+            None,
+        ))
     }
 
     /// Takes back a prize the club paid `member`: `amt` down their path, as

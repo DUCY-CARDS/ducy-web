@@ -7,6 +7,7 @@ import { Verifier, createIdentity, signMessage } from '../src/identity.js';
 import { approve, hostReceive, newClub, removeMember } from '../src/club.js';
 import { accountBody, checkOwnLedger, ensureChips, issue, totals } from '../src/club-chips.js';
 import { setCredit } from '../src/club-credit.js';
+import { command } from '../src/club-commands.js';
 import { settleRows, startMoney } from '../src/club-money.js';
 import { chipsForTable, leftTable, newTable } from '../src/club-tables.js';
 import {
@@ -19,6 +20,8 @@ function clubWith(...ids) {
     club.members[id] = {id, name: id.toUpperCase(), status: 'pending', requestedAt: 0};
     approve(club, id, 0);
   }
+  // The owner's float: chips on credit come out of it (#633).
+  command(club, 'vault_settle', {}, 0);
   return club;
 }
 

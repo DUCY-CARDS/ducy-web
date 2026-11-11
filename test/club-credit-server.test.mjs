@@ -10,6 +10,7 @@ import { createClub, openClub } from '../relay/src/club-room.js';
 import { buyIn, cashOut, setStack, totals } from '../src/club-chips.js';
 import { createTableHost } from '../src/club-host.js';
 import { clubEngine } from '../src/club-engine.js';
+import { command } from '../src/club-commands.js';
 
 function memoryStorage() {
   const m = new Map();
@@ -64,25 +65,38 @@ test('the owner sets a limit, answers a request at it by raising it, and records
   assert.deepEqual([lastAccount().credit, lastAccount().available, lastAccount().request], [70000, 20000, null]);
   assert.deepEqual([lastAccount().answer.outcome, lastAccount().answer.given, lastAccount().answer.limit], ['granted', 20000, 70000]);
 
-  // She pays some of it back outside ducy; the owner gives it, with a note (#454).
-  assert.equal((await cmd('give', {id: ann.id, amount: 30000, note: 'cash'})).error, '');
+  // Her 500 on credit came out of the float (#633), and stayed out: she lost it.
+  const float = club.money.float;
+  assert.equal(float, 200000 - 50000);
+  // She pays some of it back outside ducy; the owner records it, with a
+  // note: the debt comes down, and no chips move (#633).
+  assert.match((await cmd('record_payment', {id: ann.id, amount: 60000})).error, /Ann owes 500/);
+  assert.equal((await cmd('record_payment', {id: ann.id, amount: 30000, note: 'cash'})).error, '');
   const a = lastAccount();
   assert.equal(a.balance, -20000);
   assert.equal(a.available, 50000);
-  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['give', 30000, 'cash']]);
-  assert.equal(totals(club).owedToClub, 20000);
+  assert.deepEqual(a.entries.map(e => [e.kind, e.amount, e.note]), [['payment', 30000, 'cash']]);
+  assert.equal(club.money.float, float, 'the float is untouched');
+  const t = totals(club);
+  // (Her lost 500 went to no one here, so the books can't add up.)
+  assert.deepEqual([t.owedToClub, t.paid], [20000, 30000]);
+  assert.match(club.log.at(-1).text, /Recorded Ann’s payment of 300: cash/);
 });
 
 // A table's chip requests on credit, on ducy's engine.
 test('at a table: a buy-in on credit is approved; past what is available, refused with an offer to ask', async t => {
   const table = {id: 't1', name: 'One', seats: 6, sb: 1, bb: 2, game: 'nlhe', turnSecs: 0, status: 'open', minBB: 20, maxBB: 100};
   const club = {
-    code: 'ABCD-EFGH', tables: [table], chips: {issued: 0, reclaimed: 0}, ratholeHours: 0,
+    code: 'ABCD-EFGH', hostId: 'HOST', tables: [table], chips: {issued: 0, reclaimed: 0}, ratholeHours: 0,
     members: {
       ann: {id: 'ann', name: 'Ann', status: 'member', balance: 0, credit: 300},
       bob: {id: 'bob', name: 'Bob', status: 'member', balance: 0, credit: 100},
     },
   };
+  // Its float, which chips on credit come out of (#633).
+  command(club, 'vault_settle');
+  const float = club.money.float;
+  assert.ok(float >= 200);
   const sent = [], changed = [];
   const engine = clubEngine();
   const th = createTableHost({
@@ -100,7 +114,9 @@ test('at a table: a buy-in on credit is approved; past what is available, refuse
   assert.equal(club.members.ann.seat?.stack, 200);
   assert.deepEqual(changed, ['ann']);
   assert.equal(club.members.ann.balance, -200);
-  assert.deepEqual([club.money.ledger.at(-1).kind, club.money.ledger.at(-1).amount, club.money.ledger.at(-1).balance], ['buy_in', -200, -200], 'all of it on credit');
+  const own = club.money.ledger.filter(e => e.member === 'ann').at(-1);
+  assert.deepEqual([own.kind, own.amount, own.balance], ['buy_in', -200, -200], 'all of it on credit');
+  assert.deepEqual([club.money.ledger.at(-1).member, club.money.ledger.at(-1).kind, club.money.float], ['float', 'credit', float - 200], 'from the float');
   await th.handle('t1', 'bob', {type: 'join'});
   await th.handle('t1', 'bob', {type: 'request_chips', amount: 150});
   await settle();

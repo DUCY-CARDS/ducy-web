@@ -403,6 +403,10 @@ impl ClubState {
             "approve" | "decline" => {
                 // A Credit player (#621): let in with a credit line.
                 let credit = crate::book::approval_credit(args)?;
+                // Someone joining through an agent gets their line from them (#633).
+                if credit.is_some() {
+                    self.book.owners_credit(&id)?;
+                }
                 let reply = if op == "approve" {
                     self.book.club.approve(&id, now)
                 } else {
@@ -416,6 +420,8 @@ impl ClubState {
                     if let Some(limit) = credit {
                         self.book.set_credit(&id, Some(limit as i64), now)?;
                         out.account(&id, None);
+                        // They hear it with being let in (#633).
+                        crate::book::with_credit(&mut out.replies, &id, limit);
                     }
                     out.tables_to.push(id);
                 }
@@ -475,6 +481,25 @@ impl ClubState {
                 } else {
                     format!("Took back {chips} from {who}")
                 };
+                if let Some(n) = e.note.as_deref().filter(|n| !n.is_empty()) {
+                    line += &format!(": {n}");
+                }
+                self.book.log_move(&line, moved, now);
+                out.account(&id, Some(e.n - 1));
+            }
+            // A member's payment of what they owe the club, made outside
+            // ducy (#633): the debt is cleared and no chips move. Logged as
+            // a chip move, a big one a notice.
+            "record_payment" => {
+                let e =
+                    self.book
+                        .record_payment(&id, num(args, "amount"), &text(args, "note"), now)?;
+                let moved = e.amount.unsigned_abs();
+                let mut line = format!(
+                    "Recorded {}’s payment of {}",
+                    self.name(&id),
+                    crate::rules::chip_text(moved)
+                );
                 if let Some(n) = e.note.as_deref().filter(|n| !n.is_empty()) {
                     line += &format!(": {n}");
                 }
@@ -962,6 +987,157 @@ mod tests {
                 .0
                 .contains("no host action nope")
         );
+    }
+
+    #[test]
+    fn credit_seats_draw_on_the_float_and_a_payment_moves_no_chips() {
+        use crate::book::Limits;
+        let limits = Limits {
+            min: 100,
+            max: 5000,
+        };
+        let mut c = club(&["ann", "bo"]);
+        run(&mut c, "float_size", json!({"amount": 3000})).unwrap();
+        run(&mut c, "give", json!({"id": "bo", "amount": 1000})).unwrap();
+        run(&mut c, "set_credit", json!({"id": "ann", "amount": 2500})).unwrap();
+        assert_eq!(c.book.money.float(), 2000);
+        // Ann's seat on credit comes out of the float, and stops at it.
+        let e = c
+            .book
+            .buy_in("ann", "t1", Some(2500), limits, 10)
+            .unwrap_err();
+        assert!(e.message.contains("float is too low"), "{e:?}");
+        assert!(!e.short);
+        c.book.buy_in("ann", "t1", Some(2000), limits, 10).unwrap();
+        assert_eq!((c.book.balance("ann"), c.book.money.float()), (-2000, 0));
+        let last = c.book.money.ledger().last().unwrap().clone();
+        assert_eq!(
+            (last.member.as_str(), last.kind, last.amount),
+            (crate::money::FLOAT, EntryKind::Credit, -2000)
+        );
+        // Bo's own chips don't touch it.
+        c.book.buy_in("bo", "t1", Some(1000), limits, 10).unwrap();
+        assert_eq!(c.book.money.float(), 0);
+        // Ann stands up down 500: the 1,500 go back to the float, and the
+        // 500 she owes stays. Bo stands up with it.
+        c.book.left_table("ann", 1500, 10).unwrap();
+        c.book.left_table("bo", 1500, 10).unwrap();
+        assert_eq!((c.book.balance("ann"), c.book.money.float()), (-500, 1500));
+        assert_eq!(c.book.balance("bo"), 1500);
+        assert!(c.totals().conserved);
+        // She pays outside ducy: the debt is cleared, no chips move, and
+        // the books still add up.
+        let pay = |c: &mut ClubState, amount: i64| {
+            run(
+                c,
+                "record_payment",
+                json!({"id": "ann", "amount": amount, "note": "cash"}),
+            )
+        };
+        assert_eq!(pay(&mut c, 600).unwrap_err().0, "Ann owes 5.");
+        let o = pay(&mut c, 500).unwrap();
+        assert_eq!(o.accounts[0].id, "ann");
+        assert_eq!((c.book.balance("ann"), c.book.money.float()), (0, 1500));
+        assert_eq!(c.book.chips.paid, 500);
+        let t = c.totals();
+        assert!(t.conserved, "{t:?}");
+        assert_eq!(t.owed_to_club, 0);
+        assert_eq!(
+            c.book.log.last().unwrap()["text"],
+            "Recorded Ann’s payment of 5: cash"
+        );
+        assert_eq!(pay(&mut c, 100).unwrap_err().0, "Ann doesn’t owe the club.");
+        // Winning on credit: what she drew goes back, the rest is hers.
+        c.book.buy_in("ann", "t2", Some(1000), limits, 10).unwrap();
+        c.book.buy_in("bo", "t2", Some(1500), limits, 10).unwrap();
+        assert_eq!(c.book.money.float(), 500);
+        c.book.left_table("ann", 1800, 10).unwrap();
+        c.book.left_table("bo", 700, 10).unwrap();
+        assert_eq!((c.book.balance("ann"), c.book.money.float()), (800, 1500));
+        assert!(c.totals().conserved);
+        assert!(
+            c.book.money.audit().is_empty(),
+            "{:?}",
+            c.book.money.audit()
+        );
+    }
+
+    #[test]
+    fn an_agents_players_credit_is_the_agents_alone() {
+        let mut c = club(&["al", "bo"]);
+        run(&mut c, "offer_agent", json!({"id": "al"})).unwrap();
+        c.book.answer_agent("al", true, 10, &mut rng());
+        run(&mut c, "assign_agent", json!({"id": "bo", "agent": "al"})).unwrap();
+        let no = "Bo plays under Al: Al sets their credit.";
+        let e = run(&mut c, "set_credit", json!({"id": "bo", "amount": 500})).unwrap_err();
+        assert_eq!(e.0, no);
+        c.book.request_chips("bo", Some(500), "", "", 10).unwrap();
+        let e = run(&mut c, "raise_credit", json!({"id": "bo", "amount": 500})).unwrap_err();
+        assert_eq!(e.0, no);
+        assert_eq!(c.book.credit("bo"), 0);
+        // Al can, and Bo's chips on credit still come out of the float,
+        // through Al's link with the club.
+        run(&mut c, "set_credit", json!({"id": "al", "amount": 2000})).unwrap();
+        c.book
+            .run_agent(
+                "al",
+                &json!({"op": "credit", "id": "bo", "amount": 500}),
+                10,
+            )
+            .unwrap();
+        assert_eq!(c.book.credit("bo"), 500);
+        let float = c.book.money.float();
+        c.book
+            .buy_in(
+                "bo",
+                "t1",
+                Some(500),
+                crate::book::Limits {
+                    min: 100,
+                    max: 1000,
+                },
+                10,
+            )
+            .unwrap();
+        assert_eq!(c.book.money.float(), float - 500);
+        // Someone joining through Al is let in with Al's line, not the owner's.
+        c.book.club.members.insert(
+            "cy".into(),
+            serde_json::from_value(
+                json!({"id": "cy", "name": "Cy", "status": "pending", "agentOf": "al"}),
+            )
+            .unwrap(),
+        );
+        let e = run(
+            &mut c,
+            "approve",
+            json!({"id": "cy", "kind": "credit", "credit": 300}),
+        )
+        .unwrap_err();
+        assert_eq!(e.0, "Cy plays under Al: Al sets their credit.");
+        assert_eq!(c.book.club.members["cy"].status, Status::Pending);
+    }
+
+    #[test]
+    fn let_in_with_credit_they_hear_their_line() {
+        let mut c = club(&[]);
+        c.book.club.members.insert(
+            "ann".into(),
+            serde_json::from_value(json!({"id": "ann", "name": "Ann", "status": "pending"}))
+                .unwrap(),
+        );
+        let o = run(
+            &mut c,
+            "approve",
+            json!({"id": "ann", "kind": "credit", "credit": 300}),
+        )
+        .unwrap();
+        let status = o
+            .replies
+            .iter()
+            .find(|r| r["body"]["type"] == "status")
+            .unwrap();
+        assert_eq!(status["body"]["credit"], 300);
     }
 
     #[test]

@@ -34,6 +34,14 @@ pub struct Chips {
     pub issued: i64,
     /// Taken back.
     pub reclaimed: i64,
+    /// What members owed the club and paid outside ducy (#633): chips the
+    /// float gave out on credit, paid for.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub paid: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 /// A club's rules and money.
@@ -398,6 +406,38 @@ impl Book {
         Ok(e)
     }
 
+    /// The owner records a member's payment of what they owe the club, made
+    /// outside ducy (#633): the debt comes down by `amt` and no chips move,
+    /// the float's least of all. The chips the float gave out on credit are
+    /// with whoever won them; the books count them as paid for
+    /// ([`Chips::paid`]), so they still add up.
+    pub fn record_payment(
+        &mut self,
+        id: &str,
+        amt: Option<i64>,
+        why: &str,
+        now: u64,
+    ) -> Result<Entry, RuleError> {
+        self.member(id)?;
+        let amt = amount(amt)?;
+        self.direct(id)?;
+        let owes = (-self.balance(id)).max(0) as u64;
+        if owes == 0 {
+            return refuse(format!("{} doesn’t owe the club.", self.name(id)));
+        }
+        if amt > owes {
+            return refuse(format!("{} owes {}.", self.name(id), chip_text(owes)));
+        }
+        self.ensure_links(now)?;
+        let e = self
+            .money
+            .record_payment(id, CLUB, amt, &note(why), now)
+            .map_err(money_err)?;
+        self.chips.paid += amt as i64;
+        self.sync();
+        Ok(e)
+    }
+
     /// A backer (an agent) gives one of their players chips: it costs them
     /// nothing until the chips go on a table.
     pub fn backer_give(
@@ -574,9 +614,38 @@ impl Book {
         Ok(())
     }
 
+    /// Refused for a player under an agent: their credit line is the
+    /// agent's to set, not the owner's (#633).
+    pub(crate) fn owners_credit(&self, id: &str) -> Result<(), RuleError> {
+        let b = self.backer_of(id);
+        if b != CLUB {
+            let agent = self.name(&b);
+            return refuse(format!(
+                "{} plays under {agent}: {agent} sets their credit.",
+                self.name(id)
+            ));
+        }
+        Ok(())
+    }
+
     /// The host sets a member's credit limit (0: none). Lowering it below
     /// what they owe is allowed: they have nothing available until they pay.
+    /// Not for a player under an agent (#633).
     pub fn set_credit(&mut self, id: &str, limit: Option<i64>, now: u64) -> Result<(), RuleError> {
+        self.member(id)?;
+        self.owners_credit(id)?;
+        let host = self.club.host_id.clone();
+        self.set_credit_by(&host, id, limit, now)
+    }
+
+    // A credit limit set by `by`: the host, or the player's agent.
+    fn set_credit_by(
+        &mut self,
+        by: &str,
+        id: &str,
+        limit: Option<i64>,
+        now: u64,
+    ) -> Result<(), RuleError> {
         self.member(id)?;
         let Some(limit) = limit
             .filter(|&l| l >= 0 && l as u64 <= MAX_CHIPS)
@@ -589,13 +658,12 @@ impl Book {
             return Ok(());
         }
         self.set_limit(id, limit, now)?;
-        let host = self.club.host_id.clone();
         let text = format!(
             "{}’s credit limit is now {}",
             self.name(id),
             chip_text(limit)
         );
-        self.log_credit(&host, &text, limit.saturating_sub(was), now);
+        self.log_credit(by, &text, limit.saturating_sub(was), now);
         Ok(())
     }
 
@@ -619,6 +687,7 @@ impl Book {
         now: u64,
     ) -> Result<(), RuleError> {
         self.member(id)?;
+        self.owners_credit(id)?;
         if self.request(id).is_none() {
             return refuse("There’s no request to answer.");
         }
@@ -884,11 +953,14 @@ impl Book {
                     self.ensure_links(now)?;
                     self.sync();
                     if let Some(limit) = credit {
-                        self.set_credit(&id, Some(limit as i64), now)?;
+                        self.set_credit_by(by, &id, Some(limit as i64), now)?;
                         done.accounts.push(AccountTo {
                             id: id.clone(),
                             since: None,
                         });
+                        // They hear it with being let in, so aren't told to
+                        // ask for chips (#633).
+                        with_credit(&mut done.replies, &id, limit);
                     }
                     done.approved = Some(id);
                 }
@@ -896,7 +968,7 @@ impl Book {
             // A player's credit line (#621), on their link with the agent.
             "credit" => {
                 self.mine(by, &id)?;
-                self.set_credit(&id, int(cmd.get("amount")), now)?;
+                self.set_credit_by(by, &id, int(cmd.get("amount")), now)?;
                 done.accounts.push(AccountTo { id, since: None });
             }
             // A reply in one of their players' threads (#621).
@@ -976,6 +1048,17 @@ impl Book {
             _ => return refuse("Unknown command."),
         }
         Ok(done)
+    }
+}
+
+/// The status reply letting `id` in, in `replies`, saying their credit
+/// line (#633).
+pub(crate) fn with_credit(replies: &mut [Value], id: &str, limit: u64) {
+    for r in replies
+        .iter_mut()
+        .filter(|r| r["to"] == id && r["body"]["type"] == "status")
+    {
+        r["body"]["credit"] = limit.into();
     }
 }
 
@@ -1086,6 +1169,11 @@ impl Book {
             },
             MoneyError::Overdue { .. } => TableRefusal {
                 message: "What you owe is overdue: pay it back to play.".into(),
+                short: false,
+            },
+            // Chips on credit come from the owner's float (#633).
+            MoneyError::Float { .. } => TableRefusal {
+                message: "The club’s float is too low to cover chips on credit right now. Ask the manager to refill it.".into(),
                 short: false,
             },
             other => TableRefusal {
@@ -1651,9 +1739,14 @@ mod tests {
         b.set_credit("ann", Some(100), 3).unwrap();
         let e = b.buy_in("ann", "t1", Some(500), LIMITS, 4).unwrap_err();
         assert_eq!(e.message, "You have 4 available (your chips and credit).");
-        // Within credit: a buy-in on credit.
+        // Within credit: a buy-in on credit, the 100 on credit from the
+        // owner's float (#633). With too little in it, refused.
+        b.money.refill(50, "", 5).unwrap();
+        let e = b.buy_in("ann", "t1", Some(400), LIMITS, 5).unwrap_err();
+        assert!(!e.short && e.message.contains("float"));
+        b.money.refill(50, "", 5).unwrap();
         b.buy_in("ann", "t1", Some(400), LIMITS, 5).unwrap();
-        assert_eq!(b.balance("ann"), -100);
+        assert_eq!((b.balance("ann"), b.money.float()), (-100, 0));
     }
 
     #[test]

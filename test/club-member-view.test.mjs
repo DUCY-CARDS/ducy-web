@@ -7,11 +7,14 @@ import { chipLines, leftSummary } from '../src/club-member-view.js';
 import { backerGive, buyIn, cashOut, ensureChips, issue, setStack, topUp } from '../src/club-chips.js';
 import { setCredit } from '../src/club-credit.js';
 import { entriesOf } from '../src/club-money.js';
+import { command } from '../src/club-commands.js';
 
 const L = {min: 8000, max: 20_000};
 
 test('a credit player’s chips: sessions as lines, a debt paid', () => {
   const c = ensureChips({code: 'C', hostId: 'h', members: {ann: {id: 'ann', name: 'Ann', status: 'member'}, bo: {id: 'bo', name: 'Bo', status: 'member'}}});
+  // The owner's float: chips on credit come out of it (#633).
+  command(c, 'vault_settle', {}, 0);
   issue(c, 'bo', 100_000, 1);
   issue(c, 'ann', 5000, 2);
   setCredit(c, 'ann', 50_000);
@@ -31,12 +34,12 @@ test('a credit player’s chips: sessions as lines, a debt paid', () => {
   ]);
   assert.deepEqual(leftSummary(mine(), out), {table: 'main', net: -22_000, balance: -17_000, owes: 17_000});
   assert.equal(leftSummary(mine(), 999), null);
-  // Stands up from PLO with 150: still owes 120; pays 100, which the manager gives with a note.
+  // Stands up from PLO with 150: still owes 120; pays 100, which the manager records with a note (#633).
   setStack(c, 'ann', 15_000);
   cashOut(c, 'ann', 40);
-  issue(c, 'ann', 10_000, 50, 'Cash');
+  command(c, 'record_payment', {id: 'ann', amount: 10_000, note: 'Cash'}, 50);
   const lines = chipLines(mine());
-  assert.deepEqual(lines.slice(0, 2).map(l => [l.kind, l.amount, l.balance, l.note ?? '']), [['give', 10_000, -2000, 'Cash'], ['left', 5000, -12_000, '']]);
+  assert.deepEqual(lines.slice(0, 2).map(l => [l.kind, l.amount, l.balance, l.note ?? '']), [['payment', 10_000, -2000, 'Cash'], ['left', 5000, -12_000, '']]);
 });
 
 test('a top-up handed back belongs to its session; a tournament’s refund is a line of its own', () => {

@@ -17,6 +17,7 @@ const { repaidBy } = await import('../src/club-money.js');
 const { newTable } = await import('../src/club-tables.js');
 const { clubEngine } = await import('../src/club-engine.js');
 const { createTableHost } = await import('../src/club-host.js');
+const { command } = await import('../src/club-commands.js');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(what, fn, ms = 30_000) {
@@ -38,6 +39,8 @@ function setUp() {
     if (id !== 'ann') issue(club, id, 1000, 0);
   }
   setCredit(club, 'ann', 500);
+  // The owner's float: Ann's chips on credit come out of it (#633).
+  command(club, 'vault_settle', {}, 0);
   const t = newTable(club, {name: 'Main', sb: 1, bb: 2, minBB: 40, maxBB: 100, seats: 6, turnSecs: 0, stayHands: 5});
   const engine = clubEngine();
   // Each player acts (check or call) only while `acting` says so, so a hand
