@@ -64,7 +64,7 @@ A major release is any of these:
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
-| The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager; the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
+| The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager (Chromium; a browser without passkeys goes straight on); the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
 

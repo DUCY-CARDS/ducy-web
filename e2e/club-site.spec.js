@@ -38,7 +38,17 @@ const test = base.extend({
 
 const fitsTheScreen = async page => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
-test('a first visit asks for the passkey before making a new player; someone new goes on to the manager', async ({page}) => {
+test('a browser without passkeys goes straight on to the manager', async ({page}) => {
+  await page.addInitScript(() => { delete window.PublicKeyCredential; });
+  await page.goto('https://club.ducy.cards/#clubs');
+  await expect(page.locator('#clubs .cl-pass, #clubs .pl-head').first()).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Sign in'})).toHaveCount(0);
+  await fitsTheScreen(page);
+});
+
+test('a first visit asks for the passkey before making a new player; someone new goes on to the manager', async ({page, browserName}) => {
+  // Playwright's WebKit has no passkeys (as for play.spec.js's passkey tests).
+  test.skip(browserName === 'webkit', 'no passkeys in Playwright’s WebKit');
   await page.goto('https://club.ducy.cards/#clubs');
   await expect(page.getByRole('heading', {name: 'Sign in'})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Use your passkey'})).toBeVisible();
