@@ -359,6 +359,9 @@ test.describe('a club member', () => {
     await again.locator('[data-pt=player]').first().click();
     // Once its player ID has loaded: the dialog draws again then.
     await expect(again.locator('#pset .pl-pid')).not.toHaveText('…');
+    // And once the relay has said this new ID has no passkey (#646): that
+    // redraws the dialog, which would drop a file being chosen.
+    await expect(again.locator('#pset [data-ps="pk-first"]')).toBeVisible();
     await again.locator('#pset input[data-ps="file"]').setInputFiles(file);
     await again.locator('#pset [name=pw]').fill(pw);
     await again.locator('#pset [data-psform="restore"] button[type="submit"]').click();
