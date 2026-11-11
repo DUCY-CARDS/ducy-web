@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test as base, expect } from '@playwright/test';
 import { RELAY_PORT } from './playwright.config.js';
+import { grantAdmin, grantLink } from './grant.mjs';
 
 const RELAY = `ws://localhost:${RELAY_PORT}`;
 // The Ducybot models and chart data aren't served here, and the browser logs each miss.
@@ -114,12 +115,16 @@ test('several clubs: the front page lists them, and #clubs goes there (#611)', a
   await expect(page).toHaveURL(/#clubs\/c\/JKMN-PQRS$/);
 });
 
-test('the club manager offers no way to start a club (#611)', async ({page, watch}) => {
-  await watch(page).goto('/manage.html#clubs');
-  await expect(page.locator('[data-cl="demo"]')).toBeVisible();
-  await expect(page.getByText(/Start a club|Create your own club/)).toHaveCount(0);
-  await expect(page.locator('#cl-clubname')).toHaveCount(0);
-  await fitsTheScreen(page);
+test('the club manager offers no way to start a club, and no demo club (#611, #636)', async ({page, watch}) => {
+  watch(page);
+  for (const hash of ['#clubs', '#clubs/new', '#clubs/start/not-a-token']) {
+    await page.goto(`/manage.html${hash}`);
+    await expect(page.locator('.pl-head h1')).toHaveText('Club manager');
+    await expect(page.locator('[data-cl="demo"]')).toHaveCount(0);
+    await expect(page.getByText(/Start a club|Create your own club|Try a demo club/)).toHaveCount(0);
+    await expect(page.locator('#cl-clubname')).toHaveCount(0);
+    await fitsTheScreen(page);
+  }
 });
 
 test('the full landing page is still at #welcome', async ({page, watch}) => {
@@ -235,25 +240,27 @@ async function letIn(owner, credit = 0) {
   await expect(form).toHaveCount(0);
 }
 
-test('starting a club without permission is refused, and says who to give ducy', async ({page, watch, browserName}) => {
+test('a grant link that isn’t this player’s is refused, and says who to give ducy (#636)', async ({page, watch, browserName}, info) => {
   needsPasskeys(browserName);
   await authenticator(page);
-  // Linked from nowhere (#611): the address only.
-  await watch(page).goto(`/manage.html?relay=${RELAY}#clubs/new`);
+  // Someone else's link, or a made-up one: the relay has no grant for this player.
+  await watch(page).goto(`/manage.html?relay=${RELAY}#clubs/start/${'A'.repeat(43)}`);
+  await expect(page.locator('.cl-act-title')).toHaveText('Start a club');
   await page.locator('#cl-clubname').fill('Night Owls');
   await page.locator('[data-cl="create"]').click();
   // Clubs need a passkey first (#575).
   await page.locator('[data-cl="pass-enrol"]').click();
-  await expect(page.getByText(/takes permission from ducy/)).toBeVisible();
+  await expect(page.getByText(/isn’t for this player ID, or it was used or taken back/)).toBeVisible();
   await expect(page.locator('code.cl-id')).toBeVisible();
   await fitsTheScreen(page);
+  await page.screenshot({path: info.outputPath('refused.png'), fullPage: true});
 });
 
-// A relay of its own that lets anyone start a trial club, for a whole club
-// flow; one per worker, so the browsers' runs don't share it. Its clock
-// moves on when a test says (RELAY_TEST_CLOCK, #599).
-async function trialRelay(port) {
-  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, TRIALS: '', RELAY_TEST_CLOCK: '1'}});
+// A relay of its own with a test admin, who grants each owner their club
+// (#636, grant.mjs), for a whole club flow; one per worker, so the browsers'
+// runs don't share it. Its clock moves on when a test says (RELAY_TEST_CLOCK, #599).
+async function trialRelay(port, admin) {
+  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, ADMINS_FILE: admin.file, RELAY_TEST_CLOCK: '1'}});
   for (let i = 0; i < 100; i++) {
     if (await fetch(`http://localhost:${port}/code/ZZZZ-ZZZZ`).then(() => true, () => false)) return relay;
     await new Promise(r => setTimeout(r, 100));
@@ -263,10 +270,11 @@ async function trialRelay(port) {
 }
 
 test.describe('a club member', () => {
-  let relay, url;
+  let relay, url, admin;
   test.beforeAll(async ({}, info) => {
     const port = RELAY_PORT + 10 + info.parallelIndex;
-    relay = await trialRelay(port);
+    admin = await grantAdmin();
+    relay = await trialRelay(port, admin);
     url = `ws://localhost:${port}`;
   });
   test.afterAll(() => relay?.kill());
@@ -281,7 +289,7 @@ test.describe('a club member', () => {
   // opens.
   async function clubWithAva(browser, watch, info = null) {
     const {page: owner} = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.goto(await grantLink(owner, url, admin));
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await expect(owner.getByText('Set up a passkey')).toBeVisible();
@@ -469,7 +477,7 @@ test.describe('a club member', () => {
     test.setTimeout(240_000);
     // The owner starts a club with a table open.
     const {page: owner} = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.goto(await grantLink(owner, url, admin));
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
@@ -570,7 +578,7 @@ test.describe('a club member', () => {
     test.setTimeout(180_000);
     // The owner opens a 0.25/0.50 table taking 10%, capped at a big blind.
     const {page: owner} = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.goto(await grantLink(owner, url, admin));
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
@@ -811,10 +819,11 @@ test.describe('a club member', () => {
 // both ways while pending, let in as Cash or Credit, then chips or credit
 // before sitting.
 test.describe('joining a club', () => {
-  let relay, url;
+  let relay, url, admin;
   test.beforeAll(async ({}, info) => {
     const port = RELAY_PORT + 30 + info.parallelIndex;
-    relay = await trialRelay(port);
+    admin = await grantAdmin();
+    relay = await trialRelay(port, admin);
     url = `ws://localhost:${port}`;
   });
   test.afterAll(() => relay?.kill());
@@ -827,7 +836,7 @@ test.describe('joining a club', () => {
   // The owner starts a club with a table open; its invite link and code.
   async function ownerClub(browser, watch) {
     const owner = await browserWith(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.goto(await grantLink(owner, url, admin));
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
@@ -1038,8 +1047,9 @@ async function seedHands(page) {
 }
 
 test('a member replays their hands, steps by keys, and takes a spot to the equity calculator (#592)', async ({page, watch, browserName}, info) => {
+  // Try a demo club is off for the beta (#636): its list, opened directly.
   await watch(page).goto('/manage.html#clubs');
-  await page.locator('[data-cl="demo"]').click();
+  await page.evaluate(() => import('/src/demo.js').then(m => m.showDemoList()));
   // A small demo club, quick to set up.
   await page.locator('[data-demo-start="credit"]').click();
   await expect(page.locator('.mg-side')).toBeAttached();
@@ -1102,7 +1112,7 @@ test('a member replays their hands, steps by keys, and takes a spot to the equit
 
 test('a demo club opens, and its main pages draw', async ({page, watch}) => {
   await watch(page).goto('/manage.html#clubs');
-  await page.locator('[data-cl="demo"]').click();
+  await page.evaluate(() => import('/src/demo.js').then(m => m.showDemoList()));
   await page.locator('[data-demo-start="busy"]').click();
   // Starting one changes the address, then reloads: the manager shows after that.
   await expect(page.locator('.mg-side')).toBeAttached();

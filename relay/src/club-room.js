@@ -145,33 +145,6 @@ export async function createClub(storage, env, code, claim = async () => {}) {
   return {hostId: identity.id, invite: club.invite};
 }
 
-// A browser-run club moving here (#98): {type: 'import_club', club: code,
-// data, senders}, signed by the club's host (data.hostId), with its club
-// (club.js) and its Verifier's senders. No one may be at a table. The club
-// gets its own signing identity here, the host becomes its owner, and the
-// members' keys and message counters carry over. Returns {hostId}: the host
-// then signs a host_moved for it (see openClub), so members follow.
-// `claim` as for createClub.
-export async function importClub(storage, env, code, claim = async () => {}) {
-  if (await storage.get('club')) throw new Error('That club is already on the server.');
-  if (await checkSignature(env)) throw new Error('The request isn’t signed properly.');
-  const name = room({op: 'checkImport', env, code}).value;
-  await claim(env.from, code, name);
-  const body = env.body;
-  const identity = await createIdentity();
-  const club = {...body.data, hostId: identity.id, ownerId: env.from, alwaysOn: true};
-  ensureTables(club);
-  // Its daily chip cap becomes the owner's float (#589).
-  command(club, 'vault_settle');
-  const hostKey = await newKeyPair({keep: true});
-  await storage.put('identity', await exportIdentity(identity));
-  await storage.put('hostKey', await keyPairToJSON(hostKey));
-  await storage.put('verifier', body.senders && typeof body.senders === 'object' ? body.senders : {});
-  await storage.put('memberPubs', {});
-  await storage.put('club', club);
-  return {hostId: identity.id};
-}
-
 // What anyone may learn from a club's code (GET /code/<code>, #393): that
 // it's a club; and, only when it lets people ask to join with the code,
 // its name and host ID, so they can. Nothing about its members or tables.

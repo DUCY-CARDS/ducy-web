@@ -1,53 +1,131 @@
-// The relay's registry of always-on clubs (#98, #265): permission, trial
-// clubs, limits, pausing, temporary clubs (#395), and usage against
-// Cloudflare's free plan. The rules are ducy-play's club_registry (#463).
+// The relay's registry of always-on clubs (#98, #265): grants and their
+// one-time links (#636), limits, pausing, temporary clubs (#395), Wipe all
+// clubs, and usage against Cloudflare's free plan. The rules are ducy-play's
+// club_registry (#463).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { blockedReason, cleanLimits, FREE_GBS_PER_DAY, FREE_LIMITS, GBS_PER_CLUB_MINUTE, limitsFrom, registry, removesAt, TEMP_DAYS, TRIAL_DAYS } from '../relay/src/registry.js';
+import { blockedReason, cleanLimits, FREE_GBS_PER_DAY, FREE_LIMITS, GBS_PER_CLUB_MINUTE, grantHash, limitsFrom, newGrantToken, NOT_YOUR_LINK, registry, removesAt, TEMP_DAYS } from '../relay/src/registry.js';
 
 function memoryStorage() {
   const m = new Map();
-  return {get: async k => structuredClone(m.get(k)), put: async (k, v) => { m.set(k, structuredClone(v)); }, delete: async k => { m.delete(k); }};
+  return {get: async k => structuredClone(m.get(k)), put: async (k, v) => { m.set(k, structuredClone(v)); }, delete: async k => { m.delete(k); }, dump: () => JSON.stringify([...m])};
 }
 
-test('limits come from the environment, with defaults of 3 per owner and 25 in all', () => {
-  assert.deepEqual(limitsFrom({}), {perOwner: 3, total: 25, creators: [], noTrials: false});
-  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: '1', MAX_CLUBS: '2', CLUB_CREATORS: 'ann, bob ,'}), {perOwner: 1, total: 2, creators: ['ann', 'bob'], noTrials: false});
-  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: 'x', MAX_CLUBS: '-1'}), {perOwner: 3, total: 25, creators: [], noTrials: false});
-  assert.equal(limitsFrom({TRIALS: 'off'}).noTrials, true);
+// Grants `id` a club and claims it in room `code` with the link's token.
+async function granted(reg, id, code, now = Date.now(), name = '', opts = {}) {
+  const {token} = await reg.grant(id, opts.grant || {}, now);
+  return reg.claim(id, code, now, name, {...opts, grant: token});
+}
+
+test('limits come from the environment, with defaults of 3 per owner and 25 in all; no creators or trials (#636)', () => {
+  assert.deepEqual(limitsFrom({}), {perOwner: 3, total: 25, creators: [], noTrials: true});
+  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: '1', MAX_CLUBS: '2', CLUB_CREATORS: 'ann, bob ,', TRIALS: ''}), {perOwner: 1, total: 2, creators: [], noTrials: true});
+  assert.deepEqual(limitsFrom({MAX_CLUBS_PER_OWNER: 'x', MAX_CLUBS: '-1'}), {perOwner: 3, total: 25, creators: [], noTrials: true});
 });
 
-test('with trials off, a player needs a grant to start a club', async () => {
-  const reg = registry(memoryStorage(), limitsFrom({TRIALS: 'off'}));
-  await assert.rejects(reg.claim('ann', 'AAAA-BBBB', 1000, 'Owls'), /takes permission/);
-  await reg.grant('ann', {note: 'host'});
-  assert.equal((await reg.claim('ann', 'AAAA-BBBB', 1000, 'Owls')).plan, 'club');
+test('a grant link’s token: 32 random bytes, kept only as its hash', async () => {
+  const a = newGrantToken(), b = newGrantToken();
+  assert.match(a, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(a, b);
+  assert.match(await grantHash(a), /^[0-9a-f]{64}$/);
+  assert.equal(await grantHash(a), await grantHash(a));
+  for (const bad of ['', 'x', a + 'x', a.slice(1) + '!', null, 42, {}]) assert.equal(await grantHash(bad), '');
 });
 
-test('without permission, a player gets one trial club, once, with the free limits', async () => {
-  const reg = registry(memoryStorage(), limitsFrom({}));
-  const now = Date.UTC(2026, 9, 14);
-  const rec = await reg.claim('ann', 'AAAA-AAAA', now, 'Ann’s club');
-  assert.equal(rec.plan, 'trial');
-  assert.equal(rec.expires, now + TRIAL_DAYS * 864e5);
-  assert.deepEqual(rec.limits, FREE_LIMITS);
-  assert.equal(rec.name, 'Ann’s club');
-  await assert.rejects(reg.claim('ann', 'BBBB-BBBB', now), /already had your free trial/);
-  // Deleting the trial club doesn't give another.
+test('a club takes a grant’s link, from the player it’s for, once (#636)', async () => {
+  const storage = memoryStorage();
+  // CLUB_CREATORS is ignored: env-id gets nothing from it.
+  const reg = registry(storage, limitsFrom({CLUB_CREATORS: 'env-id', TRIALS: ''}));
+  const now = Date.UTC(2026, 10, 10);
+  // No grant: no club, no trial.
+  for (const who of ['ann', 'env-id']) await assert.rejects(reg.claim(who, 'AAAA-BBBB', now, 'Owls'), {message: NOT_YOUR_LINK});
+  const g = await reg.grant('ann', {note: 'Thursday game', limits: {tables: 5, tourneysPerDay: 3}}, now);
+  assert.equal(g.note, 'Thursday game');
+  assert.deepEqual(g.limits, {tables: 5, tourneysPerDay: 3});
+  // The token isn't stored, only its hash.
+  assert.equal(storage.dump().includes(g.token), false);
+  assert.equal((await storage.get('invites')).ann.hash, await grantHash(g.token));
+  // Forwarded: no one else can use it; nor a wrong or missing token.
+  await assert.rejects(reg.claim('bob', 'AAAA-BBBB', now, 'Owls', {grant: g.token}), {message: NOT_YOUR_LINK});
+  await assert.rejects(reg.claim('ann', 'AAAA-BBBB', now, 'Owls', {grant: newGrantToken()}), {message: NOT_YOUR_LINK});
+  await assert.rejects(reg.claim('ann', 'AAAA-BBBB', now, 'Owls'), {message: NOT_YOUR_LINK});
+  const rec = await reg.claim('ann', 'AAAA-BBBB', now, 'Owls', {grant: g.token});
+  assert.equal(rec.plan, 'club');
+  assert.equal(rec.expires, undefined);
+  assert.deepEqual(rec.limits, {tables: 5, tourneysPerDay: 3});
+  // Used up: not again, in this room or another.
+  await assert.rejects(reg.claim('ann', 'CCCC-DDDD', now, 'Again', {grant: g.token}), {message: NOT_YOUR_LINK});
+  const list = await reg.list(now);
+  assert.deepEqual(list.grants, {});
+  assert.deepEqual(list.trials, {});
+  assert.deepEqual(list.invites.ann, {at: now, note: 'Thursday game', limits: {tables: 5, tourneysPerDay: 3}, usedAt: now, code: 'AAAA-BBBB', used: true});
+  assert.equal(JSON.stringify(list).includes(g.token), false);
+  // A second grant is a second club, on a new link.
+  const g2 = await reg.grant('ann', {}, now);
+  assert.equal((await reg.claim('ann', 'CCCC-DDDD', now, '', {grant: g2.token})).limits.tables, FREE_LIMITS.tables);
+});
+
+test('a claim that fails leaves the grant unused; two at once make one club', async () => {
+  const reg = registry(memoryStorage(), {perOwner: 1, total: 2});
+  const {token} = await reg.grant('ann');
+  await granted(reg, 'bob', 'AAAA-AAAA');
+  await granted(reg, 'cy', 'BBBB-BBBB');
+  // Full: refused, and the link still works once there's room.
+  await assert.rejects(reg.claim('ann', 'CCCC-CCCC', Date.now(), '', {grant: token}), /full/);
+  assert.equal((await reg.list()).invites.ann.used, false);
+  await reg.release('BBBB-BBBB');
+  const both = await Promise.allSettled([
+    reg.claim('ann', 'CCCC-CCCC', Date.now(), '', {grant: token}),
+    reg.claim('ann', 'DDDD-DDDD', Date.now(), '', {grant: token}),
+  ]);
+  assert.deepEqual(both.map(r => r.status), ['fulfilled', 'rejected']);
+  assert.equal(both[1].reason.message, NOT_YOUR_LINK);
+  // The relay's per-owner limit still holds.
   await reg.release('AAAA-AAAA');
-  await assert.rejects(reg.claim('ann', 'BBBB-BBBB', now), /free trial/);
-  await assert.rejects(reg.claim('bob', 'CCCC-CCCC', now).then(() => reg.claim('cy', 'CCCC-CCCC', now)), /in use/);
+  const again = await reg.grant('ann');
+  await assert.rejects(reg.claim('ann', 'EEEE-EEEE', Date.now(), '', {grant: again.token}), /already have 1 club/);
 });
 
-test('a trial ends after its days; a paused club is blocked; the owner learns why', async () => {
+test('granting again, or revoking, kills the unused link', async () => {
+  const reg = registry(memoryStorage(), limitsFrom({}));
+  const first = await reg.grant('ann');
+  const second = await reg.grant('ann');
+  await assert.rejects(reg.claim('ann', 'AAAA-AAAA', Date.now(), '', {grant: first.token}), {message: NOT_YOUR_LINK});
+  await reg.revoke('ann');
+  await assert.rejects(reg.claim('ann', 'AAAA-AAAA', Date.now(), '', {grant: second.token}), {message: NOT_YOUR_LINK});
+  const list = await reg.list();
+  assert.deepEqual([list.grants, list.invites], [{}, {}]);
+  await assert.rejects(reg.grant('not an id!'), /player ID/);
+  assert.deepEqual((await reg.list()).invites, {});
+  // A grant that moved to a new device's ID (#575) has no link there.
+  const g = await reg.grant('ann');
+  await granted(reg, 'own', 'BBBB-BBBB');
+  await reg.moveOwner('BBBB-BBBB', 'own', 'own2');
+  await assert.rejects(reg.claim('own2', 'CCCC-CCCC', Date.now(), '', {grant: g.token}), {message: NOT_YOUR_LINK});
+});
+
+test('Wipe all clubs: every club, grant and link goes; the admin log stays (#636)', async () => {
+  const storage = memoryStorage();
+  const reg = registry(storage, limitsFrom({}));
+  await granted(reg, 'ann', 'AAAA-AAAA');
+  await granted(reg, 'bob', 'BBBB-BBBB');
+  const unused = await reg.grant('cy');
+  await storage.put('trials', {old: 'CCCC-CCCC'});
+  await reg.adminLog({at: 1, action: 'grant'});
+  assert.deepEqual((await reg.clubCodes()).sort(), ['AAAA-AAAA', 'BBBB-BBBB']);
+  await reg.wipe();
+  assert.deepEqual(await reg.clubCodes(), []);
+  const list = await reg.list();
+  assert.deepEqual([list.clubs, list.grants, list.invites, list.trials], [[], {}, {}, {}]);
+  await assert.rejects(reg.claim('cy', 'DDDD-DDDD', Date.now(), '', {grant: unused.token}), {message: NOT_YOUR_LINK});
+  assert.equal((await reg.adminLogList()).length, 1);
+});
+
+test('a paused club is blocked; the owner learns why', async () => {
   const reg = registry(memoryStorage(), limitsFrom({}));
   const now = Date.UTC(2026, 9, 14);
-  await reg.claim('ann', 'AAAA-AAAA', now);
-  assert.equal((await reg.status('AAAA-AAAA', now + 864e5)).blocked, '');
-  assert.match((await reg.status('AAAA-AAAA', now + (TRIAL_DAYS + 1) * 864e5)).blocked, /trial has ended/);
-  // The super admin keeps it going: a club, no end date.
-  await reg.setClub('AAAA-AAAA', {plan: 'club'});
+  await granted(reg, 'ann', 'AAAA-AAAA', now);
   assert.equal((await reg.status('AAAA-AAAA', now + 100 * 864e5)).blocked, '');
   await reg.setClub('AAAA-AAAA', {suspended: true});
   assert.match((await reg.status('AAAA-AAAA', now)).blocked, /paused/);
@@ -57,49 +135,14 @@ test('a trial ends after its days; a paused club is blocked; the owner learns wh
   await assert.rejects(reg.setClub('ZZZZ-ZZZZ', {suspended: true}), /No such club/);
 });
 
-test('with permission: clubs (no end), up to the grant’s number, with its limits', async () => {
-  const reg = registry(memoryStorage(), {perOwner: 2, total: 4, creators: ['env-id']});
-  await reg.grant('ann', {note: 'Thursday game', maxClubs: 1, limits: {tables: 5, tourneysPerDay: 3}});
-  const rec = await reg.claim('ann', 'AAAA-AAAA');
-  assert.equal(rec.plan, 'club');
-  assert.equal(rec.expires, undefined);
-  assert.deepEqual(rec.limits, {tables: 5, tourneysPerDay: 3});
-  await assert.rejects(reg.claim('ann', 'BBBB-BBBB'), /already have 1 club/);
-  // Granted in the environment (CLUB_CREATORS): perOwner clubs, free limits.
-  await reg.claim('env-id', 'CCCC-CCCC');
-  await reg.claim('env-id', 'DDDD-DDDD');
-  await assert.rejects(reg.claim('env-id', 'EEEE-EEEE'), /already have 2/);
-  await reg.release('DDDD-DDDD');
-  await reg.claim('bob', 'DDDD-DDDD'); // trials
-  await reg.claim('cy', 'EEEE-EEEE');
-  await assert.rejects(reg.claim('env-id', 'FFFF-FFFF'), /full/);
-  // Revoked: the next club is a trial (if they haven't had one).
-  await reg.revoke('ann');
-  await reg.release('AAAA-AAAA');
-  assert.equal((await reg.claim('ann', 'AAAA-AAAA')).plan, 'trial');
-  await assert.rejects(reg.grant('not an id!'), /player ID/);
-  const list = await reg.list();
-  assert.deepEqual(Object.keys(list.grants).sort(), ['env-id']);
-  assert.equal(list.grants['env-id'].fromEnv, true);
-  assert.deepEqual(Object.keys(list.trials).sort(), ['ann', 'bob', 'cy']);
-  assert.equal(list.clubs.length, 4);
-});
-
 test('a new club is temporary until its owner proves a backup; unused for a week, it goes', async () => {
   const storage = memoryStorage();
-  const reg = registry(storage, limitsFrom({CLUB_CREATORS: 'ann'}));
+  const reg = registry(storage, limitsFrom({}));
   const now = Date.UTC(2026, 9, 25);
-  const rec = await reg.claim('ann', 'AAAA-AAAA', now);
+  const rec = await granted(reg, 'ann', 'AAAA-AAAA', now);
   assert.equal(rec.temporary, true);
   assert.equal(removesAt(rec), now + TEMP_DAYS * 864e5);
-  await reg.claim('ann', 'BBBB-BBBB', now);
-  // A club moving here from a browser already existed: not temporary.
-  assert.equal((await reg.claim('ann', 'CCCC-CCCC', now, '', {temporary: false})).temporary, false);
-  // A club from before temporary clubs has no flag: kept as it was.
-  const all = await storage.get('clubs');
-  all['DDDD-DDDD'] = {owner: 'bob', at: now - 100 * 864e5, plan: 'club'};
-  await storage.put('clubs', all);
-  assert.equal((await reg.status('DDDD-DDDD')).record.temporary, false);
+  await granted(reg, 'ann', 'BBBB-BBBB', now);
 
   // Only the owner proves it.
   await assert.rejects(reg.proved('AAAA-AAAA', 'bob', now), /owner/);
@@ -129,7 +172,7 @@ test('limits from the admin are whole numbers in range, else unchanged', () => {
 test('usage: club-minutes of play a day, in all and per club', async () => {
   const reg = registry(memoryStorage(), limitsFrom({}));
   const now = Date.UTC(2026, 9, 8, 12);
-  await reg.claim('ann', 'AAAA-AAAA', now - 3 * 864e5);
+  await granted(reg, 'ann', 'AAAA-AAAA', now - 3 * 864e5);
   await reg.used(90, now, 'AAAA-AAAA');
   await reg.used(30, now);
   await reg.used(60, now - 864e5, 'AAAA-AAAA');

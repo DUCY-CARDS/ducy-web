@@ -14,8 +14,15 @@
 //   /admin/club/<code>   {reveal} a club in full, read-only; reveal: with the
 //                                 lobby chat and finished hands' cards (logged)
 //   /admin/club/<code>/set {suspended, limits, plan, expires}
-//   /admin/grant  {id, note, maxClubs, limits}   lets a player create clubs
-//   /admin/revoke {id}
+//   /admin/grant  {id, note, limits}   lets a player create one club (#636):
+//                                 answers {...grant, token}, the token for
+//                                 their one-time link (never kept or logged)
+//   /admin/revoke {id}            takes it away; an unused link stops working
+//   /admin/wipe   {confirm}       Wipe all clubs (#636): every club's data,
+//                                 record, backups and fair play rows, and every
+//                                 grant; `confirm` must be the relay's
+//                                 environment name ('live', 'staging',
+//                                 'sandbox', 'local'). Logged before it starts.
 //   /admin/people                 every player ID the server knows
 //   /admin/person {id}            their activity in every club
 //   /admin/log                    the admin log: every admin action
@@ -122,6 +129,9 @@ export function mergePeople(list, perClub) {
 //   fairPlayHistory(id)      fair-play-admin.js history(id)
 //   list() grant(id, body) revoke(id) setClub(code, change) status(code)
 //                            the registry (registry.js)
+//   environment              the relay's environment name, for /admin/wipe
+//   clubCodes()              every club's code (registry.js)
+//   wipe(codes)              deletes every club (#636): {clubs}
 //   room(code, what, params) a club room's view: 'info', 'full' {reveal},
 //                            'people', 'person' {id}
 //   refresh(code)            the room picks up a change to its record
@@ -150,9 +160,17 @@ export async function adminApi(path, env, admins, ops, now = Date.now()) {
       return ok({id, weeks: weeks.map(w => ({...w, club: names[w.code] || ''}))});
     }
     if (path === '/admin/grant') {
-      const out = await ops.grant(String(data.id), data);
-      await log('grant', String(data.id), [data.note, data.maxClubs ? `${data.maxClubs} clubs` : '', data.limits ? `${data.limits.tables} tables, ${data.limits.tourneysPerDay}/day` : ''].filter(Boolean).join(' · '));
+      const out = await ops.grant(String(data.id), {note: String(data.note || ''), limits: data.limits && typeof data.limits === 'object' ? data.limits : null});
+      await log('grant', String(data.id), [out.note, out.limits ? `${out.limits.tables} tables, ${out.limits.tourneysPerDay}/day` : ''].filter(Boolean).join(' · '));
       return ok(out);
+    }
+    if (path === '/admin/wipe') {
+      const name = String(ops.environment || '');
+      if (!name || data.confirm !== name) throw new AdminError(400, `Type ${name} to wipe this relay’s clubs.`);
+      const codes = await ops.clubCodes();
+      // Logged before anything is deleted: the log is the record (#401).
+      await log('wipe', name, `${codes.length} ${codes.length === 1 ? 'club' : 'clubs'}`);
+      return ok(await ops.wipe(codes));
     }
     if (path === '/admin/revoke') {
       await ops.revoke(String(data.id));

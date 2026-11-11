@@ -26,6 +26,6 @@ export default defineConfig({
   ],
   webServer: [
     {command: `node e2e/serve.mjs ${SITE_PORT}`, cwd: '..', url: `http://localhost:${SITE_PORT}/index.html`},
-    {command: `node relay/dev-server.mjs ${RELAY_PORT}`, cwd: '..', port: RELAY_PORT, env: {TRIALS: 'off'}},
+    {command: `node relay/dev-server.mjs ${RELAY_PORT}`, cwd: '..', port: RELAY_PORT},
   ],
 });

@@ -5,7 +5,7 @@
 //
 //   const owner = createOwner({identity, onChange, onNote});
 //   owner.start()            reconnect to this browser's always-on club, if any
-//   await owner.create(name) make one: a fresh room becomes the club
+//   await owner.create(name, grant) make one: a fresh room becomes the club
 //   await owner.run(op, args)  a host action (club-server.js OPS); throws why not
 //   owner.club, owner.view   the club and {seated, running, online}, or null
 //
@@ -54,8 +54,7 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
   // The connection is ready for the club: what this page came to do.
   async function greet(code) {
     if (creating?.attach) net.send(await signMessage(identity, {type: 'owner_hello', club: code, key: (await keys).pub}));
-    else if (creating?.data) net.send(await signMessage(identity, {type: 'import_club', club: code, data: creating.data, senders: creating.senders}));
-    else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name}));
+    else if (creating) net.send(await signMessage(identity, {type: 'create_club', club: code, name: creating.name, ...(creating.grant ? {grant: creating.grant} : {})}));
     else await sendSigned({type: 'owner_hello', key: (await keys).pub});
     onChange();
   }
@@ -116,12 +115,9 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
       try { watching(await openBox(aes, m.enc)); } catch { console.warn('club: a table update didn’t decrypt; ignored'); }
       return;
     }
-    if ((m?.type === 'club_created' || m?.type === 'club_imported') && creating) {
+    if (m?.type === 'club_created' && creating) {
       rec = {code: creating.code, hostId: m.hostId, name: creating.name};
       await save(rec);
-      // A club that moved here: as its old host, tell its members to follow
-      // the club's new identity (#98).
-      if (m.type === 'club_imported') await sendSigned({type: 'host_moved', hostId: m.hostId});
       creating.resolve(rec);
       creating = null;
       await sendSigned({type: 'owner_hello', key: (await keys).pub});
@@ -199,8 +195,9 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
       owner.run('unwatch').catch(() => {});
     },
     // Rejects if the relay doesn't answer in time, so the page can offer to
-    // run the club in the browser instead (#134).
-    create(name) {
+    // run the club in the browser instead (#134). `grant`: the token from
+    // ducy's one-time link (#636), signed into the request.
+    create(name, grant = '') {
       return new Promise((resolve, reject) => {
         const code = newCode();
         const timer = setTimeout(() => {
@@ -210,7 +207,7 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
           reject(new Error('ducy’s server didn’t answer.'));
         }, CREATE_MS);
         const done = f => v => { clearTimeout(timer); f(v); };
-        creating = {name, code, resolve: done(resolve), reject: done(reject)};
+        creating = {name, grant, code, resolve: done(resolve), reject: done(reject)};
         connectTo(code);
       });
     },
@@ -224,15 +221,6 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
         }, 15_000);
         creating = {attach: true, code, resolve, reject, timer};
         connectTo(code);
-      });
-    },
-    // Moves a browser-run club (club.js) to its room on the relay (#98),
-    // keeping its code, so members' links and memberships carry on. `senders`
-    // is its Verifier's state. This page must have stopped hosting it.
-    moveHere(club, senders) {
-      return new Promise((resolve, reject) => {
-        creating = {name: club.name, code: club.code, data: club, senders, resolve, reject};
-        connectTo(club.code);
       });
     },
     // Unlocks the connection with passkey session `token` (#575). Resolves

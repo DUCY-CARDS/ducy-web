@@ -14,13 +14,16 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
 import { relayClient } from './relay-helper.mjs';
+import { granter, testAdmin } from './admin-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
 const PORT = 22000 + Math.floor(Math.random() * 1000);
+// An admin, to grant the club (#636).
+const ADMIN = await testAdmin();
 const RELAY = `http://localhost:${PORT}`;
 const CLI = fileURLToPath(new URL('../tools/ducy-service.mjs', import.meta.url));
-const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {stdio: ['ignore', 'pipe', 'inherit']});
+const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {stdio: ['ignore', 'pipe', 'inherit'], env: {...process.env, ADMINS_FILE: ADMIN.file}});
 await new Promise(resolve => server.stdout.once('data', resolve));
 test.after(() => server.kill());
 
@@ -29,6 +32,7 @@ const cli = (args, env = {}) => promisify(execFile)(process.execPath, [CLI, ...a
   .then(r => ({code: 0, out: r.stdout, err: r.stderr}), e => ({code: e.code, out: e.stdout, err: e.stderr}));
 
 const relay = relayClient(PORT);
+const grantFor = granter(PORT, ADMIN.ident);
 const open = (path, ident = null, opts) => relay.open(path, ident, opts);
 
 test('a service made with its command line gives chips through the relay, until revoked', {skip: !haveWasm && 'no wasm build'}, async () => {
@@ -38,7 +42,7 @@ test('a service made with its command line gives chips through the relay, until 
   // The owner makes an always-on club; Ann joins.
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Rewards Club'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Rewards Club', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
   await a.ready;

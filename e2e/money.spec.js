@@ -8,6 +8,7 @@ import { openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test as base, expect } from '@playwright/test';
 import { RELAY_PORT } from './playwright.config.js';
+import { grantAdmin, grantLink } from './grant.mjs';
 
 const EXPECTED = /Failed to load resource/;
 const test = base.extend({
@@ -33,13 +34,14 @@ async function authenticator(page) {
   }});
 }
 
-// A relay of its own that lets anyone start a trial club; one per worker.
+// A relay of its own with a test admin, who grants the owner their club
+// (#636, grant.mjs); one per worker.
 // Ready once it says it's listening: a port another checkout's tests have
 // taken fails here, rather than the test talking to their relay.
 // E2E_RELAY_LOG: a path prefix to keep its errors at.
-function trialRelay(port) {
+function trialRelay(port, admin) {
   const log = process.env.E2E_RELAY_LOG ? openSync(`${process.env.E2E_RELAY_LOG}-${port}.log`, 'a') : 'ignore';
-  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: ['ignore', 'pipe', log], env: {...process.env, TRIALS: ''}});
+  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: ['ignore', 'pipe', log], env: {...process.env, ADMINS_FILE: admin.file}});
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { relay.kill(); reject(new Error('the trial relay didn’t start')); }, 15_000);
     let out = '';
@@ -58,12 +60,13 @@ const num = t => Number(t.replace(/[−-]/, '-').replace(/,/g, ''));
 test.describe('club money', () => {
   test.skip(({browserName}) => browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
   test.setTimeout(240_000);
-  let relay, url;
+  let relay, url, admin;
   test.beforeAll(async ({browserName}, info) => {
     if (browserName !== 'chromium') return;
     // Clear of play.spec.js's trial relays (+10 on).
     const port = RELAY_PORT + 70 + info.parallelIndex;
-    relay = await trialRelay(port);
+    admin = await grantAdmin();
+    relay = await trialRelay(port, admin);
     url = `ws://localhost:${port}`;
   });
   test.afterAll(() => relay?.kill());
@@ -78,7 +81,7 @@ test.describe('club money', () => {
   // The owner starts a club with a table; returns the owner's page, the invite and the code.
   async function clubWithTable(browser, watch) {
     const owner = await newPage(browser, watch);
-    await owner.goto(`/manage.html?relay=${url}#clubs/new`);
+    await owner.goto(await grantLink(owner, url, admin));
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();

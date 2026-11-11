@@ -10,17 +10,21 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
 import { relayClient, softPasskey } from './relay-helper.mjs';
+import { granter, testAdmin } from './admin-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { passkeys, rpIdFor } from '../relay/src/passkeys.js';
 import { check as unlockCheck, movesChips } from '../relay/src/unlock.js';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
 const PORT = 19000 + Math.floor(Math.random() * 1000);
-const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {stdio: ['ignore', 'pipe', 'inherit']});
+// An admin, to grant each club (#636).
+const ADMIN = await testAdmin();
+const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(PORT)], {stdio: ['ignore', 'pipe', 'inherit'], env: {...process.env, ADMINS_FILE: ADMIN.file}});
 await new Promise(resolve => server.stdout.once('data', resolve));
 test.after(() => server.kill());
 
 const relay = relayClient(PORT);
+const grantFor = granter(PORT, ADMIN.ident);
 const open = (path, ident = null, opts) => relay.open(path, ident, opts);
 
 test('a room becomes an always-on club: members join and the owner runs it, with no host', {skip: !haveWasm && 'no wasm build'}, async () => {
@@ -28,7 +32,7 @@ test('a room becomes an always-on club: members join and the owner runs it, with
   const code = 'CCCC-CCCC';
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Night Owls'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Night Owls', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   assert.ok(made.hostId && made.invite);
 
@@ -81,7 +85,7 @@ test('what a code is: a club tells its name only when it takes requests by code 
 
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Code Night'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Code Night', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   // Off by default: a club, and nothing more.
   assert.deepEqual((await look(code)).body, {kind: 'club', ask: false});
@@ -260,7 +264,7 @@ test('the relay refuses a club connection that isn’t unlocked', {skip: !haveWa
   const code = 'PPPP-PPPP';
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Locked Night'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Locked Night', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   // Ann proves her ID but has no passkey session: nothing she sends counts.
   const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann, {unlock: false});
@@ -285,7 +289,7 @@ test('the relay vouches: a member who lost their ID is moved to their new one, c
   const code = 'VVVV-VVVV';
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Vouch Night'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Vouch Night', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
   await a.ready;
@@ -331,7 +335,7 @@ test('the float (#589): a second refill in a day waits, unless approved with ano
   const code = 'FFFF-FFFF';
   let o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Float Night'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Float Night', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
   const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
   await a.ready;

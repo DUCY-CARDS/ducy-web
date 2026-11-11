@@ -21,6 +21,13 @@ const PAGE_FEATURE = {promos: 'promos', settle: 'balances'};
 export const pageOff = id => OFF.has(PAGE_FEATURE[id]);
 export const shownNav = () => NAV.map(g => ({...g, pages: g.pages.filter(([id]) => !pageOff(id))}));
 
+// The token of the grant link an address came from (#636): its
+// #clubs/start/<token> (the admin site makes it), or ''.
+export function grantToken(hash) {
+  const p = String(hash || '').replace(/^#/, '').split('?')[0].split('/');
+  return p[0] === 'clubs' && p[1] === 'start' && /^[A-Za-z0-9_-]{43}$/.test(p[2] || '') ? p[2] : '';
+}
+
 // Addresses from before #398, and the page each now opens.
 export const OLD_PAGES = {
   own: 'overview', tables: 'cash', tourneys: 'tourneys', players: 'members',
