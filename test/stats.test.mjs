@@ -1,11 +1,10 @@
 // Usage counts for the admin site (#601, relay/src/stats.js): totals per
 // day, active players from a per-day set of hashes that goes once the day
-// is counted, new players, games and players per game, hands, and the
-// admins left out. No relay needed.
+// is counted, new players, club hands, and the admins left out. No relay needed.
 // Run with: node --test test/stats.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { STATS_DAYS, dayOf, liveGames, stats } from '../relay/src/stats.js';
+import { STATS_DAYS, dayOf, stats } from '../relay/src/stats.js';
 import { cfAnalytics, scriptFor } from '../relay/src/cf-analytics.js';
 
 const mem = () => {
@@ -14,22 +13,21 @@ const mem = () => {
 };
 const D1 = Date.parse('2026-11-01T12:00:00Z'), D2 = D1 + 864e5, D3 = D2 + 864e5;
 
-test('a day: active and new players, games, players per game, hands, clubs', async () => {
+test('a day: active and new players, clubs and club hands; friends games aren’t counted (#643)', async () => {
   const s = mem();
   const st = stats(s, {admins: new Set(['admin1'])});
   for (const id of ['ann', 'bob', 'ann', 'admin1']) await st.note({kind: 'player', id, code: 'AAAA-BBBB'}, D1);
   await st.note({kind: 'player', id: 'cy', code: 'CCCC-DDDD'}, D1);
+  // What friends tables used to report: nothing now.
   await st.note({kind: 'game'}, D1);
   await st.note({kind: 'gamePlayer'}, D1);
-  await st.note({kind: 'gamePlayer'}, D1);
-  await st.note({kind: 'game'}, D1);
   await st.note({kind: 'hand'}, D1);
   await st.note({kind: 'clubHand', code: 'AAAA-BBBB', ids: ['ann', 'bob']}, D1);
   // Only the admins: not counted.
   await st.note({kind: 'clubHand', code: 'EEEE-FFFF', ids: ['admin1']}, D1);
   await st.note({kind: 'nonsense'}, D1);
   const [day] = await st.days(1, D1);
-  assert.deepEqual(day, {day: '2026-11-01', active: 3, newPlayers: 3, games: 2, playersPerGame: 2, hands: 2, clubsActive: 2, clubHands: 1});
+  assert.deepEqual(day, {day: '2026-11-01', active: 3, newPlayers: 3, clubsActive: 2, clubHands: 1});
   // No player ID is stored as it is.
   for (const v of s.m.values()) for (const id of ['ann', 'bob', 'cy', 'admin1']) assert.ok(!JSON.stringify(v).includes(`"${id}"`));
 });
@@ -49,7 +47,6 @@ test('the next day: the old day is counted and its set deleted; returning player
   assert.deepEqual(days.map(d => [d.day, d.active, d.newPlayers, d.clubsActive]), [
     ['2026-11-01', 2, 2, 1], ['2026-11-02', 2, 1, 1], ['2026-11-03', 0, 0, 0],
   ]);
-  assert.equal(days[2].playersPerGame, null, 'no games: no players per game');
   assert.ok(!s.m.has('statsSeen:2026-11-02'), 'reading counts finished days too');
   // A new stats object on the same storage (the relay restarted) still knows who's been seen.
   const again = stats(s);
@@ -60,24 +57,19 @@ test('the next day: the old day is counted and its set deleted; returning player
 test(`days older than ${STATS_DAYS} are dropped`, async () => {
   const s = mem();
   const st = stats(s);
-  await st.note({kind: 'hand'}, D1);
-  await st.note({kind: 'hand'}, D1 + (STATS_DAYS + 1) * 864e5);
+  await st.note({kind: 'clubHand', code: 'AAAA-BBBB'}, D1);
+  await st.note({kind: 'clubHand', code: 'AAAA-BBBB'}, D1 + (STATS_DAYS + 1) * 864e5);
   assert.ok(!s.m.has('statsDay:2026-11-01'));
   assert.deepEqual(s.m.get('statsDays'), [dayOf(D1 + (STATS_DAYS + 1) * 864e5)]);
 });
 
 test('counts made at once all land', async () => {
   const st = stats(mem());
-  await Promise.all(Array.from({length: 40}, (_, i) => st.note({kind: i % 2 ? 'hand' : 'player', id: `p${i}`}, D1)));
+  await Promise.all(Array.from({length: 40}, (_, i) => st.note(i % 2 ? {kind: 'clubHand', code: 'AAAA-BBBB'} : {kind: 'player', id: `p${i}`}, D1)));
   const [d] = await st.days(1, D1);
-  assert.equal(d.hands, 20);
+  assert.equal(d.clubHands, 20);
   assert.equal(d.active, 20);
   assert.equal(d.newPlayers, 20);
-});
-
-test('live games: stale ones are left out', () => {
-  const now = D1;
-  assert.deepEqual(liveGames({a: {players: 3, at: now - 1000}, b: {players: 2, at: now - 2 * 864e5}}, now), [{players: 3, at: now - 1000}]);
 });
 
 test('Cloudflare\'s numbers: only with the token, which goes to Cloudflare alone', async () => {

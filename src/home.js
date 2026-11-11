@@ -1,13 +1,13 @@
 // V3's front pages (#225): the landing page and the two places it leads.
-//   #        the beta's front page (#551): hosting, joining, clubs and bots
+//   #        the beta's front page (#551): joining, clubs and bots
 //   #welcome the full landing page: Study, Play or Quest, not linked in the beta
 //   #study   Study, what you do on your own: Equity, Pre-flop ranges and
 //            Heads-up training
 //   #challenge  Heads-up training: the GTO bot
-//   #lobby   Play: friends, your clubs, the Regulars and the heads-up
-//            challenge
-// The pages behind them (#equity, #trainer, #ladder, #practice, #host,
-// #join, a club's #clubs/…) are the ones there were before V3; each shows where it is
+//   #lobby   Play: a code to join, your clubs, the Regulars and the
+//            heads-up challenge
+// The pages behind them (#equity, #trainer, #ladder, #practice, #join, a
+// club's #clubs/…) are the ones there were before V3; each shows where it is
 // with a breadcrumb back to Study or Play (`crumbFor`). Pure: the page
 // strings are built from what `hubData` reads, so they can be tested.
 
@@ -15,7 +15,6 @@ import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { skillTable } from './trainer-skills.js';
 import { ORDER, loadProgress as loadLadder } from './ladder.js';
 import { avatarUrl } from './avatars.js';
-import { isOff } from './club-beta.js';
 
 // The small beta plays poker and nothing else (#551): Study and Quest stay at
 // their addresses, with no links to them from Play.
@@ -33,7 +32,6 @@ const CRUMBS = {
   charts: ['study', 'Pre-flop charts'],
   ladder: ['lobby', 'Heads-up challenge'],
   practice: ['lobby', 'Play the Regulars'],
-  host: ['lobby', 'Start a game'],
   join: ['lobby', 'Join a game'],
   clubs: ['lobby', 'Clubs'],
 };
@@ -42,13 +40,13 @@ const PARENTS = {study: ['home', 'Study'], challenge: ['study', 'Heads-up traini
 /**
  * The breadcrumb for page `p`: [{href, label}], from the hub above it to the
  * page itself (whose href is null). `table` is the table you're at
- * ('train', 'play' or 'clubs' from play.js), for the 'play' page.
+ * ('train' or 'clubs' from play.js), for the 'play' page.
  */
 export function crumbFor(p, table) {
   // Quest is a place of its own, at the top.
   if (p === 'quest') return [{href: null, label: 'Bankroll Quest'}];
   let page = p;
-  if (p === 'play') page = table === 'play' ? 'host' : table === 'clubs' ? 'clubs' : 'practice';
+  if (p === 'play') page = table === 'clubs' ? 'clubs' : 'practice';
   const here = CRUMBS[page];
   if (!here) return [];
   const [hub, label] = here;
@@ -229,14 +227,11 @@ function clubsTile(clubs) {
   return h + '</ul></div>';
 }
 
-// What Play offers: friends, clubs and the bots.
+// What Play offers: a code to join, clubs and the bots.
 function playTiles(d) {
   let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
-  // Enter a code (#393): a game's or a club's, or a link to either.
-  h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game or club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
-  // Start a game is off in the beta (#635, club-beta.js).
-  if (!isOff('startGame')) h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a>';
-  h += '</form>';
+  // Enter a code (#393): a club's, or its invite link.
+  h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button></form>';
   h += '<p class="v3-join-note" data-v3note role="status" hidden></p></div>';
   h += '<div class="v3-tiles">';
   h += clubsTile(d.clubs || []);

@@ -73,7 +73,7 @@ test('Reset puts the demo back to its scenario’s start, in the same session; i
   const again = createDemoRelay({storage, identity: async () => owner, ready: async () => ducy});
   await again.setUp(scenarioById('new'));
   assert.equal(await again.club(), null);
-  assert.deepEqual(await again.lookup('HHHH-JJJJ'), {kind: 'game'});
+  assert.deepEqual(await again.lookup('HHHH-JJJJ'), {kind: 'none'});
 });
 
 // What a demo club's start looks like, without its ids or times.

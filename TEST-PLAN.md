@@ -19,7 +19,7 @@ A major release is any of these:
 
 | Part | Pages | Who uses it |
 |---|---|---|
-| **Main** | `/`: the front page (Friends, your clubs, Play the Regulars), hosting and joining a private game, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
+| **Main** | `/`: the front page (the code box, your clubs, Play the Regulars), joining a club, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
 | **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: rake at cash tables, promotions, club services | No one in the beta; reachable by address only |
 | **Club manager** | club.ducy.cards (#637; staging: club-staging.ducy.cards), its own site; `manage.html` on a local page: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
 | **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
@@ -45,15 +45,15 @@ A major release is any of these:
 
 | Test | Part |
 |---|---|
-| Front page offers Friends and the Regulars, and nothing else, with no clubs | Main |
+| Front page offers a club code and the Regulars, and nothing else, with no clubs | Main |
+| `#host` and old friends-table links open no game; a code with no club says so | Main |
 | With no clubs, the front page takes a club code, and `#clubs` is the front page | Main |
 | One club: the front page opens it, under Play | Main |
 | Several clubs: the front page lists them, and `#clubs` goes there | Main |
 | The club manager offers no way to start a club | Club manager |
 | A hand against the Regulars plays to its end, with no grades | Main |
 | The Regulars' table keeps its seat stats and stats table | Main |
-| A friend joins a hosted game by its code | Main |
-| A friends table shows no player stats and keeps none; the same at a club table | Main |
+| A club table shows no player stats and keeps none | Main |
 | Starting a club without permission is refused | Club manager |
 | A new player asks to join with a message, gets a reply, is let in as Cash and given chips | Main |
 | The same as a Credit player: let in with a credit line, and can sit with it | Club manager |
@@ -80,15 +80,13 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Feature | Unit | Browser | Manual |
 |---|---|---|---|
 | Front page, its tiles and links | `home.test` | yes | M1 |
-| Code box: game code, club code, invite link, bad code | `play-net.test`, `relay-club.test` | partly | M2 |
-| Host a private cash game: setup, code, table opens | `e2e.test`, `play-net.test` | yes | M3 |
-| Host a private tournament | `private-tourney.test`, `tourney-run.test` | no | M4 |
-| Join a game; play hands with two or more people | `e2e.test`, `fair-deal.test`, `pots.test` | join only | M3 |
-| Bomb pots, run it twice, side pots | `pots.test`, `fair-deal.test` | no | M3 |
-| Disconnects, reloads, a host's table resuming | `heartbeat.test`, `idle-seats.test`, `hit-and-run.test` | no | M5 |
-| Table chat | `table-chat.test` | no | M3 |
+| Code box: club code, invite link, bad code | `play-net.test`, `relay-club.test` | partly | M2 |
+| No one hosts a game in a tab: the relay refuses a host | `relay-queue.test`, `relay-club.test` | yes | M2 |
+| Side pots, run it twice, bomb pots at the Regulars | `pots.test`, `fair-deal.test` | no | M1 |
+| Disconnects and reloads at a club table | `heartbeat.test`, `idle-seats.test`, `hit-and-run.test` | no | M5 |
+| Chat and muting at a bot table | `table-chat.test`, `bot-chat.test` | no | M1 |
 | Play the Regulars | `regulars.test`, `bot-chat.test` | yes | M1 |
-| Player stats (VPIP/PFR on seats, the stats table): bot tables only, none at tables of people | `play-stats.test` | yes | M3 |
+| Player stats (VPIP/PFR on seats, the stats table): bot tables only, none at club tables | `play-stats.test` | yes | M6 |
 | Joining a club, asking for chips, playing at its tables | `club.test`, `club-member-view.test`, `relay-club.test` | join, chips | M6 |
 | Player settings, name, avatar | – | no | M1 |
 | Identity backup and restore | `identity.test`, `backup.test` | no | M7 |
@@ -162,49 +160,30 @@ available, the first testers' phones stand in, and the gap is noted in Results.
 Every step runs on staging.ducy.cards (its password is in DirectAdmin) before the release, in a fresh private window unless it says otherwise. Staging has its own relay and data, so clubs and players made there never reach the live site. "Two browsers" means two devices, or two private windows in different browsers.
 
 **M1 Front page and the Regulars**
-1. Open `/`. You see Friends and Play the Regulars (and your clubs, once you have any), with no Beta or play money banners. Nothing scrolls sideways. `/#clubs` shows the front page.
+1. Open `/`. You see the code box and Play the Regulars (and your clubs, once you have any), with no Beta or play money banners. Nothing scrolls sideways. `/#clubs` shows the front page.
 2. Tap each tile. It opens its page, and Back returns to the front page.
-3. Play the Regulars: sit down and play five hands. You get no grades and no hand review.
+3. Play the Regulars: sit down and play five hands. You get no grades and no hand review. Chat: a bot answers now and then; tap its name and Mute, and its lines go, for you only. Unmute it from the gear.
 4. Open the gear: change your name and avatar, then reload. Both are kept.
 5. Open Privacy from the footer. It reads, and the wordmark goes back home.
 
 **M2 The code box** (front page)
 1. Enter `hello`. You're told it isn't a code.
-2. Enter a well-formed code with no game, such as `ZZZZ-ZZZZ`. You're told there's no game or club with that code, without going to another page.
-3. Enter a live game's code (from M3). It goes to that game's join page.
+2. Enter a well-formed code with no club, such as `ZZZZ-ZZZZ`. You're told there's no club with that code, without going to another page.
+3. Enter a club's code that takes requests by code. It goes to that club's join screen.
 4. Paste a club's invite link. It goes to that club's join screen.
-
-**M2b No Start a game in the beta** (#635)
-1. The front page has the code box and Join, and no Start a game.
-2. Go to `/#host`. Join a game opens, and the address reads `#join`.
-
-M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-beta.js`). To run them, add `?on=startGame` to the host's address.
-
-**M3 A private cash game, two browsers**
-1. Host: Start a game. Under Invite your friends, the setup shows a code. Open the table: it has the same code, and no "can't reach the relay".
-2. Guest: enter the code, give a name, join. Each browser sees the other.
-3. Play 20 hands, including an all-in with a side pot (three players), a bomb pot, and running it twice. The chips add up after each hand.
-4. Use table chat, both ways.
-5. Neither browser shows stats under the seats or a stats table, and the ⋯ menu has no stats items.
-6. Host: End game. Standings show, and the download works.
-
-**M4 A private tournament, three browsers**
-1. Host: set one up. Its setup shows a code, and the lobby opens with it.
-2. Two guests register by code. The host starts it.
-3. Play to a winner. Blinds rise on schedule, and the payouts match the payout table.
+5. The front page has no Start a game, and `/#host` (even with `?on=startGame`) opens no game setup (#643).
 
 **M5 Connections**
-1. During M3, reload the guest. They return to their seat with their chips. At a club table (M6), the same, and a second tab of the same player takes over from the first, which says so.
-2. Turn the guest's network off for 30 seconds, then back on. They return, and weren't folded while away.
-3. Reload the host. The table resumes, and the hand in progress is intact.
-4. Close the guest's tab for good. After the timeout the seat empties, and the chips are kept in the standings.
+1. At a club table (M6), reload a player. They return to their seat with their chips, and a second tab of the same player takes over from the first, which says so.
+2. Turn the player's network off for 30 seconds, then back on. They return to their seat.
+3. Close the player's tab for good. After the timeout the seat empties, and the chips go back to their balance.
 
 **M6 A club, as a member** (needs a club from C1)
 1. Open the owner's invite link in a fresh browser. Fill in your name and "Who are you?" (Ask to join won't go without it), and ask to join. The passkey comes before anything reaches the club.
 2. The owner sees your request in Needs you, with your message. The owner replies: the reply shows under your request, and you can answer (at most three in a row before a reply).
 3. The owner lets you in as a Cash player. You're a member with a balance of 0: you see the tables and can sign up for a scheduled game, but can't sit. The owner's Needs you shows you as New, with Give chips.
 4. Ask for chips. When the owner gives them, the balance shows, and you're no longer New.
-5. Sit at the club's table and play five hands with another member. Stand up: the balance is right.
+5. Sit at the club's table and play five hands with another member. Neither shows stats under the seats or a stats table. Stand up: the balance is right.
 6. The front page's club tile has the club's name, and opens it; its breadcrumb is Play › the club. Join a second club: the front page lists both, and each opens.
 
 **M7 Identity**
@@ -218,7 +197,7 @@ M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-be
 
 **M9 Installable app**
 1. Add to home screen on iPhone and Android. The app opens full screen on the front page.
-2. The installed app still runs M1 and M3.
+2. The installed app still runs M1 and M6.
 
 **M10 Passkeys** (#575; on a real iPhone with iCloud Keychain, a real Android phone with Google Password Manager, and desktop Chrome; once more on iPhone with a third-party passkey manager such as 1Password if one is to hand)
 1. Enrol: in a fresh browser, open a club's invite link and ask to join. Before the request goes, "Set up a passkey" shows. Continue: the device asks for Face ID, a fingerprint or the screen lock, and the request then reaches the owner.
@@ -313,8 +292,8 @@ On admin.ducy.cards, after the release (the admin site deploys with each release
 5. Someone who isn't an admin is refused cleanly, and nothing in the player app links to the admin site. `ducy.cards/admin.html` goes to admin.ducy.cards.
 
 **A2 Usage**
-1. On Staging, play three hands of a friends game with two browsers, and connect to a club as a member.
-2. The Overview's last day shows one more friends game, its players, three more hands, and the member as an active player (your own admin ID isn't counted). Now shows the game and the member while they're connected.
+1. On Staging, play three hands at a club table with two members.
+2. The Overview's last day shows three more club hands and the members as active players (your own admin ID isn't counted). Now shows the members and the table while they're connected. There's no Friends games count.
 3. Charts and Table show the same numbers, in light and dark mode.
 
 **A3 Cloudflare** (only once `CF_ANALYTICS_TOKEN` is set on a relay)

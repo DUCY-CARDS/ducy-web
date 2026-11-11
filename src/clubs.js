@@ -7,7 +7,6 @@
 // Views, one per tab (#209: Train · Play · Clubs):
 //   'play'   Bots (Train), and the table you're at: nothing from here
 //   'join'   your join requests and how they're going
-//   'host'   Start a game (Play): nothing from here
 //   'clubs'  a club's page (the address says which, see shownClub): the
 //            club you run, agent tools, or the one you belong to (balance,
 //            chips, tables to sit at). Your clubs are listed on the front
@@ -2056,7 +2055,7 @@ function render() {
   drawTools();
   if (me) noticeHelp();
   if (!open || !root) return;
-  const body = me ? viewHtml() : (view === 'clubs' || view === 'host' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
+  const body = me ? viewHtml() : (view === 'clubs' ? `<p class="pl-meta">${esc(note || 'Loading…')}</p>` : '');
   // Nothing for this tab: the play.js part of it stands alone.
   root.hidden = !body && !replay.isOpen;
   if (root.hidden) { root.innerHTML = ''; return; }
@@ -2185,7 +2184,7 @@ function viewHtml() {
   }
   // Bots, Ladder and Start a game (Train and Play, #209) have nothing of the
   // clubs.
-  if (view === 'play' || view === 'ladder' || view === 'quest' || view === 'host') return '';
+  if (view === 'play' || view === 'ladder' || view === 'quest') return '';
   // Clubs need the passkey first (#575).
   const gate = passGateHtml();
   if (gate) return msg + gate + footHtml();

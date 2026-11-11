@@ -11,8 +11,10 @@ test('every older page has a breadcrumb back to Study or Play', () => {
   assert.deepEqual(crumbFor('trainer').map(c => c.label), ['Study', 'Pre-flop ranges']);
   assert.deepEqual(crumbFor('ladder').map(c => c.label), ['Play', 'Heads-up challenge']);
   assert.deepEqual(crumbFor('ladder')[0].href, '#lobby');
-  for (const p of ['host', 'join', 'clubs', 'practice']) assert.equal(crumbFor(p)[0].href, '#lobby', p);
+  for (const p of ['join', 'clubs', 'practice']) assert.equal(crumbFor(p)[0].href, '#lobby', p);
   assert.deepEqual(crumbFor('nowhere'), []);
+  // Start a game is gone (#643).
+  assert.deepEqual(crumbFor('host'), []);
 });
 
 test('at a table, the breadcrumb says Table under Play', () => {
@@ -39,10 +41,11 @@ test('hub data counts mastered skills and the ladder rung', () => {
   assert.equal(d.rung, 7);
 });
 
-test('the beta opens on friends, clubs and the Regulars, and nothing else (#564)', () => {
+test('the beta opens on a club code, clubs and the Regulars, and nothing else (#564, #643)', () => {
   const h = hubHtml('home', hubData(store()));
   assert.match(h, /Pull up a chair\./);
-  assert.match(h, /Game or club code/);
+  assert.match(h, /Club code/);
+  assert.doesNotMatch(h, /#host/);
   const links = [...h.matchAll(/href="(#[a-z0-9-]+)"/g)].map(m => m[1]);
   assert.deepEqual(links, ['#practice']);
   assert.doesNotMatch(h, /Start a game|Study|Quest|training|Heads-up challenge|Ducybot|play money/i);
@@ -55,7 +58,7 @@ const MINE = {name: 'Back Room', href: 'manage.html#clubs/own', who: 'You run it
 test('with no clubs, the front page has no clubs tile: its code box joins one (#611)', () => {
   const h = hubHtml('home', {...hubData(store()), clubs: []});
   assert.doesNotMatch(h, /v3-clubs|href="#clubs|>Clubs<|Private clubs/);
-  assert.match(h, /Game or club code/);
+  assert.match(h, /Club code/);
 });
 
 test('with one club, its tile opens the club (#611)', () => {
@@ -133,14 +136,14 @@ test('the Play page: a code box, and no heads-up challenge in the beta (#564)', 
   const h = hubHtml('lobby', {mastered: 3, skills: 28, rung: 5, rungs: 20});
   assert.doesNotMatch(h, /Heads-up challenge|Rung 5 of 20/);
   // Enter a code (#393): one box for a game or a club, with room for a word back.
-  assert.match(h, /Game or club code/);
+  assert.match(h, /Club code/);
   assert.match(h, /data-v3note[^>]*hidden/);
   assert.doesNotMatch(h, /club manager|Start a club|trial/i);
 });
 
 test('which side each page is on; the beta shows no way across (#551)', () => {
   for (const p of ['study', 'challenge', 'equity', 'trainer']) assert.equal(sideOf(p), 'study', p);
-  for (const p of ['lobby', 'practice', 'ladder', 'host', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
+  for (const p of ['lobby', 'practice', 'ladder', 'join', 'clubs']) assert.equal(sideOf(p), 'play', p);
   assert.equal(sideOf('play', 'clubs'), 'play');
   assert.equal(sideOf('home'), '');
   assert.equal(sideOf('quest'), 'quest');

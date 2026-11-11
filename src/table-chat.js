@@ -1,11 +1,8 @@
-// Chat at a friends table. Guests send what they type to the host,
-// encrypted like everything else at the table (play.js); the host's tab
-// checks it, puts the sender's name on it and sends it on to everyone. The
-// relay only ever sees ciphertext. The checks are ducy-host's chat (in
-// ducy-wasm, #462); the log on screen is the page's.
+// Chat: at a bot table (play.js) and in a club's lobby (clubs.js,
+// club-server.js). The checks are ducy-host's chat (in ducy-wasm, #462); the
+// log on screen is the page's.
 
-import { ChatLimiter, chatClean, chatName as wasmChatName, chatRead } from '../wasm/ducy_wasm.js';
-import { chatPid } from './chat-mute.js';
+import { ChatLimiter, chatClean, chatName as wasmChatName } from '../wasm/ducy_wasm.js';
 
 export const CHAT_MAX = 200; // characters in one message (ducy-host's CHAT_MAX)
 export const CHAT_KEEP = 50; // messages kept on screen
@@ -16,19 +13,6 @@ export const cleanChat = text => chatClean(String(text ?? ''));
 
 // A name for a chat line: what the player calls themselves, cut short.
 export const chatName = name => wasmChatName(String(name ?? ''));
-
-// A chat message from the host as a guest receives it, or null if it isn't
-// one: {from, text, at}, with the sender's player ID (pid) and table seat
-// (seat) when the host sent them (#616: muting follows the ID).
-export function readChat(m) {
-  if (!m || typeof m !== 'object') return null;
-  const msg = chatRead(m, Date.now());
-  if (!msg) return null;
-  const pid = chatPid(m.pid);
-  if (pid) msg.pid = pid;
-  if (Number.isInteger(m.seat) && m.seat >= 0 && m.seat < 16) msg.seat = m.seat;
-  return msg;
-}
 
 // The log with `msg` added, keeping the last `keep`.
 export const addChat = (log, msg, keep = CHAT_KEEP) => [...log, msg].slice(-keep);

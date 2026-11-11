@@ -3,9 +3,8 @@
 //   #play / #practice   Bots (Train): a game you can resume, or the bots;
 //                       and whichever table you're at
 //   #ladder Ladder (Train): heads-up against the bots, easiest first (#212)
-//   #join   Join (Play): what a link or Play's Enter a code (#393) asks to
-//           join, a table or a club, and your club requests
-//   #host   Start a game (Play): a table for friends
+//   #join   Join (Play): the club a link or Play's Enter a code (#393) asks
+//           to join, and your club requests
 //   #clubs/… a club's page (#611: the clubs are listed on the front page)
 // Train's other tabs are main.js's: Drills (#trainer) and Equity.
 // play.js and clubs.js each draw their part of every tab (their `view`);
@@ -13,24 +12,21 @@
 // of things waiting for you on Clubs, a dot on it when a table you can sit
 // at opens, and the count in the window title.
 
-import { openPlay, closePlay, joinTable, tableGroup, tableName, showQuestGames, takeQuestSeat, watchQuestSeat } from './play.js';
+import { openPlay, closePlay, tableGroup, tableName, showQuestGames, takeQuestSeat, watchQuestSeat } from './play.js';
 import {
   anyClubs, closeClubs, clubCrumb, clubPage, joinClub, memberName, needsYou, onClubsChange, openClubs, openSeats, showClubPlayers, startClubs,
 } from './clubs.js';
 import { MAX_CLUB_NAME, parseInvite } from './club.js';
 import { formatInfo } from './club-info.js';
 import { isPlayerId } from './identity.js';
-import { linkedHost, lookupCode, normCode, relayUrl } from './play-net.js';
+import { lookupCode, normCode, relayUrl } from './play-net.js';
 import { myName, notifyOn, openPlayerSettings } from './player-settings.js';
 import { setTitleSection, setTitleWaiting } from './title.js';
 import { crumbFor, sideOf, sideSwitch } from './home.js';
-// One-off tournaments (#394): their form and page on Start a game, and a
-// code that turns out to be one's.
-import './private-tourney-room.js';
 
-export const TABS = ['play', 'ladder', 'quest', 'join', 'host', 'clubs'];
+export const TABS = ['play', 'ladder', 'quest', 'join', 'clubs'];
 // Each tab's window title (#195): "Clubs · DUCY".
-const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll Quest', join: 'Join a game', host: 'Start a game', clubs: 'Clubs'};
+const TITLES = {play: 'Play the Regulars', ladder: 'Heads-up challenge', quest: 'Bankroll Quest', join: 'Join a game', clubs: 'Clubs'};
 
 let tab = null; // the tab showing, or null when the section is closed
 let seenSeats = 0; // open seats the last time Clubs was looked at
@@ -65,7 +61,6 @@ export function openSection(t, shortcut) {
     joinRoot.addEventListener('submit', onJoin);
   }
   if (t === 'join') renderJoin();
-  else if (t === 'host') renderHost();
   else joinRoot.hidden = true;
   openClubs(el('clubs'), t);
   openPlay(el('play'), shortcut, t);
@@ -185,79 +180,54 @@ function toast(text, label = 'See requests', action = showClubPlayers, ms = 10_0
   if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-// ---- Start a game (#152, #209) ----
-
-// What it is; play.js draws its steps. A club that lasts is on Clubs.
-// Since V3 (#225) play.js draws the whole page, heading included.
-function renderHost() {
-  joinRoot.innerHTML = '';
-  joinRoot.hidden = true;
-}
-
 // ---- the Join tab (#141) ----
 
 // A club found by its code on Play (#393): {code, hostId, name}. Join shows
 // it like an invite, and asking to join sends no invite token.
 let codeClub = null;
 
-// What the page address asks to join: a club invite, or a friends table;
-// or the club Enter a code found.
+// What the page address asks to join: a club invite, or the club Enter a
+// code found.
 function linked() {
   const inv = parseInvite(location.href);
-  if (inv) return {kind: 'club', inv, text: location.href};
-  if (codeClub) return {kind: 'club', inv: {...codeClub, invite: ''}, text: codeClub.code};
-  const code = normCode(new URLSearchParams(location.search).get('table') || '');
-  if (code) return {kind: 'table', code, hostId: linkedHost(), text: code};
+  if (inv) return {inv, text: location.href};
+  if (codeClub) return {inv: {...codeClub, invite: ''}, text: codeClub.code};
   return null;
 }
 
-// Reads what was typed or pasted: a club invite link, a table link, or a
-// table code. Null if it's none of those.
+// Reads what was typed or pasted: a club invite link ({link}) or a club code
+// ({code}). Null if it's neither.
 export function readJoin(text) {
   const s = String(text || '').trim();
   if (/^https?:\/\//i.test(s) || s.includes('?')) {
     let u;
     try { u = new URL(s, location.href); } catch { return null; }
-    const inv = parseInvite(u.href);
-    if (inv) return {kind: 'club', inv};
-    const code = normCode(u.searchParams.get('table') || '');
-    const host = u.searchParams.get('host') || '';
-    if (code) return {kind: 'table', code, hostId: /^[1-9A-HJ-NP-Za-km-z]{8}$/.test(host) ? host : ''};
-    return null;
+    return parseInvite(u.href) ? {link: s} : null;
   }
   const code = normCode(s);
-  return code ? {kind: 'table', code, hostId: ''} : null;
+  return code ? {code} : null;
 }
 
-// Play's Enter a code (#393). A link goes where it did. A code: a club of
-// yours opens (no network needed); else the relay says what it is: a club
-// that takes requests by code shows on Join as an invite, with Ask to join;
-// one that doesn't is said so here; anything else is joined as a game.
-// Resolves to a word for under the code box, or '' once it has gone on.
+// Play's Enter a code (#393). An invite link goes where it did. A code: a
+// club of yours opens (no network needed); else the relay says what it is:
+// a club that takes requests by code shows on Join as an invite, with Ask to
+// join; one that doesn't is said so here. Resolves to a word for under the
+// code box, or '' once it has gone on.
 export async function enterCode(text) {
   const what = readJoin(text);
   if (!what) return 'That isn’t a code or a link. Codes look like ABCD-EFGH.';
   codeClub = null;
-  if (what.kind === 'club') { location.href = String(text).trim(); return ''; }
-  const bare = !!normCode(text);
-  if (bare) {
-    const page = clubPage(what.code);
-    if (page) { location.href = page; return ''; }
-    const info = await lookupCode(what.code);
-    // No club, and no game open with it (#566); unknown (offline) still tries.
-    if (info?.kind === 'none') return 'No game or club with that code. Check it with whoever sent it.';
-    if (info?.kind === 'club') {
-      if (!info.ask || !isPlayerId(info.hostId)) return 'That’s a club’s code. To join the club, ask its host for the invite link.';
-      codeClub = {code: what.code, hostId: info.hostId, name: String(info.name || '').slice(0, MAX_CLUB_NAME)};
-    }
-  }
-  // Join, with it filled in: a game joins straight away when your name is known.
+  if (what.link) { location.href = what.link; return ''; }
+  const page = clubPage(what.code);
+  if (page) { location.href = page; return ''; }
+  const info = await lookupCode(what.code);
+  if (!info) return 'Couldn’t check that code. Try again.';
+  if (info.kind !== 'club') return 'No club with that code. Check it with whoever sent it.';
+  if (!info.ask || !isPlayerId(info.hostId)) return 'That’s a club’s code. To join the club, ask its host for the invite link.';
+  codeClub = {code: what.code, hostId: info.hostId, name: String(info.name || '').slice(0, MAX_CLUB_NAME)};
+  // Join, with it filled in.
   const u = new URL(location.href);
-  for (const k of ['club', 'invite', 'host', 'table', 'name', 'by']) u.searchParams.delete(k);
-  if (!codeClub) {
-    u.searchParams.set('table', what.code);
-    if (what.hostId) u.searchParams.set('host', what.hostId);
-  }
+  for (const k of ['club', 'invite', 'host', 'name', 'by']) u.searchParams.delete(k);
   u.hash = '';
   history.replaceState(null, '', u.toString().replace(/#$/, '') + '#lobby');
   location.hash = 'join';
@@ -273,43 +243,40 @@ function renderJoin() {
   const name = knownName();
   // What's typed in Who are you? survives a redraw.
   const introTyped = joinRoot?.querySelector('textarea[name=intro]')?.value || '';
-  // V3 (#225): a cream form like Start a game's.
+  // V3 (#225): a cream form.
   let h = '<div class="pl-wrap"><div class="pl-head"><h1>Join a game</h1></div>';
   if (!relayUrl()) {
-    joinRoot.innerHTML = h + '<p class="pl-meta">Games with other people need ducy’s relay, which isn’t set up here.</p></div>';
+    joinRoot.innerHTML = h + '<p class="pl-meta">Clubs need ducy’s relay, which isn’t set up here.</p></div>';
     joinRoot.hidden = false;
     return;
   }
   // Codes are entered on Play (#393): with nothing to join here, Join is
-  // your club requests (clubs.js) and why a game didn't join (play.js).
+  // your club requests (clubs.js).
   if (!link) {
-    joinRoot.innerHTML = h + '<p class="pl-meta">To join a game or a club, enter its code on <a href="#lobby">Play</a>.</p></div>';
+    joinRoot.innerHTML = h + '<p class="pl-meta">To join a club, enter its code on <a href="#lobby">Play</a>.</p></div>';
     joinRoot.hidden = false;
     return;
   }
-  const club = link.kind === 'club' ? link.inv : null;
+  const club = link.inv;
   h += '<form class="pj-form sg-form" data-joinform>';
   // An invite says what you're joining, and who sent it (#185); joining is
   // always your click.
-  if (club) {
-    h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
-    h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
-    // About the club, from the club itself (#398).
-    const about = aboutOf.get(club.code);
-    if (about) h += `<div class="pj-about cl-info-text">${formatInfo(about)}</div>`;
-    h += '</div>';
-    if (club.invite && !aboutOf.has(club.code)) {
-      aboutOf.set(club.code, '');
-      lookupCode(club.code, globalThis.fetch, club.invite).then(info => { if (info?.about) { aboutOf.set(club.code, info.about); if (linked()?.inv?.code === club.code) renderJoin(); } });
-    }
+  h += `<div class="pj-invite"><span class="sg-label">You’re invited to</span><b class="pj-club">${esc(club.name || `club ${club.code}`)}</b>`;
+  h += `<span class="pj-meta">${club.by ? `from ${esc(club.by)} · ` : ''}code ${esc(club.code)}</span>`;
+  // About the club, from the club itself (#398).
+  const about = aboutOf.get(club.code);
+  if (about) h += `<div class="pj-about cl-info-text">${formatInfo(about)}</div>`;
+  h += '</div>';
+  if (club.invite && !aboutOf.has(club.code)) {
+    aboutOf.set(club.code, '');
+    lookupCode(club.code, globalThis.fetch, club.invite).then(info => { if (info?.about) { aboutOf.set(club.code, info.about); if (linked()?.inv?.code === club.code) renderJoin(); } });
   }
-  if (!club) h += `<p class="pj-meta">Game <b>${esc(link.code)}</b></p>`;
-  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${club && name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
+  h += `<label class="pj-field"${name ? ' hidden' : ''}><span class="sg-label">${name ? 'Your name in this club' : 'Your name'}</span><input class="pl-text" name="name" maxlength="20" autocomplete="nickname" placeholder="What others see" value="${esc(name)}"></label>`;
   // Who you are (#621), for the owner or the agent who sent the link.
-  if (club) h += `<label class="pj-field"><span class="sg-label">Who are you?</span><textarea class="pl-text pj-intro" name="intro" rows="2" maxlength="300" required placeholder="Your name and who invited you">${esc(introTyped)}</textarea></label>`;
+  h += `<label class="pj-field"><span class="sg-label">Who are you?</span><textarea class="pl-text pj-intro" name="intro" rows="2" maxlength="300" required placeholder="Your name and who invited you">${esc(introTyped)}</textarea></label>`;
   if (joinNote) h += `<p class="pl-neterr">${esc(joinNote)}</p>`;
-  h += `<button class="tr-start sg-open" type="submit">${club ? 'Ask to join' : 'Join'}</button>`;
-  if (name) h += `<p class="pj-meta">${club ? 'Asking' : 'Joining'} as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
+  h += '<button class="tr-start sg-open" type="submit">Ask to join</button>';
+  if (name) h += `<p class="pj-meta">Asking as <b>${esc(name)}</b>. <button type="button" class="link-btn" data-pj="rename">Change</button></p>`;
   h += '</form>';
   h += '</div>';
   joinRoot.innerHTML = h;
@@ -321,14 +288,7 @@ function renderJoin() {
   });
   const input = joinRoot.querySelector('[name=name]');
   if (!name && !matchMedia('(pointer: coarse)').matches) input.focus();
-  // A friends table's link, with a name already known: join straight away.
-  // A club invite waits for Ask to join (#185).
-  if (link.kind === 'table' && name && !autoJoined.has(link.text)) {
-    autoJoined.add(link.text);
-    go(link, name);
-  }
 }
-const autoJoined = new Set();
 
 function onJoin(e) {
   const f = e.target.closest('form[data-joinform]');
@@ -346,29 +306,23 @@ function onJoin(e) {
     return;
   }
   // Who you are (#621): needed to join a club.
-  if (what.kind === 'club' && !intro) {
+  if (!intro) {
     joinNote = 'Say who you are.';
     renderJoin();
     joinRoot.querySelector('[name=intro]')?.focus();
     return;
   }
-  go(what, name, intro);
-}
-
-function go(what, name, intro = '') {
   joinNote = '';
   codeClub = null;
   clearLink();
-  if (what.kind === 'club') {
-    joinClub(what.inv, name, intro);
-    renderJoin();
-  } else joinTable({code: what.code, name, hostId: what.hostId});
+  joinClub(what.inv, name, intro);
+  renderJoin();
 }
 
 // The link's join is under way: drop it from the address (keeping ?relay=),
 // so a reload doesn't ask again.
 function clearLink() {
   const u = new URL(location.href);
-  for (const k of ['club', 'invite', 'host', 'table']) u.searchParams.delete(k);
+  for (const k of ['club', 'invite', 'host']) u.searchParams.delete(k);
   history.replaceState(null, '', u.toString());
 }

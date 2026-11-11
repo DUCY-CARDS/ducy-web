@@ -14,10 +14,9 @@
 // back to the buy-in first (GTO training plays every hand at 100 BB).
 // review returns the last finished hand's review against the GTO bot (see
 // play-review.js), or null.
-// A club's tables (club-host.js) and the friends table (play.js, #462) use
-// the ops in club-engine.js (runnerCreate, runnerFriends, runnerEvent,
-// runnerSave, runnerRestore, ...): each table and its runner, the same code
-// an always-on club runs in the relay's Worker.
+// A club's tables (club-host.js) use the ops in club-engine.js
+// (runnerCreate, runnerEvent, runnerSave, runnerRestore, ...): each table
+// and its runner, the same code an always-on club runs in the relay's Worker.
 import init, * as wasm from '../wasm/ducy_wasm.js';
 import { clubEngine } from './club-engine.js';
 
@@ -206,7 +205,7 @@ const ops = {
     } catch {}
     return true;
   },
-  // A club's tables and the friends table (club-engine.js).
+  // A club's tables (club-engine.js).
   ...clubs.ops,
 };
 

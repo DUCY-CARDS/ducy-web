@@ -3,8 +3,7 @@
 // tables (added, edited, renamed, deleted; a tournament paying by one, which
 // follows its edits until it finishes and then keeps what it paid), an older
 // tournament's own payout as a one-row table, what members see, the editor's
-// draft, a one-off tournament's own table, and the club server's ops for
-// managers and not members.
+// draft, and the club server's ops for managers and not members.
 // Needs the wasm build in wasm/. Run with: node --test test/payout-tables.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,8 +18,6 @@ import {
 } from '../src/club-tourneys.js';
 import { entriesOpen, hostTourneysHtml, memberTourneysHtml, newDraft } from '../src/club-tourneys-ui.js';
 import { addPlace, addRow, cleanRows, draftOf, readRows, removeRow, rowsEditorHtml, starterRows } from '../src/payout-table-ui.js';
-import { HOST_ID, joinPrivate, lobbyBody, newPrivateTourney, paidPlaces, privateClub, prizeTotals, setPrizes } from '../src/private-tourney.js';
-import { setupHtml } from '../src/private-tourney-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 
 const LEVELS = [{sb: 10, bb: 20, ante: 0, minutes: 10}, {sb: 20, bb: 40, ante: 0, minutes: 10}, {sb: 50, bb: 100, ante: 10, minutes: 10}];
@@ -199,28 +196,6 @@ test('the editor’s draft: rows and places added and taken away, read back, gap
   back.rows[1].places = [10000, null, null];
   assert.deepEqual(cleanRows(back), [{from: 3, places: [6000, 4000]}, {from: 8, places: [10000]}]);
   assert.equal(removeRow({rows: [{from: 1, places: [1]}]}, 0).rows.length, 1, 'the last row stays');
-});
-
-test('a one-off tournament: its own table by entries, in points, prizes beyond the entries still allowed', () => {
-  const club = privateClub('ABCD-EFGH', 'Ann', 0);
-  assert.throws(() => newPrivateTourney(club, {game: 'nlhe', stack: 1500, tableSize: 9, structure: LEVELS, payout: 'table', buyIn: 100, rows: [{from: 1, places: [9000]}]}, 0), /90\.00%/);
-  assert.equal(club.tourneys.length, 0, 'nothing made');
-  const t = newPrivateTourney(club, {game: 'nlhe', stack: 1500, tableSize: 9, structure: LEVELS, payout: 'table', buyIn: 100, rows: ROWS}, 0);
-  assert.deepEqual(t.payout.rows, ROWS);
-  for (let i = 0; i < 5; i++) joinPrivate(club, `g${i}`, `G${i}`, 0);
-  assert.deepEqual(paidPlaces(t).map(p => p.share), [10000]);
-  joinPrivate(club, HOST_ID, 'Ann', 0);
-  assert.deepEqual(paidPlaces(t).map(p => p.share), [6500, 3500]);
-  assert.deepEqual(lobbyBody(club).prizes, [390, 210]);
-  // The host pays more than came in (#403).
-  setPrizes(club, [500, 300]);
-  assert.deepEqual(prizeTotals(t), {prizes: 800, entries: 600, added: 200});
-  // The form shows the editor for By entries.
-  const ed = structureEditor({stack: 1500, tableSize: 9});
-  const h = setupHtml({name: '', game: 'nlhe', stack: 1500, tableSize: 9, payout: 'table', buyIn: 100, table: draftOf()}, ed);
-  assert.match(h, /data-tzrows/);
-  assert.match(h, /data-tz="prow-add"/);
-  assert.doesNotMatch(setupHtml({name: '', game: 'nlhe', stack: 1500, tableSize: 9, payout: 'wta', buyIn: 100, table: draftOf()}, ed), /data-tzrows/);
 });
 
 // ---- the club server ----

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat, readChat } from '../src/table-chat.js';
+import { CHAT_MAX, addChat, chatLimiter, chatName, cleanChat } from '../src/table-chat.js';
 import { chatPid, isMuted, mutedList, onMuteChange, readMuted, setMuted, shownChat } from '../src/chat-mute.js';
 
 test('a chat message is trimmed, flattened to one line and cut short', () => {
@@ -18,24 +18,6 @@ test('names on chat lines are short, with a fallback', () => {
   assert.equal(chatName('Allen'), 'Allen');
   assert.equal(chatName(''), 'A player');
   assert.equal(chatName('n'.repeat(40)).length, 20);
-});
-
-test('a guest reads only well-formed chat messages', () => {
-  assert.deepEqual(readChat({type: 'chat', from: 'Ann', text: ' hi ', at: 5}), {from: 'Ann', text: 'hi', at: 5});
-  assert.equal(readChat({type: 'chat', from: 'Ann', text: '   '}), null);
-  assert.equal(readChat({type: 'state'}), null);
-  assert.equal(readChat(null), null);
-  assert.equal(readChat({type: 'chat', text: 'hey'}).from, 'A player');
-});
-
-test('a chat line keeps its sender ID and seat when they look right (#616)', () => {
-  const id = 'AbCd1234';
-  assert.deepEqual(readChat({type: 'chat', from: 'Ann', text: 'hi', at: 5, pid: id, seat: 3}), {from: 'Ann', text: 'hi', at: 5, pid: id, seat: 3});
-  assert.equal(readChat({type: 'chat', from: 'Ann', text: 'hi', pid: 'bot:gto'}).pid, 'bot:gto');
-  const bad = readChat({type: 'chat', from: 'Ann', text: 'hi', pid: '<img src=x>', seat: 99});
-  assert.equal(bad.pid, undefined);
-  assert.equal(bad.seat, undefined);
-  assert.equal(readChat({type: 'chat', from: 'Ann', text: 'hi', pid: {}, seat: '2'}).pid, undefined);
 });
 
 // A localStorage stand-in.

@@ -761,7 +761,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
     },
     async lookup(code, invite = '') {
       const club = await roomFor(code).store.get('club');
-      return club ? codeInfo(club, invite) : {kind: 'game'};
+      return club ? codeInfo(club, invite) : {kind: 'none'};
     },
     async club() {
       const room = await demoRoom();

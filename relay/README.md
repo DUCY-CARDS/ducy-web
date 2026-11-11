@@ -1,40 +1,33 @@
 # ducy relay
 
-Forwards multiplayer messages for the `#play` and `#clubs` pages. Each table
-or club code is a room; the host's tab and every player's tab keep a
-WebSocket open to it. The relay has no game logic: the host's tab runs the
-table (ducy's `MultiTable`) and sends each player only their own view. The
-only thing it stores is the queue below.
+Runs ducy's clubs. Each club code is a room; the always-on club runs in it,
+and every member's tab keeps a WebSocket open to it as a guest. No tab hosts
+a table or a tournament here (#643): `role=host` is refused.
 
 | From | Sends | Relay delivers |
 |---|---|---|
-| host | `{to, data}` | `data` to guest `to` |
-| guest | `data` | `{from, data}` to the host |
-| (relay) | | `{from, event: 'open' \| 'close'}` to the host when a guest connects or drops |
-| (relay) | | `{type: 'host_gone'}` to guests when the host drops (they reconnect once it's back) |
-| either | `{type: 'ping', t}` | `{type: 'pong', t}` back to the sender, never forwarded or queued: the host's heartbeat. While its pings go unanswered (or its socket is down) the host stops its tables' clocks, so an outage doesn't time out or fold anyone |
+| guest | `data` | to the club in the room |
+| guest | `{type: 'ping', t}` | `{type: 'pong', t}` back to the sender, never passed on or queued |
 
-Connect to `/room/<CODE>?role=host` or `/room/<CODE>?role=guest&id=<client id>`,
-where the code looks like `ABCD-EFGH`. Close codes: 4000 bad request, 4001 the
-table already has a host, 4002 the host left, 4004 no such table, 4009
-replaced by a newer connection with the same id, 4029 the room is full.
+Connect to `/room/<CODE>?role=guest&id=<player ID>&queue=1`, where the code
+looks like `ABCD-EFGH`. Close codes: 4000 bad request, 4003 the club is paused,
+4004 no such club, 4008 sending too fast, 4009 replaced by a newer connection
+with the same id, 4029 the room is full.
 
 ### Queue mode (clubs)
 
-A guest that connects with `&queue=1` can reach a club whose host is away:
+A guest that connects with `&queue=1` can reach a room before its club is
+there (a club being made or moved here):
 
 | From | Sends | Relay delivers |
 |---|---|---|
-| (relay) | | `{type: 'host_away'}` to the guest if no host is connected |
-| guest, host away | `data` | stored; `{type: 'queue_full'}` back if over the limit |
-| (relay) | | when the host connects: `{from, event: 'open'}` for each waiting guest, then `{from, data, queued: n}` for each stored message |
-| host | `{ack: n}` | deletes stored message `n` (unacked ones are delivered again next time) |
-| (relay) | | `{type: 'host_back'}` to queue-mode guests when the host connects |
+| (relay) | | `{type: 'host_away'}` to the guest if there's no club in the room |
+| guest, no club | `data` | stored; `{type: 'queue_full'}` back if over the limit |
+| (relay) | | when a club moves here (`import_club`), each stored message goes to it |
 
-Queue-mode guests stay connected when the host leaves (they get `host_gone`
-but aren't closed). Limits: 10 stored messages per guest, 100 per room, 8 KB
-each, kept 7 days. The Worker keeps them in the room's Durable Object
-storage; the dev relay keeps them in memory.
+Limits: 10 stored messages per guest, 100 per room, 8 KB each, kept 7 days.
+The Worker keeps them in the room's Durable Object storage; the dev relay
+keeps them in memory.
 
 ### Proving the player's ID (#577)
 
@@ -43,11 +36,10 @@ nobody until it proves it holds the key of the player ID it named
 (`src/prove.js`). The relay sends `{type: 'prove', challenge}`; the page
 answers `{type: 'prove', env}`, env being `{type: 'prove', room, challenge}`
 signed with the player's key; the relay says `{type: 'proven'}`. Until then
-it hears nothing sent to that player, its messages are dropped, the club and
-the host don't see it arrive, and it replaces no one: only a proven
-connection closes the player's other one (4009), as a reload or a second tab
-does. A bad proof closes it with 4000. Friends tables' guests name a random
-client ID, not a player key, and aren't asked.
+it hears nothing sent to that player, its messages are dropped, the club
+doesn't see it arrive, and it replaces no one: only a proven connection
+closes the player's other one (4009), as a reload or a second tab does. A bad
+proof closes it with 4000.
 
 ### Passkeys (#575)
 
@@ -135,8 +127,8 @@ The site's relay is `wss://ducy-relay.ducy.workers.dev`.
 
 To try another relay without changing the code, open the page with
 `?relay=wss://…#play` (the `https://` URL wrangler prints works too). The
-browser remembers it, and invite links from that browser carry it, so
-friends reach the same relay. `?relay=default#play` goes back to the
+browser remembers it, and club invite links from that browser carry it, so
+members reach the same relay. `?relay=default#play` goes back to the
 site's relay.
 
 ## Always-on clubs: timers and sleeping

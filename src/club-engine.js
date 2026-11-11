@@ -9,10 +9,6 @@
 // config = {seats, minBuyIn, maxBuyIn, sb, bb, seed, game, turnMs,
 // sitOutMs}, and the runner's own options (open, link, active, idleMs, askMs).
 //
-// The page's friends table (play.js, #462) runs the same way, its host in
-// seat 0: runnerFriends(id, config) | runnerRestoreFriends(id, json,
-// config), config as above plus {hostName, hostChips, bombEvery, autoDeal}.
-//
 // Tournaments (#81, club-tourney-host.js): each run by ducy's tournament
 // runner (ClubTourney, #458): tourneyCreate(id, config, players, turnMs,
 // runner) | tourneyRestore(id, json, runner) | tourneyEvent(id, event) →
@@ -54,17 +50,6 @@ export function clubEngine(ClubTable = ducy.ClubTable) {
       const t = ClubTable.restore(id, json, c, Date.now());
       if (!t) return false;
       keep(id, wrapTable(t));
-      return true;
-    },
-    // A friends table: the host plays seat 0 (ClubTable.friends).
-    runnerFriends: (id, c) => {
-      keep(id, wrapTable(ClubTable.friends(id, c)));
-      return true;
-    },
-    // A friends table saved with runnerSave, waiting for its people (throws
-    // if it can't be loaded).
-    runnerRestoreFriends: (id, json, c) => {
-      keep(id, wrapTable(ClubTable.restoreFriends(id, json, c, Date.now())));
       return true;
     },
     runnerEvent: (id, ev) => {

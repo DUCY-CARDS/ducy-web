@@ -1,12 +1,9 @@
-// Multiplayer plumbing for #play: a WebSocket to the relay (relay/), which
-// forwards messages between the host's tab and each player's tab in a room.
-// The relay knows nothing about poker; the host's tab runs the table.
-//   host  → relay: {to, data}           relay → host:  {from, data} | {from, event: 'open' | 'close'}
-//   guest → relay: data                  relay → guest: data | {type: 'host_gone'}
-//   either → relay: {type: 'ping', t}    relay → it:    {type: 'pong', t} (the heartbeat)
+// Multiplayer plumbing for the clubs: a WebSocket to the relay (relay/), where
+// each always-on club runs in its room. Members connect as guests.
+//   guest → relay: data                  relay → guest: data
+//   guest → relay: {type: 'ping', t}     relay → guest: {type: 'pong', t}
 
 const RELAY_KEY = 'ducyRelay';
-const CLIENT_KEY = 'ducyPlayClient';
 // The deployed relay (relay/ on Cloudflare Workers). Empty hides
 // multiplayer. ?relay=<url> uses another one in this browser (for testing;
 // the https:// URL wrangler prints works too), and ?relay=default goes back
@@ -31,39 +28,13 @@ export function relayUrl() {
   }
 }
 
-// The table code in the page's link (?table=ABCD-EFGH), if any.
-export function linkedCode() {
-  return normCode(new URLSearchParams(location.search).get('table') || '');
-}
-
-// The host's player ID in the page's link (?host=…), if any: a guest checks
-// the host's signed encryption key against it.
-export function linkedHost() {
-  const h = new URLSearchParams(location.search).get('host') || '';
-  return /^[1-9A-HJ-NP-Za-km-z]{8}$/.test(h) ? h : '';
-}
-
-// A link that opens the Join tab ready to join `code`. It names the relay too when
-// it isn't the default, so friends reach the same one, and the host's player
-// ID, so guests can check the host's encryption key (play.js).
-export function joinLink(code, hostId = '') {
-  const u = new URL(location.href);
-  u.search = '';
-  u.searchParams.set('table', code);
-  if (hostId) u.searchParams.set('host', hostId);
-  const relay = relayUrl();
-  if (relay !== wsUrl(DEFAULT_RELAY)) u.searchParams.set('relay', relay);
-  u.hash = 'join';
-  return u.toString();
-}
-
 export function newCode() {
   const r = crypto.getRandomValues(new Uint8Array(8));
   const c = Array.from(r, b => CODE_CHARS[b % CODE_CHARS.length]).join('');
   return c.slice(0, 4) + '-' + c.slice(4);
 }
 
-// A table code as typed, in any case and with or without the dash or spaces,
+// A club code as typed, in any case and with or without the dash or spaces,
 // as "ABCD-EFGH"; '' if it isn't one (codes never have I, L, O, 0 or 1).
 export function normCode(s) {
   const c = String(s ?? '').toUpperCase().replace(/[\s-]/g, '');
@@ -79,7 +50,7 @@ export function useLocalRelay(r) {
 
 // What code `code` is, asked of the relay (#393): {kind: 'club', ask, name,
 // hostId} for a club (name and hostId only when it lets people ask to join
-// with its code), {kind: 'game'} for anything else, or null when the relay
+// with its code), {kind: 'none'} for anything else, or null when the relay
 // can't be asked. With the `invite` token of an invite link, a club's About
 // the club comes too (`about`, #398).
 export async function lookupCode(code, get = globalThis.fetch, invite = '') {
@@ -89,38 +60,21 @@ export async function lookupCode(code, get = globalThis.fetch, invite = '') {
     const r = await get(`${base}/code/${encodeURIComponent(code)}${invite ? `?invite=${encodeURIComponent(invite)}` : ''}`);
     if (!r.ok) return null;
     const v = await r.json();
-    return ['club', 'game', 'none'].includes(v?.kind) ? v : null;
+    return ['club', 'none'].includes(v?.kind) ? v : null;
   } catch {
     return null;
   }
 }
 
-// Identifies this tab to the host, so a reload gets the same seat back.
-export function clientId() {
-  try {
-    let id = sessionStorage.getItem(CLIENT_KEY);
-    if (!id) { id = crypto.randomUUID(); sessionStorage.setItem(CLIENT_KEY, id); }
-    return id;
-  } catch {
-    return crypto.randomUUID();
-  }
-}
-
-// Opens the room as host or guest and keeps it open, reconnecting with
-// backoff when the connection drops. Handlers: onOpen(), onMessage(obj),
-// onStatus(text) with '' once connected, onFail(reason) when it gives up.
-// With `queue` (clubs), a guest can connect while the host is away, and the
-// relay keeps its messages until the host comes back (see relay/README.md).
-// With `retryInUse`, a host refused because the room already has one keeps
-// trying for a few seconds (after a reload the relay may not have noticed
-// the old connection close yet) before giving up with `inUse` as the reason.
-// With `heartbeat`, it pings the relay every few seconds and calls
-// onHealth(healthy) when the link's health changes: unhealthy while the
-// socket is down, or (once the relay has shown it answers pings) when
-// nothing has been heard for a while. A host pauses its tables while
-// unhealthy, so an outage doesn't time everyone out. With `persistent`, it
-// never gives up reconnecting (a host keeps its table through an outage).
-export const PING_MS = 5_000, SILENT_MS = 12_000;
+// Opens the room and keeps it open, reconnecting with backoff when the
+// connection drops. Handlers: onOpen(), onMessage(obj), onStatus(text) with
+// '' once connected, onFail(reason) when it gives up, and onHealth(healthy)
+// when the link's health changes: unhealthy while the socket is down, or
+// (once the relay has shown it answers pings) when nothing has been heard
+// for a while.
+// With `queue` (clubs), a guest can connect while the club's host is away
+// (see relay/README.md). With `persistent`, it never gives up reconnecting.
+export const SILENT_MS = 12_000;
 
 // With `prove(challenge)` (a club connection, #577), the relay first asks
 // the page to prove it holds the player's key: prove signs the challenge
@@ -129,21 +83,15 @@ export const PING_MS = 5_000, SILENT_MS = 12_000;
 // is no one, so it can't knock off the player's other one.
 // Coming back to the page (a phone waking the tab) checks the connection at
 // once: a dead one reconnects straight away, a silent one is replaced.
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, retryInUse = false, inUse = 'That table code is in use.', heartbeat = false, persistent = false, prove = null} = {}) {
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, persistent = false, prove = null} = {}) {
   if (localRelay) return localRelay.connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth});
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
-  let heard = 0, pongs = false, healthy = false, beat = null;
+  let heard = 0, pongs = false, healthy = false;
   const url = `${relayUrl()}/room/${encodeURIComponent(code)}?role=${role}` + (id ? `&id=${encodeURIComponent(id)}` : '') + (queue ? '&queue=1' : '');
   const setHealth = h => { if (h !== healthy) { healthy = h; onHealth(h); } };
   // Healthy: the socket is open and, if the relay answers pings, we've heard
   // from it recently. (A relay without pongs: the socket's state alone.)
   const check = () => setHealth(!!ws && ws.readyState === 1 && (!pongs || Date.now() - heard < SILENT_MS));
-  if (heartbeat) {
-    beat = setInterval(() => {
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({type: 'ping', t: Date.now()}));
-      check();
-    }, PING_MS);
-  }
   const opened = () => { tries = 0; onStatus(''); onOpen(); check(); };
   const open = () => {
     const sock = ws = new WebSocket(url);
@@ -178,7 +126,6 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
       // would trade places every second; the newer one keeps it.
       if (e.code === 4009) {
         closed = true;
-        clearInterval(beat);
         onFail('This is open in another tab or window, which took it over. Use that one, or reload this page to take it back.');
         return;
       }
@@ -189,17 +136,16 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
         retry = setTimeout(open, 5 * 60_000);
         return;
       }
-      // 4001: the room already has a host; 4004: no such table. After a drop
-      // a guest keeps trying while the host comes back.
-      // 4008: this page sent faster than the relay allows (#103).
-      if (persistent && e.code !== 4001 && e.code !== 4008 && !(e.code === 4004 && !joined)) {
+      // 4004: no such club. 4008: this page sent faster than the relay
+      // allows (#103).
+      if (persistent && e.code !== 4008 && !(e.code === 4004 && !joined)) {
         onStatus('Reconnecting…');
         retry = setTimeout(open, Math.min(30_000, 1000 * 2 ** tries++));
         return;
       }
-      if ((e.code === 4001 && !(retryInUse && tries < 4)) || e.code === 4008 || (e.code === 4004 && !joined) || tries >= 6) {
+      if (e.code === 4008 || (e.code === 4004 && !joined) || tries >= 6) {
         closed = true;
-        onFail(e.code === 4001 ? inUse : e.code === 4004 ? 'No table with that code.'
+        onFail(e.code === 4004 ? 'No club with that code.'
           : e.code === 4008 ? 'The relay closed the connection: too many messages. Reload to reconnect.' : 'Lost the connection.');
         return;
       }
@@ -236,7 +182,7 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
   open();
   return {
     send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
-    close() { closed = true; clearTimeout(retry); clearInterval(beat); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake); if (ws) ws.close(1000); },
+    close() { closed = true; clearTimeout(retry); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake); if (ws) ws.close(1000); },
     healthy: () => healthy,
   };
 }

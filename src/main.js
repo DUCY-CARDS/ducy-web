@@ -15,7 +15,6 @@ import { openCharts, closeCharts, chartsOpen } from './charts.js';
 import { closeSection, enterCode, openSection, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
 import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub, refreshHubClubs } from './home.js';
-import { isOff } from './club-beta.js';
 import { onClubsChange, yourClubs } from './clubs.js';
 
 const ST = [
@@ -1824,7 +1823,7 @@ function loadFromHash() {
 // Heads-up training), the equity calculator (#equity, or its hand in the
 // address), the range trainer at #trainer, and the playing section
 // (play-section.js, #138), whose tabs are #play (or #practice), #ladder,
-// #join, #host and #clubs. Each page below the front pages shows a
+// #join and #clubs. Each page below the front pages shows a
 // breadcrumb back to them. The trainer doesn't need the engine, so it's set
 // up before the WASM load below. `shortcut` opens the bot table straight into
 // a preset game (see openPlay).
@@ -1871,11 +1870,6 @@ function hashMode() {
     return 'home';
   }
   if (h === 'practice') return 'play';
-  // No Start a game in the beta (#635, club-beta.js): Join a game instead.
-  if (h === 'host' && isOff('startGame')) {
-    history.replaceState(null, '', location.pathname + location.search + '#join');
-    return 'join';
-  }
   return h === 'trainer' || h === 'charts' || h === 'equity' || HUBS.includes(h) || TABS.includes(h) ? h : '';
 }
 
@@ -1887,11 +1881,10 @@ window.addEventListener('hashchange', () => {
   loadFromHash(); render(); updateGameUI();
 });
 
-// Links that join something open the Join tab: a club invite (made with
-// #clubs before #138, and some apps cut links at the #), and a friends
-// table's link (made with #play before).
+// A club invite opens the Join tab (made with #clubs before #138, and some
+// apps cut links at the #).
 const q = new URLSearchParams(location.search);
-const toJoin = (q.has('club') && q.has('invite')) || (q.has('table') && (!location.hash || location.hash === '#play'));
+const toJoin = q.has('club') && q.has('invite');
 if (toJoin && location.hash !== '#join') history.replaceState(null, '', location.pathname + location.search + '#join');
 
 // Init. Before any page opens: the trainer, stats and club pages call ducy's

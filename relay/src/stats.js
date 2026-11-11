@@ -4,9 +4,6 @@
 //
 // Events, note(ev):
 //   {kind: 'player', id, code}   a player connected to club `code` (proven)
-//   {kind: 'game'}               a friends game began (its host counts as a player)
-//   {kind: 'gamePlayer'}         another player joined that game
-//   {kind: 'hand'}               a friends game's hand finished (its host says so)
 //   {kind: 'clubHand', code, ids} a club hand finished, with these seats
 // The admins' own player IDs (`admins`, admins.json) aren't counted, and a
 // club hand only they played isn't either.
@@ -20,8 +17,8 @@
 //   statsSalt          the salt (hex)
 //   statsKnown         the Bloom filter (Uint8Array)
 //   statsDays          the dates with a record, oldest first
-//   statsDay:<date>    {newPlayers, games, gamePlayers, hands, clubHands,
-//                       active, clubsActive (once the day is counted)}
+//   statsDay:<date>    {newPlayers, clubHands, active, clubsActive (once the
+//                       day is counted)}
 //   statsSeen:<date>   {hash: 1}: the day's players, until it's counted
 //   statsClubs:<date>  {code: 1}: the day's clubs, until it's counted
 
@@ -30,7 +27,7 @@ const BLOOM_BYTES = 1 << 16, BLOOM_K = 5; // 512K bits: few false "seen before" 
 
 export const dayOf = t => new Date(t).toISOString().slice(0, 10);
 const hex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
-const empty = () => ({newPlayers: 0, games: 0, gamePlayers: 0, hands: 0, clubHands: 0});
+const empty = () => ({newPlayers: 0, clubHands: 0});
 
 // The bits a hash sets in the Bloom filter.
 function bloomBits(h) {
@@ -121,17 +118,9 @@ export function stats(storage, {admins = new Set()} = {}) {
       for (const b of bits) known[b >> 3] |= 1 << (b & 7);
       await storage.put('statsKnown', known);
       rec.newPlayers++;
-    } else if (ev.kind === 'game') {
-      rec.games++;
-      rec.gamePlayers++;
-    } else if (ev.kind === 'gamePlayer') {
-      rec.gamePlayers++;
-    } else if (ev.kind === 'hand') {
-      rec.hands++;
     } else if (ev.kind === 'clubHand') {
       const ids = Array.isArray(ev.ids) ? ev.ids.map(String) : [];
       if (ids.length && ids.every(isAdmin)) return;
-      rec.hands++;
       rec.clubHands++;
       if (code) await addTo(d, 'statsClubs', code);
     } else return;
@@ -140,9 +129,8 @@ export function stats(storage, {admins = new Set()} = {}) {
 
   return {
     note: (ev, now = Date.now()) => serial(() => note(ev || {}, now)),
-    // The last `n` days, oldest first: {day, active, newPlayers, games,
-    // playersPerGame, hands, clubsActive, clubHands}. Today's active players
-    // and clubs are so far.
+    // The last `n` days, oldest first: {day, active, newPlayers, clubsActive,
+    // clubHands}. Today's active players and clubs are so far.
     days: (n = 30, now = Date.now()) => serial(async () => {
       await roll(now);
       const out = [];
@@ -151,20 +139,9 @@ export function stats(storage, {admins = new Set()} = {}) {
         const rec = await dayRec(d);
         const active = rec.active ?? Object.keys((await storage.get(`statsSeen:${d}`)) || {}).length;
         const clubsActive = rec.clubsActive ?? Object.keys((await storage.get(`statsClubs:${d}`)) || {}).length;
-        out.push({
-          day: d, active, newPlayers: rec.newPlayers, games: rec.games,
-          playersPerGame: rec.games ? Math.round((rec.gamePlayers / rec.games) * 10) / 10 : null,
-          hands: rec.hands, clubsActive, clubHands: rec.clubHands,
-        });
+        out.push({day: d, active, newPlayers: rec.newPlayers, clubsActive, clubHands: rec.clubHands});
       }
       return out;
     }),
   };
-}
-
-// Friends games live now (#601), as their rooms report them: {code: {players,
-// at}}. One not heard from in a day is taken as gone (its room was reset).
-export const LIVE_STALE_MS = 864e5;
-export function liveGames(all, now = Date.now()) {
-  return Object.values(all || {}).filter(g => now - g.at < LIVE_STALE_MS);
 }
