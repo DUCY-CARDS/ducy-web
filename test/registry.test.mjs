@@ -79,8 +79,10 @@ test('a claim that fails leaves the grant unused; two at once make one club', as
     reg.claim('ann', 'CCCC-CCCC', Date.now(), '', {grant: token}),
     reg.claim('ann', 'DDDD-DDDD', Date.now(), '', {grant: token}),
   ]);
-  assert.deepEqual(both.map(r => r.status), ['fulfilled', 'rejected']);
-  assert.equal(both[1].reason.message, NOT_YOUR_LINK);
+  // Either may win; exactly one does.
+  assert.deepEqual(both.map(r => r.status).sort(), ['fulfilled', 'rejected']);
+  assert.equal(both.find(r => r.status === 'rejected').reason.message, NOT_YOUR_LINK);
+  assert.equal((await reg.list()).clubs.filter(c => c.owner === 'ann').length, 1);
   // The relay's per-owner limit still holds.
   await reg.release('AAAA-AAAA');
   const again = await reg.grant('ann');
