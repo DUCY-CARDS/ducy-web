@@ -7,8 +7,9 @@
 //
 // Views, by the page's hash: #overview (the default: versions everywhere,
 // what's live now, the last 30 days as small charts or a table, and
-// Cloudflare's numbers when the relay has its token), #clubs (usage,
-// permission, the club list), #club=<code> (everything the club stores,
+// Cloudflare's numbers when the relay has its token), #clubs (usage, grants
+// and their one-time links, #636, the club list, and Wipe all clubs),
+// #club=<code> (everything the club stores,
 // read-only), #people, #person=<id> (their activity in every club), #log
 // (the admin log), #errors (what pages reported going wrong, #552), #fair
 // (every club's fair play numbers, #612, admin-fair-play.js) and
@@ -24,6 +25,7 @@ import { chipText } from './chip-format.js';
 import { ago as agoText } from './time-ago.js';
 import { chartHtml, fmt, wire } from './admin-charts.js';
 import { fairHtml, historyHtml, nextSort } from './admin-fair-play.js';
+import { siteHost } from './sites.js';
 
 // ducy's engine first: signing (the JSON a request is signed over) and
 // player IDs use it (identity.js, #460).
@@ -214,20 +216,11 @@ async function overviewHtml() {
 function clubsHtml() {
   let h = '';
   if (usage) {
-    h += `<section><h2>Use of Cloudflare’s free plan</h2><p class="muted">${usage.clubs} clubs · at most ${usage.limits.total} · trial ${usage.limits.trialDays} days</p>`
+    h += `<section><h2>Use of Cloudflare’s free plan</h2><p class="muted">${usage.clubs} clubs · at most ${usage.limits.total}</p>`
       + table(['Day', '#Club-hours', '#GB-s', '#Share of free'], usage.days.map(d => tr([esc(d.day), num(d.clubHours), num(d.gbs), num(`<span class="${d.share > 80 ? 'err' : d.share > 50 ? 'warn' : ''}">${d.share}%</span>`)])))
       + '</section>';
   }
-  const g = Object.entries(data.grants);
-  h += `<section><h2>Who may create clubs</h2><div class="row">
-      <input id="g-id" placeholder="Player ID" size="30">
-      <input id="g-note" placeholder="Note" size="24">
-      <label>Clubs <input id="g-max" type="number" min="0" placeholder="3"></label>
-      <label>Tables <input id="g-tables" type="number" min="0" placeholder="2"></label>
-      <label>Tournaments a day <input id="g-tourneys" type="number" min="0" placeholder="1"></label>
-      <button class="primary" id="grant">Grant</button></div>`
-    + table(['Player', 'Note', '#Clubs', 'Limits', 'Since', ''], g.map(([id, x]) => tr([pid(id), esc(x.note || (x.fromEnv ? 'CLUB_CREATORS' : '')), num(x.maxClubs || data.limits.perOwner), x.limits ? `${x.limits.tables} tables, ${x.limits.tourneysPerDay}/day` : 'free', day(x.at), x.fromEnv ? '' : `<button data-revoke="${esc(id)}">Revoke</button>`])), 'Nobody yet')
-    + '</section>';
+  h += grantsHtml();
   const clubs = [...data.clubs].sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
   const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
   const rows = clubs.map(c => {
@@ -238,16 +231,47 @@ function clubsHtml() {
       planHtml(c),
       `<input type="number" min="0" value="${c.limits.tables}" data-lim-tables="${esc(c.code)}" aria-label="Tables"> tables<br><input type="number" min="0" value="${c.limits.tourneysPerDay}" data-lim-tourneys="${esc(c.code)}" aria-label="Tournaments a day"> / day <button data-limits="${esc(c.code)}">Set</button>`,
       stateHtml(c), ago(c.lastActive), `${hours(week)} / ${hours(c.minutes || 0)}`,
-      `<div class="row"><button data-pause="${esc(c.code)}" data-to="${c.suspended ? 'false' : 'true'}">${c.suspended ? 'Resume' : 'Pause'}</button>`
-        + (c.plan === 'trial' ? `<button data-plan="${esc(c.code)}">Make it a club</button><button data-extend="${esc(c.code)}">Trial +14 days</button>` : '') + '</div>',
+      `<button data-pause="${esc(c.code)}" data-to="${c.suspended ? 'false' : 'true'}">${c.suspended ? 'Resume' : 'Pause'}</button>`,
     ]);
   });
   h += `<section><h2>Clubs</h2>${table(['Club', 'Owner', 'Plan', 'Limits', 'State', 'Last active', 'Play (7 days / all)', ''], rows, 'No clubs yet')}</section>`;
+  // Wipe all clubs (#636): this environment's, once its name is typed.
+  h += `<section class="wipe"><h2>Wipe all clubs</h2><p class="muted">Deletes every club on ${esc(env.label)}, with its data and backups, and every grant. It can’t be undone.</p>`
+    + `<div class="row"><input id="w-confirm" placeholder="Type ${esc(env.key)}" aria-label="Type ${esc(env.key)} to confirm" autocomplete="off"><button class="danger" id="wipe" disabled>Wipe</button></div></section>`;
   return h;
 }
 
+// Who may create a club (#636): a grant is one club for one player ID, and
+// its one-time link is shown here once, to copy and send. Unused links can
+// be taken back, or replaced by a new one.
+let granted = null; // {id, link}: the grant just made, until the next one
+// On the environment's club site (#637: only a club site may make a club),
+// e.g. https://club.ducy.cards/#clubs/start/<token>; on a local relay,
+// manage.html beside this page.
+function grantLink(token) {
+  const hash = `#clubs/start/${token}`;
+  const club = siteHost('club', new URL(env.site).hostname);
+  if (club) return `https://${club}/${hash}`;
+  return `${location.origin}/manage.html${localRelay ? `?relay=${encodeURIComponent(localRelay)}` : ''}${hash}`;
+}
+function grantsHtml() {
+  const rows = Object.entries(data.invites || {}).sort(([, a], [, b]) => (b.at || 0) - (a.at || 0));
+  let h = `<section><h2>Who may create clubs</h2><div class="row">
+      <input id="g-id" placeholder="Player ID" size="30">
+      <input id="g-note" placeholder="Note" size="24">
+      <label>Tables <input id="g-tables" type="number" min="0" placeholder="2"></label>
+      <label>Tournaments a day <input id="g-tourneys" type="number" min="0" placeholder="1"></label>
+      <button class="primary" id="grant">Grant</button></div>`;
+  if (granted) h += `<div class="row"><input id="g-link" readonly value="${esc(granted.link)}" aria-label="Link for ${esc(showId(granted.id))}"><button id="g-copy">Copy</button></div>`;
+  return h + table(['Player', 'Note', 'Limits', 'Since', 'Link', ''], rows.map(([id, x]) => tr([
+    pid(id), esc(x.note), x.limits ? `${x.limits.tables} tables, ${x.limits.tourneysPerDay}/day` : 'free', day(x.at),
+    x.used ? `Used ${day(x.usedAt)}${x.code ? ` · <button class="link" data-club="${esc(x.code)}"><code>${esc(x.code)}</code></button>` : ''}` : '<span class="warn">Not used</span>',
+    x.used ? '' : `<div class="row"><button data-relink="${esc(id)}">New link</button><button data-revoke="${esc(id)}">Revoke</button></div>`,
+  ])), 'Nobody yet') + '</section>';
+}
+
 function planHtml(c) {
-  const plan = c.plan === 'trial' ? `Trial, ${c.expires > Date.now() ? `${Math.ceil((c.expires - Date.now()) / 864e5)} days left` : 'ended'}` : 'Club';
+  const plan = 'Club';
   // No backup proved yet (#395): deleted once unused for a week.
   const temp = c.temporary
     ? `<br><span class="warn">Temporary</span> <span class="muted">· removed ${c.removesAt ? esc(when(c.removesAt)) : 'soon'} if unused</span>`
@@ -255,7 +279,7 @@ function planHtml(c) {
   return plan + temp;
 }
 
-const stateHtml = c => (c.suspended ? '<span class="err">Paused</span>' : c.blocked ? '<span class="warn">Trial ended</span>' : '<span class="ok">Running</span>');
+const stateHtml = c => (c.suspended ? '<span class="err">Paused</span>' : '<span class="ok">Running</span>');
 
 // ---- a club ----
 
@@ -357,8 +381,7 @@ function peopleHtml(people) {
   return `<section><h2>People</h2><div class="row"><input id="p-filter" placeholder="Search" size="24" value="${esc(peopleFilter)}"><span class="muted">${rows.length} of ${people.length}</span></div>`
     + table(['Player', 'Names', 'Clubs', 'Last seen', 'Grant'], rows.map(p => tr([
       pid(p.id), esc(p.names.join(', ')),
-      p.clubs.map(c => `<button class="link" data-club="${esc(c.code)}">${esc(c.club || c.code)}</button> <span class="muted">${esc([c.role, c.role === 'owner' ? '' : c.status, c.agent ? `agent ${c.agent}` : ''].filter(Boolean).join(', '))}${c.balance != null ? ` · ${chips(c.balance)}` : ''}</span>`).join('<br>')
-        + (p.trial ? `<br><span class="muted">trial ${esc(p.trial)}</span>` : ''),
+      p.clubs.map(c => `<button class="link" data-club="${esc(c.code)}">${esc(c.club || c.code)}</button> <span class="muted">${esc([c.role, c.role === 'owner' ? '' : c.status, c.agent ? `agent ${c.agent}` : ''].filter(Boolean).join(', '))}${c.balance != null ? ` · ${chips(c.balance)}` : ''}</span>`).join('<br>'),
       ago(p.lastSeen),
       p.grant ? `<span class="ok">✓</span> ${esc(p.grant.note || '')}` : '',
     ])), 'Nobody yet') + '</section>';
@@ -366,8 +389,7 @@ function peopleHtml(people) {
 
 function personHtml(p) {
   let h = `<section><h2><code>${esc(showId(p.id))}</code> <span class="muted">${esc(p.id)}</span></h2><dl>`
-    + `<dt>Grant</dt><dd>${p.grant ? `${esc(p.grant.note || '✓')} · ${p.grant.maxClubs || data?.limits?.perOwner || ''} clubs${p.grant.limits ? ` · ${p.grant.limits.tables} tables, ${p.grant.limits.tourneysPerDay}/day` : ''}` : '—'}</dd>`
-    + `<dt>Trial</dt><dd>${esc(p.trial || '—')}</dd></dl></section>`;
+    + `<dt>Grant</dt><dd>${p.grant ? `${esc(p.grant.note || '✓')}${p.grant.limits ? ` · ${p.grant.limits.tables} tables, ${p.grant.limits.tourneysPerDay}/day` : ''} · not used` : '—'}</dd></dl></section>`;
   if (!p.clubs.length) return h + '<section><p class="muted">In no clubs</p></section>';
   for (const c of p.clubs) {
     const m = c.member;
@@ -386,12 +408,13 @@ function personHtml(p) {
 
 // ---- the admin log ----
 
-const ACTIONS = {grant: 'Grant', revoke: 'Revoke', pause: 'Pause', resume: 'Resume', limits: 'Limits', plan: 'Plan', expires: 'Trial end', reveal: 'Showed chats and cards'};
+const ACTIONS = {grant: 'Grant', revoke: 'Revoke', pause: 'Pause', resume: 'Resume', limits: 'Limits', plan: 'Plan', reveal: 'Showed chats and cards', wipe: 'Wiped all clubs'};
 
 function logHtml(log) {
   return `<section><h2>Admin log</h2>${table(['When', 'Admin', 'Action', 'Of', 'Detail'], [...log].reverse().map(e => tr([
     when(e.at), `${esc(e.name)} <span class="muted">${esc(showId(e.by))}</span>`, esc(ACTIONS[e.action] || e.action),
-    /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(e.target) ? `<button class="link" data-club="${esc(e.target)}"><code>${esc(e.target)}</code></button>` : pid(e.target),
+    // Wipe all clubs (#636) is of an environment.
+    e.action === 'wipe' ? esc(e.target) : /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(e.target) ? `<button class="link" data-club="${esc(e.target)}"><code>${esc(e.target)}</code></button>` : pid(e.target),
     esc(e.detail),
   ])), 'Nothing yet')}</section>`;
 }
@@ -409,7 +432,7 @@ function errorsHtml(errors) {
 const val = id => { const v = $(id)?.value.trim(); return v ? Number(v) : undefined; };
 
 async function act(fn, done) {
-  try { await fn(); if (await show()) say(done, 'ok'); } catch (e) { say(e.message, 'err'); }
+  try { await fn(); if (await show()) say(typeof done === 'function' ? done() : done, 'ok'); } catch (e) { say(e.message, 'err'); }
 }
 
 document.addEventListener('click', async e => {
@@ -418,6 +441,7 @@ document.addEventListener('click', async e => {
   if (b.dataset.env) {
     env = envs.find(x => x.key === b.dataset.env) || env;
     remember('ducyAdminEnv', env.key);
+    granted = null;
     drawEnvs();
     // A club or person belongs to one relay: back to its list.
     const {view} = route();
@@ -449,28 +473,38 @@ document.addEventListener('click', async e => {
     return show();
   }
   if (b.id === 'csv') return downloadCsv();
-  if (b.id === 'grant') {
-    const id = $('g-id').value.trim();
+  if (b.id === 'grant' || b.dataset.relink) {
+    // A new grant, or a new link for an unused one (its old link stops working).
+    const old = b.dataset.relink ? data.invites?.[b.dataset.relink] : null;
+    const id = old ? b.dataset.relink : $('g-id').value.trim();
     const tables = val('g-tables'), tourneysPerDay = val('g-tourneys');
-    const limits = tables !== undefined || tourneysPerDay !== undefined ? {tables: tables ?? 2, tourneysPerDay: tourneysPerDay ?? 1} : null;
-    return act(() => api('/admin/grant', {id, note: $('g-note').value.trim(), maxClubs: val('g-max') || 0, limits}), `Granted ${id}.`);
+    const limits = old ? old.limits || null : tables !== undefined || tourneysPerDay !== undefined ? {tables: tables ?? 2, tourneysPerDay: tourneysPerDay ?? 1} : null;
+    if (old && !confirm('Make a new link? The old one stops working.')) return;
+    return act(async () => {
+      const out = await api('/admin/grant', {id, note: old ? old.note || '' : $('g-note').value.trim(), limits});
+      granted = {id, link: grantLink(out.token)};
+    }, `Granted ${id}. Copy the link and send it to them.`);
   }
+  if (b.id === 'g-copy') return navigator.clipboard?.writeText($('g-link').value).then(() => say('Copied.', 'ok'), () => { $('g-link').select(); });
   if (b.dataset.revoke) {
-    if (!confirm('Take away this player’s permission? Their clubs carry on until paused.')) return;
+    if (!confirm('Take back this grant? Its link stops working.')) return;
+    if (granted?.id === b.dataset.revoke) granted = null;
     return act(() => api('/admin/revoke', {id: b.dataset.revoke}), 'Revoked.');
   }
-  const code = b.dataset.pause || b.dataset.plan || b.dataset.extend || b.dataset.limits;
+  if (b.id === 'wipe') {
+    const typed = $('w-confirm').value.trim();
+    if (typed !== env.key) return;
+    granted = null;
+    let n = 0;
+    return act(async () => { n = (await api('/admin/wipe', {confirm: typed})).clubs; }, () => `Wiped ${n} ${n === 1 ? 'club' : 'clubs'} on ${env.label}.`);
+  }
+  const code = b.dataset.pause || b.dataset.limits;
   if (!code) return;
   const set = change => api(`/admin/club/${encodeURIComponent(code)}/set`, change);
   if (b.dataset.pause) {
     const pause = b.dataset.to === 'true';
     if (pause && !confirm('Pause this club? Everyone but its owner is disconnected until you resume it.')) return;
     return act(() => set({suspended: pause}), pause ? 'Paused.' : 'Resumed.');
-  }
-  if (b.dataset.plan) return act(() => set({plan: 'club'}), 'It’s a club now, with no end date.');
-  if (b.dataset.extend) {
-    const c = data.clubs.find(x => x.code === code);
-    return act(() => set({expires: Math.max(c.expires || 0, Date.now()) + 14 * 864e5}), 'Trial extended by 14 days.');
   }
   if (b.dataset.limits) {
     const tables = Number(document.querySelector(`[data-lim-tables="${CSS.escape(code)}"]`).value);
@@ -488,6 +522,8 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('input', e => {
+  // Wipe all clubs (#636): only once this environment's name is typed.
+  if (e.target.id === 'w-confirm') { $('wipe').disabled = e.target.value.trim() !== env.key; return; }
   if (e.target.id !== 'p-filter') return;
   peopleFilter = e.target.value;
   // Redrawn from the last answer, keeping the cursor in the box.

@@ -35,40 +35,55 @@ const api = adminFetch(PORT, ADMIN.ident);
 // A club change (#401: /admin/club/<code>/set).
 const setClub = (code, change) => api(`/admin/club/${code}/set`, change);
 
-// `who` asks for an always-on club in room `code`: the reply.
-async function create(who, code, name) {
+// `who` asks for an always-on club in room `code`, with `grant` (its link's
+// token, #636): the reply.
+async function create(who, code, name, grant = '') {
   const c = open(`/room/${code}?role=guest&id=${who.id}&queue=1`, who);
   await c.ready;
-  c.send(await signMessage(who, {type: 'create_club', club: code, name}));
+  c.send(await signMessage(who, {type: 'create_club', club: code, name, ...(grant ? {grant} : {})}));
   for (;;) {
     const m = await c.next();
     if (m.type === 'club_created' || m.type === 'club_error') return {c, m};
   }
 }
+const grant = async (id, data = {}) => {
+  const r = await api('/admin/grant', {id, ...data});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return r.body.token;
+};
+const refused = async (who, code, token) => {
+  const r = await create(who, code, 'Nope', token);
+  assert.equal(r.m.type, 'club_error');
+  assert.match(r.m.reason, /isn’t for this player ID, or it was used or taken back/);
+  r.c.ws.close();
+};
 
-test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('grants and their one-time links, limits, pausing, and Wipe all clubs (#636)', {skip: !haveWasm && 'no wasm build'}, async () => {
   const ann = await createIdentity(), bob = await createIdentity();
 
-  // Ann's first club is her trial; her second is refused.
-  const {c: o, m: made} = await create(ann, 'TTTT-TTTT', 'Trial Night');
+  // No grant, no club: no trials any more.
+  await refused(ann, 'UUUU-UUUU', '');
+  const token = await grant(ann.id, {note: 'Thursdays'});
+  // Ann's link, forwarded to Bob, does nothing for him.
+  await refused(bob, 'UUUU-UUUU', token);
+  const {c: o, m: made} = await create(ann, 'TTTT-TTTT', 'Night Owls', token);
   assert.equal(made.type, 'club_created');
-  const second = await create(ann, 'UUUU-UUUU', 'Another');
-  assert.equal(second.m.type, 'club_error');
-  assert.match(second.m.reason, /free trial/);
-  second.c.ws.close();
+  // Used: not again.
+  await refused(ann, 'UUUU-UUUU', token);
 
   let list = (await api('/admin/clubs')).body;
-  const trial = list.clubs.find(c => c.code === 'TTTT-TTTT');
-  assert.equal(trial.plan, 'trial');
-  assert.equal(trial.owner, ann.id);
-  assert.equal(trial.name, 'Trial Night');
-  assert.ok(trial.expires > Date.now());
-  assert.deepEqual(list.trials, {[ann.id]: 'TTTT-TTTT'});
+  const rec = list.clubs.find(c => c.code === 'TTTT-TTTT');
+  assert.equal(rec.plan, 'club');
+  assert.equal(rec.owner, ann.id);
+  assert.equal(rec.name, 'Night Owls');
+  assert.deepEqual(list.grants, {});
+  assert.deepEqual(list.invites[ann.id], {at: list.invites[ann.id].at, note: 'Thursdays', limits: null, usedAt: list.invites[ann.id].usedAt, code: 'TTTT-TTTT', used: true});
+  assert.equal(JSON.stringify(list).includes(token), false);
 
   // The owner sees the plan, and the limit on tables.
   o.send(await signMessage(ann, {club: 'TTTT-TTTT', type: 'owner_hello'}));
   const view = await o.next('owner_view');
-  assert.equal(view.body.plan.plan, 'trial');
+  assert.equal(view.body.plan.plan, 'club');
   assert.deepEqual(view.body.plan.limits, {tables: 2, tourneysPerDay: 1});
   for (let i = 1; i <= 3; i++) {
     o.send(await signMessage(ann, {club: 'TTTT-TTTT', type: 'owner_cmd', op: 'new_table', args: {table: {name: `T${i}`}}, id: i}));
@@ -85,11 +100,11 @@ test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm
   // A look inside: its tables and members.
   const look = (await api('/admin/club/TTTT-TTTT')).body;
   assert.equal(look.blocked, '');
-  assert.equal(look.inside.club.name, 'Trial Night');
+  assert.equal(look.inside.club.name, 'Night Owls');
   assert.equal(look.inside.club.tables.length, 3);
   assert.equal(look.inside.online, 1);
   // …and the club in full (#401).
-  assert.equal(look.full.name, 'Trial Night');
+  assert.equal(look.full.name, 'Night Owls');
   assert.equal(look.full.ownerId, ann.id);
   assert.equal(look.full.tables.filter(t => t.status !== 'closed').length, 3);
 
@@ -123,7 +138,6 @@ test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm
   assert.equal(pb.clubs[0].status, 'member');
   assert.ok(pb.lastSeen > 0);
   assert.equal(pa.clubs[0].role, 'owner');
-  assert.equal(pa.trial, 'TTTT-TTTT');
   // And one person's activity in every club.
   const person = (await api('/admin/person', {id: bob.id})).body;
   assert.equal(person.clubs.length, 1);
@@ -143,30 +157,48 @@ test('trial clubs, permission, limits and pausing', {skip: !haveWasm && 'no wasm
   await setClub('TTTT-TTTT', {suspended: false});
   const back = open(`/room/TTTT-TTTT?role=guest&id=${bob.id}&queue=1`, bob);
   await back.ready;
-  back.ws.close();
 
-  // Permission: granted, Ann may have a (non-trial) club with the grant's limits.
-  assert.equal((await api('/admin/grant', {id: ann.id, note: 'test', limits: {tables: 6, tourneysPerDay: 2}})).status, 200);
-  const third = await create(ann, 'VVVV-VVVV', 'Granted');
-  assert.equal(third.m.type, 'club_created');
+  // A second grant: a second club, with the grant's limits.
+  const second = await create(ann, 'VVVV-VVVV', 'Granted', await grant(ann.id, {note: 'test', limits: {tables: 6, tourneysPerDay: 2}}));
+  assert.equal(second.m.type, 'club_created');
   list = (await api('/admin/clubs')).body;
-  const granted = list.clubs.find(c => c.code === 'VVVV-VVVV');
-  assert.equal(granted.plan, 'club');
-  assert.deepEqual(granted.limits, {tables: 6, tourneysPerDay: 2});
-  assert.equal(list.grants[ann.id].note, 'test');
-  assert.equal((await api('/admin/revoke', {id: ann.id})).status, 200);
-  assert.equal((await api('/admin/clubs')).body.grants[ann.id], undefined);
-  assert.equal((await setClub('TTTT-TTTT', {plan: 'club'})).status, 200);
-  for (const s of [o, third.c]) s.ws.close();
+  assert.deepEqual(list.clubs.find(c => c.code === 'VVVV-VVVV').limits, {tables: 6, tourneysPerDay: 2});
+  // Revoking an unused grant kills its link; granting again replaces it.
+  const bobs = await grant(bob.id);
+  const bobs2 = await grant(bob.id);
+  await refused(bob, 'WWWW-WWWW', bobs);
+  assert.equal((await api('/admin/revoke', {id: bob.id})).status, 200);
+  await refused(bob, 'WWWW-WWWW', bobs2);
+  assert.equal((await api('/admin/clubs')).body.invites[bob.id], undefined);
+  for (const s of [o, second.c]) s.ws.close();
 
-  // The admin log: every action, with who did it.
+  // Wipe all clubs: refused without this relay's name, typed exactly.
+  const unused = await grant(bob.id);
+  for (const confirm of [undefined, 'live', 'Local']) assert.equal((await api('/admin/wipe', {confirm})).status, 400);
+  assert.equal((await api('/admin/clubs')).body.clubs.length, 2);
+  const wiped = await api('/admin/wipe', {confirm: 'local'});
+  assert.deepEqual([wiped.status, wiped.body], [200, {clubs: 2}]);
+  // Its members are let go, and the clubs, grants and links are gone.
+  assert.equal((await back.closed).code, 4004);
+  list = (await api('/admin/clubs')).body;
+  assert.deepEqual([list.clubs, list.grants, list.invites], [[], {}, {}]);
+  assert.deepEqual((await fetch(`http://localhost:${PORT}/code/TTTT-TTTT`).then(r => r.json())), {kind: 'none'});
+  assert.deepEqual((await api('/admin/fair-play')).body.clubs, []);
+  await refused(bob, 'WWWW-WWWW', unused);
+  // A room wiped is empty: a new grant makes a new club in it.
+  const fresh = await create(ann, 'TTTT-TTTT', 'Again', await grant(ann.id));
+  assert.equal(fresh.m.type, 'club_created');
+  fresh.c.ws.close();
+
+  // The admin log: every action, with who did it; the wipe before anything went.
   const log = (await api('/admin/log')).body.log;
-  assert.deepEqual(log.map(e => e.action), ['limits', 'reveal', 'pause', 'resume', 'grant', 'revoke', 'plan']);
+  assert.deepEqual(log.map(e => e.action), ['grant', 'limits', 'reveal', 'pause', 'resume', 'grant', 'grant', 'grant', 'revoke', 'grant', 'wipe', 'grant']);
   assert.ok(log.every(e => e.by === ADMIN.ident.id && e.name === 'Tess' && e.at > 0));
+  assert.equal(JSON.stringify(log).includes(token), false);
   const shown = log.find(e => e.action === 'reveal');
   assert.equal(shown.target, 'TTTT-TTTT');
-  assert.equal(shown.by, ADMIN.ident.id);
   assert.equal(log.find(e => e.action === 'grant').target, ann.id);
+  assert.deepEqual(log.filter(e => e.action === 'wipe').map(e => [e.target, e.detail]), [['local', '2 clubs']]);
 });
 
 test('only signed requests from a listed key get in', async () => {
@@ -189,7 +221,7 @@ test('only signed requests from a listed key get in', async () => {
 
   // A bad signature: the admin's request with its data changed.
   const env = await signAdmin(ADMIN.ident, '/admin/grant', {id: eve.id});
-  const forged = {...env, body: {...env.body, data: {id: eve.id, maxClubs: 9}}};
+  const forged = {...env, body: {...env.body, data: {id: eve.id, note: 'forged'}}};
   assert.equal((await postAdmin(PORT, '/admin/grant', forged)).status, 401);
   // Someone else's key in the admin's name.
   const claimed = await signAdmin(eve, '/admin/clubs');
@@ -218,7 +250,7 @@ test('usage: players, clubs, now; the admins not counted', {skip: !haveWasm && '
   assert.equal((await host.closed).code, 4000);
   // Carl's club, and the admin in it.
   const carl = await createIdentity();
-  const {c: cc, m} = await create(carl, 'WWWW-WWWW', 'Carl’s');
+  const {c: cc, m} = await create(carl, 'WWWW-WWWW', 'Carl’s', await grant(carl.id));
   assert.equal(m.type, 'club_created');
   cc.send(await signMessage(carl, {club: 'WWWW-WWWW', type: 'owner_hello'}));
   await cc.next('owner_view');

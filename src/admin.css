@@ -94,6 +94,11 @@ tr.flagged td { background: var(--flag-bg); }
 /* One line per row: wide tables scroll sideways rather than wrap. */
 table[data-table] td { white-space: nowrap; }
 td.n span[title] { text-decoration: underline dotted; text-underline-offset: 3px; }
+/* A grant's one-time link (#636), and Wipe all clubs. */
+#g-link { flex: 1 1 260px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.wipe { border-color: var(--red); }
 @media (max-width: 520px) {
   main { padding: 16px; }
   section { padding: 10px; }

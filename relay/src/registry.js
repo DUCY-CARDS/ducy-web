@@ -3,15 +3,24 @@
 // memory in dev-server.mjs). The rules are ducy-play's club_registry
 // (clubRegistry, #463); this keeps them in storage.
 //
-// Creating a club takes the super admin's permission (a grant), except for
-// each player's one trial club: free for TRIAL_DAYS, with the free limits.
-// The admin API (admin.js, for the keys in admins.json) grants and revokes
-// permission, suspends clubs and changes their plan and limits.
+// Creating a club takes the super admin's grant (#636), and nothing else: no
+// trial clubs, and CLUB_CREATORS isn't read any more. A grant is for one
+// player ID and one club. The admin API (admin.js, for the keys in
+// admins.json) makes it and gets back a one-time link with a secret token
+// (only its hash is kept here). The player opens the link and signs a
+// create_club carrying the token; claim() takes it only from that player,
+// only once. Granting again gives a new link (the old one stops working);
+// revoking an unused grant kills its link. wipe() deletes every club and
+// grant (the admin site's Wipe all clubs).
 //
 // storage: {get(key), put(key, value), delete(key)}, async.
 //   clubs         {code: Record}
-//   grants        {playerId: {at, note, maxClubs, limits}}: who may create clubs
-//   trials        {playerId: code}: each player's trial club, used once
+//   grants        {playerId: {at, note, maxClubs, limits}}: unused grants, as
+//                 ducy-play's rules read them
+//   invites       {playerId: {hash, at, note, limits, usedAt, code}}: each
+//                 grant's link: its token's SHA-256 (null once used), and
+//                 the club it made
+//   trials        {playerId: code}: trial clubs from before #636
 //   day:<date>    {minutes: club-minutes of play that day (UTC)}
 //   adminSeq      {adminId: {seq: at}}: admin requests seen lately (#401)
 //   adminLog      [{at, by, name, action, target, detail}]: admin actions (#401)
@@ -24,12 +33,10 @@
 //
 // Temporary clubs (#395): a new club is temporary until its owner proves a
 // backup of it works (provedAt, signed by the owner through the club's
-// room). One with no activity for TEMP_DAYS is deleted (expired()). Clubs
-// made before this have no `temporary` and are kept, as they always were.
+// room). One with no activity for TEMP_DAYS is deleted (expired()).
 //
-// limits: {perOwner, total, creators}: at most perOwner clubs for each owner
-// and total in all; creators: player IDs granted from the environment
-// (CLUB_CREATORS), as well as the stored grants.
+// limits: {perOwner, total}: at most perOwner clubs for each owner and total
+// in all.
 
 import { clubRegistry } from '../../wasm/ducy_wasm.js';
 import { addReport, cleanReport, reportLimiter } from './error-log.js';
@@ -51,15 +58,26 @@ export const ADMIN_LOG = 1000;
 // When temporary club `rec` will be deleted if no one uses it, or null.
 export const removesAt = rec => (rec?.temporary ? (rec.lastActive || rec.at || 0) + TEMP_DAYS * 864e5 : null);
 
+// Only a grant makes a club (#636): no creators from the environment, no trials.
 export function limitsFrom(env = {}) {
   const n = (v, d) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : d);
-  return {
-    perOwner: n(env.MAX_CLUBS_PER_OWNER, 3),
-    total: n(env.MAX_CLUBS, 25),
-    creators: String(env.CLUB_CREATORS || '').split(',').map(s => s.trim()).filter(Boolean),
-    noTrials: env.TRIALS === 'off',
-  };
+  return {perOwner: n(env.MAX_CLUBS_PER_OWNER, 3), total: n(env.MAX_CLUBS, 25), creators: [], noTrials: true};
 }
+
+// A grant's link token (#636): 32 random bytes, base64url.
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+export function newGrantToken() {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// Its SHA-256, hex; '' for anything that isn't a token.
+export async function grantHash(token) {
+  if (typeof token !== 'string' || !TOKEN.test(token)) return '';
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(d), x => x.toString(16).padStart(2, '0')).join('');
+}
+// The one answer for every link that won't do, so a link tells no one anything.
+export const NOT_YOUR_LINK = 'This link isn’t for this player ID, or it was used or taken back.';
 
 // Runs registry op `op` on `parts` ({clubs, grants, trials}): {value,
 // registry} (the parts after it, when it changed them). Throws why not.
@@ -103,6 +121,18 @@ export function registry(storage, limits) {
 
   const takeReport = reportLimiter();
 
+  // Grants are checked and used up one at a time: nothing else that touches
+  // them runs between the check and the use.
+  let chain = Promise.resolve();
+  const serial = fn => {
+    const out = chain.then(fn);
+    chain = out.catch(() => {});
+    return out;
+  };
+  const invites = async () => (await storage.get('invites')) || {};
+  // An invite as the admin site sees it: never its hash.
+  const shown = ({hash: _h, ...rest}) => ({...rest, used: !!rest.usedAt});
+
   // Usage was seated time until #421, which one seat held for two weeks
   // made nonsense: it starts again from then, once (usageV2).
   let usageFresh = null;
@@ -117,11 +147,24 @@ export function registry(storage, limits) {
   })().catch(e => { usageFresh = null; throw e; }));
 
   return {
-    // `owner` may have a club in room `code`, called `name`: with permission,
-    // a club; without, their one trial club. Throws why not. Resolves to the
-    // record. `temporary` (#395): false for a club that already existed,
-    // moving here from a browser.
-    claim: (owner, code, now = Date.now(), name = '', {temporary = true} = {}) => op({op: 'claim', owner, code, name, temporary: !!temporary}, now),
+    // `owner` may have a club in room `code`, called `name`, with `grant`,
+    // the token from their link (#636): it must be their unused grant's.
+    // Throws why not; else the grant is used up, and this resolves to the
+    // club's record. A new club is temporary (#395).
+    async claim(owner, code, now = Date.now(), name = '', {grant = ''} = {}) {
+      // Hashed first: once in serial(), only storage is awaited.
+      const hash = await grantHash(grant);
+      return serial(async () => {
+        const all = await invites();
+        const inv = Object.hasOwn(all, owner) ? all[owner] : null;
+        if (!hash || !inv || inv.usedAt || inv.hash !== hash) throw new Error(NOT_YOUR_LINK);
+        const rec = await op({op: 'claim', owner, code, name, temporary: true}, now);
+        await op({op: 'revoke', id: owner});
+        all[owner] = {...inv, hash: null, usedAt: now, code};
+        await storage.put('invites', all);
+        return rec;
+      });
+    },
     // The owner proved a backup of club `code` works (#395): it isn't
     // temporary any more. `owner` is who signed the request (the room
     // checked); it must be the club's owner.
@@ -194,15 +237,25 @@ export function registry(storage, limits) {
       return (await storage.get('adminLog')) || [];
     },
 
-    // Every club with its record, who has permission, and who used a trial.
+    // Every club with its record, the unused grants, every grant's link
+    // (`invites`: used or not, never its token), and who had a trial.
     async list(now = Date.now()) {
       await freshUsage();
-      return op({op: 'list'}, now);
+      const out = await op({op: 'list'}, now);
+      out.invites = Object.fromEntries(Object.entries(await invites()).map(([id, v]) => [id, shown(v)]));
+      return out;
     },
-    // Lets `id` create clubs: up to `maxClubs` (default perOwner), each with
-    // `limits` (default the free ones).
-    grant: (id, {note = '', maxClubs = 0, limits: l = null} = {}, now = Date.now()) =>
-      op({op: 'grant', id: String(id), note: String(note), maxClubs: Number.isSafeInteger(maxClubs) && maxClubs > 0 ? maxClubs : 0, limits: l}, now),
+    // Lets `id` create one club (#636), with `limits` (default the free
+    // ones): {...grant, token}, the token for their link, shown this once.
+    // A grant already there, used or not, is replaced: its link stops working.
+    grant: (id, {note = '', limits: l = null} = {}, now = Date.now()) => serial(async () => {
+      const g = await op({op: 'grant', id: String(id), note: String(note), maxClubs: 0, limits: l}, now);
+      const token = newGrantToken();
+      const all = await invites();
+      all[String(id)] = {hash: await grantHash(token), at: now, note: g.note, limits: g.limits || null, usedAt: null, code: null};
+      await storage.put('invites', all);
+      return {...g, token};
+    }),
     // The relay vouched that `to` is the owner of club `code`, `from`, on a
     // new device (#575): the club's record, and any permission, follow.
     async moveOwner(code, from, to) {
@@ -213,8 +266,20 @@ export function registry(storage, limits) {
       const grants = (await storage.get('grants')) || {};
       if (grants[from] && !grants[to]) { grants[to] = grants[from]; await storage.put('grants', grants); }
     },
-    // Takes permission away; their clubs carry on until suspended.
-    revoke: id => op({op: 'revoke', id: String(id)}),
+    // Takes a grant away, and its link with it; a club it made carries on
+    // until suspended.
+    revoke: id => serial(async () => {
+      await op({op: 'revoke', id: String(id)});
+      const all = await invites();
+      if (Object.hasOwn(all, String(id))) { delete all[String(id)]; await storage.put('invites', all); }
+    }),
+    // Every club's code (#636): what Wipe all clubs deletes, room by room.
+    clubCodes: async () => Object.keys((await storage.get('clubs')) || {}),
+    // Wipe all clubs (#636), once each room's data is gone: every club's
+    // record, every grant and link, and the trials.
+    wipe: () => serial(async () => {
+      for (const k of ['clubs', 'grants', 'invites', 'trials']) await storage.delete(k);
+    }),
     // Changes a club: {suspended, limits, plan ('trial' | 'club'), expires
     // (ms, for a trial)}.
     setClub: (code, change = {}, now = Date.now()) => op({op: 'setClub', code, change}, now),

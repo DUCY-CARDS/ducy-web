@@ -5,14 +5,15 @@
 //
 // Queue mode (guest connects with queue=1, used by clubs): the guest may
 // connect before the room is a club ({type: 'host_away'}). Its messages
-// meanwhile are stored (a few per guest, for up to 7 days) and go to the club
-// once one moves here (import_club).
+// meanwhile are stored (a few per guest, for up to 7 days); moving a club
+// here (import_club) is gone (#636), so nothing takes them.
 //
 // Heartbeat: {type: "ping", t} from anyone is answered with {type: "pong", t}.
 //
 // Always-on clubs (#93, club-room.js): a guest alone in an empty room may
-// send a signed {type: 'create_club', club: code, name}; the room then is
-// that club's host, for good. It answers {type: 'club_created', hostId,
+// send a signed {type: 'create_club', club: code, name, grant}, `grant` the
+// token from their one-time link (#636, registry.js); the room then is that
+// club's host, for good. It answers {type: 'club_created', hostId,
 // invite} (or {type: 'club_error', reason}), and runs the club itself with
 // members connecting as guests.
 //
@@ -43,7 +44,7 @@
 // allowed, over a limit, or the club is paused), 404 (no such club or
 // member), 409 (refused, e.g. not enough chips) or 429 (too fast).
 
-import { adminView, codeInfo, createClub, importClub, openClub } from './club-room.js';
+import { adminView, codeInfo, createClub, openClub } from './club-room.js';
 import { adminApi, adminsFrom } from './admin.js';
 import adminList from '../../admins.json';
 import { limitsFrom, registry, removesAt } from './registry.js';
@@ -74,8 +75,6 @@ const CODE = /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/;
 const ID = /^[\w-]{1,64}$/;
 const MAX_GUESTS = 16;
 const MAX_MESSAGE = 64 * 1024;
-// A whole club moving here (#98), with its ledger.
-const MAX_IMPORT = 1024 * 1024;
 // Each connection may send RATE messages a second, in bursts of up to BURST;
 // one that sends faster is closed (4008), so a single client can't use up
 // the account's quota for everyone (#103).
@@ -126,6 +125,9 @@ const ADMINS = adminsFrom(adminList);
 // Their player IDs, left out of the usage counts (#601).
 const ADMIN_IDS = new Set(ADMINS.keys());
 const originsOf = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+// The relay's environment as the admin site names it (#636): 'live' for
+// production (no ENVIRONMENT), else 'staging' or 'sandbox'.
+const environmentOf = env => (!env.ENVIRONMENT || env.ENVIRONMENT === 'production' ? 'live' : String(env.ENVIRONMENT));
 
 // What's live now (#601): each club's players and running tables (its
 // room's /admin/now).
@@ -172,6 +174,15 @@ async function admin(req, env, url, cors) {
     list: () => reg('/list'),
     grant: (id, body) => reg('/grant', {...body, id}),
     revoke: id => reg('/revoke', {id}),
+    // Wipe all clubs (#636): each room's data, then the registry's records,
+    // grants and fair play rows.
+    environment: environmentOf(env),
+    clubCodes: () => reg('/club-codes').then(r => r.codes),
+    wipe: async codes => {
+      for (const code of codes) await roomOf(env, code).fetch(`https://room/admin/wipe/${encodeURIComponent(code)}`);
+      await reg('/wipe', {codes});
+      return {clubs: codes.length};
+    },
     setClub: (code, change) => reg('/set-club', {code, change}),
     status: code => reg('/status', {code}),
     room,
@@ -339,7 +350,7 @@ export class Registry {
     if (path === '/passkey-owner') { await this.reg.moveOwner(String(body.code), String(body.from), String(body.to)); return Response.json({ok: true}); }
     if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
-      if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {temporary: body.temporary !== false}));
+      if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {grant: String(body.grant || '')}));
       else if (path === '/proved') return Response.json(await this.reg.proved(String(body.code), String(body.owner)));
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
@@ -354,6 +365,12 @@ export class Registry {
       else if (path === '/list') return Response.json(await this.reg.list());
       else if (path === '/grant') return Response.json(await this.reg.grant(String(body.id), body));
       else if (path === '/revoke') await this.reg.revoke(String(body.id));
+      // Wipe all clubs (#636): the codes first, then (each room emptied) the rest.
+      else if (path === '/club-codes') return Response.json({codes: await this.reg.clubCodes()});
+      else if (path === '/wipe') {
+        await this.reg.wipe();
+        await this.fp.wipe(Array.isArray(body.codes) ? body.codes.map(String) : []);
+      }
       else if (path === '/set-club') return Response.json(await this.reg.setClub(String(body.code), body.change || {}));
       else if (path === '/admin-seen') await this.reg.adminSeen(String(body.id), Number(body.seq));
       else if (path === '/admin-log') await this.reg.adminLog(body.entry || {});
@@ -619,7 +636,9 @@ export class Room {
     try {
       if (!code || others || (await this.queued()).length) throw new Error('That club code is in use.');
       if (env?.from !== id) throw new Error('The request must come from you.');
-      const made = await createClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name}));
+      // The grant's token (#636), in the signed request: the registry takes
+      // it from this player only, once.
+      const made = await createClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name, grant: String(env.body?.grant || '')}));
       ws.send(JSON.stringify({type: 'club_created', ...made}));
       await this.club();
     } catch (e) {
@@ -627,28 +646,8 @@ export class Room {
     }
   }
 
-  // A club moves here (#98). Members may be connected (waiting for it); what
-  // they left meanwhile goes to the club straight after.
-  async importHere(ws, id, env) {
-    const code = this.state.getTags(ws).find(t => t.startsWith('c:'))?.slice(2);
-    try {
-      if (!code) throw new Error('Not a club room.');
-      if (env?.from !== id) throw new Error('The request must come from you.');
-      // A club that already existed isn't temporary (#395).
-      const made = await importClub(this.storage(), env, code, (owner, c, name) => this.registry('/claim', {owner, code: c, name, temporary: false}));
-      ws.send(JSON.stringify({type: 'club_imported', ...made}));
-      const club = await this.club();
-      for (const q of await this.queued()) {
-        await club.message({from: q.from, data: q.data});
-        await this.state.storage.delete('q:' + String(q.n).padStart(12, '0'));
-      }
-    } catch (e) {
-      ws.send(JSON.stringify({type: 'club_error', reason: e.message}));
-    }
-  }
-
   async fetch(req) {
-    // Making, importing or reading a club runs its rules (ducy-play's).
+    // Making or reading a club runs its rules (ducy-play's).
     loadEngine();
     const url = new URL(req.url);
     const code = decodeURIComponent(url.pathname.split('/').pop() || '');
@@ -664,7 +663,19 @@ export class Room {
     }
     // From the Worker's admin API only: the outside world reaches rooms by
     // /room/<code> WebSockets alone.
-    const adm = url.pathname.match(/^\/admin\/(refresh|info|expire|now)\//);
+    // Wipe all clubs (#636): everyone is let go, its backups dropped, and
+    // the room's storage deleted.
+    if (url.pathname.startsWith('/admin/wipe/')) {
+      for (const ws of this.state.getWebSockets()) { try { ws.close(4004, 'the club was closed'); } catch {} }
+      this.clubP = null;
+      this.timerMap?.clear();
+      const cfg = backupConfig(this.env);
+      if (cfg && code) await dropBackups(cfg, code).catch(e => console.warn(e));
+      await this.state.storage.deleteAlarm();
+      await this.state.storage.deleteAll();
+      return Response.json({ok: true});
+    }
+    const adm =url.pathname.match(/^\/admin\/(refresh|info|expire|now)\//);
     if (adm) return this.adminRequest(adm[1], code);
     // The club as the admin page shows it, from storage (#401).
     const view = url.pathname.match(/^\/admin\/(full|people|person)\//);
@@ -812,9 +823,7 @@ export class Room {
 
   async webSocketMessage(ws, msg) {
     if (!allow(ws, RATE, BURST)) { ws.close(4008, 'too many messages'); return; }
-    if (typeof msg !== 'string' || msg.length > MAX_IMPORT) return;
-    // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
-    if (msg.length > MAX_MESSAGE && !msg.includes('"import_club"')) return;
+    if (typeof msg !== 'string' || msg.length > MAX_MESSAGE) return;
     // A heartbeat: answered here, never passed on or queued.
     const pong = pingReply(msg);
     if (pong) { ws.send(pong); return; }
@@ -834,7 +843,7 @@ export class Room {
         if (unlockedNow(ws.deserializeAttachment()?.unlock)) await club.message({from: id, data: m});
         return;
       }
-      if (club || msg.includes('"create_club"') || msg.includes('"import_club"') || msg.startsWith('{"type":"unlock"')) {
+      if (club || msg.includes('"create_club"') || msg.startsWith('{"type":"unlock"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }
         // Only a connection unlocked with the player's passkey acts (#575).
@@ -857,7 +866,6 @@ export class Room {
         // With the passkey it was unlocked with (#589: refills).
         if (club) await club.message({from: id, data: m, device: g.u?.device || ''});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
-        else if (m?.body?.type === 'import_club') await this.importHere(ws, id, m);
         return;
       }
       if (this.state.getTags(ws).includes('queue') && !(await this.enqueue(id, msg))) {

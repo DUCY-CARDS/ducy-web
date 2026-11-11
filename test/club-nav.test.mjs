@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { managerPage, NAV, navOf, pageHash, PAGES, pageTitle } from '../src/club-nav.js';
+import { grantToken, managerPage, NAV, navOf, pageHash, PAGES, pageTitle } from '../src/club-nav.js';
 
 test('the sidebar groups the pages by task', () => {
   assert.deepEqual(NAV.map(g => g.group), ['', 'Games', 'Members', 'Settings']);
@@ -66,4 +66,13 @@ test('Members’ filters are in its address too, an agent’s players by the age
 
 test('addresses that aren’t the club you run name no page', () => {
   for (const h of ['', '#clubs', '#clubs/c/ABCD-EFGH', '#play', '#clubs/nope', '#clubs/member/', '#clubs/constructor', '#clubs/__proto__']) assert.equal(managerPage(h), null, h);
+});
+
+test('a grant link’s address gives its token, and nothing else does (#636)', () => {
+  const t = 'A'.repeat(21) + '-_' + 'z9'.repeat(10);
+  assert.equal(t.length, 43);
+  assert.equal(grantToken(`#clubs/start/${t}`), t);
+  assert.equal(grantToken(`clubs/start/${t}?x=1`), t);
+  assert.equal(managerPage(`#clubs/start/${t}`), null);
+  for (const h of ['', '#clubs/new', '#clubs/start/', `#clubs/start/${t}x`, `#clubs/start/${t.slice(1)}`, `#clubs/start/${t.slice(1)}!`, `#play/start/${t}`, null]) assert.equal(grantToken(h), '', String(h));
 });

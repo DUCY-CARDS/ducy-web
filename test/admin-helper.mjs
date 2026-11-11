@@ -23,3 +23,11 @@ export const postAdmin = (port, path, env) => fetch(`http://localhost:${port}${p
 
 // (path, data) → {status, body}, signed by `ident`.
 export const adminFetch = (port, ident) => async (path, data = {}) => postAdmin(port, path, await signAdmin(ident, path, data));
+
+// id → the token of a new grant for player `id` (#636), from admin `ident`
+// on the relay on `port`: what a create_club carries as `grant`.
+export const granter = (port, ident) => async id => {
+  const r = await adminFetch(port, ident)('/admin/grant', {id});
+  if (r.status !== 200) throw new Error(`grant: ${r.status} ${JSON.stringify(r.body)}`);
+  return r.body.token;
+};

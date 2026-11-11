@@ -13,7 +13,7 @@ import WebSocket from '../relay/node_modules/ws/index.js';
 import { relayClient } from './relay-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { TEMP_DAYS } from '../relay/src/registry.js';
-import { adminFetch, testAdmin } from './admin-helper.mjs';
+import { adminFetch, granter, testAdmin } from './admin-helper.mjs';
 
 const haveWasm = existsSync(new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url));
 
@@ -29,16 +29,16 @@ async function relay(t, env = {}) {
   const open = (path, ident = null) => r.open(path, ident);
   const api = adminFetch(port, adm.ident);
   const clubs = () => api('/admin/clubs').then(r => r.body.clubs);
-  return {open, clubs};
+  return {open, clubs, grantFor: granter(port, adm.ident)};
 }
 
 test('a new club is temporary until its owner proves a backup; members see it', {skip: !haveWasm && 'no wasm build', timeout: 20_000}, async t => {
-  const {open, clubs} = await relay(t);
+  const {open, clubs, grantFor} = await relay(t);
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'TTTT-AAAA';
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Night Owls'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Night Owls', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
 
   let rec = (await clubs()).find(c => c.code === code);
@@ -78,12 +78,12 @@ test('a new club is temporary until its owner proves a backup; members see it', 
 
 test('a temporary club left unused is deleted', {skip: !haveWasm && 'no wasm build', timeout: 20_000}, async t => {
   // As if 8 days had passed whenever it looks.
-  const {open, clubs} = await relay(t, {RELAY_CLEANUP_MS: '200', RELAY_CLEANUP_AHEAD_MS: String(8 * 864e5)});
+  const {open, clubs, grantFor} = await relay(t, {RELAY_CLEANUP_MS: '200', RELAY_CLEANUP_AHEAD_MS: String(8 * 864e5)});
   const owner = await createIdentity();
   const code = 'TTTT-BBBB';
   const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
-  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Gone Soon'}));
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Gone Soon', grant: await grantFor(owner.id)}));
   // Deleting the club lets its connections go.
   assert.equal(await o.closed, 4004);
   assert.equal((await clubs()).find(c => c.code === code), undefined);

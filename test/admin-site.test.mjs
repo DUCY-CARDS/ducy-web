@@ -34,7 +34,7 @@ test('the build: one page pointed at its release, its own policy, no meta policy
   assert.match(readFileSync(join(out, '.htaccess'), 'utf8'), /Header set Content-Security-Policy/);
   assert.equal(JSON.parse(readFileSync(join(out, 'version.json'), 'utf8')).environment, 'admin');
   assert.ok(existsSync(join(out, 'v/test-1/wasm/ducy_wasm_bg.wasm')));
-  assert.deepEqual(readdirSync(join(out, 'v/test-1/src')).sort(), ['admin-charts.js', 'admin-fair-play.js', 'admin.css', 'admin.js', 'browser-check.js', 'chip-format.js', 'club-fair-play.js', 'identity.js', 'time-ago.js']);
+  assert.deepEqual(readdirSync(join(out, 'v/test-1/src')).sort(), ['admin-charts.js', 'admin-fair-play.js', 'admin.css', 'admin.js', 'browser-check.js', 'chip-format.js', 'club-fair-play.js', 'identity.js', 'sites.js', 'time-ago.js']);
 });
 
 // A host folder as rsync sees it: public_html, maybe with admin/ in it.

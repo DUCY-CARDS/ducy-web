@@ -2076,7 +2076,8 @@ a.v3-tile:hover, a.v3-tile:focus-visible { transform: translateY(-3px); }
 @media (max-width: 640px) { .ps-sections { grid-template-columns: minmax(0, 1fr); } .ps-me { width: 72px; height: 72px; } }
 
 /* The club manager's list (clubs.js, V3 #225): a card per club, then the
-   demo card (and, at #clubs/new, Start a club). */
+   demo card when the beta has it, and Start a club from a grant's link
+   (#clubs/start/<token>, #636). */
 .cl-clubs { display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
 .cl-club { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 22px; border-radius: 18px; background: #24472f; color: #f3e7c9; text-decoration: none; box-shadow: 0 6px 0 #0f2219; }
 .cl-club:hover { color: #fff; filter: brightness(1.06); }

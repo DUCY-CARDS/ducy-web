@@ -20,9 +20,9 @@ A major release is any of these:
 | Part | Pages | Who uses it |
 |---|---|---|
 | **Main** | `/`: the front page (the code box, your clubs, Play the Regulars), joining a club, a club member's pages, the Regulars' tables, `privacy.html` | Everyone |
-| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: rake at cash tables, promotions, club services | No one in the beta; reachable by address only |
-| **Club manager** | club.ducy.cards (#637; staging: club-staging.ducy.cards), its own site; `manage.html` on a local page: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; demo clubs | Club owners |
-| **Admin** | admin.ducy.cards: usage, versions, relays, grants, club info, error reports | ducy's admins |
+| **Beta extras** | `/#welcome` and what it links to: Study (`#study`, `#equity`, `#trainer`, `#charts`), heads-up training (`#challenge`, Ducybot at `#codedoug` and `#gto-plo4/5/6`), `#ladder`, Bankroll Quest (`#quest`). The club features listed off in `src/club-beta.js`: rake at cash tables, promotions, club services, Try a demo club (#636) | No one in the beta; reachable by address only |
+| **Club manager** | club.ducy.cards (#637; staging: club-staging.ducy.cards), its own site; `manage.html` on a local page: Overview, Tables, Tournaments (with rake), Requests, Members, a member's page (with credit), Balances, Chips, Club info, Rules, Backup and devices, History; starting a club from a grant link (#636) | Club owners |
+| **Admin** | admin.ducy.cards: usage, versions, relays, grants and their one-time links, club info, error reports, Wipe all clubs | ducy's admins |
 
 `sim.html` isn't published (`scripts/build-site.sh` doesn't ship it).
 
@@ -38,7 +38,7 @@ A major release is any of these:
 
 **How to run:**
 - **Unit tests:** run the command in `.github/workflows/ci.yml`, step "Unit tests". It needs `wasm/` from a fresh build (`wasm-pack`, as in CI) and `npm ci --prefix relay`. A stale `wasm/` fails on engine wording, as `club-agents.test.mjs` once did.
-- **Browser tests:** `npm ci --prefix e2e`, then `npx playwright test` in `e2e/`. `E2E_CHANNEL=chrome` uses an installed Chrome. They serve the repo and start the dev relay with `TRIALS=off`.
+- **Browser tests:** `npm ci --prefix e2e`, then `npx playwright test` in `e2e/`. `E2E_CHANNEL=chrome` uses an installed Chrome. They serve the repo and start the dev relay; tests that start clubs run a relay of their own with a test admin who grants each owner their club (`e2e/grant.mjs`, #636).
 - **Rust:** `scripts/rust-checks.sh`.
 
 **What the browser tests cover** (`e2e/play.spec.js`, `e2e/money.spec.js` and `e2e/club-site.spec.js`, in Chromium and WebKit, desktop and 375 px; the club tests that need a passkey run in Chromium only):
@@ -59,7 +59,9 @@ A major release is any of these:
 | The same as a Credit player: let in with a credit line, and can sit with it | Club manager |
 | The same through an agent's link: the agent replies, lets them in and gives chips | Club manager |
 | With Let everyone in on: in at once as Cash, New until the owner gives chips | Club manager |
-| A demo club opens, and its main pages draw | Club manager |
+| A demo club opens (`?on=demoClub`: Try a demo club is off in the beta, #636), and its main pages draw | Club manager |
+| The club manager offers no way to start a club and no demo club (`#clubs`, `#clubs/new`, a bad `#clubs/start/…`); a made-up grant link is refused and shows your player ID | Club manager |
+| A grant link (#636) on the club site, against a relay taking clubs from the club site only: forwarded to someone else it's refused and shows their ID; its own player makes the club with their passkey, and the link leaves the address; opened on ducy.cards it goes to the club site (Chromium, 1280 and 375 px) | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
@@ -99,7 +101,9 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 
 | Feature | Unit | Browser | Manual |
 |---|---|---|---|
-| Starting a club takes a grant | `registry.test`, `relay-temporary.test` | yes | C1 |
+| Starting a club takes a grant (#636): one club, one player ID, one use; only the token's hash kept; a forwarded, wrong or used link refused alike; granting again or revoking kills an unused link; no trials, CLUB_CREATORS ignored; a claim that fails leaves it unused; two at once make one club | `registry.test`, `relay-admin.test`, `sites.test`, `relay-temporary.test` | yes | C1 |
+| The grant check and the club-site check together: a create from ducy.cards is refused before the grant is looked at (it stays unused); from the club site without the grant, refused | `sites.test` | yes | C1, C10 |
+| Wipe all clubs (#636): only with the relay's environment name typed; logged before anything goes; every club's room, record, backups and fair play rows, every grant and link; members let go; the admin log kept | `relay-admin.test`, `admin-api.test`, `registry.test` | yes | A5 |
 | Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
 | Tables: new, offer a game, move, remove a player | `club-tables.test`, `move-table.test`, `remove-from-table.test`, `table-groups.test` | no | C3 |
 | Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
@@ -136,7 +140,7 @@ here and a browser test.
 | Feature | Unit | Manual |
 |---|---|---|
 | Signed admin requests; non-admins refused | `relay-admin.test`, `admin-api.test` | A1 |
-| Grants, club info, error reports | `admin-api.test`, `error-report.test` | A1, M8 |
+| Grants and their one-time links (the token answered once, never listed or logged), club info, error reports | `admin-api.test`, `error-report.test` | A1, M8 |
 | Usage counts per day, admins left out; what's live now | `stats.test`, `relay-admin.test` | A2 |
 | Cloudflare's numbers, only with the relay's token | `stats.test` | A3 |
 | The admin site: build, password kept on deploy, never uploaded open, live deploy leaves it alone; `admin.html` redirects; charts | `admin-site.test`, `csp.test` | A1, A4 |
@@ -215,8 +219,11 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 ## Manual: club manager
 
 **C1 Starting a club**
-1. Nothing in the player app or the club manager links to starting a club. Without a grant, the club site's `#clubs/new` (by address only) refuses to start a club and shows your ID.
-2. Grant that ID on admin.ducy.cards (Staging → Clubs). Starting the club now works, and its owner is asked to prove a backup.
+1. Nothing in the player app or the club manager links to starting a club, and there's no Try a demo club. `#clubs/new` on the club site shows the manager with no way to start one.
+2. On admin.ducy.cards (Staging → Clubs), grant a player ID: a link to club-staging.ducy.cards shows once, with Copy.
+3. Open the link in another player's browser: Start a club, then Create, is refused, with that player's ID shown.
+4. Open it as the granted player: make the passkey if asked, name the club, Create. The club is made and its owner is asked to prove a backup; the address no longer has the link. On the admin site the grant shows Used with the club's code.
+5. Open the link again: it does nothing. Grant someone else, then Revoke before they use it: their link is refused. New link on an unused grant: the old link is refused, the new one works.
 
 **C2 Pages**
 1. Visit every sidebar page at desktop and phone width. Each draws, with no empty page or dead menu item.
@@ -252,7 +259,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 1. Download the club's backup. Restore it into a fresh browser: the members, balances and tables come back.
 2. `node relay/hostrocket/check.mjs` passes. It needs the relay's backup secrets.
 
-**C7 Demo clubs**
+**C7 Demo clubs** (off in the beta, #636: open the club site with `?on=demoClub`)
 1. Start each demo. Its pages draw, Reset works, and End demo returns to a clean manager.
 
 **C8 Agents** (three browsers: owner, agent, a player)
@@ -288,7 +295,7 @@ On admin.ducy.cards, after the release (the admin site deploys with each release
 1. Opening admin.ducy.cards asks for the DirectAdmin password first.
 2. In a fresh browser, it shows "Not on the admin list". Restore your admin key's backup file there: the Overview loads.
 3. Switch Live, Staging and Sandbox: each loads, and Clubs, People, Admin log and Errors show that environment's.
-4. Grants, club info and error reports work as before.
+4. Grants (C1), club info and error reports work.
 5. Someone who isn't an admin is refused cleanly, and nothing in the player app links to the admin site. `ducy.cards/admin.html` goes to admin.ducy.cards.
 
 **A2 Usage**
@@ -301,6 +308,11 @@ On admin.ducy.cards, after the release (the admin site deploys with each release
 
 **A4 Versions**
 1. Versions lists each site's release and each relay's commit. A password-protected site shows "Sign in" until you sign in to it in this browser; after that, its release shows.
+
+**A5 Wipe all clubs** (#636; on Sandbox or Staging, never as a check on Live)
+1. Clubs → Wipe all clubs: Wipe stays off until the environment's name (`sandbox`, `staging`) is typed exactly.
+2. Wipe: every club and grant is gone from Clubs; a member who had a club page open is let go; the club's code is no club any more; Fair play is empty.
+3. The admin log shows "Wiped all clubs" for that environment with the number of clubs, by you.
 
 ## Manual: beta extras
 

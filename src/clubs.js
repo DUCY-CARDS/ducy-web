@@ -32,7 +32,7 @@ import {
 } from './club.js';
 import { ensureChips, ledgerCsv, MAX_NOTE, totals, VAULT_WAITS } from './club-chips.js';
 import {
-  buyInRange, cashOutEveryone, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
+  buyInRange, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
 import { feeds, isMain } from './club-groups.js';
 import { gameKey, listOf } from './club-lists.js';
@@ -63,8 +63,8 @@ import { structureEditor } from './tourney-structure-ui.js';
 import { fairPlayer } from './fair-check.js';
 import { demo, showDemoList } from './demo.js';
 import { clubUrl, playerUrl, siteOf } from './sites.js';
-import { OFF } from './club-beta.js';
-import { managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
+import { isOff, OFF } from './club-beta.js';
+import { grantToken as grantOf, managerPage, navOf, pageHash, pageOff, pageTitle, shownNav } from './club-nav.js';
 import { pickHtml, readPick, syncPicks } from './amount-picks.js';
 import { durationText, FILTERS, lastActive, memberFilter, overviewNumbers, pageOf, SORTS, sortMembers, tableSummaries, todaysTourneys } from './club-overview.js';
 import { clearableKeys, floatOf, managerNotices, raiseTo } from './club-notices.js';
@@ -313,6 +313,9 @@ const tourneyLive = () => (isRemote() ? own().view?.tourneys || {} : {});
 let pageEngine = null;
 const loadEngine = () => (pageEngine ||= import('../wasm/ducy_wasm.js').then(w => w.default({module_or_path: new URL('../wasm/ducy_wasm_bg.wasm', import.meta.url)})));
 
+// The grant link's token this page was opened with (#636), or ''.
+const grantToken = () => grantOf(location.hash);
+
 // A new club, always on (#93, #152): its room on the relay becomes the club.
 async function createClub(name) {
   const n = String(name || '').trim();
@@ -328,8 +331,11 @@ async function createClub(name) {
   alwaysFailed = null;
   render();
   try {
-    await owner.create(n.slice(0, MAX_CLUB_NAME));
+    // With the grant's token from the link (#636); a demo needs none.
+    await owner.create(n.slice(0, MAX_CLUB_NAME), grantToken());
     note = '';
+    // The link is used up: off the address.
+    if (grantToken()) history.replaceState(null, '', `${location.pathname}${location.search}#clubs`);
     setWizard('backup', {setup: true});
   } catch (e) {
     // The relay is down or full (limits, #123).
@@ -1286,29 +1292,6 @@ function closeClub(b) {
   render();
 }
 
-// Moves this browser's club to the server as an always-on club (#98): same
-// code, so members' links keep working, and they follow it there. A club
-// kept here doesn't run here (#580): anyone it last had at a table gets
-// those chips back first, as when a club restarts.
-async function moveToAlwaysOn(b) {
-  if (owner.record) { failAt(b, 'This browser already runs an always-on club; one per browser for now.'); return; }
-  if (!confirm(`Move ${club.name} to ducy’s server? It then stays open with this page closed, and you run it from here as its owner. Members don’t need to do anything.`)) return;
-  if (cashOutEveryone(club, Date.now(), new Set()).length) saveClub();
-  const data = JSON.parse(JSON.stringify(club)), senders = verifier.toJSON();
-  note = 'Moving your club to the server…';
-  render();
-  try {
-    await owner.moveHere(data, senders);
-    try { localStorage.removeItem(CLUB_KEY); localStorage.removeItem(SENDERS_KEY); } catch {}
-    club = owner.club;
-    verifier = null;
-    note = 'Your club now runs on the server: it stays open with this page closed.';
-  } catch (e) {
-    note = `The club didn’t move: ${e.message}`;
-  }
-  render();
-}
-
 // Opens an always-on club this player owns, made in another browser (#98).
 async function attachAlwaysOn(code) {
   code = normCode(code || '');
@@ -2251,10 +2234,12 @@ function managerHtml() {
   }
   for (const m of helped) h += card({href: clubHash(m.code), name: m.name || m.code, who: 'Agent', waiting: helperWaiting(m)});
   h += '</div>';
-  // Starting a club (#611) takes ducy's permission, and nothing links to
-  // it: the person given it opens #clubs/new. A demo club starts here.
-  const starting = !own && (demo || location.hash.split('?')[0] === '#clubs/new');
-  if (starting || (!own && !demo)) h += `<div class="cl-club-acts">${starting ? createHtml() : ''}${demo ? '' : demoCardHtml()}</div>`;
+  // Starting a club takes ducy's grant (#636): its one-time link opens
+  // #clubs/start/<token>, and nothing else links to it. A demo club starts
+  // here too; Try a demo club is off for the beta (club-beta.js).
+  const starting = !own && (demo || !!grantToken());
+  const tryDemo = !own && !demo && !isOff('demoClub');
+  if (starting || tryDemo) h += `<div class="cl-club-acts">${starting ? createHtml() : ''}${tryDemo ? demoCardHtml() : ''}</div>`;
   return h + footHtml();
 }
 
@@ -2394,8 +2379,7 @@ function notice(text, go = 'play') {
 
 // Clubs' Create a club card (#152, #209), when you don't run one: just a
 // name. The club is always on; there's nothing else to choose here.
-// On the club manager at #clubs/new only, linked from nowhere (#611), and
-// in a demo.
+// On the club manager from a grant's link only (#636), and in a demo.
 function createHtml() {
   if (club || isRemote()) return '';
   let h = '<section class="cl-act-card"><span class="cl-act-title">Start a club</span>';
@@ -2403,8 +2387,8 @@ function createHtml() {
   h += `<button class="tr-start" data-cl="create">${alwaysFailed ? 'Try again' : 'Create'}</button></span>`;
   if (alwaysFailed) {
     h += `<p class="pl-desc pl-neterr">Couldn’t start it on ducy’s server: ${esc(alwaysFailed.reason)}</p>`;
-    // Asking for permission (#265): ducy needs this player's ID to grant it.
-    if (/permission/.test(alwaysFailed.reason) && me?.id) h += `<p class="pl-meta">Your player ID, for ducy: <code class="cl-id">${esc(me.id)}</code></p>`;
+    // A link for someone else (#636): ducy needs this player's ID for one of theirs.
+    if (!demo && me?.id) h += `<p class="pl-meta">Your player ID, for ducy: <code class="cl-id">${esc(me.id)}</code></p>`;
   }
   // Already have one (#191): its backup brings it back, here or on another
   // device. Not in a demo (#406), which starts empty.
@@ -2557,10 +2541,10 @@ function hostHtml() {
 }
 
 // A club kept in this browser from before clubs ran on ducy's server: it
-// doesn't run in a tab any more (#580), so it can only move there, or go.
+// doesn't run in a tab any more (#580), and can't move there (#636): it can only go.
 function movePageHtml() {
   let h = `<section class="cl-card cl-move"><h2>${esc(club.name)}</h2><p class="pl-desc">Clubs run on ducy’s server now.</p>`;
-  return h + '<div class="pl-actions"><button class="btn-small primary" data-cl="move-always">Move to ducy’s server</button><button class="btn-small" data-cl="close">Delete club</button></div></section>';
+  return h + '<div class="pl-actions"><button class="btn-small" data-cl="close">Delete club</button></div></section>';
 }
 
 // Live, or how the club's connection is doing, in the top bar; nothing for
@@ -3090,7 +3074,7 @@ function backupPageHtml() {
   } else h += '<p class="pl-desc">Kept in this browser only. Move it to always on to back it up.</p>';
   // Leaving this browser isn't deleting the club (#544): a section of its own.
   if (remote) h += '<h2>This browser</h2><div class="pl-actions"><button class="btn-small" data-cl="close">Stop running it here</button></div>';
-  h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button>' : '<button class="btn-small" data-cl="move-always">Move to always on</button><button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
+  h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button>' : '<button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
   return h;
 }
 
@@ -4044,7 +4028,6 @@ async function onClickIn(e) {
     render();
     setTimeout(() => { copied = false; render(); }, 1500);
   } else if (act === 'close') closeClub(b);
-  else if (act === 'move-always') moveToAlwaysOn(b);
   else if (act === 'delete-always') deleteAlwaysOn();
   else if (act === 'attach') attachAlwaysOn(root.querySelector('#cl-attach')?.value);
   else if (act === 'forget') leaveMembership(b.dataset.code);

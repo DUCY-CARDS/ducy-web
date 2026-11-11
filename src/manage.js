@@ -7,8 +7,8 @@
 // and starting or restoring a club.
 //
 //   #clubs           the list
-//   #clubs/new       starting a club, with ducy's permission: linked from
-//                    nowhere (#611)
+//   #clubs/start/<token>  starting a club, from ducy's one-time grant link
+//                    (#636, made on the admin site); nothing else links to it
 //   #clubs/overview  the club you run, by page (club-nav.js, #398); older
 //                    addresses (#clubs/own, #clubs/players …) still work
 //   #clubs/c/CODE    a club you help run

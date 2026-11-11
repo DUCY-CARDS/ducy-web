@@ -77,7 +77,7 @@ test('every action is logged, a reveal before anything is shown', async () => {
   const ann = await createIdentity();
   const admins = adminsFrom([{id: ann.id, pub: ann.pub, name: 'Ann'}]);
   const reg = registry(mem(), limitsFrom({}));
-  await reg.claim('owner1', 'AAAA-BBBB', Date.now(), 'Owls');
+  await reg.claim('owner1', 'AAAA-BBBB', Date.now(), 'Owls', {grant: (await reg.grant('owner1')).token});
   const order = [];
   const ops = {
     seen: (id, seq) => reg.adminSeen(id, seq),
@@ -115,6 +115,48 @@ test('every action is logged, a reveal before anything is shown', async () => {
   // A club that isn't there.
   assert.equal((await call('/admin/club/ZZZZ-ZZZZ/set', {suspended: true})).status, 409);
   assert.equal((await call('/admin/nothing')).status, 404);
+});
+
+test('a grant answers its link’s token once, and the log never has it (#636)', async () => {
+  const ann = await createIdentity();
+  const admins = adminsFrom([{id: ann.id, pub: ann.pub, name: 'Ann'}]);
+  const reg = registry(mem(), limitsFrom({}));
+  const ops = {seen: (id, seq) => reg.adminSeen(id, seq), log: e => reg.adminLog(e), logList: () => reg.adminLogList(), list: () => reg.list(), grant: (id, b) => reg.grant(id, b), revoke: id => reg.revoke(id)};
+  const call = async (path, data) => adminApi(path, await sign(ann, path, data), admins, ops);
+  const out = (await call('/admin/grant', {id: 'p1', note: 'Thursdays', limits: {tables: 3, tourneysPerDay: 2}, maxClubs: 9})).body;
+  assert.match(out.token, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(out.note, 'Thursdays');
+  const list = (await call('/admin/clubs')).body;
+  assert.equal(JSON.stringify(list).includes(out.token), false);
+  assert.deepEqual(Object.keys(list.invites.p1).sort(), ['at', 'code', 'limits', 'note', 'used', 'usedAt']);
+  const log = (await call('/admin/log')).body.log;
+  assert.equal(JSON.stringify(log).includes(out.token), false);
+  assert.equal(log[0].detail, 'Thursdays · 3 tables, 2/day');
+  assert.equal((await call('/admin/grant', {id: 'not an id!'})).status, 409);
+});
+
+test('Wipe all clubs takes the environment’s name, and is logged before anything goes (#636)', async () => {
+  const ann = await createIdentity();
+  const admins = adminsFrom([{id: ann.id, pub: ann.pub, name: 'Ann'}]);
+  const order = [];
+  const ops = {
+    seen: async () => {}, log: async e => { order.push(`log:${e.action}:${e.target}:${e.detail}`); },
+    environment: 'staging', clubCodes: async () => ['AAAA-BBBB', 'CCCC-DDDD'],
+    wipe: async codes => { order.push(`wipe:${codes.join(',')}`); return {clubs: codes.length}; },
+  };
+  const call = async (path, data) => adminApi(path, await sign(ann, path, data), admins, ops);
+  for (const confirm of [undefined, '', 'live', 'Staging', ' staging']) {
+    const r = await call('/admin/wipe', {confirm});
+    assert.equal(r.status, 400, String(confirm));
+    assert.match(r.body.error, /Type staging/);
+  }
+  assert.deepEqual(order, []);
+  const r = await call('/admin/wipe', {confirm: 'staging'});
+  assert.deepEqual([r.status, r.body], [200, {clubs: 2}]);
+  assert.deepEqual(order, ['log:wipe:staging:2 clubs', 'wipe:AAAA-BBBB,CCCC-DDDD']);
+  // A relay that doesn't say its name can't be wiped.
+  const none = await adminApi('/admin/wipe', await sign(ann, '/admin/wipe', {confirm: ''}), admins, {...ops, environment: ''});
+  assert.equal(none.status, 400);
 });
 
 // A club's storage with a member, a lobby line and a finished hand.

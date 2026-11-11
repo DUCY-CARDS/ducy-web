@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { pingReply } from './src/ping.js';
 import { createServer } from 'node:http';
-import { adminView, codeInfo, createClub, importClub, openClub } from './src/club-room.js';
+import { adminView, codeInfo, createClub, openClub } from './src/club-room.js';
 import { adminApi, adminsFrom } from './src/admin.js';
 import { limitsFrom, registry } from './src/registry.js';
 import { fairPlayStore } from './src/fair-play-admin.js';
@@ -98,8 +98,8 @@ function inRoom(room, fn) {
 }
 
 // The registry of always-on clubs (registry.js), in memory, with the limits
-// from the environment as in wrangler.toml (MAX_CLUBS_PER_OWNER, MAX_CLUBS,
-// CLUB_CREATORS).
+// from the environment as in wrangler.toml (MAX_CLUBS_PER_OWNER, MAX_CLUBS).
+// A club takes a grant from the admin API (#636).
 const reg = registry(storageOf({store: new Map()}), limitsFrom(process.env));
 // Each club's fair play summaries (#612), as the Worker's registry keeps them.
 const fairPlay = fairPlayStore(storageOf({store: new Map()}));
@@ -249,6 +249,29 @@ async function admin(req, res, url) {
     list: () => reg.list(),
     grant: (id, body) => reg.grant(id, body),
     revoke: id => reg.revoke(id),
+    // Wipe all clubs (#636), as in the Worker. ENVIRONMENT names it; 'local'.
+    environment: process.env.ENVIRONMENT || 'local',
+    clubCodes: () => reg.clubCodes(),
+    wipe: async codes => {
+      for (const code of codes) {
+        const room = rooms.get(code);
+        if (!room) continue;
+        // After whatever the room is doing; then it's gone, so anything late
+        // writes to nothing.
+        await inRoom(room, async () => {
+          room.club = null;
+          clearTimeout(room.backupTimer);
+          room.backupTimer = null;
+          room.store.clear();
+        });
+        rooms.delete(code);
+        for (const g of room.guests.values()) g.ws.close(4004, 'the club was closed');
+      }
+      if (backups) for (const code of codes) await dropBackups(backups, code).catch(e => console.warn(e));
+      await reg.wipe();
+      await fairPlay.wipe(codes);
+      return {clubs: codes.length};
+    },
     setClub: (code, change) => reg.setClub(code, change),
     status: code => reg.status(code),
     room: async (code, what, params) => {
@@ -289,7 +312,6 @@ async function service(req, res, code) {
   res.end(await answer.text());
 }
 
-// Up to 1 MB: a whole club moving here (#98); other messages stay under MAX_MESSAGE.
 // GET /usage, /code/… and /admin/…, as the Worker answers them; everything else is WebSockets.
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -426,8 +448,7 @@ function guest(ws, room, code, id, queue, isClub, held) {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
       if (pong) return ws.send(pong);
-      // Only a club moving here (#98) may be bigger than MAX_MESSAGE.
-      if (data.length > MAX_MESSAGE && !String(data).includes('"import_club"')) return;
+      if (data.length > MAX_MESSAGE) return;
       // A location reading (#581): from an unlocked connection only, not
       // counted as activity (unlock.js unlockedNow).
       if (room.store.has('club') && String(data).startsWith('{"type":"location"')) {
@@ -436,9 +457,8 @@ function guest(ws, room, code, id, queue, isClub, held) {
         if (unlockedNow(ws.unlock)) inRoom(room, async () => (await clubOf(room, code))?.message({from: id, data: msg}));
         return;
       }
-      // An always-on club runs here, or someone asks to make this room one,
-      // or to move their club here.
-      if (room.store.has('club') || String(data).includes('"create_club"') || String(data).includes('"import_club"') || String(data).startsWith('{"type":"unlock"')) {
+      // An always-on club runs here, or someone asks to make this room one.
+      if (room.store.has('club') || String(data).includes('"create_club"') || String(data).startsWith('{"type":"unlock"')) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
         inRoom(room, async () => {
@@ -459,22 +479,13 @@ function guest(ws, room, code, id, queue, isClub, held) {
           // With the passkey it was unlocked with (#589: refills).
           if (club) return club.message({from: id, data: msg, device: ws.unlock?.device || ''});
           const type = msg?.body?.type;
-          if (type !== 'create_club' && type !== 'import_club') return;
+          if (type !== 'create_club') return;
           try {
             if (msg.from !== id) throw new Error('The request must come from you.');
-            if (type === 'create_club') {
-              if (room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
-              send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name)))});
-              await clubOf(room, code);
-            } else {
-              // A club that already existed isn't temporary (#395).
-              send(ws, {type: 'club_imported', ...(await importClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name, {temporary: false})))});
-              const c = await clubOf(room, code);
-              // What members left while the host was away goes to the club.
-              const waiting = room.queued;
-              room.queued = [];
-              for (const q of waiting) await c.message({from: q.from, data: q.data});
-            }
+            if (room.guests.size > 1 || room.queued.length) throw new Error('That club code is in use.');
+            // The grant's token (#636), in the signed request.
+            send(ws, {type: 'club_created', ...(await createClub(storageOf(room), msg, code, (owner, c, name) => reg.claim(owner, c, Date.now(), name, {grant: String(msg.body?.grant || '')})))});
+            await clubOf(room, code);
           } catch (e) {
             send(ws, {type: 'club_error', reason: e.message});
           }

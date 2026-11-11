@@ -364,7 +364,10 @@ test('demo bots are Quest’s players, picked as Quest’s line-ups pick them fo
 test('a real club room refuses the demo’s simulate and bot commands', {skip: !haveWasm && 'no wasm build'}, async () => {
   const { default: WebSocket } = await import('../relay/node_modules/ws/index.js');
   const port = 21000 + Math.floor(Math.random() * 1000);
-  const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(port)], {stdio: ['ignore', 'pipe', 'inherit']});
+  // An admin grants the owner their club (#636).
+  const { granter, testAdmin } = await import('./admin-helper.mjs');
+  const admin = await testAdmin();
+  const server = spawn(process.execPath, [fileURLToPath(new URL('../relay/dev-server.mjs', import.meta.url)), String(port)], {stdio: ['ignore', 'pipe', 'inherit'], env: {...process.env, ADMINS_FILE: admin.file}});
   await new Promise(resolve => server.stdout.once('data', resolve));
   try {
     // Club connections prove the player's ID and are unlocked with a passkey (#575, #577).
@@ -374,7 +377,7 @@ test('a real club room refuses the demo’s simulate and bot commands', {skip: !
     const owner = await createIdentity(), ann = await createIdentity();
     const o = open(owner);
     await o.ready;
-    o.send(await signMessage(owner, {type: 'create_club', club: 'GGGG-GGGG', name: 'Real Club'}));
+    o.send(await signMessage(owner, {type: 'create_club', club: 'GGGG-GGGG', name: 'Real Club', grant: await granter(port, admin.ident)(owner.id)}));
     const made = await o.next('club_created');
     o.send(await signMessage(owner, {club: 'GGGG-GGGG', type: 'owner_hello'}));
     await o.next('owner_view');

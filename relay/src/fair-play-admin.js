@@ -200,5 +200,17 @@ export function fairPlayStore(storage) {
       if (!idx[code].weeks.length) delete idx[code];
       await storage.put('fpIndex', idx);
     },
+    // Wipe all clubs (#636): every club's summaries and weeks go now. Codes
+    // in `codes` that the index has forgotten go too. Returns how many clubs.
+    async wipe(codes = []) {
+      const idx = await index();
+      const all = new Set([...Object.keys(idx), ...codes]);
+      for (const code of all) {
+        await storage.delete(`fp:${code}`);
+        for (const w of idx[code]?.weeks || []) await storage.delete(`fpw:${code}:${w}`);
+      }
+      await storage.delete('fpIndex');
+      return all.size;
+    },
   };
 }
