@@ -13,6 +13,7 @@ import { openCharts, closeCharts, chartsOpen } from './charts.js';
 import { closeSection, enterCode, openSection, sectionOpen, showNav, startBackground, TABS } from './play-section.js';
 import { setTitleSection } from './title.js';
 import { HUBS, HUB_TITLES, closeHub, hubOpen, openHub, refreshHubClubs } from './home.js';
+import { isOff } from './club-beta.js';
 import { onClubsChange, yourClubs } from './clubs.js';
 
 const ST = [
@@ -1868,6 +1869,11 @@ function hashMode() {
     return 'home';
   }
   if (h === 'practice') return 'play';
+  // No Start a game in the beta (#635, club-beta.js): Join a game instead.
+  if (h === 'host' && isOff('startGame')) {
+    history.replaceState(null, '', location.pathname + location.search + '#join');
+    return 'join';
+  }
   return h === 'trainer' || h === 'charts' || h === 'equity' || HUBS.includes(h) || TABS.includes(h) ? h : '';
 }
 

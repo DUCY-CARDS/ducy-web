@@ -15,6 +15,7 @@ import { HOLDEM_PERCENTILE } from './holdem-rank.js';
 import { skillTable } from './trainer-skills.js';
 import { ORDER, loadProgress as loadLadder } from './ladder.js';
 import { avatarUrl } from './avatars.js';
+import { isOff } from './club-beta.js';
 
 // The small beta plays poker and nothing else (#551): Study and Quest stay at
 // their addresses, with no links to them from Play.
@@ -233,7 +234,9 @@ function playTiles(d) {
   let h = '<div class="v3-tile v3-tile-dark v3-tile-wide"><span class="v3-tile-text"><span class="v3-tile-name">Friends</span></span>';
   // Enter a code (#393): a game's or a club's, or a link to either.
   h += '<form class="v3-join" data-v3join><label class="v3-sr" for="v3-code">Game or club code</label><input id="v3-code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter a code"><button type="submit">Join</button>';
-  h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a></form>';
+  // Start a game is off in the beta (#635, club-beta.js).
+  if (!isOff('startGame')) h += '<span class="v3-or">or</span><a class="v3-btn-red" href="#host">Start a game</a>';
+  h += '</form>';
   h += '<p class="v3-join-note" data-v3note role="status" hidden></p></div>';
   h += '<div class="v3-tiles">';
   h += clubsTile(d.clubs || []);

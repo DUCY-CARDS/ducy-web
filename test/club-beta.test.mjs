@@ -2,14 +2,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { OFF } from '../src/club-beta.js';
+import { OFF, isOff } from '../src/club-beta.js';
 import { managerPage, pageHash, pageOff, shownNav } from '../src/club-nav.js';
 import { newDraft, hostTourneysHtml } from '../src/club-tourneys-ui.js';
 import { structureEditor } from '../src/tourney-structure-ui.js';
 import { chargeOn } from '../src/club-rake.js';
 
 test('the unfinished features are off', () => {
-  assert.deepEqual([...OFF].sort(), ['cashRake', 'promos', 'services']);
+  assert.deepEqual([...OFF].sort(), ['cashRake', 'promos', 'services', 'startGame']);
+});
+
+test('Start a game is off, and ?on=startGame turns it on for that page only (#635)', () => {
+  assert.equal(isOff('startGame', ''), true);
+  assert.equal(isOff('startGame', '?relay=x&on=startGame'), false);
+  assert.equal(isOff('startGame', '?on=promos'), true);
+  assert.equal(isOff('credit', ''), false);
 });
 
 test('agents, credit, Balances and tournament rake are on (#623)', () => {

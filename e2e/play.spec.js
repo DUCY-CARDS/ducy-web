@@ -40,7 +40,10 @@ test('the front page offers friends, clubs and the Regulars, and nothing else', 
   await watch(page).goto('/');
   await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
   await expect(page.getByLabel('Game or club code')).toBeVisible();
-  for (const name of ['Start a game', 'Play the Regulars']) await expect(page.getByRole('link', {name})).toBeVisible();
+  await expect(page.getByRole('link', {name: 'Play the Regulars'})).toBeVisible();
+  await expect(page.locator('form[data-v3join] button[type=submit]')).toBeVisible();
+  // No Start a game in the beta (#635).
+  await expect(page.getByText('Start a game')).toHaveCount(0);
   // No clubs yet: no clubs tile, and no page of them (#611).
   await expect(page.getByText(/Private clubs|Start a club|Create your own club/)).toHaveCount(0);
   await expect(page.getByText(/play money|Still in development/i)).toHaveCount(0);
@@ -49,6 +52,19 @@ test('the front page offers friends, clubs and the Regulars, and nothing else', 
   await fitsTheScreen(page);
 });
 
+test('#host lands on Join a game in the beta (#635)', async ({page, watch}) => {
+  watch(page);
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({width, height: 800});
+    await page.goto(`/?relay=${RELAY}#host`);
+    await expect(page).toHaveURL(/#join$/);
+    await expect(page).toHaveTitle(/Join a game/);
+    await expect(page.getByText('Start a game')).toHaveCount(0);
+    await fitsTheScreen(page);
+  }
+});
+
+// The friends tables below need Start a game, off in the beta: ?on=startGame turns it on.
 test('a code with no game behind it says so on the front page (#566)', async ({page, watch}) => {
   await watch(page).goto(`/?relay=${RELAY}`);
   await page.getByLabel('Game or club code').fill('ZZZZ-ZZZZ');
@@ -57,7 +73,7 @@ test('a code with no game behind it says so on the front page (#566)', async ({p
 });
 
 test('a private game shows its code before it opens, and opens with it (#566)', async ({page, watch}) => {
-  await watch(page).goto(`/?relay=${RELAY}#host`);
+  await watch(page).goto(`/?relay=${RELAY}&on=startGame#host`);
   const shown = (await page.locator('.sg-code').innerText()).trim();
   expect(shown).toMatch(/^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/);
   // Its link, to this site, with the same code.
@@ -159,7 +175,7 @@ test('a friends table shows no player stats, and keeps none (#625)', async ({bro
   // Stats an earlier version kept at a friends table: the people's go.
   const c = {hands: 4, vpip: 2, pfr: 1, threeBetChances: 0, threeBets: 0, aggressive: 0, calls: 0, folds: 0, facedBets: 0, foldsToBets: 0, sawFlop: 0, showdowns: 0, showdownsWon: 0, net: 0, netBB: 0};
   await host.addInitScript(k => { if (!sessionStorage.seeded) { localStorage.setItem('ducyPlayStats', JSON.stringify({v: 1, games: {nlhe: {you: k, doug_poker: k, 'friend:Gus': k}}})); sessionStorage.seeded = '1'; } }, c);
-  await host.goto(`/?relay=${RELAY}#host`);
+  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
   await host.locator('#pl-name').fill('Hana');
   await host.locator('[data-act="host"]').click();
   await expect(host.locator('[data-act="copy"]')).toBeVisible();
@@ -206,7 +222,7 @@ test('the heads-up challenge deals a hand, with no review', async ({page, watch}
 test('a friend joins a hosted game by its code', async ({browser, watch}) => {
   const open = async () => watch(await (await browser.newContext()).newPage());
   const host = await open();
-  await host.goto(`/?relay=${RELAY}#host`);
+  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
   await host.locator('#pl-name').fill('Hana');
   await host.locator('[data-act="host"]').click();
   await expect(host.locator('[data-act="copy"]')).toBeVisible();
@@ -229,7 +245,7 @@ test('muting a player hides their chat for you only, and unmuting brings it back
   const {viewport, userAgent, deviceScaleFactor, isMobile, hasTouch} = info.project.use;
   const open = async () => watch(await (await browser.newContext({viewport, userAgent, deviceScaleFactor, isMobile, hasTouch})).newPage());
   const host = await open();
-  await host.goto(`/?relay=${RELAY}#host`);
+  await host.goto(`/?relay=${RELAY}&on=startGame#host`);
   await host.locator('#pl-name').fill('Hana');
   await host.locator('[data-act="host"]').click();
   await expect(host.locator('[data-act="copy"]')).toBeVisible();
