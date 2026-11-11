@@ -135,6 +135,8 @@ test.describe('a grant link (#636)', () => {
     await page.goto(`https://club.ducy.cards/?relay=${url}#clubs`);
     await page.getByRole('button', {name: 'I’m new to ducy'}).click();
     await expect(page.locator('.mg-badge')).toHaveText('Club manager');
+    // Drawn once ducy's engine is in: player IDs need it.
+    await page.locator('#clubs .cl-pass, #clubs .pl-head').first().waitFor();
     return page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id));
   }
   const createWith = async (page, link) => {

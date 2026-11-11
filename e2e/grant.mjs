@@ -27,6 +27,8 @@ export async function grantFor(admin, port, id) {
 // address (#clubs/start/<token>, as the admin site makes it for a local page).
 export async function grantLink(page, relay, admin) {
   await page.goto(`/manage.html?relay=${relay}#clubs`);
+  // Drawn once ducy's engine is in: player IDs need it.
+  await page.locator('#clubs .cl-pass, #clubs .pl-head').first().waitFor();
   const id = await page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id));
   const token = await grantFor(admin, new URL(relay).port, id);
   return `/manage.html?relay=${relay}#clubs/start/${token}`;
