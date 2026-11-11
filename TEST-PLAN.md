@@ -170,6 +170,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 3. Enter a live game's code (from M3). It goes to that game's join page.
 4. Paste a club's invite link. It goes to that club's join screen.
 
+**M2b No Start a game in the beta** (#635)
+1. The front page has the code box and Join, and no Start a game.
+2. Go to `/#host`. Join a game opens, and the address reads `#join`.
+
+M3–M4 need Start a game, which the beta turns off (`startGame` in `src/club-beta.js`). To run them, add `?on=startGame` to the host's address.
+
 **M3 A private cash game, two browsers**
 1. Host: Start a game. Under Invite your friends, the setup shows a code. Open the table: it has the same code, and no "can't reach the relay".
 2. Guest: enter the code, give a name, join. Each browser sees the other.
