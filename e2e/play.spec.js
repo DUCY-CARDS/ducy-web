@@ -1073,7 +1073,8 @@ test('a member replays their hands, steps by keys, and takes a spot to the equit
   await replays.first().click();
   const dialog = page.getByRole('dialog', {name: 'Hand replay'});
   await expect(dialog.getByText('Main 1/2 · hand 2')).toBeVisible();
-  await expect(dialog.getByText('2/2')).toBeVisible();
+  // Exact: the hand's date (e.g. 11/12/2026) can hold "2/2" too.
+  await expect(dialog.getByText('2/2', {exact: true})).toBeVisible();
   await expect(dialog.getByRole('button', {name: 'Next hand ›'})).toBeDisabled();
   // → steps; Bob's queens show only at the end.
   await page.keyboard.press('ArrowRight');
