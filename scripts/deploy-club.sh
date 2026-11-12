@@ -36,7 +36,10 @@ esac
 
 echo "== is there a folder for $HOST?"
 LISTING="$(rsync --list-only "$PARENT/")"
-if ! awk '$1 ~ /^d/ { print $NF }' <<< "$LISTING" | grep -qxF "$NAME"; then
+# A folder, or a link to one (DirectAdmin or a file manager may make either).
+if ! awk '$1 ~ /^[dl]/ { n = $5; for (i = 6; i <= NF; i++) n = n " " $i; sub(/ -> .*/, "", n); print n }' <<< "$LISTING" | grep -qxF "$NAME"; then
+  echo "What's there (entries with \"club\" in the name):"
+  grep -i club <<< "$LISTING" || echo "(none)"
   MSG="No $NAME/ folder on the host: the club site wasn't deployed. In DirectAdmin, create the subdomain $HOST (its folder is public_html/$NAME), then deploy again."
   [ "$ENV_NAME" = production ] || MSG="$MSG Password-protect that folder as $ENV_NAME.ducy.cards is."
   echo "::warning title=Club site not deployed::$MSG"
