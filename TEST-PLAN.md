@@ -103,7 +103,8 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 
 | Feature | Unit | Browser | Manual |
 |---|---|---|---|
-| Starting a club takes a grant (#636): one club, one player ID, one use; only the token's hash kept; a forwarded, wrong or used link refused alike; granting again or revoking kills an unused link; no trials, CLUB_CREATORS ignored; a claim that fails leaves it unused; two at once make one club | `registry.test`, `relay-admin.test`, `sites.test`, `relay-temporary.test` | yes | C1 |
+| Starting a club takes a grant (#636): one club, one player ID, one use; only the token's hash kept; a forwarded, wrong or used link refused alike; granting again or revoking kills an unused link; no trials, CLUB_CREATORS ignored; a claim that fails leaves it unused; two at once make one club | `registry.test`, `relay-admin.test`, `sites.test`, `relay-kept.test` | yes | C1 |
+| Clubs are kept (#654): no temporary clubs, no backup to prove, nothing deleted for going unused, old flags dropped; no backup prompts for owners or members; an owner whose passkey keeps no copy of their key is asked to unlock or add one | `registry.test`, `relay-kept.test`, `relay-club.test`, ducy-club `registry` | yes | C1, C6 |
 | The grant check and the club-site check together: a create from ducy.cards is refused before the grant is looked at (it stays unused); from the club site without the grant, refused | `sites.test` | yes | C1, C10 |
 | Wipe all clubs (#636): only with the relay's environment name typed; logged before anything goes; every club's room, record, backups and fair play rows, every grant and link; members let go; the admin log kept | `relay-admin.test`, `admin-api.test`, `registry.test` | yes | A5 |
 | Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
@@ -115,7 +116,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Credit: limits, playing on credit out of the float, a request at the limit, an agent's players' lines | `club-credit.test`, `club-credit-server.test`, ducy-club `book`, `host` and `tests/money.rs` | yes | C9 |
 | Balances: who owes whom, settling both ways, a payment recorded | `club-credit.test`, `club-credit-server.test` | yes | C9 |
 | Club info and rules | `club-info.test`, `club-help.test` | no | C2 |
-| Backup and devices, restore | `club-backup.test`, `backup.test` | no | C6 |
+| Backup and devices: the passkey moves the club; a backup file as an option, and restore | `club-backup.test`, `backup.test` | yes | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
 | Agents: make one, their invite, their players' requests and chips | `club-agents.test` | join, give | C8 |
 | Demo clubs | `demo-club.test` | yes | C7 |
@@ -194,9 +195,9 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 6. The front page's club tile has the club's name, and opens it; its breadcrumb is Play › the club. Join a second club: the front page lists both, and each opens.
 
 **M7 Identity**
-1. Save a backup from player settings.
-2. In a fresh browser, restore it. The same name, the same clubs and the same balances come back.
-3. On an iPhone, with the site installed and then not installed: note whether anything is lost after 7 days without a visit. This takes a week, so record the date it started.
+1. Nothing asks a member to back up: no card on a club's page.
+2. Save a backup from You (an option, for admin keys and passkeys that can't keep a copy).
+3. In a fresh browser, restore it. The same name, the same clubs and the same balances come back.
 
 **M8 Error reports**
 1. On staging, cause an error: open the browser console and run `setTimeout(() => { throw new Error('test plan M8') })`.
@@ -225,7 +226,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 1. Nothing in the player app or the club manager links to starting a club, and there's no Try a demo club. `#clubs/new` on the club site shows the manager with no way to start one.
 2. On admin.ducy.cards (Staging → Clubs), grant a player ID: a link to club-staging.ducy.cards shows once, with Copy.
 3. Open the link in another player's browser: Start a club, then Create, is refused, with that player's ID shown.
-4. Open it as the granted player: make the passkey if asked, name the club, Create. The club is made and its owner is asked to prove a backup; the address no longer has the link. On the admin site the grant shows Used with the club's code.
+4. Open it as the granted player: make the passkey if asked, name the club, Create. The club is made and goes straight to its first table (step 1 of 2), with no backup step; the address no longer has the link. On the admin site the grant shows Used with the club's code.
 5. Open the link again: it does nothing. Grant someone else, then Revoke before they use it: their link is refused. New link on an unused grant: the old link is refused, the new one works.
 
 **C2 Pages**
@@ -260,9 +261,11 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 4. Leave the page idle over the passkey's few minutes, then Refill or Save a size: the passkey is asked for again first.
 5. As a member: put chips in the vault (at once), take some out (the passkey first; it waits the chosen time), and cancel it from another of your devices. The owner sees the vault on your member page, but not the request.
 
-**C6 Backup and restore**
-1. Download the club's backup. Restore it into a fresh browser: the members, balances and tables come back.
-2. `node relay/hostrocket/check.mjs` passes. It needs the relay's backup secrets.
+**C6 Moving devices, backup and restore** (#654)
+1. Moving by passkey: as the owner, on a phone whose passkey keeps a copy (iCloud Keychain on iOS 18+, Google Password Manager), Backup and devices shows "Passkey: moves to a new device ✓" and no banner. On a second device with the same synced passkey, Restore with a passkey: the club opens as yours, with its members, balances and tables.
+2. With a passkey that keeps no copy (one without PRF): every manager page shows "Your passkey can't move this club to a new device yet." Unlock: if the passkey can keep a copy now, the banner goes; if not, it says to add another. Add a passkey (on a device that can): the banner goes.
+3. Optional file: Backup and devices → Download a backup, with a password. Restore it into a fresh browser: the members, balances and tables come back.
+4. `node relay/hostrocket/check.mjs` passes. It needs the relay's backup secrets.
 
 **C7 Demo clubs** (off in the beta, #636: open the club site with `?on=demoClub`)
 1. Start each demo. Its pages draw, Reset works, and End demo returns to a clean manager.

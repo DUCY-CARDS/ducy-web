@@ -228,13 +228,12 @@ function clubsHtml() {
     return tr([
       `<button class="link" data-club="${esc(c.code)}"><b>${esc(c.name) || '(no name)'}</b></button><br><code>${esc(c.code)}</code>`,
       pid(c.owner) + (data.grants[c.owner] ? ' <span class="ok">✓</span>' : ''),
-      planHtml(c),
       `<input type="number" min="0" value="${c.limits.tables}" data-lim-tables="${esc(c.code)}" aria-label="Tables"> tables<br><input type="number" min="0" value="${c.limits.tourneysPerDay}" data-lim-tourneys="${esc(c.code)}" aria-label="Tournaments a day"> / day <button data-limits="${esc(c.code)}">Set</button>`,
       stateHtml(c), ago(c.lastActive), `${hours(week)} / ${hours(c.minutes || 0)}`,
       `<button data-pause="${esc(c.code)}" data-to="${c.suspended ? 'false' : 'true'}">${c.suspended ? 'Resume' : 'Pause'}</button>`,
     ]);
   });
-  h += `<section><h2>Clubs</h2>${table(['Club', 'Owner', 'Plan', 'Limits', 'State', 'Last active', 'Play (7 days / all)', ''], rows, 'No clubs yet')}</section>`;
+  h += `<section><h2>Clubs</h2>${table(['Club', 'Owner', 'Limits', 'State', 'Last active', 'Play (7 days / all)', ''], rows, 'No clubs yet')}</section>`;
   // Wipe all clubs (#636): this environment's, once its name is typed.
   h += `<section class="wipe"><h2>Wipe all clubs</h2><p class="muted">Deletes every club on ${esc(env.label)}, with its data and backups, and every grant. It can’t be undone.</p>`
     + `<div class="row"><input id="w-confirm" placeholder="Type ${esc(env.key)}" aria-label="Type ${esc(env.key)} to confirm" autocomplete="off"><button class="danger" id="wipe" disabled>Wipe</button></div></section>`;
@@ -270,15 +269,6 @@ function grantsHtml() {
   ])), 'Nobody yet') + '</section>';
 }
 
-function planHtml(c) {
-  const plan = 'Club';
-  // No backup proved yet (#395): deleted once unused for a week.
-  const temp = c.temporary
-    ? `<br><span class="warn">Temporary</span> <span class="muted">· removed ${c.removesAt ? esc(when(c.removesAt)) : 'soon'} if unused</span>`
-    : c.provedAt ? `<br><span class="muted">Backup proved ${esc(day(c.provedAt))}</span>` : '';
-  return plan + temp;
-}
-
 const stateHtml = c => (c.suspended ? '<span class="err">Paused</span>' : '<span class="ok">Running</span>');
 
 // ---- a club ----
@@ -297,8 +287,7 @@ function clubHtml(x, code) {
   let h = `<section><div class="row spread"><h2>${esc(f.name || rec?.name || '')} <code>${esc(code)}</code></h2>`
     + (f.revealed ? '<span class="warn">Showing chats and cards</span>' : '<button id="reveal">Show chats and cards</button>') + '</div><dl>'
     + `<dt>Owner</dt><dd>${pid(f.ownerId || rec?.owner)} <span class="muted">${ago(f.ownerSeen)}</span></dd>`
-    // A temporary club goes after 7 days unused (registry.js removesAt).
-    + (rec ? `<dt>Plan</dt><dd>${planHtml({...rec, removesAt: rec.temporary ? (rec.lastActive || rec.at) + 7 * 864e5 : null})}</dd><dt>State</dt><dd>${stateHtml({...rec, blocked: x.blocked})}${x.blocked ? ` <span class="muted">${esc(x.blocked)}</span>` : ''}</dd>` : '')
+    + (rec ? `<dt>State</dt><dd>${stateHtml({...rec, blocked: x.blocked})}${x.blocked ? ` <span class="muted">${esc(x.blocked)}</span>` : ''}</dd>` : '')
     + `<dt>Limits</dt><dd>${rec ? `${rec.limits.tables} tables, ${rec.limits.tourneysPerDay}/day` : '—'}</dd>`
     + `<dt>Now</dt><dd>${x.inside?.online ?? 0} connected${live ? ` · ${live.members.seated} seated` : ''}${x.inside?.queued ? ` · ${x.inside.queued} waiting` : ''}</dd>`
     + `<dt>Created</dt><dd>${day(f.createdAt)}</dd>`

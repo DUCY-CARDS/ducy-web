@@ -39,8 +39,7 @@
 //                  once), tourneysPerDay}; the relay's registry sets them for
 //                  an always-on club. null: no cap. setLimits() changes them.
 //   plan           the plan, for the owner's page: {plan: 'trial' | 'club',
-//                  expires, temporary, provedAt, removesAt}; setLimits()
-//                  may change it too
+//                  expires}; setLimits() may change it too
 //   lastSeen()     when each player was last heard from, {id: ms}, kept by
 //                  an always-on club's room (#401); its owner sees it (#426)
 //   checks()       the latest fair play report (relay/src/collusion.js,
@@ -356,9 +355,8 @@ export function createClubServer({
     armPromos();
   }
 
-  // The tables for members, saying too whether the club is temporary (#395:
-  // no backup of it proved), which they see on its page.
-  const tablesNow = () => ({...tablesBody(club, seatedCounts()), ...(plan?.temporary ? {temporary: true} : {})});
+  // The tables for members.
+  const tablesNow = () => tablesBody(club, seatedCounts());
   function broadcastTables() {
     if (!tableHost) return;
     // Who's at which table shows in the lobby.
@@ -971,13 +969,10 @@ export function createClubServer({
     tourneyLive,
     tablesRunning: () => !!tableHost,
     // The plan's limits changed (the super admin, #265).
-    // A backup proved (#395) changes `temporary`: members hear of it.
     setLimits(l, p = plan) {
-      const was = !!plan?.temporary;
       limits = l || null;
       plan = p;
       scheduleAdmin();
-      if (was !== !!plan?.temporary) broadcastTables();
     },
     limits: () => limits,
     // Something only the owner's view shows changed (the fair play report).

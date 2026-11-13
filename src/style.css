@@ -2622,18 +2622,12 @@ button.mg-stat.green:hover, a.mg-stat.green:hover { color: #fff; background: #2c
 .cl-vault-form .pl-text { width: 110px; }
 .cl-vault-out { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; }
 .cl-float-now { font-family: var(--font-data); margin-right: 8px; }
-/* Back up your account (#562): a member's club page until they have. The
-   passkey card (#575) in place of a club page until it's set up or used. */
-.cl-backup .cl-backup-text, .cl-pass .cl-backup-text { margin: 0; font-size: 14px; }
+/* The passkey card (#575) in place of a club page until it's set up or used. */
+.cl-pass .cl-backup-text { margin: 0; font-size: 14px; }
 .cl-pass { margin: 16px 0; }
 .cl-pass .cl-down { color: #b0391f; }
 .cl-pass-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .cl-pass .link-btn { color: #8f2e1b; }
-.cl-backup .pl-idform { margin: 0; }
-.cl-backup .pl-idform .pl-desc, .cl-backup .pl-idform label { color: inherit; }
-.cl-backup .pl-idform .pl-desc { font-size: 14px; margin: 0; }
-.cl-backup .pl-idform label { flex-direction: column; align-items: stretch; gap: 4px; font-weight: 600; }
-.cl-backup .pl-text { width: 100%; font-size: 16px; padding: 8px 10px; background: #fffaf0; color: #1d3a2c; border-color: #c9b98f; }
 .cl-settled { margin: 0; padding: 10px 14px; border-radius: 12px; background: #2f6b3d; color: #e3f4de; font-weight: 600; }
 .cl-tcard .cl-sitform { flex-basis: 100%; box-shadow: none; padding: 10px 0 0; background: none; color: inherit; }
 .cl-home-chips.owes { background: #c9472f; color: #fff4e8; }

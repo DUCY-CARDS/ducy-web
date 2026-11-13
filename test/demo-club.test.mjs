@@ -80,7 +80,7 @@ test('Reset puts the demo back to its scenario’s start, in the same session; i
 function shape(club) {
   const table = id => club.tables.find(t => t.id === id)?.name ?? null;
   return {
-    name: club.name, temporary: !!club.temporary,
+    name: club.name,
     tables: club.tables.map(t => ({name: t.name, game: t.game, sb: t.sb, bb: t.bb, seats: t.seats, status: t.status})),
     members: Object.values(club.members).filter(m => m.id !== club.ownerId)
       .map(m => ({name: m.name, status: m.status, balance: m.balance || 0, seat: m.seat ? [table(m.seat.table), m.seat.stack] : null, ask: m.request?.amount ?? null, credit: m.credit || 0, atLimit: !!m.request?.atLimit,
@@ -131,7 +131,6 @@ test('each demo club starts in its scenario’s state, and starts again the same
     }
     assert.deepEqual(shapes[1], shapes[0], `${s.id} starts the same every time`);
     const first = shapes[0];
-    assert.equal(first.temporary, false, 'no Temporary banner in a demo');
     if (s.id === 'busy') {
       const members = first.members.filter(m => m.status === 'member').length;
       assert.ok(members >= 40 && members <= 50, `${members} members`);

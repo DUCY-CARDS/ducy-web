@@ -269,11 +269,6 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
         "tables" => {
             set("tables", list(b.get("tables")));
             set("rathole", number(b.get("rathole")).into());
-            // No backup of the club proved yet (#395).
-            set(
-                "temporary",
-                (b.get("temporary") == Some(&Value::Bool(true))).into(),
-            );
             // The games offered that aren't running, to sign up for.
             set("menu", list(b.get("menu")));
             // How many wait on each game's list (#518).
@@ -284,6 +279,8 @@ pub fn take_host_message(mem: &mut Map<String, Value>, env: &Value) -> bool {
                     .cloned()
                     .unwrap_or_else(|| json!({})),
             );
+            // A temporary club's flag (#395) is gone (#654).
+            mem.remove("temporary");
         }
         // The waitlists you're on (#518): each with its count and your
         // place, a seat offered, or when your place goes.

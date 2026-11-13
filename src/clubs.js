@@ -21,10 +21,10 @@
 //   ducyClubs         clubs this browser has asked to join
 //   ducyClubName      the display name sent with join requests
 
-import { isBackedUp, keepStorage, loadIdentity, markBackedUp, MIN_NEW_PASSWORD, safariMayClear, showId, signMessage, Verifier } from './identity.js';
-import { clubBackupText, proveClubBackup } from './club-backup.js';
+import { keepStorage, loadIdentity, showId, signMessage, Verifier } from './identity.js';
+import { clubBackupText } from './club-backup.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
-import { BACKUP_SAVED, backupFormHtml, downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY, saveBackup } from './player-settings.js';
+import { backupFormHtml, downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
 import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
@@ -336,7 +336,9 @@ async function createClub(name) {
     note = '';
     // The link is used up: off the address.
     if (grantToken()) history.replaceState(null, '', `${location.pathname}${location.search}#clubs`);
-    setWizard('backup', {setup: true});
+    setWizard('table');
+    // Whether the owner's passkey keeps a copy of their key (#654).
+    if (!demo) refreshPass();
   } catch (e) {
     // The relay is down or full (limits, #123).
     note = '';
@@ -345,32 +347,21 @@ async function createClub(name) {
   render();
 }
 
-// Creating a club (#152, #395): a name; a backup ('backup'), then proving
-// it works ('prove'); the first table ('table'); the invite link
-// ('invite'). The backup and proof can be skipped ('skip' warns first),
-// leaving the club temporary. The club exists from the first step, so
-// closing the page mid-way comes back to the step it was at. A backup made
-// later (Settings, or the Temporary banner) takes the backup and proof
-// steps alone (`setup` false).
+// Creating a club (#152): a name; the first table ('table'); the invite
+// link ('invite'). No backup step (#654): the owner's passkey moves the
+// club to another device. The club exists from the first step, so closing
+// the page mid-way comes back to the step it was at.
 const WIZARD_KEY = 'ducyClubWizard';
-const WIZARD_STEPS = ['backup', 'prove', 'skip', 'table', 'invite'];
-let wizard = load(WIZARD_KEY, null); // {code, step, setup}
-if (wizard && !WIZARD_STEPS.includes(wizard.step)) wizard = null; // an older step (#111)
+const WIZARD_STEPS = ['table', 'invite'];
+let wizard = load(WIZARD_KEY, null); // {code, step}
+if (wizard && !WIZARD_STEPS.includes(wizard.step)) wizard = null; // an older step (#111, #395)
 const myClubCode = () => club?.code || owner?.record?.code || '';
 
-function setWizard(step, {setup = wizard?.setup ?? false} = {}) {
-  wizard = step ? {code: myClubCode(), step, setup} : null;
+function setWizard(step) {
+  wizard = step ? {code: myClubCode(), step} : null;
   if (wizard) save(WIZARD_KEY, wizard);
   else try { localStorage.removeItem(WIZARD_KEY); } catch {}
   render();
-}
-
-// Past the backup and proof: on to the first table when setting up, else
-// back to the club.
-function wizardOnward() {
-  if (wizard?.setup) { setWizard('table'); return; }
-  setWizard(null);
-  location.hash = 'clubs/overview';
 }
 
 // The New table form (#113, #476): three choices (game, blinds, seats) as
@@ -1010,8 +1001,6 @@ const hostNoteKey = () => `ducyClubHost:${club?.code || myClubCode()}`;
 const hostNotes = () => load(hostNoteKey(), {});
 const setHostNote = (k, v) => save(hostNoteKey(), {...hostNotes(), [k]: v});
 
-// Until the club is backed up: a reminder, since without a backup nobody
-// can run it again if this browser loses it.
 // Connection states, the same words everywhere (#191): connected; connected
 // but the club itself can't be reached; reconnecting; not connected (Try again).
 const CONN = {on: 'Connected', unreachable: 'Club unreachable', reconnecting: 'Reconnecting…', off: 'Not connected'};
@@ -1028,20 +1017,14 @@ function connText(n, meanwhile) {
   return `${CONN.off}.`;
 }
 
-// A temporary club (#395, no backup of it proved): a banner back to the
-// backup and proof steps. A club from before then has no such flag: it gets
-// the older reminder, until a backup is made here or proved.
-function backupNagHtml() {
-  // A demo club (#406) is never kept: its backup means nothing.
-  if (!isRemote() || demo) return '';
-  const plan = own().view?.plan;
-  if (plan?.temporary) {
-    const until = plan.removesAt ? ` If no one uses it, it’s deleted on ${esc(new Date(plan.removesAt).toLocaleDateString())}.` : '';
-    return `<p class="pl-desc pl-neterr cl-nag cl-temp"><b>Temporary club:</b> back it up and restore it to keep it.${until} <button class="btn-small primary" data-cl="backup-now">Back it up</button></p>`;
-  }
-  const notes = hostNotes();
-  if (!plan || plan.provedAt || notes.backedUp || notes.backupNagHidden) return '';
-  return '<p class="pl-desc pl-neterr cl-nag">No backup of this club has been made in this browser: if it loses the club, nobody can run it again. <button class="btn-small" data-cl="backup-now">Back it up</button> <button class="link-btn" data-cl="backup-nag-hide">I have one</button></p>';
+// An owner whose passkey keeps no copy of their key on the relay (#654):
+// signing in on a new device wouldn't bring them, or their club, back. An
+// unlock saves one, when the passkey can; else another passkey may.
+function copyNagHtml() {
+  // A demo club (#406) is never kept.
+  if (!isRemote() || demo || pass.copy !== false) return '';
+  const busy = pass.busy ? ' disabled' : '';
+  return `<p class="pl-desc pl-neterr cl-nag cl-nocopy"><b>Your passkey can’t move this club to a new device yet.</b> <button class="btn-small primary" data-cl="copy-unlock"${busy}>Unlock</button> <button class="btn-small" data-cl="copy-add"${busy}>Add a passkey</button></p>`;
 }
 
 
@@ -1271,15 +1254,6 @@ function onSubmitIn(e) {
   }
   const bf = e.target.closest('form[data-clform="backup"]');
   if (bf) { e.preventDefault(); submitBackup(bf); return; }
-  const prf = e.target.closest('form[data-clform="prove"]');
-  if (prf) { e.preventDefault(); submitProof(prf); return; }
-  // A member's Back up card (#562): Player settings' backup.
-  const mbf = e.target.closest('form[data-clform="member-backup"]');
-  if (mbf) {
-    e.preventDefault();
-    saveBackup(me, mbf).then(() => { memberBackup = {saved: true}; render(); }, err => { memberBackup = {form: true, note: err.message}; render(); });
-    return;
-  }
   const sf = e.target.closest('form[data-clform="service"]');
   if (sf) {
     e.preventDefault();
@@ -1541,7 +1515,10 @@ const proveFor = code => challenge => signMessage(me, {type: 'prove', room: code
 // Where this player is with their passkey: 'open' (unlocked, or not
 // needed: no clubs yet, a demo), 'none' (they have none: make one),
 // 'locked' (unlock), 'unsupported' (this browser can't), or 'unknown'
-// (the relay can't be asked). `note`: what went wrong last.
+// (the relay can't be asked). `note`: what went wrong last. `copy`, for an
+// owner with a passkey (#654): whether the relay keeps a copy of their key,
+// so signing in on a new device brings them and their club back (undefined
+// when not known).
 let pass = {state: 'open', note: '', busy: false};
 let pendingCreate = null; // a club name to create once unlocked
 // Whether this browser's player needs their passkey here: in a club, or
@@ -1555,8 +1532,10 @@ async function refreshPass() {
   try {
     const st = await pk.status(me.id);
     pass.state = !st.enrolled ? 'none' : pk.session(me.id) ? 'open' : 'locked';
+    pass.copy = owner?.record && st.enrolled ? !!st.copy : undefined;
   } catch {
     pass.state = 'unknown';
+    pass.copy = undefined;
   }
   render();
 }
@@ -1628,14 +1607,18 @@ function unlockAll() {
 
 // After a passkey made or used: open, and everything carries on.
 async function unlocked() {
-  pass = {state: 'open', note: '', busy: false};
+  pass = {state: 'open', note: '', busy: false, copy: pass.copy};
   render();
   await unlockAll();
   if (pendingCreate) { const n = pendingCreate; pendingCreate = null; createClub(n); }
-  render();
+  // Whether the relay keeps a copy of the key now (#654).
+  await refreshPass();
 }
 
-// A passkey action from the gate card, with what went wrong shown on it.
+// A passkey action from the gate card or the owner's no-copy banner, with
+// what went wrong shown on it. 'copy-unlock' saves a copy when the passkey
+// can make one (PRF); 'copy-add' adds another passkey (after a fresh
+// unlock), which may.
 async function passAct(act) {
   if (pass.busy) return;
   pass.busy = true;
@@ -1643,9 +1626,13 @@ async function passAct(act) {
   render();
   try {
     if (act === 'enrol') await pk.enrol(me, myName());
-    else if (act === 'unlock') await pk.unlock(me);
-    else { await recoverAccount(); pass.busy = false; return; }
+    else if (act === 'unlock' || act === 'copy-unlock') await pk.unlock(me);
+    else if (act === 'copy-add') {
+      if (!pk.fresh(me.id)) await pk.unlock(me);
+      await pk.enrol(me, myName());
+    } else { await recoverAccount(); pass.busy = false; return; }
     await unlocked();
+    if (act === 'copy-unlock' && pass.copy === false) { note = 'This passkey can’t keep a copy. Add another passkey.'; render(); }
   } catch (e) {
     pass.busy = false;
     pass.note = e.message;
@@ -2114,9 +2101,8 @@ function render() {
   // And the Members search (#398), where it was being typed.
   const search = root.querySelector('[data-msearch]');
   const searchKept = search && document.activeElement === search && {start: search.selectionStart, end: search.selectionEnd};
-  // A backup's passwords, or the file chosen to prove it (#395): the form
-  // itself is kept, since a chosen file can't be put back.
-  const clForm = root.querySelector('form[data-clform="backup"], form[data-clform="prove"], form[data-clform="member-backup"]');
+  // A club backup's passwords: the form itself is kept.
+  const clForm = root.querySelector('form[data-clform="backup"]');
   const clFocus = clForm?.contains(document.activeElement) && document.activeElement;
   // A promotion being set up (#544), kept the same way: what's picked and
   // ticked too. Its kind redraws it, and that one's new.
@@ -2434,12 +2420,12 @@ function createHtml() {
     // A link for someone else (#636): ducy needs this player's ID for one of theirs.
     if (!demo && me?.id) h += `<p class="pl-meta">Your player ID, for ducy: <code class="cl-id">${esc(me.id)}</code></p>`;
   }
-  // Already have one (#191): its backup brings it back, here or on another
-  // device. Not in a demo (#406), which starts empty.
+  // Already have one: the owner's passkey brings it back on another device
+  // (#575, #654); or, as an option, its backup file (#191). Not in a demo
+  // (#406), which starts empty.
+  if (!demo && pk.supported()) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="pass-recover">Restore with a passkey</button></span>';
   // A real button (#544), which opens the hidden file picker.
   if (!demo) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="restore-pick">Restore from backup</button><input type="file" data-clrestore accept=".json,application/json" hidden></span>';
-  // Or with a passkey (#575).
-  if (!demo && pk.supported()) h += '<span class="cl-act-desc cl-restore"><button class="link-btn" type="button" data-cl="pass-recover">Restore with a passkey</button></span>';
   return h + '</section>';
 }
 
@@ -2448,108 +2434,52 @@ function demoCardHtml() {
   return '<section class="cl-act-card"><span class="cl-act-title">Try a demo club</span><span class="cl-act-row"><button class="tr-start" data-cl="demo">Open</button></span></section>';
 }
 
-// Setting up a club (#152, #395), one step at a time (see WIZARD_STEPS):
-// back it up with a password, prove the file opens, open a first table,
-// then the invite link. Skipping the backup warns first, and leaves the
-// club temporary.
+// Setting up a club (#152), one step at a time (see WIZARD_STEPS): open a
+// first table, then the invite link.
 function wizardHtml() {
-  const name = club?.name || owner?.record?.name || '';
-  const setup = !!wizard.setup;
   // Its steps from 1 (#544), the label always above the heading. Naming the
   // club came before them.
-  const step = n => (setup ? `<span class="pl-meta cl-step">Step ${n} of 4</span>` : '');
-  const err = backupNote ? `<p class="pl-desc pl-neterr">${esc(backupNote)}</p>` : '';
+  const step = n => `<span class="pl-meta cl-step">Step ${n} of 2</span>`;
   let h = '<section class="cl-card cl-wizard">';
-  if (wizard.step === 'skip') {
-    h += `<h2>Skip the backup?</h2><p class="pl-desc pl-neterr"><b>Without a backup, your club can’t be recovered.</b> If this browser’s data is cleared, or you lose this device, nobody can run the club again: not its members, its chips or its history.</p>`;
-    h += `<p class="pl-desc">Until you back it up, it’s a <b>temporary club</b>: everything works, but if no one uses it for 7 days it’s deleted.</p>`;
-    return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-back">Back up after all</button><button class="btn-small" data-cl="wiz-onward">Skip anyway</button></div></section>';
-  }
-  if (wizard.step === 'prove') {
-    h += `${step(2)}<h2>Prove it works</h2><p class="pl-desc">Now open the file you just saved, and enter its password. This only checks it: nothing on this device changes.</p>`;
-    h += '<form class="pl-idform" data-clform="prove">';
-    h += '<label>Backup file<input class="pl-text" type="file" name="file" required accept=".json,application/json"></label>';
-    h += '<label>Password<input class="pl-text" type="password" name="pw" required autocomplete="current-password"></label>';
-    h += `<div class="pl-actions"><button class="tr-start" type="submit">Check it</button><button class="btn-small" type="button" data-cl="wiz-back">Make a new one</button><button class="btn-small" type="button" data-cl="${setup ? 'wiz-skip' : 'wiz-cancel'}">${setup ? 'Skip' : 'Cancel'}</button></div></form>`;
-    return h + err + '</section>';
-  }
-  if (wizard.step === 'table') {
-    if (provedNote) h += `<p class="pl-desc cl-proved">${provedNote}</p>`;
-    h += `${step(3)}<h2>Your first table</h2>`;
-    return h + tableFormHtml({wizard: true}) + '</section>';
-  }
   if (wizard.step === 'invite') {
-    h += `${step(4)}<h2>Your invite link</h2>`;
+    h += `${step(2)}<h2>Your invite link</h2>`;
     h += club ? inviteRowHtml() : '<p class="pl-meta">Connecting to your club…</p>';
     return h + '<div class="pl-actions"><button class="tr-start" data-cl="wiz-done">Go to your club</button></div></section>';
   }
-  h += `${step(1)}<h2>Back up ${esc(name)}</h2>`;
-  h += '<p class="pl-desc">The backup is a file, locked with a password you choose, that lets you run the club again from any browser if this one loses it. Then you open it once here, to prove it works.</p>';
-  h += '<form class="pl-idform" data-clform="backup">';
-  h += `<label>Password<input class="pl-text" type="password" name="pw" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
-  h += `<label>Again<input class="pl-text" type="password" name="pw2" required minlength="${MIN_NEW_PASSWORD}" autocomplete="new-password"></label>`;
-  h += '<p class="pl-desc">It isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
-  h += `<div class="pl-actions"><button class="tr-start" type="submit">Save the backup</button><button class="btn-small" type="button" data-cl="${setup ? 'wiz-skip' : 'wiz-cancel'}">${setup ? 'Skip' : 'Cancel'}</button></div></form>`;
-  return h + err + '</section>';
+  h += `${step(1)}<h2>Your first table</h2>`;
+  return h + tableFormHtml({wizard: true}) + '</section>';
 }
-// What the table step says once the backup is proved.
-let provedNote = '';
 
-// The backup form: the file downloads, then the proof step.
+// The club's backup file, on Backup and devices (an option, #654): null, or
+// {note} while its form is open.
+let clubBackup = null;
+
 async function submitBackup(f) {
   const pw = f.elements.pw.value;
-  if (pw !== f.elements.pw2.value) { backupNote = 'The passwords don’t match.'; render(); return; }
   try {
+    if (pw !== f.elements.pw2.value) throw new Error('The passwords don’t match.');
     await backupClub(pw);
   } catch (e) {
-    backupNote = e.message;
+    clubBackup = {note: e.message};
     render();
     return;
   }
-  backupNote = '';
-  setWizard('prove');
+  clubBackup = null;
+  render();
 }
-
-// The proof (#395): the chosen file, unlocked with its password the way a
-// restore does (club-backup.js), must be this club's and hold the owner's
-// player ID. The club's room then records it, signed by the owner, and the
-// club isn't temporary any more.
-async function submitProof(f) {
-  const file = f.elements.file.files[0];
-  const go = f.querySelector('[type=submit]');
-  if (!file || go.disabled) return;
-  go.disabled = true;
-  go.textContent = 'Checking…';
-  try {
-    await proveClubBackup(await file.text(), f.elements.pw.value, {code: myClubCode(), ownerId: club?.ownerId || me.id});
-    await owner.run('backup_proved');
-  } catch (e) {
-    go.disabled = false;
-    go.textContent = 'Check it';
-    backupNote = e.message;
-    render();
-    return;
-  }
-  backupNote = '';
-  provedNote = '<b>Backed up ✓</b> Keep the file and the password safe: with both, anyone can run this club.';
-  wizardOnward();
-}
-let backupNote = ''; // what went wrong with the backup or its proof
 // The Settings tab's service form: null, 'new', or a service's id; and what's wrong with it.
 let serviceForm = null, serviceNote = '';
 
 // Saves the club's backup (#152): your player ID, which owns the club, locked
 // with `password`, with the club's code and name (club-backup.js). Restoring
 // it (Player settings) brings the ID back and reopens the club in that
-// browser. It counts once proved (submitProof).
+// browser.
 async function backupClub(password) {
   const code = myClubCode(), name = club?.name || owner?.record?.name || '';
   // Exporting the key needs a recent passkey unlock (#575).
   const ident = demo ? me : await pk.exportable(me);
   downloadFile(await clubBackupText(ident, password, {code, name}), `ducy-club-${code}.json`);
   setHostNote('backedUp', Date.now());
-  // It's a backup of the owner's player ID too (#562).
-  markBackedUp(me.id);
 }
 
 // Which relay this page uses. A page served locally but using the site's
@@ -2579,7 +2509,7 @@ function hostHtml() {
   if (location.hash.startsWith('#clubs') && location.hash.slice(1) !== want) history.replaceState(null, '', `${location.pathname}${location.search}#${want}`);
   let h = `<div class="mg-shell${navOpen ? ' nav-open' : ''}${notesOpen ? ' notes-open' : ''}">`;
   h += sideHtml(at.page);
-  h += `<section class="mg-page">${backupNagHtml()}${pageHtml(at)}</section>`;
+  h += `<section class="mg-page">${copyNagHtml()}${pageHtml(at)}</section>`;
   h += notesHtml();
   return h + '<div class="mg-scrim" data-cl="mg-close"></div></div>';
 }
@@ -3084,20 +3014,22 @@ function rulesHtml() {
   return h;
 }
 
-// Backup and devices (#398, #399): the backup and its proof, running the
-// club from another device, and deleting it.
+// Backup and devices (#398, #399, #654): moving devices is by passkey (its
+// copy on the relay: a new device signs in with it); a backup file is an
+// option; leaving this browser; deleting the club.
 function backupPageHtml() {
   const remote = isRemote();
   let h = '';
   if (remote) {
-    // A backup counts once proved (#395), on any device: the relay keeps when.
-    const last = hostNotes().backedUp, plan = own().view?.plan;
-    if (plan?.temporary) h += '<p class="pl-meta pl-neterr">Temporary club: no backup proved yet.</p>';
-    else if (plan?.provedAt) h += `<p class="pl-meta">Backed up ✓ ${esc(new Date(plan.provedAt).toLocaleString())}</p>`;
+    if (!demo && pass.copy) h += '<p class="pl-meta cl-copy-ok">Passkey: moves to a new device ✓</p>';
+    if (!demo && pass.copy === false) h += '<p class="pl-meta pl-neterr">Passkey: can’t move to a new device yet</p>';
+    const last = hostNotes().backedUp;
     if (last) h += `<p class="pl-meta">Last backup from this browser: ${esc(new Date(last).toLocaleString())}</p>`;
-    // Moving devices (#191) is restoring this backup there.
-    h += '<div class="pl-actions"><button class="btn-small primary" data-cl="backup">Back up the club</button></div>';
-  } else h += '<p class="pl-desc">Kept in this browser only. Move it to always on to back it up.</p>';
+    if (clubBackup) {
+      h += backupFormHtml('data-clform="backup"', 'data-cl="backup-cancel"');
+      if (clubBackup.note) h += `<p class="pl-desc pl-neterr">${esc(clubBackup.note)}</p>`;
+    } else h += '<div class="pl-actions"><button class="btn-small" data-cl="backup">Download a backup</button></div>';
+  } else h += '<p class="pl-desc">Kept in this browser only.</p>';
   // Leaving this browser isn't deleting the club (#544): a section of its own.
   if (remote) h += '<h2>This browser</h2><div class="pl-actions"><button class="btn-small" data-cl="close">Stop running it here</button></div>';
   h += `<h2>Delete</h2><div class="pl-actions">${remote ? '<button class="btn-small" data-cl="delete-always">Delete club</button>' : '<button class="btn-small" data-cl="close">Delete club</button>'}</div>`;
@@ -3338,11 +3270,8 @@ function memberHomeHtml(m, manage = '') {
   h += '</div>';
   if (vaultTakenRecently(m.vault)) h += `<p class="cl-side-note cl-vault-taken" role="status">${esc(vaultTakenText(m.vault.taken))}</p>`;
   h += leftPanelHtml(m);
-  h += memberBackupHtml();
   if (!(n?.online && n.hostHere)) h += `<p class="pl-meta cl-conn">${connText(n, 'Your seat and chips are kept.')}${n ? '' : ` <button class="btn-small" data-cl="retry" data-code="${code}">Try again</button>`}</p>`;
   if (m.error) h += `<p class="pl-desc pl-neterr cl-err">${esc(m.error)}</p>`;
-  // No backup of the club proved yet (#395): it may not last.
-  if (m.temporary) h += '<p class="pl-meta cl-temp">Temporary club: its owner hasn’t backed it up yet. If no one uses it for 7 days, it’s deleted.</p>';
   if (mismatch) h += '<p class="pl-desc pl-neterr">Your copy of the ledger doesn’t add up to the balance the club reports.</p>';
   if (m.agent === 'offered') {
     h += `<div class="cl-account cl-offer"><span>The owner asked you to be an <b>agent</b>.</span>${roleHtml('agent')}`;
@@ -3408,27 +3337,6 @@ function memberHomeHtml(m, manage = '') {
   h += clubNameHtml(m);
   h += `<button class="link-btn cl-forget" data-cl="forget" data-code="${code}">Forget this club</button>`;
   return h + '</aside></div>';
-}
-
-// Back up your account (#562): on a member's club page until this player ID
-// has a backup (Player settings' backup, saved here or there). Not in a demo
-// (#406), whose people are made up.
-let memberBackup = null; // null, {form: true, note?} or {saved: true}
-function memberBackupHtml() {
-  if (demo || !me || (isBackedUp(me.id) && !memberBackup?.saved)) return '';
-  if (memberBackup?.saved) {
-    return `<section class="cl-left cl-backup" role="status"><b class="cl-left-title">Backed up ✓</b><p class="cl-backup-text">${esc(BACKUP_SAVED)}</p><button class="btn-small primary" data-cl="member-backup-done">Done</button></section>`;
-  }
-  let h = '<section class="cl-left cl-backup"><b class="cl-left-title">Back up your account</b>';
-  h += '<p class="cl-backup-text">Your account lives only in this browser. A backup gets it back on a new phone, or if the browser clears it.</p>';
-  // iPhone Safari clears a site's data after 7 days without a visit, unless
-  // it's on the Home Screen.
-  if (safariMayClear()) h += '<p class="cl-backup-text">In Safari, tap Share, then Add to Home Screen, so Safari doesn’t clear it.</p>';
-  if (memberBackup?.form) {
-    h += backupFormHtml('data-clform="member-backup"', 'data-cl="member-backup-cancel"');
-    if (memberBackup.note) h += `<p class="cl-backup-text cl-down">${esc(memberBackup.note)}</p>`;
-  } else h += '<button class="btn-small primary" data-cl="member-backup">Download</button>';
-  return h + '</section>';
 }
 
 // A balance or result: "−120", never "-120".
@@ -3965,9 +3873,8 @@ async function onClickIn(e) {
   else if (act === 'left-done') { leftPanels.delete(b.dataset.code); render(); }
   // Passkeys (#575): make one, unlock, or bring an account back with one.
   else if (act === 'pass-enrol' || act === 'pass-unlock' || act === 'pass-recover') passAct(act.slice(5));
-  // A member's Back up card (#562).
-  else if (act === 'member-backup') { memberBackup = {form: true}; render(); root.querySelector('form[data-clform="member-backup"] [name=pw]')?.focus(); }
-  else if (act === 'member-backup-cancel' || act === 'member-backup-done') { memberBackup = null; render(); }
+  // An owner's passkey with no copy of their key (#654): unlock, or add one.
+  else if (act === 'copy-unlock' || act === 'copy-add') passAct(act);
   else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
   else if (act === 'sit-cancel') { sitForm = ''; sitAmount = 0; render(); }
   // Grouped tables (#501): the answer to "We're starting a new table. Join?".
@@ -4023,8 +3930,9 @@ async function onClickIn(e) {
   // Voiding a prize asks why, in its row (#544).
   else if (act === 'promo-void') { voiding = b.dataset.id; render(); root.querySelector('form[data-voidform] input')?.focus(); }
   else if (act === 'void-cancel') { voiding = ''; render(); }
-  // A new backup takes the backup and proof steps (#395).
-  else if (act === 'backup' || act === 'backup-now') { backupNote = ''; setWizard('backup', {setup: false}); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
+  // The club's backup file, an option (#654).
+  else if (act === 'backup') { clubBackup = {note: ''}; render(); root.querySelector('form[data-clform=backup] [name=pw]')?.focus(); }
+  else if (act === 'backup-cancel') { clubBackup = null; render(); }
   else if (act === 'service-add' || act === 'service-edit') {
     serviceForm = act === 'service-add' ? 'new' : b.dataset.id;
     serviceNote = '';
@@ -4035,18 +3943,13 @@ async function onClickIn(e) {
     const s = club.services?.[b.dataset.id];
     if (confirm(`Revoke ${s?.name || 'this service'}? Its key stops working at once; adding it again takes its service line.`)) hostAct('service_revoke', {id: b.dataset.id});
   }
-  // Setting up a club: Skip asks once more, warning it can't be recovered.
-  else if (act === 'wiz-skip') { backupNote = ''; setWizard('skip'); }
-  else if (act === 'wiz-back') { backupNote = ''; setWizard('backup'); }
-  else if (act === 'wiz-onward') { provedNote = ''; wizardOnward(); }
+  // Setting up a club.
   else if (act === 'wiz-invite') setWizard('invite');
-  else if (act === 'wiz-cancel') { backupNote = ''; setWizard(null); }
   else if (act === 'wiz-done') { setWizard(null); location.hash = 'clubs/overview'; }
   else if (act === 'share') { setHostNote('shared', true); navigator.share?.({title: club?.name || 'ducy club', text: `Join ${club?.name || 'my club'} on ducy`, url: link()}).catch(() => {}); render(); }
   // Let in: Cash or Credit first (#621).
   else if (act === 'approve') { letIn = `o|${b.dataset.id}`; render(); }
   else if (act === 'letin-cancel') { letIn = ''; render(); }
-  else if (act === 'backup-nag-hide') { setHostNote('backupNagHidden', true); render(); }
   else if (act === 'close-table-yes') { closingTable = null; hostAct('close_table', {table: b.dataset.table}); render(); }
   else if (act === 'close-table-no') { closingTable = null; render(); }
   else if (act === 'decline') hostAct('decline', {id: b.dataset.id});
@@ -4351,8 +4254,6 @@ export function startClubs() {
     window.addEventListener('pageshow', e => { if (e.persisted) reconnectAll(); });
     // Back online after sleep or a network change: reconnect what dropped.
     window.addEventListener('online', () => reconnectAll());
-    // A backup saved in Player settings: no more Back up card (#562).
-    window.addEventListener('ducy-backed-up', () => render());
     club = load(CLUB_KEY, null);
     if (club) { ensureChips(club); ensureTables(club); }
     verifier = new Verifier(load(SENDERS_KEY, {}));

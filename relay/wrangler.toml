@@ -53,10 +53,8 @@ ADMIN_ORIGINS = "https://admin.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
-# The beta (#551): a club takes a grant, with no trial clubs, and unused clubs
-# aren't deleted.
+# The beta (#551): a club takes a grant, with no trial clubs.
 TRIALS = "off"
-KEEP_UNUSED_CLUBS = "on"
 
 # Staging and sandbox (DEPLOY.md): Workers of their own, so their own Durable
 # Objects and data, each allowing only its own site. `wrangler deploy --env
@@ -88,7 +86,6 @@ MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
 TRIALS = "off"
-KEEP_UNUSED_CLUBS = "on"
 
 # The sandbox can be wiped (relay/src/reset.js): RESETTABLE turns that on.
 # Never set it on the live relay or staging.
@@ -117,5 +114,4 @@ MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
 TRIALS = "off"
-KEEP_UNUSED_CLUBS = "on"
 RESETTABLE = "on"

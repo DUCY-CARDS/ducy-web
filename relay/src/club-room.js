@@ -177,8 +177,7 @@ export async function adminView(storage, what, {reveal = false, id = ''} = {}) {
 }
 
 // The club server's plan and limits from its registry record (#265). An
-// older club with no record keeps the free limits. `temporary` (#395):
-// no backup of it proved yet.
+// older club with no record keeps the free limits.
 const planOf = record => room({op: 'planOf', record: record || null}).value;
 
 // Is `env` the old host's signed handoff to this club's identity (#98)?
@@ -229,9 +228,6 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // admin site, #601).
 // `record`: the club's record in the registry (registry.js, #265), for its
 // plan and limits; server.setRecord(record) when the super admin changes it.
-// `onProved(owner)`: the owner proved a backup works (#395, the
-// backup_proved action); the caller records it in the registry and
-// resolves to the club's new record.
 // `onOwnerMoved(from, to)`: the relay vouched the owner onto a new player
 // ID (vouchedMove); the caller updates the registry's record.
 // `openConns`: {id: conn} for those in `online`, their connections as the
@@ -241,7 +237,7 @@ export function playClock(onUsage, timers = null, now = () => Date.now()) {
 // the registry. No cards in it.
 // `judge`: scores hands after the flop for the fair play check (postflop.js
 // judgeVia, #615); null leaves that part off.
-export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onProved = null, onOwnerMoved = async () => {}, onFairPlay = () => {}, timers = null, record = null, judge = null}) {
+export async function openClub({storage, send, online = [], openConns = {}, ClubTable, onUsage = () => {}, onHand = () => {}, onDeleted = () => {}, onSaved = () => {}, onOwnerMoved = async () => {}, onFairPlay = () => {}, timers = null, record = null, judge = null}) {
   const club = await storage.get('club');
   if (!club) return null;
   const identity = await importIdentity(await storage.get('identity'));
@@ -308,11 +304,6 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
       if (rec) out.push(rec);
     }
     return out;
-  }
-  // Only the owner's signed owner_cmd reaches this (club-server.js).
-  async function backupProved() {
-    if (!onProved) throw new Error('ducy’s server can’t record that right now.');
-    server.setRecord(await onProved(club.ownerId));
   }
   // The fair play check (fair-play.js: collusion, #582, and real-time
   // assistance, #591): after a session (play quiet
@@ -441,7 +432,7 @@ export async function openClub({storage, send, online = [], openConns = {}, Club
     // A tournament hand ended: its tables' seat flags again (#581).
     handDone: tid => refreshFlags(tid),
     onPlay: playing,
-    extraOps: {delete_club: deleteClub, hands, backup_proved: backupProved},
+    extraOps: {delete_club: deleteClub, hands},
     storeHand,
     // Every seat's cards, kept apart for ducy's checks (hand-records.js).
     fullHand: (hand, opts) => {

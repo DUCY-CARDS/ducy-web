@@ -47,7 +47,7 @@
 import { adminView, codeInfo, createClub, openClub } from './club-room.js';
 import { adminApi, adminsFrom } from './admin.js';
 import adminList from '../../admins.json';
-import { limitsFrom, registry, removesAt } from './registry.js';
+import { limitsFrom, registry } from './registry.js';
 import { fairPlayStore } from './fair-play-admin.js';
 import { MAX_REPORT_BYTES } from './error-log.js';
 import { BACKUP_EVERY_MS, backupConfig, dropBackups, pullBackup, pushBackup } from './backup.js';
@@ -113,8 +113,6 @@ function connOf(req) {
 
 const MAX_QUEUED = 100, MAX_QUEUED_PER_GUEST = 10, MAX_QUEUED_MESSAGE = 8 * 1024;
 const QUEUE_MS = 7 * 864e5;
-// How often the registry looks for unused temporary clubs to delete (#395).
-const CLEANUP_EVERY_MS = 6 * 3600e3;
 
 // The relay's one registry of always-on clubs (registry.js).
 const registryOf = env => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
@@ -295,8 +293,8 @@ async function route(req, env) {
 
 // The registry of always-on clubs (registry.js), one for the relay: limits
 // on creating them, and their usage. Only rooms reach it, except /usage
-// and the /has behind /code (#393). On its alarm, every few hours,
-// temporary clubs left unused are deleted (#395).
+// and the /has behind /code (#393). No club is deleted for going unused
+// (#654).
 export class Registry {
   constructor(state, env) {
     const s = state.storage;
@@ -312,17 +310,6 @@ export class Registry {
     this.fp = fairPlayStore({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)});
   }
 
-  async alarm() {
-    loadEngine();
-    // The beta keeps clubs as long as it can (#551): none are deleted for being unused.
-    const unused = this.env.KEEP_UNUSED_CLUBS === 'on' ? [] : await this.reg.expired();
-    for (const code of unused) {
-      // The room deletes the club (telling its members), after checking again.
-      await roomOf(this.env, code).fetch(`https://room/admin/expire/${encodeURIComponent(code)}`).catch(e => console.warn('club: not expired:', e));
-    }
-    await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
-  }
-
   async fetch(req) {
     // ducy's engine first: the registry's rules (registry.js clubRegistry),
     // admin checks and passkeys all call it, and this object may start in
@@ -334,7 +321,6 @@ export class Registry {
       return Response.json({codes: clubCodes(await this.state.storage.get('clubs'))});
     }
     if (this.env.RESETTABLE === 'on' && path === '/reset') {
-      await this.state.storage.deleteAlarm();
       await this.state.storage.deleteAll();
       const s = this.state.storage;
       this.reg = registry({get: k => s.get(k), put: (k, v) => s.put(k, v), delete: k => s.delete(k)}, limitsFrom(this.env));
@@ -352,10 +338,8 @@ export class Registry {
     }
     if (path === '/passkey-session') return Response.json({session: await this.pk.session(String(body.token || ''), body.club || null)});
     if (path === '/passkey-owner') { await this.reg.moveOwner(String(body.code), String(body.from), String(body.to)); return Response.json({ok: true}); }
-    if ((await this.state.storage.getAlarm()) == null) await this.state.storage.setAlarm(Date.now() + CLEANUP_EVERY_MS);
     try {
       if (path === '/claim') return Response.json(await this.reg.claim(String(body.owner), String(body.code), Date.now(), String(body.name || ''), {grant: String(body.grant || '')}));
-      else if (path === '/proved') return Response.json(await this.reg.proved(String(body.code), String(body.owner)));
       else if (path === '/has') return Response.json({has: await this.reg.has(String(body.code))});
       else if (path === '/status') return Response.json(await this.reg.status(String(body.code)));
       else if (path === '/release') { await this.reg.release(String(body.code)); await this.fp.drop(String(body.code)); }
@@ -450,12 +434,6 @@ export class Room {
         onFairPlay: summary => this.clubCode().then(c => this.registry('/fair-play', {code: c, summary})),
         onDeleted: () => this.deleted(),
         onSaved: () => this.scheduleBackup(),
-        // A backup proved (#395): recorded in the registry, signed for by the owner.
-        onProved: async owner => {
-          const c = await this.clubCode();
-          await this.registry('/proved', {code: c, owner});
-          return (await this.status(c, true)).record;
-        },
         timers: this.tableTimers(),
         onOwnerMoved: async (from, to) => {
           await this.registry('/passkey-owner', {code: await this.clubCode(), from, to});
@@ -489,8 +467,7 @@ export class Room {
     return this.statusV;
   }
 
-  // The super admin changed the club, or looks inside it (#265); or the
-  // registry found it temporary and unused (#395).
+  // The super admin changed the club, or looks inside it (#265).
   async adminRequest(path, code) {
     // Who's here and the tables running, for the admin site's Now (#601):
     // the admins left out. A club no one is in isn't opened to ask.
@@ -502,16 +479,6 @@ export class Room {
         if (club) tables = (await club.adminInfo()).tables.filter(t => t.running).length;
       }
       return Response.json({online: ids.size, tables});
-    }
-    if (path === 'expire') {
-      const st = await this.status(code, true);
-      const at = removesAt(st.record);
-      if (at == null || at > Date.now()) return Response.json({ok: true, deleted: false});
-      const club = await this.club(code).catch(() => null);
-      // Deleting tells its members, and releases it from the registry.
-      if (club) await club.run('delete_club');
-      else await this.registry('/release', {code});
-      return Response.json({ok: true, deleted: true});
     }
     if (path === 'refresh') {
       const st = await this.status(code, true);
@@ -679,7 +646,7 @@ export class Room {
       await this.state.storage.deleteAll();
       return Response.json({ok: true});
     }
-    const adm =url.pathname.match(/^\/admin\/(refresh|info|expire|now)\//);
+    const adm =url.pathname.match(/^\/admin\/(refresh|info|now)\//);
     if (adm) return this.adminRequest(adm[1], code);
     // The club as the admin page shows it, from storage (#401).
     const view = url.pathname.match(/^\/admin\/(full|people|person)\//);

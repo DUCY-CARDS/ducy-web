@@ -28,12 +28,11 @@
 //
 // A Record: {owner, at, name, plan: 'trial' | 'club', expires (trials; ms),
 //   limits: {tables, tourneysPerDay}, suspended, lastActive, minutes (all
-//   time), days: {date: minutes} (the last DAYS_KEPT days), temporary,
-//   provedAt}
+//   time), days: {date: minutes} (the last DAYS_KEPT days)}
 //
-// Temporary clubs (#395): a new club is temporary until its owner proves a
-// backup of it works (provedAt, signed by the owner through the club's
-// room). One with no activity for TEMP_DAYS is deleted (expired()).
+// A club is kept until its owner or the super admin deletes it: none is
+// deleted for going unused (#654). Its owner moves devices with their
+// passkey (passkeys.js), not a backup file.
 //
 // limits: {perOwner, total}: at most perOwner clubs for each owner and total
 // in all.
@@ -50,13 +49,8 @@ export const FREE_GBS_PER_DAY = 13_000;
 export const FREE_LIMITS = Object.freeze({tables: 2, tourneysPerDay: 1});
 export const TRIAL_DAYS = 14;
 const DAYS_KEPT = 30;
-// A temporary club this long without activity is deleted (#395).
-export const TEMP_DAYS = 7;
 // Admin actions kept in the admin log (#401): about 150 KB, in one value.
 export const ADMIN_LOG = 1000;
-
-// When temporary club `rec` will be deleted if no one uses it, or null.
-export const removesAt = rec => (rec?.temporary ? (rec.lastActive || rec.at || 0) + TEMP_DAYS * 864e5 : null);
 
 // Only a grant makes a club (#636): no creators from the environment, no trials.
 export function limitsFrom(env = {}) {
@@ -150,7 +144,7 @@ export function registry(storage, limits) {
     // `owner` may have a club in room `code`, called `name`, with `grant`,
     // the token from their link (#636): it must be their unused grant's.
     // Throws why not; else the grant is used up, and this resolves to the
-    // club's record. A new club is temporary (#395).
+    // club's record.
     async claim(owner, code, now = Date.now(), name = '', {grant = ''} = {}) {
       // Hashed first: once in serial(), only storage is awaited.
       const hash = await grantHash(grant);
@@ -158,20 +152,13 @@ export function registry(storage, limits) {
         const all = await invites();
         const inv = Object.hasOwn(all, owner) ? all[owner] : null;
         if (!hash || !inv || inv.usedAt || inv.hash !== hash) throw new Error(NOT_YOUR_LINK);
-        const rec = await op({op: 'claim', owner, code, name, temporary: true}, now);
+        const rec = await op({op: 'claim', owner, code, name}, now);
         await op({op: 'revoke', id: owner});
         all[owner] = {...inv, hash: null, usedAt: now, code};
         await storage.put('invites', all);
         return rec;
       });
     },
-    // The owner proved a backup of club `code` works (#395): it isn't
-    // temporary any more. `owner` is who signed the request (the room
-    // checked); it must be the club's owner.
-    proved: (code, owner, now = Date.now()) => op({op: 'proved', code, owner}, now),
-    // Temporary clubs with no activity for TEMP_DAYS (#395): the codes to
-    // delete.
-    expired: (now = Date.now()) => op({op: 'expired'}, now),
     // Is there an always-on club in room `code`? (A room that should hold one
     // but finds its storage empty rebuilds it from a backup, #97.)
     has: code => op({op: 'has', code}),

@@ -1,11 +1,11 @@
 // The relay's registry of always-on clubs (#98, #265): grants and their
-// one-time links (#636), limits, pausing, temporary clubs (#395), Wipe all
+// one-time links (#636), limits, pausing, clubs kept (#654), Wipe all
 // clubs, and usage against Cloudflare's free plan. The rules are ducy-play's
 // club_registry (#463).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { blockedReason, cleanLimits, FREE_GBS_PER_DAY, FREE_LIMITS, GBS_PER_CLUB_MINUTE, grantHash, limitsFrom, newGrantToken, NOT_YOUR_LINK, registry, removesAt, TEMP_DAYS } from '../relay/src/registry.js';
+import { blockedReason, cleanLimits, FREE_GBS_PER_DAY, FREE_LIMITS, GBS_PER_CLUB_MINUTE, grantHash, limitsFrom, newGrantToken, NOT_YOUR_LINK, registry } from '../relay/src/registry.js';
 
 function memoryStorage() {
   const m = new Map();
@@ -137,32 +137,36 @@ test('a paused club is blocked; the owner learns why', async () => {
   await assert.rejects(reg.setClub('ZZZZ-ZZZZ', {suspended: true}), /No such club/);
 });
 
-test('a new club is temporary until its owner proves a backup; unused for a week, it goes', async () => {
+test('a new club is kept: no temporary flag, no proving a backup, nothing expires (#654)', async () => {
   const storage = memoryStorage();
   const reg = registry(storage, limitsFrom({}));
   const now = Date.UTC(2026, 9, 25);
   const rec = await granted(reg, 'ann', 'AAAA-AAAA', now);
-  assert.equal(rec.temporary, true);
-  assert.equal(removesAt(rec), now + TEMP_DAYS * 864e5);
-  await granted(reg, 'ann', 'BBBB-BBBB', now);
+  assert.equal('temporary' in rec, false);
+  assert.equal('provedAt' in rec, false);
+  assert.equal(reg.proved, undefined);
+  assert.equal(reg.expired, undefined);
+  // A year unused: still there, and may run.
+  assert.equal((await reg.status('AAAA-AAAA', now + 365 * 864e5)).blocked, '');
+  const list = await reg.list(now + 365 * 864e5);
+  assert.equal(list.clubs.length, 1);
+  assert.equal('removesAt' in list.clubs[0], false);
+  assert.equal('tempDays' in list.limits, false);
+});
 
-  // Only the owner proves it.
-  await assert.rejects(reg.proved('AAAA-AAAA', 'bob', now), /owner/);
-  await assert.rejects(reg.proved('ZZZZ-ZZZZ', 'ann', now), /No such club/);
-  const proved = await reg.proved('AAAA-AAAA', 'ann', now + 1000);
-  assert.equal(proved.temporary, false);
-  assert.equal(proved.provedAt, now + 1000);
-
-  // A week on, only the unproved one is due to go; using it puts that off.
-  assert.deepEqual(await reg.expired(now + 6 * 864e5), []);
-  assert.deepEqual(await reg.expired(now + TEMP_DAYS * 864e5), ['BBBB-BBBB']);
-  await reg.used(0, now + 5 * 864e5, 'BBBB-BBBB');
-  assert.deepEqual(await reg.expired(now + TEMP_DAYS * 864e5), []);
-  assert.deepEqual(await reg.expired(now + 12 * 864e5), ['BBBB-BBBB']);
-  const list = await reg.list(now);
-  assert.equal(list.clubs.find(c => c.code === 'BBBB-BBBB').removesAt, now + 12 * 864e5);
-  assert.equal(list.clubs.find(c => c.code === 'AAAA-AAAA').removesAt, null);
-  assert.equal(list.limits.tempDays, TEMP_DAYS);
+test('an old temporary club’s flags are dropped (#654)', async () => {
+  const storage = memoryStorage();
+  const reg = registry(storage, limitsFrom({}));
+  const now = Date.UTC(2026, 9, 25);
+  await storage.put('clubs', {'AAAA-AAAA': {owner: 'ann', at: now, name: 'Owls', plan: 'club', temporary: true, provedAt: now}});
+  const {record} = await reg.status('AAAA-AAAA', now);
+  assert.equal(record.owner, 'ann');
+  assert.equal('temporary' in record, false);
+  assert.equal('provedAt' in record, false);
+  await reg.used(0, now + 1000, 'AAAA-AAAA');
+  const kept = (await storage.get('clubs'))['AAAA-AAAA'];
+  assert.equal('temporary' in kept, false);
+  assert.equal('provedAt' in kept, false);
 });
 
 test('limits from the admin are whole numbers in range, else unchanged', () => {

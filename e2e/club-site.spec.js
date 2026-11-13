@@ -167,7 +167,9 @@ test.describe('a grant link (#636)', () => {
 
     // Its player: the club is made, owned by their own key, and the link is off the address.
     await createWith(page, link);
-    await expect(page.locator('[data-cl="wiz-skip"]')).toBeVisible();
+    // No backup step (#654): straight to the first table.
+    await expect(page.locator('.cl-wizard .cl-step')).toHaveText('Step 1 of 2');
+    await expect(page.locator('form[data-tableform]')).toBeVisible();
     await expect(page).toHaveURL(/#clubs$/);
     await fitsTheScreen(page);
     await page.screenshot({path: info.outputPath('made.png'), fullPage: true});

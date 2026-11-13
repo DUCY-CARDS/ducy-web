@@ -4,13 +4,13 @@
 // your avatar at the table, your player ID with its backup and restore, how many club hands to keep,
 // notifications when something needs you (#145), and the relay in use.
 //
-// The player ID only lives in this browser, so a backup file (locked with a
-// password, identity.js) is the way to keep it after clearing site data or
-// to use it on another device. Restoring one reloads the page, so every part
-// of it uses the restored ID.
+// A passkey (passkey.js) is how a player moves to another device (#654). A
+// backup file (locked with a password, identity.js) is an option beside it,
+// for admin keys and passkeys that can't keep a copy; nothing asks for one.
+// Restoring one reloads the page, so every part of it uses the restored ID.
 
 import {
-  backupNeedsPassword, exportLockedIdentity, loadIdentity, markBackedUp, MIN_NEW_PASSWORD, saveIdentity, showId,
+  backupNeedsPassword, exportLockedIdentity, loadIdentity, MIN_NEW_PASSWORD, saveIdentity, showId,
 } from './identity.js';
 import { openBackup } from './club-backup.js';
 import { DEFAULT_RELAY, relayUrl, wsUrl } from './play-net.js';
@@ -300,8 +300,9 @@ export const RESTORE_CLUB_KEY = 'ducyRestoreClub';
 // By every place a backup is restored (#436).
 export const RESTORE_WARNING = 'Only restore your backup on ducy.cards.';
 
-// The backup form (a password, twice), here and on a club member's Back up
-// card (clubs.js, #562): `form` and `cancel` are its and Cancel's attributes.
+// The backup form (a password, twice), here and on the club manager's Backup
+// and devices page (clubs.js): `form` and `cancel` are its and Cancel's
+// attributes.
 export function backupFormHtml(form, cancel) {
   let h = `<form class="pl-idform" ${form}>`;
   h += '<p class="pl-desc">Choose a password for the backup file. You’ll need it to restore; it isn’t kept anywhere, so if you forget it the file can’t be opened.</p>';
@@ -313,8 +314,7 @@ export function backupFormHtml(form, cancel) {
 export const BACKUP_SAVED = 'Backup saved, locked with your password. Keep the file and the password safe: with both, anyone can play as you.';
 
 // Downloads a backup of `ident` from backup form `f` (backupFormHtml),
-// locked with its password, and records that this ID has one (#562).
-// Throws, in words for the player, why not.
+// locked with its password. Throws, in words for the player, why not.
 export async function saveBackup(ident, f) {
   const pw = f.elements.pw.value;
   if (pw !== f.elements.pw2.value) throw new Error('The passwords don’t match.');
@@ -322,8 +322,6 @@ export async function saveBackup(ident, f) {
   // key this browser keeps unexportable comes from its copy.
   const key = demo ? ident : await exportable(ident);
   downloadFile(await exportLockedIdentity(key, pw), `ducy-identity-${showId(ident.id)}.json`);
-  markBackedUp(ident.id);
-  window.dispatchEvent(new CustomEvent('ducy-backed-up', {detail: {id: ident.id}}));
 }
 
 // Saves a backup file from the backup form `f`.
@@ -356,12 +354,9 @@ async function chooseBackup(file) {
 
 async function restore(text, password) {
   try {
-    // Unlocked as proving a club's backup does (club-backup.js, #395).
     const {ident, club: c} = await openBackup(text, password);
     if (me && ident.id !== me.id && !confirm(`Replace player ID ${showId(me.id)} with ${showId(ident.id)}? Clubs that know ${showId(me.id)} won’t recognize this browser any more.`)) return;
     await saveIdentity(ident);
-    // Restored from a backup: this ID has one (#562).
-    markBackedUp(ident.id);
     idForm = null;
     let clubNote = '';
     if (c) {
