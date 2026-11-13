@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,7 +107,7 @@ test('admin.html on the sites goes to the admin site; the player app never links
   assert.match(read('.htaccess'), /^RewriteRule \^admin\\\.html\$ https:\/\/admin\.ducy\.cards\/ \[L,R=301\]$/m);
   assert.doesNotMatch(read('scripts/build-site.sh'), /> "\$OUT\/admin\.html"/);
   // Its version.json may be read by the admin site.
-  assert.match(read('.htaccess'), /<Files "version\.json">\s*Header set Access-Control-Allow-Origin "https:\/\/admin\.ducy\.cards"/);
+  assert.match(read('.htaccess'), /<Files "version\.json">\s*SetEnvIf Origin "\^https:\/\/admin\(-staging\)\?\\\.ducy\\\.cards\$" ADMIN_ORIGIN=\$0\s*Header set Access-Control-Allow-Origin "%\{ADMIN_ORIGIN\}e" env=ADMIN_ORIGIN/);
   for (const f of ['index.html', 'manage.html', 'privacy.html', ...readdirSync(join(ROOT, 'src')).filter(f => f.endsWith('.js') && !f.startsWith('admin')).map(f => `src/${f}`)]) {
     assert.doesNotMatch(read(f), /admin\.ducy\.cards|admin\.html/, f);
   }
@@ -115,7 +115,73 @@ test('admin.html on the sites goes to the admin site; the player app never links
 
 test('each relay lets the admin site call its admin API', () => {
   const w = read('relay/wrangler.toml');
-  assert.equal([...w.matchAll(/^ADMIN_ORIGINS = "https:\/\/admin\.ducy\.cards"$/gm)].length, 3, 'live, staging and sandbox');
+  assert.equal([...w.matchAll(/^ADMIN_ORIGINS = "https:\/\/admin\.ducy\.cards,https:\/\/admin-staging\.ducy\.cards"$/gm)].length, 3, 'live, staging and sandbox');
+});
+
+// The staging copy, admin-staging.ducy.cards (#664).
+test('staging: every staging deploy builds the admin site and deploys it to admin-staging/', () => {
+  const y = read('.github/workflows/deploy-env.yml');
+  assert.match(y, /if \[ "\$DUCY_ENV" = staging \]; then scripts\/build-admin\.sh "\$\{SHA::8\}-\$\{DUCY_REV::8\}" _admin; fi/);
+  const at = y.indexOf('run: scripts/deploy-admin.sh _admin "${{ secrets.SSH_DEPLOY_TARGET }}/admin-staging"');
+  assert.ok(at > 0);
+  assert.match(y.slice(y.lastIndexOf('- name:', at), at), /if: inputs\.environment == 'staging'/);
+  assert.match(y, /steps\.admin\.outputs\.deployed == 'true'/);
+  assert.match(y, /https:\/\/admin-staging\.ducy\.cards\/version\.json/);
+  assert.match(read('.github/workflows/staging.yml'), /environment: staging/);
+  assert.match(read('scripts/deploy.sh'), /--exclude '\/admin-staging\/'/);
+});
+
+test('staging: the sites\' version.json may be read by both admin sites', () => {
+  assert.match(read('.htaccess'), /SetEnvIf Origin "\^https:\/\/admin\(-staging\)\?\\\.ducy\\\.cards\$" ADMIN_ORIGIN=\$0/);
+});
+
+test('deploy: only into admin/ or admin-staging/', {skip: (!haveWasm || !haveRsync) && 'no wasm build or rsync'}, () => {
+  const html = host();
+  const r = deploy(join(html, 'admin-other'));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /admin or admin-staging/);
+});
+
+// public_html with admin-staging/ (a folder or a link to one), maybe protected.
+function stagingHost({folder = 'dir', htaccess = null} = {}) {
+  const html = host({folder: false});
+  if (folder === 'dir') mkdirSync(join(html, 'admin-staging'));
+  if (folder === 'link') {
+    mkdirSync(join(html, '..', 'elsewhere'));
+    symlinkSync(join(html, '..', 'elsewhere'), join(html, 'admin-staging'));
+  }
+  if (folder && htaccess != null) writeFileSync(join(html, 'admin-staging/.htaccess'), htaccess);
+  return html;
+}
+
+test('deploy to admin-staging/: no folder warns and says what to make', {skip: (!haveWasm || !haveRsync) && 'no wasm build or rsync'}, () => {
+  const html = stagingHost({folder: null});
+  const out = join(mkdtempSync(join(tmpdir(), 'ducy-out-')), 'out');
+  const site = join(mkdtempSync(join(tmpdir(), 'ducy-admin-copy-')), 'site');
+  execFileSync('cp', ['-r', build(), site]);
+  const r = spawnSync('scripts/deploy-admin.sh', [site, join(html, 'admin-staging')], {cwd: ROOT, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: out}});
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /::warning/);
+  assert.match(r.stderr, /create the subdomain admin-staging\.ducy\.cards \(its folder is public_html\/admin-staging\)/);
+  assert.ok(!existsSync(join(html, 'admin-staging')));
+  assert.equal(readFileSync(out, 'utf8'), 'deployed=false\n');
+});
+
+test('deploy to admin-staging/: never open, password kept, a link works', {skip: (!haveWasm || !haveRsync) && 'no wasm build or rsync'}, () => {
+  const open = stagingHost({htaccess: '# nothing\n'});
+  const r1 = deploy(join(open, 'admin-staging'));
+  assert.equal(r1.status, 1);
+  assert.match(r1.stderr, /not deploying an unprotected admin site/);
+  assert.deepEqual(readdirSync(join(open, 'admin-staging')), ['.htaccess']);
+  for (const folder of ['dir', 'link']) {
+    const html = stagingHost({folder, htaccess: AUTH});
+    const r = deploy(join(html, 'admin-staging'));
+    assert.equal(r.status, 0, r.stderr);
+    const h = readFileSync(join(html, 'admin-staging/.htaccess'), 'utf8');
+    for (const line of AUTH.trim().split('\n')) assert.ok(h.includes(line), line);
+    assert.ok(existsSync(join(html, 'admin-staging/v/test-1/src/admin.js')), folder);
+    assert.equal(readFileSync(join(html, 'index.html'), 'utf8'), 'live');
+  }
 });
 
 test('charts: a clean top, gaps where there\'s no value, the latest value as the headline', () => {

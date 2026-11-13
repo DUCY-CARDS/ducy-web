@@ -12,6 +12,11 @@
 #      would delete.
 # Then scripts/deploy.sh uploads it as it does the live site.
 #
+# The same build goes to two folders:
+#   admin           admin.ducy.cards          by the release (deploy.yml)
+#   admin-staging   admin-staging.ducy.cards  by every staging deploy (#664)
+# With GITHUB_OUTPUT set, writes deployed=true or false there.
+#
 # Usage: scripts/deploy-admin.sh <site-dir> <rsync-target>
 set -euo pipefail
 
@@ -20,15 +25,22 @@ TARGET="${2:?usage: deploy-admin.sh <site-dir> <rsync-target>}"
 TARGET="${TARGET%/}"
 PARENT="${TARGET%/*}"
 NAME="${TARGET##*/}"
+out() { [ -z "${GITHUB_OUTPUT:-}" ] || echo "deployed=$1" >> "$GITHUB_OUTPUT"; }
 
 [ -f "$SITE/version.json" ] && grep -qF '"environment": "admin"' "$SITE/version.json" || { echo "$SITE doesn't look like a build-admin.sh output" >&2; exit 1; }
+case "$NAME" in
+  admin|admin-staging) HOST="$NAME.ducy.cards" ;;
+  *) echo "the admin site goes in a folder named admin or admin-staging, not $NAME" >&2; exit 1 ;;
+esac
 
-echo "== is there a folder for the admin site?"
+echo "== is there a folder for $HOST?"
 LISTING="$(rsync --list-only "$PARENT/")"
-if ! awk '$1 ~ /^d/ { print $NF }' <<< "$LISTING" | grep -qxF "$NAME"; then
-  MSG="No $NAME/ folder on the host: the admin site wasn't deployed. In DirectAdmin, create the subdomain admin.ducy.cards (its folder is public_html/$NAME) and password-protect that folder, then run the release again."
+# A folder, or a link to one (DirectAdmin or a file manager may make either).
+if ! awk '$1 ~ /^[dl]/ { n = $5; for (i = 6; i <= NF; i++) n = n " " $i; sub(/ -> .*/, "", n); print n }' <<< "$LISTING" | grep -qxF "$NAME"; then
+  MSG="No $NAME/ folder on the host: the admin site wasn't deployed to $HOST. In DirectAdmin, create the subdomain $HOST (its folder is public_html/$NAME) and password-protect that folder, then deploy again."
   echo "::warning title=Admin site not deployed::$MSG"
   echo "$MSG" >&2
+  out false
   exit 0
 fi
 
@@ -58,3 +70,4 @@ if rsync --list-only "$TARGET/" | awk '{ print $NF }' | grep -qxF .htpasswd; the
 fi
 
 scripts/deploy.sh "$SITE" "$TARGET"
+out true
