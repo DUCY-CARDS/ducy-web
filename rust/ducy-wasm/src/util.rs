@@ -116,8 +116,9 @@ pub(crate) fn friends_host(
         .map_err(err)
 }
 
-/// A club table's host: `seats` empty seats and no seat for the host; the
-/// club takes `rake` from each hand (#449).
+/// A club table's host: `seats` empty seats and no seat for the host;
+/// everyone posts `ante` every hand (0 for none, #655), and the club takes
+/// `rake` from each hand (#449).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn club_host(
     seats: usize,
@@ -125,14 +126,17 @@ pub(crate) fn club_host(
     max_buy_in: u64,
     small_blind: u64,
     big_blind: u64,
+    ante: u64,
     seed: u64,
     game: Option<String>,
     turn_ms: u64,
     rake: ducy_play::Rake,
 ) -> Result<TableHost, JsError> {
-    let rules = rules_for(game.as_deref(), small_blind, big_blind)?.with_rake(rake);
-    if small_blind == 0 || big_blind < small_blind || min_buy_in < big_blind {
-        return Err(JsError::new("invalid blinds or buy-in"));
+    let base = rules_for(game.as_deref(), small_blind, big_blind)?;
+    // A bomb-pot game keeps its own ante.
+    let rules = if ante > 0 { base.with_ante(ante) } else { base }.with_rake(rake);
+    if small_blind == 0 || big_blind < small_blind || min_buy_in < big_blind || ante > big_blind {
+        return Err(JsError::new("invalid blinds, ante or buy-in"));
     }
     if !(2..=ducy_play::MAX_PLAYERS).contains(&seats) {
         return Err(JsError::new("a table seats 2 to 10"));
@@ -143,4 +147,45 @@ pub(crate) fn club_host(
         .with_secure_deals();
     table.set_run_it_twice(true);
     TableHost::without_host(table, turn_ms, min_buy_in, max_buy_in).map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_club_table_takes_its_ante_and_keeps_no_flop_no_drop() {
+        let rake = ducy_play::Rake {
+            percent: 500,
+            cap: 400,
+            no_flop: true,
+            time: 0,
+        };
+        let host = club_host(6, 8_000, 20_000, 100, 200, 50, 1, None, 0, rake)
+            .ok()
+            .unwrap();
+        let rules = host.table().rules();
+        assert_eq!(
+            (rules.small_blind, rules.big_blind, rules.ante),
+            (100, 200, 50)
+        );
+        assert!(!rules.bomb_pot);
+        assert_eq!(rules.rake, rake);
+        // No ante: none.
+        let host = club_host(
+            6,
+            8_000,
+            20_000,
+            100,
+            200,
+            0,
+            1,
+            Some("plo5".into()),
+            0,
+            rake,
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(host.table().rules().ante, 0);
+    }
 }

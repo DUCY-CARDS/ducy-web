@@ -273,7 +273,7 @@ impl ClubState {
                 let d = t.other.get("dealing");
                 let on = is_dealing(d);
                 json!({
-                    "id": t.id, "name": t.name, "game": t.game, "sb": t.sb, "bb": t.bb, "seats": t.seats,
+                    "id": t.id, "name": t.name, "game": t.game, "sb": t.sb, "bb": t.bb, "ante": t.ante, "seats": t.seats,
                     "taken": num(seated.get(&t.id)), "status": t.status, "dealing": on,
                     "ms": dealing_ms(d, now),
                     "stoppedAt": if on { 0 } else { num(d.and_then(|d| d.get("stoppedAt"))) },

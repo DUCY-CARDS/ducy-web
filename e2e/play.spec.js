@@ -596,7 +596,8 @@ test.describe('a club member', () => {
     // The new club's first messages redraw the page: let them land first.
     await owner.waitForTimeout(1500);
     await form.locator('input[name=blinds][value=other]').check({force: true});
-    await form.locator('[name=blindsOther]').selectOption('25/50');
+    await form.locator('[name=sb]').fill('0.25');
+    await form.locator('[name=bb]').fill('0.5');
     await form.locator('.tf-more summary').click();
     // Off in the beta until club-beta.js turns it on.
     test.skip(!(await form.locator('[name=house]').count()), 'rake is off in the beta');
@@ -703,6 +704,93 @@ test.describe('a club member', () => {
     await owner.locator('[data-cl="game-open"]').first().click();
     await expect(owner.locator('.cl-tcard .cl-charge').first()).toHaveText('Rake 10% · cap 1 BB');
     await fitsTheScreen(owner);
+  });
+
+  test('any blinds and an ante: kept when the game changes and over redraws, refused with why, shown in the lobby and at the table, and posted by everyone (#655)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    test.setTimeout(180_000);
+    // The owner sets up a club; its first table is an Omaha 1.50/3.25 with a 0.25 ante.
+    const {page: owner} = await browserWith(browser, watch);
+    await owner.goto(await grantLink(owner, url, admin));
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('[data-cl="wiz-skip"]').click();
+    await owner.locator('[data-cl="wiz-onward"]').click();
+    const form = owner.locator('form[data-tableform]');
+    await expect(form).toBeVisible();
+    await form.locator('input[name=blinds][value=other]').check({force: true});
+    await form.locator('[name=sb]').fill('1.5');
+    await form.locator('[name=bb]').fill('1');
+    // Switching games keeps the blinds, and so do the new club's first
+    // messages, which redraw the page.
+    for (const g of ['plo4', 'nlhe', 'plo5', 'plo4']) await form.locator(`input[name=game][value=${g}]`).check({force: true});
+    await owner.waitForTimeout(1500);
+    const kept = async bb => {
+      await expect(form.locator('input[name=game][value=plo4]')).toBeChecked();
+      await expect(form.locator('input[name=blinds][value=other]')).toBeChecked();
+      await expect(form.locator('[name=sb]')).toHaveValue('1.5');
+      await expect(form.locator('[name=bb]')).toHaveValue(bb);
+    };
+    await kept('1');
+    // The club's rules say what's wrong, and the form keeps what was typed.
+    await form.locator('button[type="submit"]').click();
+    await expect(owner.getByText('The big blind must be at least the small blind.')).toBeVisible();
+    await kept('1');
+    await form.locator('[name=bb]').fill('3.25');
+    await form.locator('.tf-more summary').click();
+    await form.locator('[name=ante]').fill('5');
+    await form.locator('button[type="submit"]').click();
+    await expect(owner.getByText('The ante can’t be more than the big blind.')).toBeVisible();
+    await kept('3.25');
+    await form.locator('[name=ante]').fill('0.25');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('ante-form.png'), fullPage: true});
+    await form.locator('button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+    await owner.evaluate(() => { location.hash = 'clubs/cash'; });
+    await expect(owner.locator('[data-label="Stakes"]').first()).toHaveText('1.50/3.25, ante 0.25');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('ante-board.png'), fullPage: true});
+    // Next time, the form starts from it.
+    await owner.locator('[data-cl="new-table"]').click();
+    await expect(form.locator('[name=bb]')).toHaveValue('3.25');
+    await expect(form.locator('[name=ante]')).toHaveValue('0.25');
+    await owner.locator('[data-cl="cancel-table"]').click();
+
+    // Ava and Bo join, see the ante with the blinds in the lobby, and sit.
+    const join = async name => {
+      const {page} = await browserWith(browser, watch);
+      await page.goto(invite);
+      await askToJoin(page, name);
+      await page.locator('[data-cl="pass-enrol"]').click();
+      await letIn(owner);
+      await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+      await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+      await page.locator(`[data-ask-amt="${code}"]`).fill('400');
+      await page.locator('[data-cl="ask"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="grant"]').first().click();
+      await expect(page.getByText('Balance 400')).toBeVisible();
+      await expect(page.locator('.cl-tcard-meta', {hasText: '1.50/3.25, ante 0.25'}).first()).toBeVisible();
+      await expect(page.locator('.cl-game-head b').first()).toHaveText('Omaha 4 1.50/3.25, ante 0.25 · 8-handed');
+      await fitsTheScreen(page);
+      await page.screenshot({path: info.outputPath(`ante-lobby-${name}.png`), fullPage: true});
+      await page.locator('[data-cl="sit-open"]').first().click();
+      await page.locator('form[data-sitform] button[type="submit"]').click();
+      await expect(page.locator('.pl-felt')).toBeVisible();
+      return page;
+    };
+    const ava = await join('Ava');
+    await join('Bo');
+    // The table's bar says it, and everyone dealt in antes.
+    await expect(ava.locator('.pl-bar .pl-meta').first()).toContainText('blinds 1.50/3.25, ante 0.25');
+    await expect(ava.locator('#pl-log').getByText('Bo antes 0.25')).toBeVisible({timeout: 30_000});
+    await expect(ava.locator('#pl-log').getByText('You ante 0.25')).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('ante-table.png'), fullPage: true});
   });
 
   test('the owner gives from a float and refills it; Ava keeps chips in her vault (#589, #579)', async ({browser, watch, browserName}, info) => {

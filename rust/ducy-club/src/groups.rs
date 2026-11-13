@@ -664,7 +664,7 @@ impl Club {
             return refuse("That table isn’t open.");
         };
         let mut spec = json!({
-            "game": t.game, "sb": t.sb, "bb": t.bb, "minBB": t.min_bb, "maxBB": t.max_bb, "seats": t.seats,
+            "game": t.game, "sb": t.sb, "bb": t.bb, "ante": t.ante, "minBB": t.min_bb, "maxBB": t.max_bb, "seats": t.seats,
             "turnSecs": t.turn_secs, "sitOutMins": t.sit_out_mins, "stayHands": t.stay_hands,
         });
         spec["charge"] = json!(t.charge);

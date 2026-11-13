@@ -374,15 +374,15 @@ function wizardOnward() {
 }
 
 // The New table form (#113, #476): three choices (game, blinds, seats) as
-// buttons, everything else under More options with good defaults. Every
-// number is picked from a list, never typed. The last choices are
-// remembered, except Call time, which starts at the club's (Rules).
-// `wizard`: a step of creating a club (#111, #395), which can be skipped.
+// buttons, everything else under More options with good defaults. Blinds
+// are quick picks, or Other with any small and big blind typed, and an
+// ante is typed under More options (#655); the rest is picked from lists.
+// The last choices are remembered, except Call time, which starts at the
+// club's (Rules). `wizard`: a step of creating a club (#111, #395), which
+// can be skipped.
 const TABLE_KEY = 'ducyTableChoice';
-// In hundredths (chip-format.js): 100/200 shows as 1/2. The first three are
-// buttons; the rest are under Other.
+// In hundredths (chip-format.js): 100/200 shows as 1/2.
 const BLINDS = [[100, 200], [200, 500], [500, 1000]];
-const MORE_BLINDS = [[5, 10], [10, 25], [25, 50], [50, 100], [100, 300], [1000, 2000], [1000, 2500], [2500, 5000], [5000, 10000], [10000, 20000]];
 const SEATS = [2, 6, 8, 9];
 const MIN_BBS = [20, 30, 40, 50, 100];
 const MAX_BBS = [50, 100, 150, 200, 250, 300];
@@ -413,21 +413,27 @@ const tfRadio = (name, value, label, on) => `<label class="cc-btn tf-opt"><input
 function tableFormHtml({wizard = false, offer = false} = {}) {
   const last = load(TABLE_KEY, {});
   const game = GAMES.some(g => g.id === last.game) ? last.game : GAMES[0].id;
-  const all = [...BLINDS, ...MORE_BLINDS];
-  const lastBlinds = all.find(([s, b]) => s === last.sb && b === last.bb) || BLINDS[0];
-  const blinds = BLINDS.includes(lastBlinds) ? lastBlinds.join('/') : 'other';
+  const own = Number.isSafeInteger(last.sb) && Number.isSafeInteger(last.bb) && last.sb > 0 && last.bb >= last.sb;
+  const lastBlinds = own ? [last.sb, last.bb] : BLINDS[0];
+  const pick = BLINDS.find(([s, b]) => s === lastBlinds[0] && b === lastBlinds[1]);
+  const blinds = pick ? pick.join('/') : 'other';
+  const ante = Number.isSafeInteger(last.ante) && last.ante > 0 && last.ante <= lastBlinds[1] ? last.ante : 0;
+  const amt = (name, label, hint, v) => `<input class="pl-text tf-amt" name="${name}" type="number" inputmode="decimal" min="0" step="${CHIP_STEP}" aria-label="${label}" placeholder="${hint}" value="${v ? esc(chipInput(v)) : ''}">`;
   // The game's usual size (Hold'em 9, PLO 8, PLO5 and PLO6 6), or the last one picked
   // for this game; never more than the game can deal to (PLO6: 6).
   const wanted = Math.min(last.game === game && last.seats ? last.seats : defaultSeats(game), maxSeats(game));
   let h = `<form class="cl-tableform tf" data-tableform="1"${wizard ? ' data-wizard="1"' : ''}${offer ? ' data-offer="1"' : ''}>`;
   h += `<div class="pl-row"><span class="pl-label">Game</span><div class="pl-opts">${GAMES.map(g => tfRadio('game', g.id, esc(SHORT[g.id] || g.label), g.id === game)).join('')}</div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Blinds</span><div class="pl-opts">${BLINDS.map(x => tfRadio('blinds', x.join('/'), blindsText(x), blinds === x.join('/'))).join('')}${tfRadio('blinds', 'other', 'Other', blinds === 'other')}`;
-  h += `<select class="pl-text tf-other tf-other-blinds" name="blindsOther" aria-label="Blinds">${MORE_BLINDS.map(x => `<option value="${x.join('/')}"${x === lastBlinds ? ' selected' : ''}>${blindsText(x)}</option>`).join('')}</select></div></div>`;
+  // Other: any blinds, typed (#655).
+  h += `<span class="tf-other tf-other-blinds">${amt('sb', 'Small blind', 'SB', lastBlinds[0])}<span aria-hidden="true">/</span>${amt('bb', 'Big blind', 'BB', lastBlinds[1])}</span></div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Seats</span><div class="pl-opts tf-seats">${seatsHtml(game, wanted)}</div></div>`;
   h += '<details class="tf-more" data-keep="tf-more"><summary>More options</summary><div class="tf-fields">';
   // Left empty, the table gets the name shown ("NLH - 1/2", numbered if
   // taken).
-  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(game, ...lastBlinds))}"></label>`;
+  h += `<label>Name<input class="pl-text" name="name" maxlength="${MAX_TABLE_NAME}" placeholder="${esc(formTableName(game, ...lastBlinds, ante))}"></label>`;
+  // Posted by everyone every hand; none when left empty.
+  h += `<label>Ante${amt('ante', 'Ante', '0', ante)}</label>`;
   h += `<label>Min buy-in<select class="pl-text" name="minBB">${options(MIN_BBS, nearest(MIN_BBS, last.minBB || 40), n => `${n} BB`)}</select></label>`;
   h += `<label>Max buy-in<select class="pl-text" name="maxBB">${options(MAX_BBS, nearest(MAX_BBS, last.maxBB || 100), n => `${n} BB`)}</select></label>`;
   h += `<label>Time to act<select class="pl-text" name="turnSecs">${options(TURN_SECS, last.turnSecs ?? 30, s => (s ? `${s} s` : 'None'))}</select></label>`;
@@ -492,27 +498,52 @@ function wizardNext(f) {
 // Why the club's rake (Rules, #449) wasn't saved, or ''.
 let chargeNote = '';
 
-const formTableName = (game, sb, bb) => defaultTableName(club || {tables: []}, game, sb, bb);
+const formTableName = (game, sb, bb, ante = 0) => defaultTableName(club || {tables: []}, game, sb, bb, ante);
 
-// The blinds the form has picked, [sb, bb].
-const formBlinds = f => (f.elements.blinds.value === 'other' ? f.elements.blindsOther.value : f.elements.blinds.value).split('/').map(Number);
+// The blinds the form has picked, [sb, bb], in hundredths: a quick pick, or
+// Other's as typed (NaN for what isn't an amount).
+const formBlinds = f => (f.elements.blinds.value === 'other' ? [parseChips(f.elements.sb.value), parseChips(f.elements.bb.value)] : f.elements.blinds.value.split('/').map(Number));
+// Its ante: none when left empty.
+const formAnte = f => (f.elements.ante.value.trim() === '' ? 0 : parseChips(f.elements.ante.value));
 
 // Keeps the New table form in step with its game and blinds: picking a game
 // picks its usual size, and shows only the sizes it can deal to; the
-// name's placeholder is the default name.
+// name's placeholder is the default name. The blinds and ante stay as they
+// are (#655).
 function syncTableForm(f, gameChanged) {
   const game = f.elements.game.value;
   if (gameChanged) f.querySelector('.tf-seats').innerHTML = seatsHtml(game, defaultSeats(game));
-  f.elements.name.placeholder = formTableName(game, ...formBlinds(f));
+  const [sb, bb] = formBlinds(f), ante = formAnte(f);
+  if (sb > 0 && bb > 0) f.elements.name.placeholder = formTableName(game, sb, bb, ante > 0 ? ante : 0);
   syncChargeFields(f);
+}
+
+// What the New table form had picked and typed, to put back after a redraw
+// (#655): messages arriving redraw the page, and the form is drawn afresh
+// from the last table opened.
+const tableFormValues = f => [...f.elements].filter(el => el.name && (el.type !== 'radio' || el.checked)).map(el => [el.name, el.type === 'checkbox' ? el.checked : el.value]);
+function restoreTableForm(f, values) {
+  const v = new Map(values);
+  const game = v.get('game');
+  if (game && game !== f.elements.game.value) f.elements.game.value = game;
+  const seats = v.get('seatsPick') === 'other' ? Number(v.get('seats')) : Number(v.get('seatsPick'));
+  if (seats) f.querySelector('.tf-seats').innerHTML = seatsHtml(f.elements.game.value, seats);
+  for (const [name, x] of values) {
+    const el = f.elements[name];
+    if (!el || ['game', 'seatsPick', 'seats'].includes(name)) continue;
+    if (el.type === 'checkbox') el.checked = x;
+    else el.value = x;
+  }
+  syncTableForm(f, false);
 }
 
 function submitTable(f) {
   const v = name => f.elements[name].value;
   const [sb, bb] = formBlinds(f);
+  const ante = formAnte(f);
   const seats = v('seatsPick') === 'other' ? Number(v('seats')) : Number(v('seatsPick'));
   const settings = {
-    name: v('name'), game: v('game'), sb, bb,
+    name: v('name'), game: v('game'), sb, bb, ante,
     minBB: Number(v('minBB')), maxBB: Number(v('maxBB')), seats, turnSecs: Number(v('turnSecs')),
     sitOutMins: Number(v('sitOutMins')),
     stayHands: Number(v('stayHands')),
@@ -520,16 +551,21 @@ function submitTable(f) {
   // Rake or time (#449): the table's own, as the fields say.
   const charge = f.elements.house ? readCharge(f) : null;
   if (charge?.charge !== undefined) settings.charge = charge.charge;
-  const why = settings.maxBB < settings.minBB ? 'The maximum buy-in is at least the minimum.' : charge?.error;
+  // What isn't an amount at all is said here; the rest, the club's rules say (#655).
+  const [why, at] = !(sb > 0 && bb > 0) ? ['The small and big blind are amounts above 0, to the cent.', sb > 0 ? 'bb' : 'sb']
+    : !(ante >= 0) ? ['The ante is an amount of 0 or more, to the cent.', 'ante']
+      : settings.maxBB < settings.minBB ? ['The maximum buy-in is at least the minimum.', 'maxBB']
+        : charge?.error ? [charge.error, 'house'] : [];
   if (why) {
     // Said in the form, so what was picked stays (#186).
     let n = f.querySelector('.tf-note');
     if (!n) { n = document.createElement('p'); n.className = 'pl-desc pl-neterr tf-note'; f.querySelector('.cl-formacts').before(n); }
     n.textContent = why;
-    (charge?.error ? f.elements.house : f.elements.maxBB).focus();
+    if (at === 'ante') f.querySelector('.tf-more').open = true;
+    f.elements[at].focus();
     return;
   }
-  save(TABLE_KEY, {game: settings.game, sb, bb, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
+  save(TABLE_KEY, {game: settings.game, sb, bb, ante, seats, minBB: settings.minBB, maxBB: settings.maxBB, turnSecs: settings.turnSecs});
   // The form stays open if the table can't be opened, so nothing is lost.
   // Offered, it goes on the club's menu instead.
   hostAct(f.dataset.offer ? 'offer_game' : 'new_table', {table: settings}).then(ok => {
@@ -763,7 +799,9 @@ function tableTag(g, tid) {
   return `<span class="mg-tag mm">Must move → ${esc(feeds(g, i).map(x => tableById(club, x)?.name || '').join(' or '))}</span>`;
 }
 
-const gameTitle = t => `${gameLabel(t.game)} ${chips(t.sb)}/${chips(t.bb)}`;
+// A table's stakes: "1/2", or "1/2, ante 1" (#655).
+const blindsOf = t => `${chips(t.sb)}/${chips(t.bb)}${t.ante > 0 ? `, ante ${chips(t.ante)}` : ''}`;
+const gameTitle = t => `${gameLabel(t.game)} ${blindsOf(t)}`;
 
 // A button that can't be used now, saying why beside it (#544).
 const offBtn = (btn, why) => `<span class="cl-off">${btn.replace('<button ', '<button disabled ')}<span class="pl-meta">${esc(why)}</span></span>`;
@@ -828,7 +866,7 @@ function cashHtml() {
     // On the menu, no table running: its list is who's interested.
     if (!g.tables.length) h += '<span class="mg-chain">Offered · not running</span>';
     h += '</span>';
-    h += `<span role="cell" class="mg-num" data-label="Stakes">${chips(g.t.sb)}/${chips(g.t.bb)}</span><span role="cell" data-label="Seats">${seatsName(g.t.seats)}</span>`;
+    h += `<span role="cell" class="mg-num" data-label="Stakes">${blindsOf(g.t)}</span><span role="cell" data-label="Seats">${seatsName(g.t.seats)}</span>`;
     h += `<span role="cell" class="mg-num" data-label="Tables">${g.tables.length}</span><span role="cell" class="mg-num" data-label="Seated">${seated} / ${seats}</span>`;
     h += `<span role="cell" class="mg-num mg-wait" data-label="Waitlist">${w}</span>`;
     h += `<span role="cell" class="mg-bacts"><button class="btn-small${w ? ' primary' : ''}" data-cl="game-open-table" data-key="${esc(g.key)}">Open table</button>`;
@@ -2091,7 +2129,13 @@ function render() {
   // And the chips being asked for, and why (a passkey prompt or a message
   // from the club can redraw the page mid-way, #575).
   const askKept = [...root.querySelectorAll('[data-ask-amt], [data-ask-note]')].map(i => [i.dataset.askAmt ? `amt|${i.dataset.askAmt}` : `note|${i.dataset.askNote}`, i.value]);
+  // And the New table form's choices: switching games kept the blinds only
+  // until the next message (#655).
+  const tfOld = root.querySelector('form[data-tableform]');
+  const tfKept = tfOld && {kind: `${tfOld.dataset.offer || ''}|${tfOld.dataset.wizard || ''}`, values: tableFormValues(tfOld)};
   root.innerHTML = h;
+  const tfNew = tfKept && root.querySelector('form[data-tableform]');
+  if (tfNew && `${tfNew.dataset.offer || ''}|${tfNew.dataset.wizard || ''}` === tfKept.kind) restoreTableForm(tfNew, tfKept.values);
   for (const [k, v] of askKept) {
     const [kind, code] = k.split('|');
     const i = root.querySelector(kind === 'amt' ? `[data-ask-amt="${CSS.escape(code)}"]` : `[data-ask-note="${CSS.escape(code)}"]`);
@@ -3578,7 +3622,7 @@ const mustMoveTag = g => (!g ? '' : g.main ? 'Main · ' : `Must move → ${(g.to
 // A game's seats in words (#518): "Heads up", "6-max", "9-handed".
 const seatsName = n => (n === 2 ? 'Heads up' : n === 6 ? '6-max' : `${n}-handed`);
 // A game as players pick one: "Hold'em 1/2 · 9-handed".
-const gameName = t => `${gameLabel(t.game)} ${chips(t.sb)}/${chips(t.bb)} · ${seatsName(t.seats)}`;
+const gameName = t => `${gameLabel(t.game)} ${blindsOf(t)} · ${seatsName(t.seats)}`;
 
 // Seconds left until `at`, as m:ss.
 const countdown = at => {
@@ -3607,7 +3651,7 @@ function offersHtml(m, hostHere) {
 // and the list: Join list, your place with Leave list, or I'm back after a
 // missed offer.
 function gameRowHtml(m, t, hostHere, open) {
-  const key = t.key || `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
+  const key = t.key || gameKey(t);
   const mine = (m.lists || []).find(l => l.key === key);
   const count = m.listCounts?.[key] || 0;
   const k = `data-code="${esc(m.code)}" data-key="${esc(key)}"${hostHere ? '' : ' disabled'}`;
@@ -3682,7 +3726,7 @@ function memberTablesHtml(m, hostHere) {
   // A card per table (V3 Club home, #225): cream when there's a seat for you.
   // Grouped by game, each with its waitlist (#518).
   h += '<ul class="cl-tables cl-tcards">';
-  const keyOf = t => t.key || `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
+  const keyOf = t => t.key || gameKey(t);
   const order = [...new Set(m.tables.map(keyOf))];
   const tables = m.tables.filter(t => !only || band(t) === only).sort((a, b) => order.indexOf(keyOf(a)) - order.indexOf(keyOf(b)));
   let lastKey = null;
@@ -3705,7 +3749,7 @@ function memberTablesHtml(m, hostHere) {
     const place = mustMoveTag(t.group);
     if (canMove && hostHere && (free > 0 || held)) {
       h += `<li class="cl-tcard cream"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
-      h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+      h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${blindsOf(t)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
       h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span></span>`;
       h += held ? '<span class="pl-meta cl-why">Seat held · after this hand</span>'
         : `<button class="btn-small primary" data-cl="move-here" data-code="${esc(m.code)}" data-table="${esc(t.id)}">Move here</button>`;
@@ -3714,7 +3758,7 @@ function memberTablesHtml(m, hostHere) {
     }
     const why = !hostHere ? 'Can’t reach the club right now' : atOther ? `You’re at ${atOther}: leave it first` : free <= 0 ? 'Full' : '';
     h += `<li class="cl-tcard${here || !why ? ' cream' : ''}"><span class="cl-tcard-text"><b class="cl-name">${esc(t.name)}</b>`;
-    h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${chips(t.sb)}/${chips(t.bb)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
+    h += `<span class="cl-tcard-meta">${place}${esc(gameLabel(t.game))} · ${blindsOf(t)} · ${t.taken} of ${t.seats} seats · ${free > 0 ? `${free} open` : 'full'}</span>`;
     h += `<span class="cl-tcard-meta">Buy-in ${chips(r.min)}–${chips(r.max)}</span>`;
     // Rake or time (#449), before you sit.
     if (chargeText(t)) h += `<span class="cl-tcard-meta cl-charge">${esc(chargeText(t))}</span>`;
@@ -4117,7 +4161,7 @@ async function onClickIn(e) {
   else if (act === 'game-open-table') {
     // Like its first table, or, not running, as the club offers it.
     const t = openTables(club).find(x => gameKey(x) === b.dataset.key) || (club.menu || []).find(x => x.key === b.dataset.key);
-    if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands, charge: t.charge ?? null}});
+    if (t) hostAct('new_table', {table: {game: t.game, sb: t.sb, bb: t.bb, ante: t.ante || 0, minBB: t.minBB, maxBB: t.maxBB, seats: t.seats, turnSecs: t.turnSecs, sitOutMins: t.sitOutMins, stayHands: t.stayHands, charge: t.charge ?? null}});
   } else if (act === 'list-remove') hostAct('list_remove', {key: b.dataset.key, id: b.dataset.id});
   else if (act === 'mm-edit') { mustMoveForm = b.dataset.key; render(); }
   else if (act === 'mm-cancel') { mustMoveForm = ''; render(); }
@@ -4413,7 +4457,7 @@ export async function openClubs(el, v = 'clubs') {
     });
     root.addEventListener('change', e => {
       const f = e.target.closest('form[data-tableform]');
-      if (f && ['game', 'blinds', 'blindsOther', 'house'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
+      if (f && ['game', 'blinds', 'sb', 'bb', 'ante', 'house'].includes(e.target.name)) syncTableForm(f, e.target.name === 'game');
       // The club's rake on Rules (#449).
       if (e.target.name === 'house' && e.target.form?.dataset.chargeform) syncChargeFields(e.target.form);
       // What a tournament pays by (#424): Default or a club payout table.

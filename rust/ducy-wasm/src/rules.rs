@@ -92,6 +92,8 @@ enum Op {
         game: String,
         sb: u64,
         bb: u64,
+        #[serde(default)]
+        ante: u64,
     },
     TablesBody {
         #[serde(default)]
@@ -375,9 +377,9 @@ pub fn club_rules(club: &str, op: JsValue, now: f64) -> Result<JsValue, JsError>
         }
         Op::SetInfo { info } => value(c.set_info(&info, now)),
         Op::NewTable { spec, most } => c.new_table(&spec, now, most, &mut rng()).and_then(value),
-        Op::DefaultTableName { game, sb, bb } => {
+        Op::DefaultTableName { game, sb, bb, ante } => {
             changes = false;
-            value(c.default_table_name(&game, sb, bb))
+            value(c.default_table_name(&game, sb, bb, ante))
         }
         Op::TablesBody { seated } => {
             changes = false;

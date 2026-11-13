@@ -30,6 +30,9 @@ struct Config {
     sb: u64,
     #[serde(default)]
     bb: u64,
+    // A club table's ante, posted by everyone every hand (#655).
+    #[serde(default)]
+    ante: u64,
     #[serde(default)]
     seed: u64,
     #[serde(default)]
@@ -110,9 +113,10 @@ pub struct ClubTable {
 
 #[wasm_bindgen]
 impl ClubTable {
-    /// A new table `id`: `config` = {seats, minBuyIn, maxBuyIn, sb, bb, seed,
-    /// game, turnMs, sitOutMs, open, link, idleMs, askMs, nextHandMs,
-    /// charge} (`charge`: its rake or time, as the club keeps it).
+    /// A new table `id`: `config` = {seats, minBuyIn, maxBuyIn, sb, bb, ante,
+    /// seed, game, turnMs, sitOutMs, open, link, idleMs, askMs, nextHandMs,
+    /// charge} (`ante`: posted by everyone every hand, 0 for none; `charge`:
+    /// its rake or time, as the club keeps it).
     pub fn create(id: String, config: JsValue) -> Result<ClubTable, JsError> {
         let c: Config = serde_wasm_bindgen::from_value(config).map_err(err)?;
         let mut host = club_host(
@@ -121,6 +125,7 @@ impl ClubTable {
             c.max_buy_in,
             c.sb,
             c.bb,
+            c.ante,
             c.seed,
             c.game.clone(),
             c.turn_ms,

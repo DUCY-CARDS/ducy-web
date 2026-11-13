@@ -13,8 +13,9 @@ import { rules } from './club-rules.js';
 export const OFFER_MS = 60_000;
 export const AWAY_MS = 10 * 60_000;
 
-// A table's game, as the lists have it.
-export const gameKey = t => `${t.game}:${t.sb}/${t.bb}:${t.seats}`;
+// A table's game, as the lists have it (ducy-club's Table::game_key): the
+// ante after the blinds when there is one (#655).
+export const gameKey = t => `${t.game}:${t.sb}/${t.bb}${t.ante ? `/${t.ante}` : ''}:${t.seats}`;
 
 // Game `key`'s list, oldest first.
 export const listOf = (club, key) => club.lists?.[key] || [];
