@@ -204,10 +204,11 @@ export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = 
     challenge: async () => ({challenge: await challenge()}),
 
     // Whether player `id` has a passkey: {enrolled, creds (their ids, for
-    // the browser to ask for), movedTo}.
+    // the browser to ask for), copy (one of them keeps a locked copy of the
+    // key: a new device gets the account back, #654), movedTo}.
     async status(id) {
       const rec = await get(String(id));
-      return {enrolled: rec.creds.length > 0, creds: rec.creds.map(c => c.credId), movedTo: rec.movedTo || null};
+      return {enrolled: rec.creds.length > 0, creds: rec.creds.map(c => c.credId), copy: rec.creds.some(c => !!c.copy), movedTo: rec.movedTo || null};
     },
 
     // Attaches a passkey to the signer's player ID: {type: 'passkey_enrol',

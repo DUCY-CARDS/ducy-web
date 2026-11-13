@@ -1,4 +1,4 @@
-//! The relay's registry of always-on clubs (ducy-web #98, #265, #395, #463):
+//! The relay's registry of always-on clubs (ducy-web #98, #265, #463, #654):
 //! who may have a club, each club's plan and limits, whether it may run, its
 //! use, and the super admin's changes.
 //!
@@ -9,9 +9,8 @@
 //! - **Creating a club** takes the super admin's permission (a grant),
 //!   except for each player's one trial club, free for [`TRIAL_DAYS`] with
 //!   the free limits.
-//! - **Temporary clubs** (#395): a new club is temporary until its owner
-//!   proves a backup of it works; one with no activity for [`TEMP_DAYS`] is
-//!   deleted. Clubs made before then have no `temporary` and are kept.
+//! - **Every club is kept** (#654) until its owner or the super admin
+//!   deletes it; none is deleted for going unused.
 
 use std::collections::BTreeMap;
 
@@ -25,8 +24,6 @@ pub const FREE_LIMITS: PlanLimits = PlanLimits {
 };
 /// How long a trial club is free, in days.
 pub const TRIAL_DAYS: u64 = 14;
-/// How long a temporary club may go unused, in days.
-pub const TEMP_DAYS: u64 = 7;
 /// Days of use kept on each club.
 pub const DAYS_KEPT: u64 = 30;
 /// About what a club costs while its tables run: its object awake at 128 MB.
@@ -78,11 +75,6 @@ pub struct Record {
     pub minutes: f64,
     /// Minutes of play by day (UTC), the last [`DAYS_KEPT`].
     pub days: BTreeMap<String, f64>,
-    /// No backup of it proved yet.
-    pub temporary: bool,
-    /// When a backup of it was proved.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proved_at: Option<u64>,
     /// Anything else kept on it.
     #[serde(flatten)]
     pub other: Map<String, Value>,
@@ -101,8 +93,6 @@ impl Default for Record {
             last_active: 0,
             minutes: 0.0,
             days: BTreeMap::new(),
-            temporary: false,
-            proved_at: None,
             other: Map::new(),
         }
     }
@@ -110,24 +100,15 @@ impl Default for Record {
 
 impl Record {
     /// An older record, as it reads now: one with no `lastActive` was last
-    /// used when it was made.
+    /// used when it was made; a temporary club's flags (#395) are gone
+    /// (#654).
     fn full(mut self, raw: &Value) -> Self {
         if raw.get("lastActive").is_none() {
             self.last_active = self.at;
         }
+        self.other.remove("temporary");
+        self.other.remove("provedAt");
         self
-    }
-
-    /// When it will be deleted if no one uses it (a temporary club), or None.
-    pub fn removes_at(&self) -> Option<u64> {
-        self.temporary.then(|| {
-            let last = if self.last_active > 0 {
-                self.last_active
-            } else {
-                self.at
-            };
-            last + TEMP_DAYS * DAY_MS
-        })
     }
 
     /// Whether it may run now: "" when it may, else why not.
@@ -247,14 +228,11 @@ impl Registry {
 
     /// `owner` may have a club in room `code`, called `name`: with a grant,
     /// a club; without, their one trial club. Its record, or why not.
-    /// `temporary`: false for a club that already existed, moving here from
-    /// a browser.
     pub fn claim(
         &mut self,
         owner: &str,
         code: &str,
         name: &str,
-        temporary: bool,
         limits: &RelayLimits,
         now: u64,
     ) -> Result<Record, String> {
@@ -274,7 +252,6 @@ impl Registry {
             at: now,
             last_active: now,
             name: name.into(),
-            temporary,
             ..Record::default()
         };
         match grant {
@@ -313,32 +290,6 @@ impl Registry {
         Ok(r)
     }
 
-    /// The owner proved a backup of club `code` works: it isn't temporary
-    /// any more. `owner`: who signed the request; it must be the owner.
-    pub fn proved(&mut self, code: &str, owner: &str, now: u64) -> Result<Record, String> {
-        let r = self.record(code).ok_or("No such club.")?;
-        if r.owner != owner {
-            return Err("Only the club’s owner can do that.".into());
-        }
-        self.update(code, |r| {
-            r.temporary = false;
-            r.proved_at = Some(now);
-        })
-    }
-
-    /// Temporary clubs unused for [`TEMP_DAYS`]: the codes to delete.
-    pub fn expired(&self, now: u64) -> Vec<String> {
-        self.clubs
-            .keys()
-            .filter(|c| {
-                self.record(c)
-                    .and_then(|r| r.removes_at())
-                    .is_some_and(|at| at <= now)
-            })
-            .cloned()
-            .collect()
-    }
-
     /// Club `code`'s record and whether it may run now ("" or why not).
     pub fn status(&self, code: &str, now: u64) -> Value {
         let r = self.record(code);
@@ -374,7 +325,6 @@ impl Registry {
                 let mut v = serde_json::to_value(&r).ok()?;
                 v["code"] = code.clone().into();
                 v["blocked"] = r.blocked(now).into();
-                v["removesAt"] = json!(r.removes_at());
                 Some(v)
             })
             .collect();
@@ -387,7 +337,7 @@ impl Registry {
         json!({
             "clubs": clubs, "grants": grants, "trials": self.trials,
             "limits": {"perOwner": limits.per_owner, "total": limits.total, "trialDays": TRIAL_DAYS,
-                       "free": FREE_LIMITS, "tempDays": TEMP_DAYS},
+                       "free": FREE_LIMITS},
         })
     }
 
@@ -510,35 +460,31 @@ mod tests {
             ..limits()
         };
         assert!(
-            r.claim("ann", "AAAA", "", true, &l, 10)
+            r.claim("ann", "AAAA", "", &l, 10)
                 .unwrap_err()
                 .contains("permission")
         );
         assert!(r.trials.is_empty());
         r.grant("ann", "", 1, None, 11).unwrap();
-        assert_eq!(
-            r.claim("ann", "AAAA", "", true, &l, 12).unwrap().plan,
-            "club"
-        );
+        assert_eq!(r.claim("ann", "AAAA", "", &l, 12).unwrap().plan, "club");
     }
 
     #[test]
     fn trials_grants_and_the_relays_limits() {
         let mut r = Registry::default();
         let l = limits();
-        let t = r.claim("ann", "AAAA", "Night Owls", true, &l, 10).unwrap();
+        let t = r.claim("ann", "AAAA", "Night Owls", &l, 10).unwrap();
         assert_eq!(
             (t.plan.as_str(), t.expires, t.limits),
             ("trial", Some(10 + TRIAL_DAYS * DAY), FREE_LIMITS)
         );
-        assert!(t.temporary);
         assert!(
-            r.claim("ann", "BBBB", "", true, &l, 11)
+            r.claim("ann", "BBBB", "", &l, 11)
                 .unwrap_err()
                 .contains("free trial")
         );
         assert!(
-            r.claim("bob", "AAAA", "", true, &l, 11)
+            r.claim("bob", "AAAA", "", &l, 11)
                 .unwrap_err()
                 .contains("in use")
         );
@@ -551,20 +497,20 @@ mod tests {
             12,
         )
         .unwrap();
-        let c = r.claim("bob", "CCCC", "", false, &l, 13).unwrap();
+        let c = r.claim("bob", "CCCC", "", &l, 13).unwrap();
         assert_eq!(
             (c.plan.as_str(), c.limits.tables, c.limits.tourneys_per_day),
             ("club", 5, 1)
         );
         assert!(
-            r.claim("bob", "DDDD", "", false, &l, 14)
+            r.claim("bob", "DDDD", "", &l, 14)
                 .unwrap_err()
                 .contains("already have 1 club,")
         );
         // From the environment: the relay's per-owner limit.
-        r.claim("boss", "EEEE", "", false, &l, 15).unwrap();
+        r.claim("boss", "EEEE", "", &l, 15).unwrap();
         assert!(
-            r.claim("boss", "FFFF", "", false, &l, 15)
+            r.claim("boss", "FFFF", "", &l, 15)
                 .unwrap_err()
                 .contains("full")
         );
@@ -575,9 +521,9 @@ mod tests {
     }
 
     #[test]
-    fn running_proving_and_temporary_clubs() {
+    fn running_use_and_old_records() {
         let mut r = Registry::default();
-        r.claim("ann", "AAAA", "", true, &limits(), 0).unwrap();
+        r.claim("ann", "AAAA", "", &limits(), 0).unwrap();
         assert_eq!(r.status("AAAA", 1)["blocked"], "");
         assert!(
             r.status("AAAA", TRIAL_DAYS * DAY)["blocked"]
@@ -609,20 +555,20 @@ mod tests {
             (rec.plan.as_str(), rec.expires, rec.limits.tables),
             ("club", None, 3)
         );
-        // Unused for a week while temporary: deleted.
-        assert!(r.expired(TEMP_DAYS * DAY - 1).is_empty());
-        assert_eq!(r.expired(TEMP_DAYS * DAY), vec!["AAAA".to_string()]);
-        // Used: the week starts again. Proved: kept.
         r.used("AAAA", 30.0, DAY);
-        assert!(r.expired(TEMP_DAYS * DAY).is_empty());
         assert_eq!(r.record("AAAA").unwrap().days[&day_of(DAY)], 30.0);
-        assert!(r.proved("AAAA", "bob", 2).unwrap_err().contains("owner"));
-        r.proved("AAAA", "ann", 2).unwrap();
-        assert!(r.expired(100 * DAY).is_empty());
-        // An older record, with no temporary or lastActive, is kept.
-        r.clubs.insert("OLD".into(), json!({"owner": "x", "at": 5}));
-        assert_eq!(r.record("OLD").unwrap().last_active, 5);
-        assert!(r.expired(1000 * DAY).is_empty());
+        // An older record: no lastActive reads as made; a temporary club's
+        // flags (#395) are dropped (#654).
+        r.clubs.insert(
+            "OLD".into(),
+            json!({"owner": "x", "at": 5, "temporary": true, "provedAt": 9}),
+        );
+        let old = r.record("OLD").unwrap();
+        assert_eq!(old.last_active, 5);
+        assert!(old.other.is_empty());
+        r.used("OLD", 0.0, 6);
+        assert!(r.clubs["OLD"].get("temporary").is_none());
+        assert!(r.clubs["OLD"].get("provedAt").is_none());
     }
 
     #[test]

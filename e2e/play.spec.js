@@ -192,6 +192,8 @@ async function authenticator(page, {prf = true} = {}) {
     // virtual authenticator keeps failing once user verification has, so
     // that isn't how.) Passkeys added back have no PRF.
     clear: () => cdp.send('WebAuthn.clearCredentials', {authenticatorId}),
+    // Gone, so another can take its place (Chrome allows one at a time).
+    remove: () => cdp.send('WebAuthn.removeVirtualAuthenticator', {authenticatorId}),
   };
 }
 const needsPasskeys = browserName => test.skip(browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
@@ -284,9 +286,8 @@ test.describe('a club member', () => {
     const page = watch(await (await browser.newContext({acceptDownloads: true})).newPage());
     return {page, auth: await authenticator(page, opts)};
   };
-  // The owner starts a club (making a passkey first), skipping its own
-  // backup; Ava asks to join (making hers) and is let in, and her club page
-  // opens.
+  // The owner starts a club (making a passkey first); Ava asks to join
+  // (making hers) and is let in, and her club page opens.
   async function clubWithAva(browser, watch, info = null) {
     const {page: owner} = await browserWith(browser, watch);
     await owner.goto(await grantLink(owner, url, admin));
@@ -294,8 +295,6 @@ test.describe('a club member', () => {
     await owner.locator('[data-cl="create"]').click();
     await expect(owner.getByText('Set up a passkey')).toBeVisible();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     await owner.locator('[data-cl="wiz-invite"]').click();
     const invite = await owner.locator('#cl-link').inputValue();
     expect(invite).toContain('club=');
@@ -324,37 +323,27 @@ test.describe('a club member', () => {
     return id;
   };
 
-  test('is asked to back up until they have, and the backup brings them back into the club on another browser (#562)', async ({browser, watch, browserName}, info) => {
+  test('is never asked to back up; a backup from You still brings them back into the club on another browser (#562, #654)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, ava, auth, invite, code} = await clubWithAva(browser, watch, info);
 
-    // Her club page asks her to back up.
-    const card = ava.locator('.cl-backup');
-    await expect(card.getByText('Back up your account')).toBeVisible();
-    await expect(card.getByText(/lives only in this browser/)).toBeVisible();
-    // On an iPhone, outside the Home Screen app, how to keep Safari from clearing it.
-    await expect(card.getByText(/Add to Home Screen/)).toHaveCount(info.project.name === 'webkit-phone' ? 1 : 0);
-    await fitsTheScreen(ava);
-    await ava.screenshot({path: info.outputPath('backup-card.png'), fullPage: true});
-    await card.getByRole('button', {name: 'Download'}).click();
-    const pw = 'otter-lantern-quietly-42';
-    await card.locator('[name=pw]').fill(pw);
-    await card.locator('[name=pw2]').fill(pw);
-    await fitsTheScreen(ava);
-    await ava.screenshot({path: info.outputPath('backup-form.png'), fullPage: true});
-    const [download] = await Promise.all([ava.waitForEvent('download'), card.getByRole('button', {name: 'Save backup'}).click()]);
-    const file = info.outputPath('ava-backup.json');
-    await download.saveAs(file);
-    await expect(card.getByText('Backed up ✓')).toBeVisible();
-    await card.getByRole('button', {name: 'Done'}).click();
-    await expect(card).toHaveCount(0);
-    // And not again, after a reload.
-    await ava.reload();
-    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    // Her club page asks nothing of backups.
     await expect(ava.locator('.cl-backup')).toHaveCount(0);
+    await expect(ava.getByText(/[Bb]ack up/)).toHaveCount(0);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('member-no-backup.png'), fullPage: true});
+    // A backup is an option, from You.
     await ava.locator('[data-pt=player]').first().click();
     await expect(ava.locator('#pset .pl-pid')).not.toHaveText('…');
     const avaId = (await ava.locator('#pset .pl-pid').innerText()).trim();
+    await ava.locator('#pset [data-ps="backup"]').click();
+    const pw = 'otter-lantern-quietly-42';
+    await ava.locator('#pset [name=pw]').fill(pw);
+    await ava.locator('#pset [name=pw2]').fill(pw);
+    const [download] = await Promise.all([ava.waitForEvent('download'), ava.locator('#pset [data-psform="backup"] button[type=submit]').click()]);
+    const file = info.outputPath('ava-backup.json');
+    await download.saveAs(file);
+    await closeYou(ava);
 
     // On another browser, where her passkey has synced: restore the file,
     // open the invite link, unlock, and she's in with the same player ID,
@@ -389,11 +378,74 @@ test.describe('a club member', () => {
     await again.locator('[data-cl="pass-unlock"]').click();
     await again.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
     await expect(again.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
-    await expect(again.locator('.cl-backup')).toHaveCount(0);
     await again.locator('[data-pt=player]').first().click();
     await expect(again.locator('#pset .pl-pid')).toHaveText(avaId);
     await owner.evaluate(() => { location.hash = 'clubs/requests'; });
     await expect(owner.locator('[data-cl="approve"]')).toHaveCount(0);
+  });
+
+  // The owner (#654): no backup step; their passkey's copy is what moves
+  // the club, and an owner without one is asked to unlock or add one.
+  async function newOwner(browser, watch, opts) {
+    const {page: owner, auth} = await browserWith(browser, watch, opts);
+    await owner.goto(await grantLink(owner, url, admin));
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await expect(owner.locator('.cl-wizard .cl-step')).toHaveText('Step 1 of 2');
+    await expect(owner.locator('.cl-wizard h2')).toHaveText('Your first table');
+    await owner.locator('[data-cl="wiz-invite"]').click();
+    await expect(owner.locator('.cl-wizard .cl-step')).toHaveText('Step 2 of 2');
+    await owner.locator('[data-cl="wiz-done"]').click();
+    await expect(owner.locator('.mg-page')).toBeVisible();
+    return {owner, auth};
+  }
+
+  test('an owner with a passkey copy has no backup step or banner, and a backup file is an option (#654)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner} = await newOwner(browser, watch);
+    await owner.evaluate(() => { location.hash = 'clubs/backup'; });
+    await expect(owner.locator('.cl-copy-ok')).toBeVisible();
+    await expect(owner.locator('.cl-nocopy')).toHaveCount(0);
+    await expect(owner.getByText(/[Tt]emporary/)).toHaveCount(0);
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('owner-backup-page.png'), fullPage: true});
+    // The file, if they want one.
+    await owner.locator('[data-cl="backup"]').click();
+    const pw = 'otter-lantern-quietly-42';
+    await owner.locator('form[data-clform="backup"] [name=pw]').fill(pw);
+    await owner.locator('form[data-clform="backup"] [name=pw2]').fill(pw);
+    await fitsTheScreen(owner);
+    const [download] = await Promise.all([owner.waitForEvent('download'), owner.locator('form[data-clform="backup"] button[type=submit]').click()]);
+    expect(await download.failure()).toBeNull();
+    await expect(owner.locator('form[data-clform="backup"]')).toHaveCount(0);
+    await expect(owner.getByText(/Last backup from this browser/)).toBeVisible();
+  });
+
+  test('an owner whose passkey keeps no copy is asked to unlock or add one (#654)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, auth} = await newOwner(browser, watch, {prf: false});
+    const banner = owner.locator('.cl-nocopy');
+    await expect(banner).toBeVisible();
+    await expect(banner.locator('[data-cl="copy-unlock"]')).toBeVisible();
+    await expect(banner.locator('[data-cl="copy-add"]')).toBeVisible();
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('owner-no-copy.png'), fullPage: true});
+    // On every manager page, and on Backup and devices said plainly.
+    await owner.evaluate(() => { location.hash = 'clubs/backup'; });
+    await expect(banner).toBeVisible();
+    await expect(owner.getByText('Passkey: can’t move to a new device yet')).toBeVisible();
+    // This passkey can't keep one: unlocking says to add another.
+    await banner.locator('[data-cl="copy-unlock"]').click();
+    await expect(owner.getByText('This passkey can’t keep a copy. Add another passkey.')).toBeVisible();
+    await expect(banner).toBeVisible();
+    // Another passkey that can (one with PRF), within minutes of that
+    // unlock: the copy is kept, the banner goes.
+    await auth.remove();
+    await authenticator(owner);
+    await banner.locator('[data-cl="copy-add"]').click();
+    await expect(banner).toHaveCount(0);
+    await expect(owner.locator('.cl-copy-ok')).toBeVisible();
   });
 
   test('unlocks with a passkey, needs it again for chips, and gets the account back with it (#575)', async ({browser, watch, browserName}, info) => {
@@ -488,8 +540,6 @@ test.describe('a club member', () => {
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     await owner.locator('form[data-tableform] button[type="submit"]').click();
     const invite = await owner.locator('#cl-link').inputValue();
     const code = new URL(invite).searchParams.get('club');
@@ -589,8 +639,6 @@ test.describe('a club member', () => {
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     const form = owner.locator('form[data-tableform]');
     await expect(form).toBeVisible();
     // The new club's first messages redraw the page: let them land first.
@@ -715,8 +763,6 @@ test.describe('a club member', () => {
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     const form = owner.locator('form[data-tableform]');
     await expect(form).toBeVisible();
     await form.locator('input[name=blinds][value=other]').check({force: true});
@@ -956,8 +1002,6 @@ test.describe('joining a club', () => {
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     await owner.locator('form[data-tableform] button[type="submit"]').click();
     const invite = await owner.locator('#cl-link').inputValue();
     await owner.locator('[data-cl="wiz-done"]').click();

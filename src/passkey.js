@@ -108,8 +108,10 @@ export const forget = () => keep(null);
 
 // ---- the relay ----
 
-// Whether player `id` has a passkey: {enrolled, creds, movedTo}. Remembered
-// for the page, unless `again`.
+// Whether player `id` has a passkey: {enrolled, creds, copy, movedTo}
+// (`copy`: the relay keeps a locked copy of their key, so signing in on a
+// new device brings them back, #654). Remembered for the page, unless
+// `again`.
 const statuses = new Map();
 export function status(id, again = false) {
   if (again || !statuses.has(id)) {
@@ -165,6 +167,7 @@ async function saveCopy(ident, s, prf) {
   if (!ident.privateKey.extractable) return ident;
   const env = await signMessage(ident, {type: 'passkey_copy', challenge: await takeChallenge(), token: s.token, credId: s.credId, copy: await lockCopy(ident, prf)});
   await call('copy', {env});
+  statuses.delete(ident.id);
   return lockDown(ident);
 }
 

@@ -141,12 +141,20 @@ test('a passkey is attached by its player only, and its sign-ins are checked', {
   await assert.rejects(pk.enrol(await signMessage(ann, {type: 'passkey_enrol', challenge: 'nope', credId: p.credId, spki: p.spki, alg: -7})), /too long/);
   const made = await pk.enrol(await enrolEnv(pk, ann, p));
   assert.ok(made.token);
-  assert.deepEqual(await pk.status(ann.id), {enrolled: true, creds: [p.credId], movedTo: null});
+  assert.deepEqual(await pk.status(ann.id), {enrolled: true, creds: [p.credId], copy: false, movedTo: null});
 
   // A good sign-in starts a session the rooms accept.
   const ok = await pk.unlock(await p.sign((await pk.challenge()).challenge));
   assert.equal(ok.id, ann.id);
   assert.equal((await pk.session(ok.token)).id, ann.id);
+  // A locked copy of her key, kept for this passkey: her status says so, so
+  // a club she owns is shown as moving to a new device with it (#654).
+  const copyEnv = extra => signMessage(ann, {type: 'passkey_copy', challenge: '', token: ok.token, credId: p.credId, copy: {iv: 'aaaa', ct: 'bbbb'}, ...extra});
+  await assert.rejects(pk.saveCopy(await copyEnv({token: 'nope', challenge: (await pk.challenge()).challenge})), /Unlock/);
+  assert.equal((await pk.status(ann.id)).copy, false);
+  await pk.saveCopy(await copyEnv({challenge: (await pk.challenge()).challenge}));
+  assert.equal((await pk.status(ann.id)).copy, true);
+  assert.equal((await pk.status(eve.id)).copy, false);
   // Bad ones: the same challenge again, not verified, another site, a wrong
   // signature, a made-up challenge, and a stale one.
   const c1 = (await pk.challenge()).challenge;

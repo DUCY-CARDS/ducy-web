@@ -8,9 +8,8 @@
 //!   `sender` the record to keep when it's taken.
 //! - `canonicalJson(json)`: the bytes a message is signed over.
 //! - `playerIdFor(raw)`, `showId(id)`, `parseShownId(text)`.
-//! - Backups: `passwordProblem`, `readBackup`, `backupWithClub`,
-//!   `proveClubBackup` (the file around the key; WebCrypto locks and
-//!   unlocks the key itself).
+//! - Backups: `passwordProblem`, `readBackup`, `backupWithClub` (the file
+//!   around the key; WebCrypto locks and unlocks the key itself).
 
 use ducy_identity::{
     Sender, Verifier, backup, canonical, check_signature, parse_shown_id, player_id, show_id,
@@ -98,15 +97,4 @@ pub fn read_backup_js(text: &str) -> Result<JsValue, JsError> {
 #[wasm_bindgen(js_name = backupWithClub)]
 pub fn backup_with_club(locked: &str, code: &str, name: &str) -> Result<String, JsError> {
     backup::with_club(locked, code, name).map_err(|e| JsError::new(&e))
-}
-
-/// Whether an opened backup (its `club`, JSON or "null", and the player ID
-/// `id` its key holds) brings back club `code` for owner `owner`: "" if so,
-/// else why not.
-#[wasm_bindgen(js_name = proveClubBackup)]
-pub fn prove_club_backup(club: &str, id: &str, code: &str, owner: &str) -> String {
-    let club: Option<backup::Club> = serde_json::from_str(club).unwrap_or(None);
-    backup::prove_club(club.as_ref(), id, code, owner)
-        .err()
-        .unwrap_or_default()
 }

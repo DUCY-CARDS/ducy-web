@@ -112,8 +112,7 @@ pub fn plan_of(record: Option<&Record>) -> Value {
         None => json!({"limits": FREE_LIMITS, "plan": null}),
         Some(r) => json!({
             "limits": r.limits,
-            "plan": {"plan": r.plan, "expires": r.expires, "temporary": r.temporary,
-                     "provedAt": r.proved_at, "removesAt": r.removes_at()},
+            "plan": {"plan": r.plan, "expires": r.expires},
         }),
     }
 }

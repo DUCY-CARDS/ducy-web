@@ -48,10 +48,9 @@ import { tableChip, toChip } from './chip-format.js';
 import { ratholeMin } from './club-chips.js';
 import { newCode } from './play-net.js';
 
-// Not limited by plans (#406), and never temporary (#395): its backup
-// banner means nothing in a demo.
+// Not limited by plans (#406).
 const LIMITS = {tables: 5, tourneysPerDay: 5};
-const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, temporary: false, at: Date.now()});
+const DEMO_RECORD = () => ({plan: 'club', limits: LIMITS, at: Date.now()});
 // Add bots fills a table's empty seats, up to a full nine-handed table.
 const MAX_BOTS = 8;
 // The demo club's float (#589): 1,000,000 chips, filled again whenever it
@@ -140,7 +139,7 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
 
   async function open(room) {
     const w = await wasmReady();
-    let record = (await room.store.get('demoRecord')) || DEMO_RECORD();
+    const record = (await room.store.get('demoRecord')) || DEMO_RECORD();
     Object.assign(room.pubs, (await room.store.get('memberPubs')) || {});
     for (const b of (await room.store.get('demoBots')) || []) {
       room.bots.set(b.id, newBot(b, await importIdentity(b.identity), false));
@@ -155,12 +154,6 @@ export function createDemoRelay({storage, identity, ready, think = null, churn =
       online: [...room.conns.keys()],
       ClubTable: riggable(w, room),
       record,
-      // A backup proved (#395): the demo club isn't temporary any more.
-      onProved: async () => {
-        record = {...record, temporary: false, provedAt: Date.now()};
-        await room.store.put('demoRecord', record);
-        return record;
-      },
       onDeleted: () => { room.server = null; },
     });
     await demoFloat(server);

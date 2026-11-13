@@ -26,14 +26,7 @@ enum Op {
         code: String,
         #[serde(default)]
         name: String,
-        #[serde(default = "yes")]
-        temporary: bool,
     },
-    Proved {
-        code: String,
-        owner: String,
-    },
-    Expired,
     Has {
         code: String,
     },
@@ -82,10 +75,6 @@ enum Op {
     },
 }
 
-fn yes() -> bool {
-    true
-}
-
 /// Runs `op` on the registry's parts (`registry`, JSON) with the relay's
 /// limits (`limits`, JSON).
 #[wasm_bindgen(js_name = clubRegistry)]
@@ -101,19 +90,9 @@ pub fn club_registry(
     let now = now as u64;
     let mut changes = true;
     let out: Result<Value, String> = match op {
-        Op::Claim {
-            owner,
-            code,
-            name,
-            temporary,
-        } => r
-            .claim(&owner, &code, &name, temporary, &limits, now)
+        Op::Claim { owner, code, name } => r
+            .claim(&owner, &code, &name, &limits, now)
             .map(|x| json!(x)),
-        Op::Proved { code, owner } => r.proved(&code, &owner, now).map(|x| json!(x)),
-        Op::Expired => {
-            changes = false;
-            Ok(json!(r.expired(now)))
-        }
         Op::Has { code } => {
             changes = false;
             Ok(json!(r.clubs.contains_key(&code)))

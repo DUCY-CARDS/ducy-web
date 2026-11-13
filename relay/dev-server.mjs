@@ -149,8 +149,6 @@ async function clubOf(room, code) {
     onHand: ids => usage.note({kind: 'clubHand', code, ids}),
     onFairPlay: summary => fairPlay.note(code, summary),
     onSaved: () => scheduleBackup(room, code),
-    // A backup proved (#395): recorded in the registry, signed for by the owner.
-    onProved: owner => reg.proved(code, owner),
     // The relay vouched the owner onto a new player ID (#575).
     onOwnerMoved: (from, to) => reg.moveOwner(code, from, to),
     // Deleted by its owner: an ordinary room again; members are let go.
@@ -166,25 +164,6 @@ async function clubOf(room, code) {
   }));
   return room.club;
 }
-
-// Temporary clubs left unused for 7 days are deleted (#395), as the
-// Worker's registry does on its alarm: hourly here (RELAY_CLEANUP_MS).
-// RELAY_CLEANUP_AHEAD_MS, for tests: look as if that much later.
-const CLEANUP_MS = Number(process.env.RELAY_CLEANUP_MS || 3600e3);
-const CLEANUP_AHEAD_MS = Number(process.env.RELAY_CLEANUP_AHEAD_MS || 0);
-async function expireClubs() {
-  const now = Date.now() + CLEANUP_AHEAD_MS;
-  for (const code of await reg.expired(now)) {
-    const room = rooms.get(code);
-    // Claimed but not stored yet (being created as we look): once, next time.
-    if (room && !room.store.has('club') && !room.expireWaited) { room.expireWaited = true; continue; }
-    const club = room ? await clubOf(room, code) : null;
-    // Deleting tells its members, and releases it from the registry.
-    if (club) await inRoom(room, () => club.run('delete_club'));
-    else { await reg.release(code); await fairPlay.drop(code); }
-  }
-}
-setInterval(() => expireClubs().catch(e => console.warn('club: not expired:', e)), CLEANUP_MS).unref();
 
 function enqueue(room, from, raw) {
   if (raw.length > MAX_QUEUED_MESSAGE || room.queued.length >= MAX_QUEUED) return false;
