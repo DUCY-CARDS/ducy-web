@@ -5,17 +5,12 @@
 //! **The owner** gives chips from a float: a fixed amount ([`Float::size`])
 //! taken from their vault, which has no limit and is the club's supply.
 //! Someone at the owner's device can give away at most what's in the float.
-//! Topping it up (a refill) takes deliberate steps:
-//! - the first refill in [`WAIT`] goes ahead at once (the relay has checked
-//!   a passkey unlock from the last few minutes);
-//! - another within [`WAIT`] of the last waits [`WAIT`], unless the owner
-//!   approves it with a passkey from another of their devices (the relay
-//!   says which passkey a command came with, as a `device`);
-//! - every refill is a notice, and one waiting can be cancelled.
-//!
-//! Lowering the float's size applies at once (what's over it goes back to
-//! the vault); raising it waits [`WAIT`], with a notice and Cancel. Chips
-//! taken back go to the owner's vault, not the float. A club from before
+//! Topping it up (a refill) and changing its size apply at once (#660): the
+//! relay lets them through only with a passkey unlock from the last few
+//! minutes, as every chip move. Each is logged, and one bigger than a full
+//! buy-in is a notice. Lowering the size sends what's over it back to the
+//! vault; raising it leaves the float to be refilled. Chips taken back go
+//! to the owner's vault, not the float. A club from before
 //! the float replaced its daily chip cap gets a float the size of the cap,
 //! holding what the cap had left that day.
 //!
@@ -31,11 +26,11 @@
 //! what they've asked to take out and their wait are theirs alone
 //! ([`MemberVault`], left out of the owner's view and the agent's).
 //!
-//! **Notices**: a give or take back of more than a full buy-in at the
-//! club's biggest table ([`Book::notice_from`]), a removal, every refill
-//! and every change to the float are marked in the activity log (`notice`:
-//! a key) and show in the owner's notices for [`NOTICE_DAYS`] until
-//! cleared; a refill and a raise waiting show until they apply.
+//! **Notices**: a give, take back, refill or change to the float's size of
+//! more than a full buy-in at the club's biggest table
+//! ([`Book::notice_from`]), and a removal, are marked in the activity log
+//! (`notice`: a key) and show in the owner's notices for [`NOTICE_DAYS`]
+//! until cleared.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -46,9 +41,6 @@ use crate::rules::{RuleError, TableStatus, chip_text, refuse};
 
 /// A day, in milliseconds.
 pub const DAY: u64 = 86_400_000;
-/// How long a refill within a day of the last, and a raise of the float,
-/// wait.
-pub const WAIT: u64 = DAY;
 /// A new club's float: 2,000 chips.
 pub const DEFAULT_FLOAT: u64 = 200_000;
 /// A full buy-in at the default table (Hold'em 1/2, 100 big blinds), when
@@ -78,55 +70,12 @@ impl CapRaise {
     }
 }
 
-/// A raise of the float's size, waiting.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SizeRaise {
-    /// The size it raises to.
-    pub to: u64,
-    /// When it was asked for.
-    pub at: u64,
-}
-
-impl SizeRaise {
-    /// When it applies.
-    pub fn applies(&self) -> u64 {
-        self.at + WAIT
-    }
-}
-
-/// A refill waiting, asked for within a day of the last.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RefillWait {
-    /// When it was asked for.
-    pub at: u64,
-    /// The passkey it was asked with (the relay's word); approving it takes
-    /// another.
-    #[serde(default)]
-    pub device: String,
-}
-
-impl RefillWait {
-    /// When it goes ahead, unless approved or cancelled first.
-    pub fn applies(&self) -> u64 {
-        self.at + WAIT
-    }
-}
-
 /// The owner's float.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Float {
     /// What a refill tops it up to.
     pub size: u64,
-    /// A raise of the size, waiting.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raise: Option<SizeRaise>,
-    /// A refill, waiting.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait: Option<RefillWait>,
-    /// When it was last refilled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last: Option<u64>,
     /// Whether it has been filled the first time (a new club's is, once
     /// the club starts).
     #[serde(default)]
@@ -136,13 +85,7 @@ pub struct Float {
 impl Float {
     /// A float of `size`, not filled yet.
     pub fn new(size: u64) -> Self {
-        Self {
-            size,
-            raise: None,
-            wait: None,
-            last: None,
-            open: false,
-        }
+        Self { size, open: false }
     }
 }
 
@@ -271,8 +214,8 @@ impl Book {
 
     /// The float, set up if it isn't yet: a club from before it gets one the
     /// size of its daily cap, holding what the cap had left today (a raise
-    /// of the cap waiting becomes a raise of the float); a new club's is
-    /// filled to its size.
+    /// of the cap still waiting is dropped); a new club's is filled to its
+    /// size.
     pub fn start_float(&mut self, now: u64) {
         let owner = self.owner();
         if self.club.float.is_none() {
@@ -280,12 +223,7 @@ impl Book {
             let left = cap.saturating_sub(self.given_today(now));
             let mut f = Float::new(cap);
             f.open = true;
-            f.raise = self
-                .club
-                .cap_raise
-                .take()
-                .filter(|r| now < r.applies() && r.to > cap)
-                .map(|r| SizeRaise { to: r.to, at: r.at });
+            self.club.cap_raise = None;
             self.club.chip_cap = None;
             self.club.float = Some(f);
             if left > 0 {
@@ -320,46 +258,10 @@ impl Book {
         self.club.float.as_ref().map_or(DEFAULT_FLOAT, |f| f.size)
     }
 
-    // Tops the float up to its size; what was added.
-    fn top_up_float(&mut self, text: &str, now: u64) -> u64 {
-        let top = self.float_size().saturating_sub(self.money.float());
-        if top > 0 {
-            let _ = self.money.refill(top, "", now);
-        }
-        self.float_mut().last = Some(now);
-        let owner = self.owner();
-        let line = format!("{text}: +{}", chip_text(top));
-        self.log_notice(&owner, &line, now, Some(top as i64));
-        top
-    }
-
-    /// Whatever is due by `now`: the float set up, a raise of its size, a
-    /// refill that waited its day, members' chips out of their vaults and
-    /// shorter waits. The members whose accounts changed.
+    /// Whatever is due by `now`: the float set up, members' chips out of
+    /// their vaults and shorter waits. The members whose accounts changed.
     pub fn settle_vault(&mut self, now: u64) -> Settled {
         self.start_float(now);
-        let owner = self.owner();
-        if let Some(r) = self
-            .float_mut()
-            .raise
-            .clone()
-            .filter(|r| now >= r.applies())
-        {
-            let f = self.float_mut();
-            f.size = r.to;
-            f.raise = None;
-            let text = format!("Float raised to {}", chip_text(r.to));
-            self.log_notice(&owner, &text, now, None);
-        }
-        if self
-            .float_mut()
-            .wait
-            .as_ref()
-            .is_some_and(|w| now >= w.applies())
-        {
-            self.float_mut().wait = None;
-            self.top_up_float("Refilled the float after 24 hours", now);
-        }
         let mut changed = Vec::new();
         let ids: Vec<String> = self.club.vaults.keys().cloned().collect();
         for id in ids {
@@ -389,18 +291,16 @@ impl Book {
 
     /// When something is next due to settle, if anything is.
     pub fn next_vault_due(&self) -> Option<u64> {
-        let f = self.club.float.as_ref();
-        let float = [
-            f.and_then(|f| f.raise.as_ref()).map(SizeRaise::applies),
-            f.and_then(|f| f.wait.as_ref()).map(RefillWait::applies),
-        ];
-        let members = self.club.vaults.values().flat_map(|v| {
-            v.outs
-                .iter()
-                .map(|o| o.ready)
-                .chain(v.shorter.as_ref().map(|s| s.applies))
-        });
-        float.into_iter().flatten().chain(members).min()
+        self.club
+            .vaults
+            .values()
+            .flat_map(|v| {
+                v.outs
+                    .iter()
+                    .map(|o| o.ready)
+                    .chain(v.shorter.as_ref().map(|s| s.applies))
+            })
+            .min()
     }
 
     /// The club gives a member chips from the owner's float.
@@ -440,63 +340,25 @@ impl Book {
         Ok(e)
     }
 
-    /// The owner refills the float, with passkey `device` (the relay's word,
-    /// empty when there's none): at once if it's the first refill in a day,
-    /// else it waits. `{added}` or `{waiting, applies}`.
-    pub fn refill(&mut self, device: &str, now: u64) -> Result<Value, RuleError> {
+    /// The owner refills the float from their vault, up to its size, at
+    /// once: logged, and a notice when it's more than a full buy-in.
+    /// `{added}`.
+    pub fn refill(&mut self, now: u64) -> Result<Value, RuleError> {
         self.start_float(now);
-        let f = self.float_mut().clone();
-        if f.wait.is_some() {
-            return refuse("A refill is waiting already.");
-        }
-        if self.money.float() >= f.size {
+        let top = self.float_size().saturating_sub(self.money.float());
+        if top == 0 {
             return refuse("The float is full.");
         }
-        if f.last.is_some_and(|l| now < l.saturating_add(WAIT)) {
-            let w = RefillWait {
-                at: now,
-                device: device.into(),
-            };
-            let applies = w.applies();
-            self.float_mut().wait = Some(w);
-            let owner = self.owner();
-            self.log_action(&owner, "Asked to refill the float again today", now, None);
-            return Ok(json!({"waiting": true, "applies": applies}));
-        }
-        let added = self.top_up_float("Refilled the float", now);
-        Ok(json!({"added": added}))
+        self.money.refill(top, "", now).map_err(money_err)?;
+        let line = format!("Refilled the float: +{}", chip_text(top));
+        self.log_move(&line, top, now);
+        Ok(json!({"added": top}))
     }
 
-    /// The owner approves the refill waiting with a passkey from another of
-    /// their devices (`device`, the relay's word): it goes ahead now. With
-    /// the same passkey, or none, it's refused: it waits its day.
-    pub fn approve_refill(&mut self, device: &str, now: u64) -> Result<Value, RuleError> {
-        let Some(w) = self.float_mut().wait.clone() else {
-            return refuse("No refill is waiting.");
-        };
-        if device.is_empty() || device == w.device {
-            return refuse(
-                "Approve it with a passkey on another of your devices. Or it goes ahead after 24 hours.",
-            );
-        }
-        self.float_mut().wait = None;
-        let added = self.top_up_float("Refill approved from another device", now);
-        Ok(json!({"added": added}))
-    }
-
-    /// The owner cancels the refill waiting.
-    pub fn cancel_refill(&mut self, now: u64) -> Result<(), RuleError> {
-        if self.float_mut().wait.take().is_none() {
-            return refuse("No refill is waiting.");
-        }
-        let owner = self.owner();
-        self.log_notice(&owner, "Cancelled the refill waiting", now, None);
-        Ok(())
-    }
-
-    /// The owner sets the float's size to `to` chips: a smaller one applies
-    /// at once (what's over it goes back to the vault, and any raise
-    /// waiting is dropped), a bigger one waits its day.
+    /// The owner sets the float's size to `to` chips, at once: a smaller
+    /// one sends what's over it back to the vault, a bigger one is filled
+    /// by a refill. Logged, and a notice when it changes by more than a
+    /// full buy-in.
     pub fn set_float_size(&mut self, to: Option<i64>, now: u64) -> Result<(), RuleError> {
         self.start_float(now);
         let Some(to) = to
@@ -506,19 +368,7 @@ impl Book {
             return refuse("The float is a whole number of chips above 0.");
         };
         let size = self.float_size();
-        let owner = self.owner();
-        if to > size {
-            self.float_mut().raise = Some(SizeRaise { to, at: now });
-            let text = format!(
-                "Asked to raise the float to {} (from {})",
-                chip_text(to),
-                chip_text(size)
-            );
-            self.log_action(&owner, &text, now, None);
-            return Ok(());
-        }
-        let dropped = self.float_mut().raise.take();
-        if to == size && dropped.is_none() {
+        if to == size {
             return Ok(());
         }
         self.float_mut().size = to;
@@ -528,42 +378,19 @@ impl Book {
                 .to_vault(over, "Float made smaller", now)
                 .map_err(money_err)?;
         }
-        let mut text = format!("Float set to {}", chip_text(to));
-        if let Some(r) = dropped {
-            text += &format!("; the raise to {} is cancelled", chip_text(r.to));
-        }
-        self.log_notice(&owner, &text, now, None);
-        Ok(())
-    }
-
-    /// The owner cancels a raise of the float waiting.
-    pub fn cancel_float_raise(&mut self, now: u64) -> Result<(), RuleError> {
-        let Some(r) = self.float_mut().raise.take() else {
-            return refuse("No raise of the float is waiting.");
-        };
         let owner = self.owner();
-        let text = format!("Cancelled raising the float to {}", chip_text(r.to));
-        self.log_notice(&owner, &text, now, None);
+        let text = format!("Float set to {} (from {})", chip_text(to), chip_text(size));
+        if to.abs_diff(size) > self.notice_from(now) {
+            self.log_notice(&owner, &text, now, None);
+        } else {
+            self.log_action(&owner, &text, now, None);
+        }
         Ok(())
     }
 
-    /// The float for the owner's page: {size, float, raise: {to, at,
-    /// applies} or null, wait: {at, applies} or null, last, waits (a refill
-    /// now would wait)}.
-    pub fn float_view(&self, now: u64) -> Value {
-        let f = self.club.float.clone().unwrap_or(Float::new(DEFAULT_FLOAT));
-        let raise = f.raise.as_ref().map_or(
-            Value::Null,
-            |r| json!({"to": r.to, "at": r.at, "applies": r.applies()}),
-        );
-        let wait = f
-            .wait
-            .as_ref()
-            .map_or(Value::Null, |w| json!({"at": w.at, "applies": w.applies()}));
-        json!({
-            "size": f.size, "float": self.money.float(), "raise": raise, "wait": wait,
-            "last": f.last, "waits": f.last.is_some_and(|l| now < l.saturating_add(WAIT)),
-        })
+    /// The float for the owner's page: {size, float}.
+    pub fn float_view(&self) -> Value {
+        json!({"size": self.float_size(), "float": self.money.float()})
     }
 
     /// A member's own vault command (#579): `op` "in" (`amount` from their
@@ -765,13 +592,11 @@ impl Book {
         }
     }
 
-    /// The owner's notices of chip moves, removals, refills and float
-    /// changes from the last [`NOTICE_DAYS`], and a refill or a raise of the
-    /// float waiting.
+    /// The owner's notices of big chip moves, removals and big float changes
+    /// from the last [`NOTICE_DAYS`].
     pub fn move_notices(&self, now: u64) -> Vec<Value> {
         let since = now.saturating_sub(NOTICE_DAYS * DAY);
-        let mut out: Vec<Value> = self
-            .log
+        self.log
             .iter()
             .filter(|l| l["at"].as_u64().is_some_and(|a| a >= since))
             .filter_map(|l| {
@@ -781,23 +606,7 @@ impl Book {
                     "by": l["by"], "at": l["at"],
                 }))
             })
-            .collect();
-        let Some(f) = self.club.float.as_ref() else {
-            return out;
-        };
-        if let Some(r) = &f.raise {
-            out.push(json!({
-                "key": format!("float_raise:{}", r.at), "kind": "float_raise", "to": r.to,
-                "size": f.size, "applies": r.applies(), "at": r.at,
-            }));
-        }
-        if let Some(w) = &f.wait {
-            out.push(json!({
-                "key": format!("refill:{}", w.at), "kind": "refill_wait",
-                "amount": f.size.saturating_sub(self.money.float()), "applies": w.applies(), "at": w.at,
-            }));
-        }
-        out
+            .collect()
     }
 }
 
@@ -868,9 +677,7 @@ mod tests {
         let mut c = new_club(&["ann"]);
         run(&mut c, "vault_settle", json!({}), NOW).unwrap();
         assert_eq!(c.book.money.float(), DEFAULT_FLOAT);
-        assert_eq!(c.book.float_view(NOW)["size"], DEFAULT_FLOAT);
-        // The first refill of the day still goes ahead at once.
-        assert_eq!(c.book.float_view(NOW)["waits"], false);
+        assert_eq!(c.book.float_view()["size"], DEFAULT_FLOAT);
         let e = c.book.money.ledger().last().unwrap();
         assert_eq!(
             (e.member.as_str(), e.kind),
@@ -919,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn the_first_refill_in_a_day_is_at_once_the_next_waits() {
+    fn every_refill_is_at_once() {
         let mut c = new_club(&["ann"]);
         give(&mut c, "ann", 200_000, NOW).unwrap();
         let v = run(&mut c, "refill", json!({}), NOW + H).unwrap().value;
@@ -931,90 +738,39 @@ mod tests {
                 .0
                 .contains("full")
         );
+        // Again within the hour: at once too, and nothing left to settle.
         give(&mut c, "ann", 100_000, NOW + 2 * H).unwrap();
-        // Within a day of the last: it waits, with a notice and Cancel.
-        let v = run(&mut c, "refill", json!({"device": "phone"}), NOW + 3 * H)
-            .unwrap()
-            .value;
-        assert_eq!(v, json!({"waiting": true, "applies": NOW + 3 * H + DAY}));
-        assert_eq!(c.book.money.float(), 100_000);
-        let n = c.book.move_notices(NOW + 3 * H);
-        assert_eq!(n.last().unwrap()["kind"], "refill_wait");
-        assert_eq!(n.last().unwrap()["amount"], 100_000);
-        assert!(
-            run(&mut c, "refill", json!({}), NOW + 3 * H)
-                .unwrap_err()
-                .0
-                .contains("waiting already")
-        );
-        // A day on, it goes ahead, as a notice.
-        let out = run(&mut c, "vault_settle", json!({}), NOW + 3 * H + DAY).unwrap();
-        assert_eq!(c.book.money.float(), 200_000);
+        let out = run(&mut c, "refill", json!({}), NOW + 2 * H).unwrap();
+        assert_eq!(out.value, json!({"added": 100_000}));
         assert_eq!(out.next_vault, None);
-        assert!(
-            c.book
-                .move_notices(NOW + 3 * H + DAY)
-                .iter()
-                .any(|n| n["text"] == "Refilled the float after 24 hours: +1,000")
-        );
-        audit(&c);
-    }
-
-    #[test]
-    fn a_waiting_refill_is_approved_only_from_another_device() {
-        let mut c = new_club(&["ann"]);
-        give(&mut c, "ann", 200_000, NOW).unwrap();
-        run(&mut c, "refill", json!({"device": "phone"}), NOW).unwrap();
-        give(&mut c, "ann", 50_000, NOW).unwrap();
-        run(&mut c, "refill", json!({"device": "phone"}), NOW + H).unwrap();
-        // The same passkey, or none (a single passkey): refused, it waits.
-        for d in ["phone", ""] {
-            let e = run(&mut c, "approve_refill", json!({"device": d}), NOW + H)
-                .unwrap_err()
-                .0;
-            assert!(e.starts_with("Approve it with a passkey on another"), "{e}");
-        }
-        run(
-            &mut c,
-            "approve_refill",
-            json!({"device": "laptop"}),
-            NOW + 2 * H,
-        )
-        .unwrap();
         assert_eq!(c.book.money.float(), 200_000);
-        assert!(c.book.float_view(NOW + 2 * H)["wait"].is_null());
-        assert!(
-            c.book
-                .log
-                .iter()
-                .any(|l| l["text"] == "Refill approved from another device: +500"
-                    && l["notice"].is_string())
+        assert_eq!(
+            c.book.money.ledger().last().unwrap().kind,
+            EntryKind::Refill
         );
+        // More than a full buy-in (200): a notice; less: logged only.
+        let refills = |c: &ClubState| -> Vec<Value> {
+            c.book
+                .move_notices(NOW + 3 * H)
+                .into_iter()
+                .filter(|n| n["text"].as_str().unwrap().starts_with("Refilled"))
+                .collect()
+        };
+        let n = refills(&c);
+        assert_eq!(n.len(), 2);
+        assert!(n.iter().all(|n| n["kind"] == "move"));
+        assert_eq!(n[1]["text"], "Refilled the float: +1,000");
+        give(&mut c, "ann", 10_000, NOW + 3 * H).unwrap();
+        run(&mut c, "refill", json!({}), NOW + 3 * H).unwrap();
+        let l = c.book.log.last().unwrap();
+        assert_eq!(l["text"], "Refilled the float: +100");
+        assert!(l.get("notice").is_none());
+        assert_eq!(refills(&c).len(), 2);
         audit(&c);
     }
 
     #[test]
-    fn a_waiting_refill_is_cancelled() {
-        let mut c = new_club(&["ann"]);
-        give(&mut c, "ann", 10_000, NOW).unwrap();
-        run(&mut c, "refill", json!({}), NOW).unwrap();
-        give(&mut c, "ann", 10_000, NOW).unwrap();
-        run(&mut c, "refill", json!({}), NOW + H).unwrap();
-        run(&mut c, "cancel_refill", json!({}), NOW + 2 * H).unwrap();
-        run(&mut c, "vault_settle", json!({}), NOW + 2 * DAY).unwrap();
-        assert_eq!(c.book.money.float(), 190_000);
-        assert!(run(&mut c, "cancel_refill", json!({}), NOW + 2 * DAY).is_err());
-        // A day after the last one, a refill is at once again.
-        assert_eq!(
-            run(&mut c, "refill", json!({}), NOW + 2 * DAY)
-                .unwrap()
-                .value["added"],
-            10_000
-        );
-    }
-
-    #[test]
-    fn a_smaller_float_applies_at_once_a_bigger_one_waits() {
+    fn the_float_size_changes_at_once_either_way() {
         let mut c = new_club(&["ann"]);
         run(&mut c, "float_size", json!({"amount": 50_000}), NOW).unwrap();
         // What's over it goes back to the vault, in the ledger.
@@ -1023,42 +779,49 @@ mod tests {
             c.book.money.ledger().last().unwrap().kind,
             EntryKind::ToVault
         );
-        assert_eq!(c.book.move_notices(NOW)[0]["text"], "Float set to 500");
-        run(&mut c, "float_size", json!({"amount": 300_000}), NOW + H).unwrap();
-        assert_eq!(c.book.float_size(), 50_000);
-        let n = c.book.move_notices(NOW + H);
-        assert_eq!(n.last().unwrap()["kind"], "float_raise");
-        assert_eq!(n.last().unwrap()["applies"], NOW + H + DAY);
-        let out = run(&mut c, "vault_settle", json!({}), NOW + 2 * H).unwrap();
-        assert_eq!(out.next_vault, Some(NOW + H + DAY));
-        run(&mut c, "vault_settle", json!({}), NOW + H + DAY).unwrap();
+        assert_eq!(
+            c.book.move_notices(NOW)[0]["text"],
+            "Float set to 500 (from 2,000)"
+        );
+        // Raised at once; not filled: a refill tops it up.
+        let out = run(&mut c, "float_size", json!({"amount": 300_000}), NOW + H).unwrap();
+        assert_eq!(out.next_vault, None);
         assert_eq!(c.book.float_size(), 300_000);
-        // Raised, not filled: a refill tops it up.
         assert_eq!(c.book.money.float(), 50_000);
-        assert!(run(&mut c, "float_size", json!({"amount": 0}), NOW + 2 * DAY).is_err());
-        audit(&c);
-    }
-
-    #[test]
-    fn a_raise_then_a_lower_drops_the_raise_and_cancel_works() {
-        let mut c = new_club(&["ann"]);
-        run(&mut c, "float_size", json!({"amount": 500_000}), NOW).unwrap();
-        run(&mut c, "float_size", json!({"amount": 100_000}), NOW + H).unwrap();
+        assert_eq!(
+            c.book.float_view(),
+            json!({"size": 300_000, "float": 50_000})
+        );
+        assert_eq!(
+            c.book.move_notices(NOW + H).last().unwrap()["text"],
+            "Float set to 3,000 (from 500)"
+        );
+        run(&mut c, "refill", json!({}), NOW + H).unwrap();
+        assert_eq!(c.book.money.float(), 300_000);
+        // A change of a full buy-in or less: logged, no notice.
+        let before = c.book.move_notices(NOW + H).len();
+        run(&mut c, "float_size", json!({"amount": 320_000}), NOW + H).unwrap();
         assert_eq!(
             c.book.log.last().unwrap()["text"],
-            "Float set to 1,000; the raise to 5,000 is cancelled"
+            "Float set to 3,200 (from 3,000)"
         );
-        run(&mut c, "float_size", json!({"amount": 500_000}), NOW + H).unwrap();
-        run(&mut c, "cancel_float_raise", json!({}), NOW + 2 * H).unwrap();
-        run(&mut c, "vault_settle", json!({}), NOW + 2 * DAY).unwrap();
-        assert_eq!(c.book.float_size(), 100_000);
-        assert!(run(&mut c, "cancel_float_raise", json!({}), NOW + 2 * DAY).is_err());
+        assert_eq!(c.book.move_notices(NOW + H).len(), before);
+        // The same size: nothing.
+        let logged = c.book.log.len();
+        run(&mut c, "float_size", json!({"amount": 320_000}), NOW + H).unwrap();
+        assert_eq!(c.book.log.len(), logged);
+        assert!(run(&mut c, "float_size", json!({"amount": 0}), NOW + 2 * DAY).is_err());
+        // The wait's commands are gone.
+        for op in ["approve_refill", "cancel_refill", "cancel_float_raise"] {
+            assert!(run(&mut c, op, json!({}), NOW + 2 * DAY).is_err(), "{op}");
+        }
+        audit(&c);
     }
 
     #[test]
     fn a_club_from_before_gets_a_float_from_its_cap() {
         // The owner had set a cap of 1,000, given 600 of it today, and asked
-        // for a raise to 5,000 an hour ago.
+        // for a raise to 5,000 an hour ago (dropped: nothing waits now).
         let mut c = old_club(&["ann"]);
         c.book.club.chip_cap = Some(100_000);
         c.book.club.cap_raise = Some(CapRaise {
@@ -1071,11 +834,6 @@ mod tests {
         assert_eq!(c.book.money.float(), 40_000);
         assert_eq!(c.book.club.chip_cap, None);
         assert_eq!(c.book.club.cap_raise, None);
-        let f = c.book.float_view(NOW);
-        assert_eq!(
-            f["raise"],
-            json!({"to": 500_000, "at": NOW - H, "applies": NOW - H + DAY})
-        );
         assert!(
             c.book
                 .move_notices(NOW)

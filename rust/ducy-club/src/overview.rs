@@ -325,8 +325,8 @@ impl ClubState {
     /// What needs the manager, newest first, each with a `key` (unique and
     /// stable while it stands) and what its quick actions need: join, chips,
     /// at_limit, help, prize, stopped, left_owing, move (a big chip move,
-    /// a removal, a refill or a change to the float, #576, #589),
-    /// refill_wait and float_raise. Those `cleared` are left out; `seated`:
+    /// a removal, or a big refill or change to the float, #576, #660).
+    /// Those `cleared` are left out; `seated`:
     /// seats taken by table.
     pub fn notices(&self, cleared: &[String], seated: &Map<String, Value>, now: u64) -> Vec<Value> {
         let members = &self.book.club.members;
@@ -509,7 +509,7 @@ impl ClubState {
                     .unwrap_or_default();
                 to(&self.notices(&cleared, &obj("seated"), now))
             }
-            "float" => self.book.float_view(now),
+            "float" => self.book.float_view(),
             _ => return refuse(format!("no overview op {op}")),
         })
     }

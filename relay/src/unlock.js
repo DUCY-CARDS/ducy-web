@@ -24,7 +24,7 @@ export { managerOnly, movesChips };
 export const RECHECK_MS = 5 * 60_000;
 
 // What to do with message `m` (parsed) from a connection whose unlock is
-// `u` ({token, at, device, seen, checked} or null): 'unlock' (it's an unlock: check
+// `u` ({token, at, origin, seen, checked} or null): 'unlock' (it's an unlock: check
 // its token), 'recheck' (check u.token again, then gate it again),
 // 'locked' or 'unlock_again' (drop it and say so), or '' (let it through;
 // `u.seen` is then updated by the caller).
@@ -54,20 +54,18 @@ export const CLUB_SITE_REPLY = {type: 'club_site', reason: 'Clubs are run on the
 export const unlockedNow =(u, now = Date.now()) => !!u && now - u.seen <= IDLE_MS && now - u.checked <= RECHECK_MS;
 
 // Runs the gate for message `m` from player `id`: `u` is the connection's
-// unlock, `session(token)` the relay's check ({id, at, movedFrom, device}
+// unlock, `session(token)` the relay's check ({id, at, movedFrom, origin}
 // or null). Resolves to {pass, u (the unlock to keep, or null), reply (to
-// send back, or null), movedFrom}. A message that passes goes to the club
-// with `u.device`, the passkey its connection was unlocked with (#589).
+// send back, or null), movedFrom}.
 export async function check(m, u, id, session, now = Date.now()) {
   let g = gate(m, u, now);
   if (g === 'unlock' || g === 'recheck') {
     const token = g === 'unlock' ? String(m.token || '') : u.token;
     const s = await session(token).catch(() => null);
     if (!s || s.id !== id) return {pass: false, u: null, reply: {type: 'locked', reason: 'Unlock with your passkey.'}};
-    // `device`: which passkey (passkeys.js session), for a club's refills (#589).
     // `origin`: the page the session was made on (#637: club sites only
     // run clubs).
-    u = {token, at: s.at, device: s.device || '', origin: s.origin || '', seen: now, checked: now};
+    u = {token, at: s.at, origin: s.origin || '', seen: now, checked: now};
     if (g === 'unlock') return {pass: false, u, reply: {type: 'unlocked', at: s.at}, movedFrom: s.movedFrom || null};
     g = gate(m, u, now);
   }

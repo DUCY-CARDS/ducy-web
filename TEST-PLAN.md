@@ -65,7 +65,7 @@ A major release is any of these:
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
 | A club's first table with blinds of its own and an ante (#655): switching games and the page's redraws keep them; a big blind under the small one, and an ante over the big blind, are refused with why and the form keeps what was typed; the owner's board, the lobby and the table's bar show "1.50/3.25, ante 0.25"; everyone dealt in antes | Club manager |
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner; Chips' parts add up to Out with players, which with the float makes what the owner put in, and Credit shows Paid back | Club manager |
-| The owner gives from the float on top of Chips and refills it (not on Rules); a member's vault shows on Chips under In vaults | Club manager |
+| The owner gives from the float on top of Chips and refills it, again the same day, and raises its size, each at once with notices for the big ones and nothing waiting (#660; not on Rules); a member's vault shows on Chips under In vaults | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
 | A first passkey from You → Passkeys → Add, with no unlock (#646); it then lists as this one, and opening You again offers no first Add | Club manager |
@@ -252,12 +252,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 6. Members: search, filters and sort all work. A member's page shows their chips history and messages.
 7. History: hands and replays open. Big chip moves stand out in the activity log.
 
-**C5b Float and vaults** (#589, #579; the owner on two real devices, each with its own passkey)
-0. Chips opens on the float (#657): Left (what's in it, of its size) with Refill, and Size with Save; a refill or raise waiting shows under them. Rules has no float.
-1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for, and the float is full again, with a notice.
-2. Give some, then refill again the same day: it waits 24 hours, with a notice that has Approve and Cancel. Approve on the same device: refused. Approve on the other device: the float fills, with a notice.
-3. With only one passkey, the waiting refill can only be cancelled or left to go ahead after 24 hours.
-4. Lower the float's size: at once. Raise it: it waits a day, with Cancel.
+**C5b Float and vaults** (#589, #579, #660)
+0. Chips opens on the float (#657): Left (what's in it, of its size) with Refill, and Size with Save. Nothing waits under them. Rules has no float.
+1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for (unless unlocked in the last few minutes), and the float is full again at once.
+2. Give some, then refill again the same day: it fills at once too. A refill of more than a full buy-in is a notice on Overview (no Approve or Cancel); a smaller one is in the activity log only.
+3. Lower the float's size: at once, what's over it back in the owner's vault. Raise it: at once, and Refill fills it. Each is logged; a change of more than a full buy-in is a notice.
+4. Leave the page idle over the passkey's few minutes, then Refill or Save a size: the passkey is asked for again first.
 5. As a member: put chips in the vault (at once), take some out (the passkey first; it waits the chosen time), and cancel it from another of your devices. The owner sees the vault on your member page, but not the request.
 
 **C6 Backup and restore**

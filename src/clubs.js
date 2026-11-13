@@ -3029,43 +3029,25 @@ function noteHtml(n) {
     top = `<b>${esc(n.name)}</b>: ${n.checkedIn} checked in of ${n.min}`;
     if (n.note) body = `<span class="pl-meta">${esc(n.note)}</span>`;
     acts = btn('sched-start', 'Start short', ` data-id="${esc(n.id)}"`, true) + btn('sched-cancel', 'Cancel', ` data-id="${esc(n.id)}" data-ask="Cancel this game?" data-yes="Cancel game"`);
-  } else if (n.kind === 'refill_wait') {
-    // A second refill in a day waits a day, unless approved from another
-    // of the owner's devices (#589).
-    top = `Refill of <b>${chips(n.amount)}</b> waiting`;
-    body = `<span class="pl-meta">${esc(capWhen(n.applies))}</span>`;
-    acts = btn('refill-approve', 'Approve', '', true) + btn('refill-cancel', 'Cancel');
-  } else if (n.kind === 'float_raise') {
-    // A raise of the float waits a day (#589).
-    top = `Float rises to <b>${chips(n.to)}</b>`;
-    body = `<span class="pl-meta">${esc(capWhen(n.applies))}</span>`;
-    acts = btn('float-cancel', 'Cancel');
   }
   // One row each (#516): what kind, who and what, how long ago, the answers.
   const tag = NOTE_TAGS[n.kind] || '';
   return `<li class="mg-note"><span class="mg-note-tag k-${n.kind}">${tag}</span><span class="mg-note-text">${top}${body ? ` ${body}` : ''}</span>${when(n.at)}${acts ? (acts.startsWith('<form') ? acts : `<span class="mg-note-acts">${acts}</span>`) : '<span class="mg-note-acts"></span>'}</li>`;
 }
 
-const NOTE_TAGS = {join: 'Join', new: 'New', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', refill_wait: 'Float', float_raise: 'Float', fair_play: 'Fair play', short: 'Game'};
+const NOTE_TAGS = {join: 'Join', new: 'New', chips: 'Chips', at_limit: 'Chips', help: 'Help', prize: 'Prize', stopped: 'Table', left_owing: 'Owes', move: 'Check', fair_play: 'Fair play', short: 'Game'};
 
 // When something waiting applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
 
 // The owner's float (#589), on top of Chips (#657): what's left to give (and
 // for chips on credit, #633), of its size, refilled from the owner's vault;
-// a refill waiting (Approve from another device, or Cancel); the size, lower
-// at once and higher after a day.
+// the size. Both at once, with a fresh passkey unlock (#660).
 function floatRowsHtml() {
   const f = floatOf(club);
-  let h = `<div class="pl-row"><span class="pl-label">Left</span><div class="pl-opts"><b class="cl-float-now">${chips(f.float)} of ${chips(f.size)}</b>`;
-  if (!f.wait) {
-    const refill = `<button class="btn-small" data-cl="refill">${f.waits ? 'Refill in 24 h' : 'Refill'}</button>`;
-    h += f.float >= f.size ? offBtn(refill, 'Full') : refill;
-  }
-  h += '</div></div>';
-  if (f.wait) h += `<p class="pl-meta cl-float-note">Refill waiting until ${esc(capWhen(f.wait.applies))} <button class="btn-small" data-cl="refill-approve">Approve</button> <button class="link-btn" data-cl="refill-cancel">Cancel</button></p>`;
+  const refill = '<button class="btn-small" data-cl="refill">Refill</button>';
+  let h = `<div class="pl-row"><span class="pl-label">Left</span><div class="pl-opts"><b class="cl-float-now">${chips(f.float)} of ${chips(f.size)}</b>${f.float >= f.size ? offBtn(refill, 'Full') : refill}</div></div>`;
   h += `<div class="pl-row"><span class="pl-label">Size</span><form class="pl-opts" data-floatform="size"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(f.size))}" aria-label="Float size"><button class="btn-small primary" type="submit">Save</button></form></div>`;
-  if (f.raise) h += `<p class="pl-meta cl-float-note">Rises to ${chips(f.raise.to)} ${esc(capWhen(f.raise.applies))} <button class="link-btn" data-cl="float-cancel">Cancel</button></p>`;
   return h;
 }
 
@@ -4097,9 +4079,6 @@ async function onClickIn(e) {
   else if (act === 'call-time') hostAct('settings', {stayHands: Number(b.dataset.hands)});
   // The owner's float (#589).
   else if (act === 'refill') hostAct('refill', {});
-  else if (act === 'refill-approve') hostAct('approve_refill', {});
-  else if (act === 'refill-cancel') hostAct('cancel_refill', {});
-  else if (act === 'float-cancel') hostAct('cancel_float_raise', {});
   // A member's vault (#579): a take-out cancelled, or the wait.
   else if (act === 'vault-cancel') vaultAct(b, 'cancel', {out: Number(b.dataset.out)});
   else if (act === 'vault-wait') vaultAct(b, 'wait', {wait: Number(b.dataset.wait)});

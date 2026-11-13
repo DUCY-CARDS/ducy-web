@@ -84,10 +84,6 @@ import {
 import { isPublicKey, newKeyPair, seal, sharedKey } from './e2e.js';
 import { HOST_KEEP_DAYS } from './hand-store.js';
 
-// The owner's commands that take the passkey their connection was unlocked
-// with, as the relay says (#589): approving a refill takes another device's.
-const DEVICE_OPS = new Set(['refill', 'approve_refill']);
-
 export function createClubServer({
   identity, club, verifier, persist, transport, onChange = () => {}, onPlay = () => {}, storeHand = () => {}, fullHand = null, engine = {},
   hostKeyPair = null, memberPubs = {}, onMemberKey = () => {}, extraOps = {}, hostInTab = false, limits = null, plan = null,
@@ -192,15 +188,12 @@ export function createClubServer({
   function unwatch(who = club.ownerId) { watching.get(who)?.(); watching.delete(who); }
 
   // The owner's check-in, or one of their actions (run): they get the
-  // result, then the club as it is now. `device`: the passkey the relay
-  // says their connection was unlocked with (#589), '' when there's none.
-  async function handleOwner({type, from, body}, device = '') {
+  // result, then the club as it is now.
+  async function handleOwner({type, from, body}) {
     if (type === 'owner_cmd') {
       let error = '', value = null;
       const op = String(body.op);
-      // Which device a refill comes from is the relay's word, never the page's.
-      const {device: _ignored, ...given} = body.args && typeof body.args === 'object' ? body.args : {};
-      const args = DEVICE_OPS.has(op) ? {...given, device: String(device || '')} : given;
+      const args = body.args && typeof body.args === 'object' ? body.args : {};
       try {
         if (from !== club.ownerId) throw new Error('Only the club’s owner can do that.');
         // Moving someone to a new player ID is the relay's, after a passkey
@@ -730,7 +723,7 @@ export function createClubServer({
     }
     if (r.tourney && r.tourney.from === msg.from) { await handleTourney(r.tourney); return; }
     if (r.admin && r.admin.from === msg.from) { handleAdmin(r.admin); changed(); return; }
-    if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner, msg.device); return; }
+    if (r.owner && r.owner.from === msg.from) { await handleOwner(r.owner); return; }
     // A member's own vault (#579): only from their signed message.
     if (r.vault && r.vault.from === msg.from) { await handleVault(r.vault); return; }
     if (r.help && r.help.from === msg.from) {

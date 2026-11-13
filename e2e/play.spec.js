@@ -793,7 +793,7 @@ test.describe('a club member', () => {
     await ava.screenshot({path: info.outputPath('ante-table.png'), fullPage: true});
   });
 
-  test('the owner gives from a float and refills it; Ava keeps chips in her vault (#589, #579)', async ({browser, watch, browserName}, info) => {
+  test('the owner gives from a float, refills it and resizes it at once; Ava keeps chips in her vault (#589, #660, #579)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, ava, code} = await clubWithAva(browser, watch);
     // A new club's float, on top of Chips (#657): full; nothing out yet.
@@ -812,7 +812,7 @@ test.describe('a club member', () => {
     await owner.locator('#cl-amt').fill('1500');
     await owner.locator('form[data-chipform] button[type=submit]').click();
     await expect(ava.getByText('Balance 1,500')).toBeVisible();
-    // The first refill of the day goes ahead; the next one would wait.
+    // Refills go ahead at once, every time (#660).
     await owner.evaluate(() => { location.hash = 'clubs/chips'; });
     await expect(owner.locator('.cl-float-now')).toHaveText('500 of 2,000');
     await expect(owner.locator('.cl-out tr', {hasText: 'In balances'}).locator('td')).toHaveText('1,500');
@@ -826,18 +826,24 @@ test.describe('a club member', () => {
     await owner.locator('form[data-chipform] button[type=submit]').click();
     await expect(ava.getByText('Balance 1,600')).toBeVisible();
     await owner.evaluate(() => { location.hash = 'clubs/chips'; });
-    await owner.getByRole('button', {name: 'Refill in 24 h'}).click();
-    await expect(owner.locator('.cl-float-note').getByText(/Refill waiting until/)).toBeVisible();
-    // This device can't approve it: it takes another device's passkey.
-    await owner.locator('.cl-float-note [data-cl="refill-approve"]').click();
-    await expect(owner.getByText(/another of your devices/)).toBeVisible();
+    await expect(owner.locator('.cl-float-now')).toHaveText('1,900 of 2,000');
+    await owner.locator('[data-cl="refill"]').click();
+    await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 2,000');
+    // A bigger float: at once too, then filled by a refill.
+    await owner.locator('form[data-floatform="size"] input').fill('5000');
+    await owner.locator('form[data-floatform="size"] button[type=submit]').click();
+    await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 5,000');
+    await owner.locator('[data-cl="refill"]').click();
+    await expect(owner.locator('.cl-float-now')).toHaveText('5,000 of 5,000');
+    await expect(owner.locator('[data-cl="refill"]')).toBeDisabled();
+    await expect(owner.locator('.cl-float-note')).toHaveCount(0);
     await fitsTheScreen(owner);
     await owner.screenshot({path: info.outputPath('float.png'), fullPage: true});
-    // The owner hears of it, with Cancel.
+    // The owner hears of the big changes; nothing waits for an answer.
     await owner.evaluate(() => { location.hash = 'clubs/overview'; });
-    await expect(owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'}).first()).toBeVisible();
-    await owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'}).first().locator('[data-cl="refill-cancel"]').click();
-    await expect(owner.locator('.mg-note', {hasText: 'Refill of 100 waiting'})).toHaveCount(0);
+    await expect(owner.locator('.mg-note', {hasText: 'Float set to 5,000 (from 2,000)'}).first()).toBeVisible();
+    await expect(owner.locator('.mg-note', {hasText: 'Refilled the float: +3,000'}).first()).toBeVisible();
+    await expect(owner.locator('.mg-note [data-cl^="refill"], .mg-note [data-cl="float-cancel"]')).toHaveCount(0);
 
     // Ava puts 1,000 in her vault, and asks to take 400 out: it waits.
     await ava.locator(`[data-cl="mtab"][data-tab="chips"]`).click();
