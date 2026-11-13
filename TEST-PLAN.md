@@ -64,6 +64,7 @@ A major release is any of these:
 | A grant link (#636) on the club site, against a relay taking clubs from the club site only: forwarded to someone else it's refused and shows their ID; its own player makes the club with their passkey, and the link leaves the address; opened on ducy.cards it goes to the club site (Chromium, 1280 and 375 px) | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
 | A club's first table with blinds of its own and an ante (#655): switching games and the page's redraws keep them; a big blind under the small one, and an ante over the big blind, are refused with why and the form keeps what was typed; the owner's board, the lobby and the table's bar show "1.50/3.25, ante 0.25"; everyone dealt in antes | Club manager |
+| Players (#661): nothing yet, then two members' hands at a cash table: each has hands, and one won what the other lost; the period switch, sorting by name both ways, and Export CSV of the rows shown (1280 and 375 px) | Club manager |
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner; Chips' parts add up to Out with players, which with the float makes what the owner put in, and Credit shows Paid back | Club manager |
 | The owner gives from the float on top of Chips and refills it, again the same day, and raises its size, each at once with notices for the big ones and nothing waiting (#660; not on Rules); a member's vault shows on Chips under In vaults | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
@@ -119,6 +120,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Backup and devices: the passkey moves the club; a backup file as an option, and restore | `club-backup.test`, `backup.test` | yes | C6 |
 | History and hand replays | `hand-replay.test` | no | C5 |
 | Agents: make one, their invite, their players' requests and chips | `club-agents.test` | join, give | C8 |
+| Players (#661): hands dealt in, won or lost after the rake, rake, per 100 hands, tournaments and last played, by club day; Today, 7 days, 30 days, All; sort, agent filter, CSV; an agent sees their own players | `club-players.test`, ducy-club's `players.rs`, `seats.rs`, `views.rs` | yes | C11 |
 | Demo clubs | `demo-club.test` | yes | C7 |
 | The club site: its build and deploy (open on live, password kept on staging and sandbox, skipped without a folder, the live deploy leaves it alone), each relay allowing it | `club-site.test` | – | C10 |
 | One passkey on both sites: the first visit's sign-in brings the same player ID, never a vouch there; club running and agents' commands only from a club site with a session made there | `sites.test`, `relay-club.test` | first visit | C10 |
@@ -286,6 +288,15 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 6. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
 6b. Chips at each step above (#657), at 1280 and 375 px: In balances, In vaults, On tables and In tournaments add up to Total; the float plus Total is what the owner put in, less what they took back (with no rake or prizes); Credit shows Owed to the club and Paid back; Adds up ✓ shows once; Members has each member's balance, seat, results and, for Credit players, their limit.
 7. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first), and Your players shows each player's credit limit. The owner sees the line on the player's page but can't set or raise it. A player let in with a line isn't told to ask for chips. The player on credit counts against the agent's own limit, and their buy-in comes out of the float. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
+
+**C11 Players** (#661; owner, an agent, two players, at 1280 and 375 px)
+1. Members → Players: "No play yet." in a new club.
+2. Two players, one under the agent, play ten hands at a cash table and a tournament. Players lists both: Hands 10 each (fewer for one who sat out), Won adds up to minus the rake, Rake matches Chips' Rake and time, Tournaments what each won less their buy-in, Last played how long ago.
+3. Today, 7 days, 30 days, All each show them; the next day, Today is empty and the others aren't.
+4. Each column sorts, high to low first (names A to Z), and again the other way. Won/100 and Rake/100 show – for a player with no hands, last either way.
+5. The agent filter: All agents, Club, the agent. Export CSV downloads the rows shown, in chips.
+6. As the agent, on their club page: Play shows only their player, with no agent column.
+7. At 375 px the table scrolls sideways with the names kept in view; the page doesn't.
 
 **C10 The club site** (#637; on staging, club-staging.ducy.cards, then live)
 1. Open club-staging.ducy.cards in a browser that has a player with a passkey on staging.ducy.cards: Sign in → Use your passkey brings the same player ID (Player settings shows it) and their clubs. No new ID was made.

@@ -8,7 +8,7 @@ import { FILTERS, SORTS } from './club-overview.js';
 export const NAV = [
   {group: '', pages: [['overview', 'Overview']]},
   {group: 'Games', pages: [['cash', 'Tables'], ['tourneys', 'Tournaments'], ['promos', 'Promotions']]},
-  {group: 'Members', pages: [['requests', 'Requests'], ['members', 'Members'], ['settle', 'Balances'], ['chips', 'Chips'], ['fairplay', 'Fair play']]},
+  {group: 'Members', pages: [['requests', 'Requests'], ['members', 'Members'], ['players', 'Players'], ['settle', 'Balances'], ['chips', 'Chips'], ['fairplay', 'Fair play']]},
   {group: 'Settings', pages: [['info', 'Club info'], ['rules', 'Rules'], ['backup', 'Backup and devices'], ['history', 'History']]},
 ];
 
@@ -30,7 +30,7 @@ export function grantToken(hash) {
 
 // Addresses from before #398, and the page each now opens.
 export const OLD_PAGES = {
-  own: 'overview', tables: 'cash', tourneys: 'tourneys', players: 'members',
+  own: 'overview', tables: 'cash', tourneys: 'tourneys',
   accounting: 'chips', promos: 'promos', history: 'history', settings: 'rules',
 };
 

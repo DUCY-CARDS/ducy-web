@@ -34,7 +34,7 @@ test('Promotions leaves the sidebar, Balances is in it, and their addresses stil
   assert.ok(pageOff('promos'));
   assert.ok(!pageOff('settle'));
   for (const id of ['promos', 'settle']) assert.equal(managerPage(`#${pageHash(id)}`).page, id);
-  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'settle', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
+  assert.deepEqual(shown, ['overview', 'cash', 'tourneys', 'requests', 'members', 'players', 'settle', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
   assert.ok(shownNav().every(g => g.pages.length), 'no empty group');
 });
 

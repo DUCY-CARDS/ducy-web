@@ -46,6 +46,7 @@ import * as pk from './passkey.js';
 import { CHIP_OPS, VAULT_OPS } from './chip-moves.js';
 import { accountOf, contributions, playersOf } from './club-agents.js';
 import { chargeFieldsHtml, chargeOn, chargeText, clubChargeHtml, contributionsHtml, readCharge, syncChargeFields } from './club-rake.js';
+import { playersCsvFile, playersEvent, playersPageHtml, playersReport } from './club-players.js';
 import { entriesOf, ledgerOf, ledgerView, settleRows } from './club-money.js';
 import { bigMove, isBigMove } from './club-log.js';
 import { handRecord, summary, tableSessions, totalsByMember } from './hand-replay.js';
@@ -2562,6 +2563,7 @@ function pageHtml(at) {
   if (page === 'promos') return pageHead('Promotions') + hostPromosHtml(club, {form: promoForm, note: promoNote, voiding});
   if (page === 'requests') return pageHead('Requests') + requestsPageHtml();
   if (page === 'members') return pageHead('Members') + membersPageHtml(at);
+  if (page === 'players') return pageHead('Players') + playersPageHtml(playersReport(club), {link: id => `#${ph('member', id)}`});
   if (page === 'member') return memberPageHtml(member);
   if (page === 'settle') return pageHead('Balances') + settleHtml();
   if (page === 'chips') return pageHead('Chips') + accountingHtml();
@@ -3784,8 +3786,8 @@ function agentHtml(m, hostHere, {page = false} = {}) {
     }
     h += '</ul>';
   }
-  // Their players' rake and time (#449).
-  if (page) h += contributionsHtml(a.rake, {agent: true});
+  // Their players' play (#661): hands, results, rake and time.
+  if (page && a.report) h += `<section class="pp-agent"><h2>Play</h2>${playersPageHtml(a.report)}</section>`;
   return h + '</div>';
 }
 
@@ -4318,6 +4320,13 @@ export async function openClubs(el, v = 'clubs') {
     root.addEventListener('keydown', onKey);
     root.addEventListener('submit', onSubmit);
     root.addEventListener('change', onFilter);
+    // Players (#661): its period, order, agent and Export CSV.
+    for (const type of ['click', 'change']) {
+      root.addEventListener(type, e => {
+        const r = playersEvent(e);
+        if (r === 'csv') { const f = playersCsvFile(); downloadFile(f.text, f.name, 'text/csv'); } else if (r) render();
+      });
+    }
     // Restore a club from its backup file (#191).
     root.addEventListener('change', e => {
       const f = e.target.dataset?.clrestore != null && e.target.files?.[0];

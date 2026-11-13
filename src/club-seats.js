@@ -41,6 +41,8 @@ export function seats(club, seating, tid, op, args = {}, now = Date.now()) {
   club.waitlist = r.club.waitlist;
   // What each player paid in rake and time (#449).
   if (r.club.rakeBook) club.rakeBook = r.club.rakeBook;
+  // Each player's hands and results (#661).
+  if (r.club.playBook) club.playBook = r.club.playBook;
   Object.assign(seating, r.seating);
   return r.value;
 }

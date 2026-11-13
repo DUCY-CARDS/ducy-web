@@ -331,7 +331,8 @@ impl ClubState {
     /// their players stood up now (credit used less their players' chips at
     /// the tables), their invite, recruits waiting, each player with
     /// their balance, request, seat and result at the tables, and their
-    /// players' rake and time at `now` (#449), when they've paid any.
+    /// players' play at `now` (#661: hands, results, rake and time), when
+    /// they've played.
     pub fn agent_body(&self, id: &str, now: u64) -> Result<Value, RuleError> {
         let Some(me) = self.book.club.members.get(id) else {
             return refuse("No such member.");
@@ -388,9 +389,9 @@ impl ClubState {
             "owed": (-(total + at_tables)).max(0),
             "invite": me.agent_invite, "recruits": recruits, "players": list,
         });
-        let rake = self.contributions(Some(id), now);
-        if rake["players"].as_array().is_some_and(|p| !p.is_empty()) {
-            body["rake"] = rake;
+        let report = self.players_report(Some(id), now);
+        if report["players"].as_array().is_some_and(|p| !p.is_empty()) {
+            body["report"] = report;
         }
         Ok(body)
     }
@@ -398,7 +399,7 @@ impl ClubState {
     /// Runs view op `op` with `args`: "entriesOf" {id, since}, "ledger",
     /// "entryViews" {ns} (those entries, by number), "settleRows"
     /// {backer}, "accountOf" {id}, "tableResult" {id}, "agentBody" {id,
-    /// now}, "contributions" {now, agent}.
+    /// now}, "contributions" {now, agent}, "players" {now, agent}.
     pub fn view(&self, op: &str, args: &Value) -> Result<Value, RuleError> {
         let id = text(args.get("id"));
         Ok(match op {
@@ -438,6 +439,12 @@ impl ClubState {
                 let now = args.get("now").and_then(Value::as_u64).unwrap_or(0);
                 let agent = args.get("agent").and_then(Value::as_str);
                 self.contributions(agent, now)
+            }
+            // Each player's play (#661): {now, agent?}.
+            "players" => {
+                let now = args.get("now").and_then(Value::as_u64).unwrap_or(0);
+                let agent = args.get("agent").and_then(Value::as_str);
+                self.players_report(agent, now)
             }
             _ => return refuse(format!("no view op {op}")),
         })
@@ -567,11 +574,15 @@ mod tests {
         assert_eq!(v["players"][0]["stack"], 200);
         assert_eq!(v["invite"], "INV");
         assert_eq!(v["total"], c.book.balance("al"));
-        // No rake paid yet: none shown.
-        assert!(v.get("rake").is_none());
+        // Nothing played yet: no report.
+        assert!(v.get("report").is_none());
         c.book.rake_hand("t1", 1, &[("bo".into(), 4)], 0);
+        c.book.play_hand("t1", 1, &[("bo".into(), -20)], 0);
         let v = c.agent_body("al", 0).unwrap();
-        assert_eq!(v["rake"]["totals"]["all"], 4);
+        assert_eq!(
+            v["report"]["players"][0]["all"],
+            json!({"hands": 1, "net": -20, "rake": 4, "tourney": 0})
+        );
         assert!(c.agent_body("nobody", 0).is_err());
         assert_eq!(c.view("tableResult", &json!({"id": "bo"})).unwrap(), 0);
     }

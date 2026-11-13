@@ -556,7 +556,8 @@ impl ClubState {
         let mut changed = false;
         let state = res.get("state").cloned().unwrap_or(Value::Null);
         // A hand over: what each player paid the club in rake or time (#449),
-        // `{id: chips}`, booked once, before anyone who left is cashed out.
+        // `{id: chips}`, booked once, before anyone who left is cashed out;
+        // and each player's hand (#661).
         let hand = count(state.get("hand_number"));
         if truthy(state.get("complete")) && hand > 0 && hand != s.recorded {
             let paid: Vec<(String, u64)> = state
@@ -569,6 +570,19 @@ impl ClubState {
                 })
                 .unwrap_or_default();
             if !self.book.rake_hand(tid, hand, &paid, now).is_empty() {
+                changed = true;
+            }
+            // Who was dealt in, and what each won or lost (#661): `{id: net}`.
+            let dealt: Vec<(String, i64)> = state
+                .get("dealt")
+                .and_then(Value::as_object)
+                .map(|m| {
+                    m.iter()
+                        .map(|(id, v)| (id.clone(), v.as_i64().unwrap_or(0)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !self.book.play_hand(tid, hand, &dealt, now).is_empty() {
                 changed = true;
             }
         }
@@ -906,16 +920,19 @@ mod tests {
         let mut s = Seating::default();
         // Ann wins 36 of a 40 pot; the club takes 4, 2 from each.
         let over = json!({"players": [player("ann", 0, 118), player("bob", 1, 78)],
-                          "state": {"complete": true, "hand_number": 1, "rake": {"ann": 2, "bob": 2}}});
+                          "state": {"complete": true, "hand_number": 1, "rake": {"ann": 2, "bob": 2},
+                                    "dealt": {"ann": 18, "bob": -22}}});
         let o = result(&mut c, &mut s, over.clone());
         assert!(o.on_hand && o.save);
         assert_eq!(
             (seat(&c, "ann")["rake"].clone(), c.book.chips.reclaimed),
             (json!(2), 4)
         );
-        // The same result again isn't booked again.
+        // The same result again isn't booked again; each was dealt one hand (#661).
         result(&mut c, &mut s, over);
         assert_eq!(c.book.chips.reclaimed, 4);
+        assert_eq!(c.book.play_book.total["ann"].hands, 1);
+        assert_eq!(c.book.play_book.total["bob"].net, -22);
         assert!(c.totals().conserved);
         // The next hand, Bob leaves as it ends: his rake is booked first,
         // then his session's goes in the ledger.

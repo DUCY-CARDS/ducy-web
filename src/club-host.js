@@ -252,10 +252,18 @@ export function createTableHost({
     // the host's view has seats in order; who sits where is the players',
     // or, for anyone who left with the hand's end, the last result's.
     const idAt = seat => (players || []).find(p => p.seat === seat)?.client_id ?? r.seating.players.find(p => p.seat === seat)?.client_id;
-    const rake = {};
-    if (res.state.complete) (res.state.seats || []).forEach((s, i) => { if (s.rake > 0 && idAt(i)) rake[idAt(i)] = s.rake; });
+    // And who was dealt in, with what each won or lost (#661): a seat in the
+    // hand isn't sitting out.
+    const rake = {}, dealt = {};
+    if (res.state.complete) {
+      (res.state.seats || []).forEach((s, i) => {
+        if (!idAt(i)) return;
+        if (s.rake > 0) rake[idAt(i)] = s.rake;
+        if (!s.empty && !s.sitting_out) dealt[idAt(i)] = Number(s.net) || 0;
+      });
+    }
     const step = seats(club(), r.seating, tid, 'result', {
-      res: {players, departed, refunds, playersIn, chipRequests, state: {complete: res.state.complete, hand_number: res.state.hand_number, rake}},
+      res: {players, departed, refunds, playersIn, chipRequests, state: {complete: res.state.complete, hand_number: res.state.hand_number, rake, dealt}},
       holdMs,
     });
     if (step.onPlay) onPlay();
