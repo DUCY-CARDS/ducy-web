@@ -9,6 +9,7 @@ import {
   buyInRange, canJoin, cashOutEveryone, cashOutTable, chipsForTable, defaultSeats, defaultTableName, handsToStay, leftTable, limits, maxSeats, newTable, openTables, syncStacks,
   tableLedgerN, tablesBody,
 } from '../src/club-tables.js';
+import { gameKey } from '../src/club-lists.js';
 
 const H = 3600e3;
 
@@ -51,6 +52,27 @@ test('default names: game and blinds, numbered when an open table has the name',
   assert.equal(defaultTableName(club, 'plo5', 500, 1000), 'PLO5 - 5/10');
   // A name the host gives is kept.
   assert.equal(newTable(club, {name: 'Main', game: 'nlhe', sb: 100, bb: 200}).name, 'Main');
+});
+
+test('any blinds and an ante (#655): kept, told to members, the same game key both sides, and refusals say why', () => {
+  const club = clubWith();
+  const t = newTable(club, {game: 'nlhe', sb: 150, bb: 325, ante: 25, seats: 6});
+  assert.deepEqual([t.sb, t.bb, t.ante], [150, 325, 25]);
+  assert.equal(t.name, 'NLH - 1.5/3.25, ante 0.25');
+  assert.equal(defaultTableName(club, 'nlhe', 100, 200, 100), 'NLH - 1/2, ante 1');
+  const told = tablesBody(club).tables[0];
+  assert.equal(told.ante, 25);
+  // The page's key for a game is the club's.
+  assert.equal(gameKey(t), told.key);
+  assert.equal(told.key, 'nlhe:150/325/25:6');
+  const plain = newTable(club, {sb: 100, bb: 200, ante: 0, seats: 6});
+  assert.equal(plain.ante, undefined, 'no ante kept');
+  assert.equal(gameKey(plain), 'nlhe:100/200:6');
+  assert.throws(() => newTable(club, {sb: 300, bb: 200}), /The big blind must be at least the small blind\.$/);
+  assert.throws(() => newTable(club, {sb: 0, bb: 200}), /amounts above 0/);
+  assert.throws(() => newTable(club, {sb: 100, bb: 200, ante: 250}), /The ante can’t be more than the big blind\./);
+  assert.throws(() => newTable(club, {sb: 100, bb: 200, ante: -1}), /The ante is an amount of 0 or more/);
+  assert.throws(() => newTable(club, {maxBB: 5000}), /Buy-ins are 1 to 1,000 big blinds\./);
 });
 
 test('seats: no more than the game can deal to', () => {

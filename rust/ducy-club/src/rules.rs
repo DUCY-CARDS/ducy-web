@@ -55,6 +55,10 @@ pub const MAX_SEATS: u32 = 9;
 pub const DEFAULT_SIT_OUT_MINS: u32 = 10;
 /// The longest the hit-and-run rule can hold someone, in hands.
 pub const MAX_STAY_HANDS: u32 = 500;
+/// The largest big blind a table may have, in hundredths: 1,000,000.
+pub const MAX_BB: u64 = 100_000_000;
+/// The largest buy-in, in big blinds.
+pub const MAX_BUY_IN_BB: u64 = 1_000;
 /// How long a reserved seat is held once its member leaves their table.
 pub const HOLD_MS: u64 = 60_000;
 
@@ -494,6 +498,10 @@ pub struct Table {
     pub sb: u64,
     /// The big blind, in hundredths.
     pub bb: u64,
+    /// The ante every player posts each hand, in hundredths; 0 for none
+    /// (ducy-web #655).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ante: u64,
     /// The smallest buy-in, in big blinds.
     #[serde(rename = "minBB")]
     pub min_bb: u64,
@@ -531,10 +539,17 @@ impl Table {
         (self.min_bb * self.bb, self.max_bb * self.bb)
     }
 
-    /// The game it deals, as players pick one: its type, stakes and seats.
-    /// Tables with the same key share a waitlist (ducy-web #518).
+    /// The game it deals, as players pick one: its type, stakes (the ante
+    /// after the blinds, when there is one) and seats: "nlhe:100/200:9",
+    /// "nlhe:100/200/100:9". Tables with the same key share a waitlist
+    /// (ducy-web #518).
     pub fn game_key(&self) -> String {
-        format!("{}:{}/{}:{}", self.game, self.sb, self.bb, self.seats)
+        let ante = if self.ante > 0 {
+            format!("/{}", self.ante)
+        } else {
+            String::new()
+        };
+        format!("{}:{}/{}{ante}:{}", self.game, self.sb, self.bb, self.seats)
     }
 
     /// Its stakes, as tables are filtered by them.
@@ -992,6 +1007,10 @@ fn plain_amount(n: u64) -> String {
         c if c % 10 == 0 => format!("{whole}.{}", c / 10),
         c => format!("{whole}.{c:02}"),
     }
+}
+
+pub(crate) fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 fn whole(v: f64) -> bool {
@@ -1669,10 +1688,14 @@ impl Club {
     }
 
     /// A new table's name when the host doesn't give one: the game and
-    /// blinds, "NLH - 1/2", with " - #2", " - #3"… when an open table has it.
-    pub fn default_table_name(&self, game_id: &str, sb: u64, bb: u64) -> String {
+    /// blinds, "NLH - 1/2" ("NLH - 1/2, ante 1" with an ante), with " - #2",
+    /// " - #3"… when an open table has it.
+    pub fn default_table_name(&self, game_id: &str, sb: u64, bb: u64, ante: u64) -> String {
         let short = game(game_id).map_or(game_id, |g| g.short);
-        let base = format!("{short} - {}/{}", plain_amount(sb), plain_amount(bb));
+        let mut base = format!("{short} - {}/{}", plain_amount(sb), plain_amount(bb));
+        if ante > 0 {
+            base += &format!(", ante {}", plain_amount(ante));
+        }
         let taken = |n: &str| self.open_tables().any(|t| t.name == n);
         if !taken(&base) {
             return base;
@@ -1716,12 +1739,33 @@ impl Club {
             return refuse("Pick a game.");
         };
         let pos = |n: f64| whole(n) && n > 0.0;
+        // Any blinds and ante the owner types (#655), in hundredths.
         let (sb, bb) = (num(spec, "sb", 1.0), num(spec, "bb", 2.0));
-        if !pos(sb) || !pos(bb) || bb < sb {
-            return refuse("The big blind must be at least the small blind, both above 0.");
+        if !pos(sb) || !pos(bb) {
+            return refuse("The small and big blind are amounts above 0, to the cent.");
+        }
+        if bb < sb {
+            return refuse("The big blind must be at least the small blind.");
+        }
+        if bb > MAX_BB as f64 {
+            return refuse("The big blind is at most 1,000,000.");
+        }
+        let ante = num(spec, "ante", 0.0);
+        if !whole(ante) {
+            return refuse("The ante is an amount of 0 or more, to the cent.");
+        }
+        if ante > bb {
+            return refuse("The ante can’t be more than the big blind.");
         }
         let (min_bb, max_bb) = (num(spec, "minBB", 40.0), num(spec, "maxBB", 100.0));
-        if !pos(min_bb) || !pos(max_bb) || max_bb < min_bb {
+        if !pos(min_bb)
+            || !pos(max_bb)
+            || min_bb > MAX_BUY_IN_BB as f64
+            || max_bb > MAX_BUY_IN_BB as f64
+        {
+            return refuse("Buy-ins are 1 to 1,000 big blinds.");
+        }
+        if max_bb < min_bb {
             return refuse("The maximum buy-in must be at least the minimum.");
         }
         let seats = num(spec, "seats", f64::from(g.default_seats));
@@ -1744,7 +1788,7 @@ impl Club {
         if !whole(stay_hands) || stay_hands > f64::from(MAX_STAY_HANDS) {
             return refuse(format!("Call time: 0 (off) to {MAX_STAY_HANDS} hands."));
         }
-        let (sb, bb) = (sb as u64, bb as u64);
+        let (sb, bb, ante) = (sb as u64, bb as u64, ante as u64);
         // Its own rake or time, or else the club's.
         let charge = match spec.get("charge") {
             Some(c) => Charge::from_value(c)?,
@@ -1752,7 +1796,7 @@ impl Club {
         };
         let given = cut(text_of(spec.get("name")).trim(), MAX_TABLE_NAME);
         let name = if given.is_empty() {
-            self.default_table_name(g.id, sb, bb)
+            self.default_table_name(g.id, sb, bb, ante)
         } else {
             given
         };
@@ -1763,6 +1807,7 @@ impl Club {
             game: g.id.into(),
             sb,
             bb,
+            ante,
             min_bb: min_bb as u64,
             max_bb: max_bb as u64,
             seats: seats as u32,
@@ -1797,6 +1842,10 @@ impl Club {
                     // Its stakes band, for filtering.
                     "stakes": t.stakes(),
                 });
+                // Its ante (#655), shown with the blinds.
+                if t.ante > 0 {
+                    v["ante"] = t.ante.into();
+                }
                 // The hit-and-run rule, so members know before they sit.
                 if t.stay_hands > 0 {
                     v["stayHands"] = t.stay_hands.into();
@@ -3343,9 +3392,94 @@ mod tests {
             c.new_table(&blinds, 0, None, &mut r).unwrap().name,
             "NLH - 1/2"
         );
-        assert_eq!(c.default_table_name("plo5", 500, 1000), "PLO5 - 5/10");
+        assert_eq!(c.default_table_name("plo5", 500, 1000, 0), "PLO5 - 5/10");
+        assert_eq!(
+            c.default_table_name("nlhe", 100, 200, 50),
+            "NLH - 1/2, ante 0.5"
+        );
         let named = json!({"name": "Main", "game": "nlhe", "sb": 100, "bb": 200});
         assert_eq!(c.new_table(&named, 0, None, &mut r).unwrap().name, "Main");
+    }
+
+    #[test]
+    fn any_blinds_and_an_ante_each_refused_with_why() {
+        let mut c = club();
+        let mut r = rng();
+        // Blinds of the owner's own (#655): 1.50/3.25, and an ante.
+        let t = c
+            .new_table(
+                &json!({"game": "plo4", "sb": 150, "bb": 325, "ante": 25, "seats": 6}),
+                0,
+                None,
+                &mut r,
+            )
+            .unwrap()
+            .clone();
+        assert_eq!((t.sb, t.bb, t.ante), (150, 325, 25));
+        assert_eq!(t.name, "PLO - 1.5/3.25, ante 0.25");
+        assert_eq!(t.game_key(), "plo4:150/325/25:6");
+        assert_eq!(t.limits(), (40 * 325, 100 * 325));
+        // Kept with the club, and told to members with the blinds.
+        let back: Table = serde_json::from_value(json!(t)).unwrap();
+        assert_eq!(back.ante, 25);
+        let body = c.tables_body(&BTreeMap::new());
+        assert_eq!(body["tables"][0]["ante"], 25);
+        assert_eq!(body["tables"][0]["key"], "plo4:150/325/25:6");
+        // No ante: none kept or told, and the key is as before.
+        let t = c
+            .new_table(&json!({"sb": 100, "bb": 200, "ante": 0}), 0, None, &mut r)
+            .unwrap()
+            .clone();
+        assert_eq!(t.ante, 0);
+        assert!(json!(t).get("ante").is_none());
+        assert_eq!(t.game_key(), "nlhe:100/200:9");
+        assert!(
+            c.tables_body(&BTreeMap::new())["tables"][1]
+                .get("ante")
+                .is_none()
+        );
+        // Equal blinds are fine; so is an ante of the big blind.
+        assert!(
+            c.new_table(&json!({"sb": 200, "bb": 200, "ante": 200}), 0, None, &mut r)
+                .is_ok()
+        );
+        let err = |c: &mut Club, s: Value| c.new_table(&s, 0, None, &mut rng()).unwrap_err().0;
+        assert_eq!(
+            err(&mut c, json!({"sb": 300, "bb": 200})),
+            "The big blind must be at least the small blind."
+        );
+        for bad in [
+            json!({"sb": 0}),
+            json!({"bb": -2}),
+            json!({"sb": 1.5}),
+            json!({"bb": "2"}),
+        ] {
+            assert_eq!(
+                err(&mut c, bad),
+                "The small and big blind are amounts above 0, to the cent."
+            );
+        }
+        assert_eq!(
+            err(&mut c, json!({"sb": 100, "bb": 100_000_100})),
+            "The big blind is at most 1,000,000."
+        );
+        for bad in [json!(-1), json!(0.5), json!("1")] {
+            assert_eq!(
+                err(&mut c, json!({"sb": 100, "bb": 200, "ante": bad})),
+                "The ante is an amount of 0 or more, to the cent."
+            );
+        }
+        assert_eq!(
+            err(&mut c, json!({"sb": 100, "bb": 200, "ante": 201})),
+            "The ante can’t be more than the big blind."
+        );
+        for bad in [
+            json!({"minBB": 0}),
+            json!({"maxBB": 1001}),
+            json!({"minBB": 1.5}),
+        ] {
+            assert_eq!(err(&mut c, bad), "Buy-ins are 1 to 1,000 big blinds.");
+        }
     }
 
     #[test]

@@ -211,6 +211,7 @@ impl Club {
             game: t.game.clone(),
             sb: t.sb,
             bb: t.bb,
+            ante: t.ante,
             min_bb: t.min_bb,
             max_bb: t.max_bb,
             seats: t.seats,
@@ -224,7 +225,7 @@ impl Club {
     /// A scheduled game's name: "NLH - 1/2".
     pub fn scheduled_name(&self, g: &Scheduled) -> String {
         // The game's own name, not a table's ("NLH - 1/2 - #2").
-        let name = self.default_table_name(&g.game.game, g.game.sb, g.game.bb);
+        let name = self.default_table_name(&g.game.game, g.game.sb, g.game.bb, g.game.ante);
         match name.rsplit_once(" - #") {
             Some((base, n)) if n.chars().all(|c| c.is_ascii_digit()) => base.to_string(),
             _ => name,
@@ -644,6 +645,9 @@ impl Club {
                     "checkInOpen": g.check_in_open(now),
                     "taken": seats.len(), "waiting": wait.len(),
                 });
+                if g.game.ante > 0 {
+                    v["ante"] = g.game.ante.into();
+                }
                 if let Some(s) = s {
                     v["mine"] = json!({
                         "place": g.place(id).unwrap_or(0), "checkedIn": s.checked_in.is_some(),

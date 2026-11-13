@@ -63,6 +63,7 @@ A major release is any of these:
 | The club manager offers no way to start a club and no demo club (`#clubs`, `#clubs/new`, a bad `#clubs/start/…`); a made-up grant link is refused and shows your player ID | Club manager |
 | A grant link (#636) on the club site, against a relay taking clubs from the club site only: forwarded to someone else it's refused and shows their ID; its own player makes the club with their passkey, and the link leaves the address; opened on ducy.cards it goes to the club site (Chromium, 1280 and 375 px) | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
+| A club's first table with blinds of its own and an ante (#655): switching games and the page's redraws keep them; a big blind under the small one, and an ante over the big blind, are refused with why and the form keeps what was typed; the owner's board, the lobby and the table's bar show "1.50/3.25, ante 0.25"; everyone dealt in antes | Club manager |
 | A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner; Chips' parts add up to Out with players, which with the float makes what the owner put in, and Credit shows Paid back | Club manager |
 | The owner gives from the float on top of Chips and refills it (not on Rules); a member's vault shows on Chips under In vaults | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
@@ -107,6 +108,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Wipe all clubs (#636): only with the relay's environment name typed; logged before anything goes; every club's room, record, backups and fair play rows, every grant and link; members let go; the admin log kept | `relay-admin.test`, `admin-api.test`, `registry.test` | yes | A5 |
 | Sidebar, pages and old addresses; hidden features stay hidden | `club-nav.test`, `club-beta.test` | demo only | C2 |
 | Tables: new, offer a game, move, remove a player | `club-tables.test`, `move-table.test`, `remove-from-table.test`, `table-groups.test` | no | C3 |
+| Any blinds and an ante (#655): the club's rules check them, every hand posts the ante, no flop no drop unchanged, offered and scheduled games keep it | `club-tables.test`, ducy-club `rules` and `interest`, ducy-wasm `util` and `tests/club-ante.cjs` | yes | C3 |
 | Tournaments: wizard, payouts, run, results | `club-tourneys.test`, `club-tourneys-ui.test`, `payout-tables.test`, `tourney-commands.test` | no | C4 |
 | Tournament rake | `club-tourneys-ui.test`, `tourney-commands.test` | yes | C4 |
 | Requests and members: join, messages, give and take chips, remove | `club.test`, `club-chips.test`, `club-overview.test`, `club-log.test` | join, give | C5 |
@@ -234,6 +236,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 **C3 Tables**
 1. Make a cash table, and offer a game. A member sees both. A member just let in (0 chips, no credit) sees them too, but can't sit until given chips or credit.
 2. Move a seated player to another table, then remove one. Their chips go back to their balance.
+3. New table → Other: type blinds of your own (1.50/3.25) and, under More options, an ante; switch games back and forth: the blinds and ante stay. A big blind under the small one, or an ante over the big blind, is refused saying why. The table's name, the lobby and the table's bar say "1.50/3.25, ante 0.25"; every player dealt in antes each hand. Offer the same game and schedule it: both keep the ante. With a rake on, a hand folded before the flop takes none.
 
 **C4 Tournaments**
 1. Walk the wizard to the end: game, buy-in, stack and players, blinds, payouts, repeats.

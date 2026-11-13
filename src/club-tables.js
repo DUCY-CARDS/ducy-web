@@ -4,8 +4,8 @@
 // the chips go through the money model (club-chips.js). The host's page
 // (clubs.js) runs each table with ducy's MultiTable.club in a worker.
 //
-// A table: {id, name, game, sb, bb, minBB, maxBB, seats, turnSecs,
-// sitOutMins, stayHands, status, createdAt}. Status is 'open', 'closing' (no new players; everyone is
+// A table: {id, name, game, sb, bb, ante (when there is one), minBB, maxBB,
+// seats, turnSecs, sitOutMins, stayHands, status, createdAt}. Status is 'open', 'closing' (no new players; everyone is
 // cashed out at the end of the hand) or 'closed' (kept for history).
 //
 // Chips: a member asks the table for chips (the engine checks the table's
@@ -39,9 +39,10 @@ export const maxSeats = game => GAMES.find(g => g.id === game)?.seats ?? MAX_SEA
 export const defaultSeats = game => GAMES.find(g => g.id === game)?.defaultSeats ?? 9;
 
 // A new table's name when the host doesn't give one: the game and blinds,
-// "NLH - 1/2", with " - #2", " - #3"… when an open table already has it.
-// Plain numbers, so it reads the same whatever the locale.
-export const defaultTableName = (club, game, sb, bb) => rules(club, {op: 'defaultTableName', game: String(game), sb: Number(sb) || 0, bb: Number(bb) || 0});
+// "NLH - 1/2" ("NLH - 1/2, ante 1" with an ante, #655), with " - #2",
+// " - #3"… when an open table already has it. Plain numbers, so it reads the
+// same whatever the locale.
+export const defaultTableName = (club, game, sb, bb, ante = 0) => rules(club, {op: 'defaultTableName', game: String(game), sb: Number(sb) || 0, bb: Number(bb) || 0, ante: Number(ante) || 0});
 // How long someone may sit out before their seat is given up (#70): set per
 // table, defaulting to the club's setting, which starts at 10 minutes. 0: no limit.
 export const DEFAULT_SIT_OUT_MINS = 10;
@@ -51,7 +52,7 @@ export const DEFAULT_SIT_OUT_MINS = 10;
 // any time, and the count starts again if they get ahead again.
 export const MAX_STAY_HANDS = 500;
 
-// Adds a table to the club from the host's choices ({name, game, sb, bb,
+// Adds a table to the club from the host's choices ({name, game, sb, bb, ante,
 // minBB, maxBB, seats, turnSecs, sitOutMins, stayHands}, each optional:
 // Hold'em 1/2, 40 to 100 big blinds, the game's usual seats, 30 seconds,
 // the club's sit-out limit and call time); throws on bad input, or when

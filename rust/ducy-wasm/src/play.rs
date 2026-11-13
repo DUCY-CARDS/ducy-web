@@ -1218,6 +1218,7 @@ impl MultiTable {
             max_buy_in,
             small_blind,
             big_blind,
+            0,
             seed,
             game,
             turn_ms,

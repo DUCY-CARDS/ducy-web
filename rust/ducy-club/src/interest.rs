@@ -39,6 +39,9 @@ pub struct MenuGame {
     pub sb: u64,
     /// The big blind, in hundredths.
     pub bb: u64,
+    /// The ante, in hundredths; 0 for none (#655).
+    #[serde(skip_serializing_if = "crate::rules::is_zero")]
+    pub ante: u64,
     /// The smallest buy-in, in big blinds.
     #[serde(rename = "minBB")]
     pub min_bb: u64,
@@ -62,7 +65,7 @@ impl MenuGame {
     /// A table's settings for it, as [`Club::new_table`] takes them.
     pub fn spec(&self) -> Value {
         let mut s = json!({
-            "name": self.name, "game": self.game, "sb": self.sb, "bb": self.bb, "minBB": self.min_bb,
+            "name": self.name, "game": self.game, "sb": self.sb, "bb": self.bb, "ante": self.ante, "minBB": self.min_bb,
             "maxBB": self.max_bb, "seats": self.seats, "turnSecs": self.turn_secs,
             "sitOutMins": self.sit_out_mins, "stayHands": self.stay_hands,
         });
@@ -114,6 +117,7 @@ impl Club {
             game: t.game,
             sb: t.sb,
             bb: t.bb,
+            ante: t.ante,
             min_bb: t.min_bb,
             max_bb: t.max_bb,
             seats: t.seats,
@@ -205,7 +209,7 @@ impl Club {
     fn interest_name(&self, key: &str) -> String {
         self.offered(key).map_or(String::new(), |g| {
             if g.name.is_empty() {
-                self.default_table_name(&g.game, g.sb, g.bb)
+                self.default_table_name(&g.game, g.sb, g.bb, g.ante)
             } else {
                 g.name.clone()
             }
@@ -362,17 +366,21 @@ impl Club {
     }
 
     /// What members are told of the menu: each offered game that isn't
-    /// running, as the tables are ({key, name, game, sb, bb, min, max,
-    /// seats}).
+    /// running, as the tables are ({key, name, game, sb, bb, ante (if any),
+    /// min, max, seats}).
     pub fn menu_body(&self) -> Vec<Value> {
         self.menu
             .iter()
             .filter(|g| self.game_tables(&g.key).is_empty())
             .map(|g| {
-                json!({
+                let mut v = json!({
                     "key": g.key, "name": self.interest_name(&g.key), "game": g.game, "sb": g.sb, "bb": g.bb,
                     "min": g.min_bb * g.bb, "max": g.max_bb * g.bb, "seats": g.seats,
-                })
+                });
+                if g.ante > 0 {
+                    v["ante"] = g.ante.into();
+                }
+                v
             })
             .collect()
     }
@@ -408,6 +416,26 @@ mod tests {
         )
         .unwrap();
         c
+    }
+
+    #[test]
+    fn an_offered_game_keeps_its_ante() {
+        let mut c = club(&["a"]);
+        let spec = json!({"game": "nlhe", "sb": 1, "bb": 2, "ante": 1, "seats": 6});
+        let key = c.offer_game(&spec, &mut rng()).unwrap().key.clone();
+        // Another game than the one without an ante.
+        assert_eq!(key, "nlhe:1/2/1:6");
+        let g = c.offered(&key).unwrap();
+        assert_eq!(g.ante, 1);
+        assert_eq!(g.spec()["ante"], 1);
+        let shown = c.menu_body();
+        let shown = shown.iter().find(|g| g["key"] == key).unwrap();
+        assert_eq!(shown["ante"], 1);
+        assert_eq!(shown["name"], "NLH - 0.01/0.02, ante 0.01");
+        // A table opened from it posts the same ante.
+        let spec = c.offered(&key).unwrap().spec();
+        let t = c.new_table(&spec, 0, None, &mut rng()).unwrap();
+        assert_eq!((t.ante, t.game_key()), (1, key));
     }
 
     #[test]

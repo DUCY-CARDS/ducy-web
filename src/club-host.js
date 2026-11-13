@@ -374,7 +374,7 @@ export function createTableHost({
     const r = {chain: Promise.resolve(), seating: newSeating(), wakeT: null};
     running.set(t.id, r);
     const config = {
-      seats: t.seats, minBuyIn: min, maxBuyIn: max, sb: t.sb, bb: t.bb, seed: crypto.getRandomValues(new Uint32Array(1))[0],
+      seats: t.seats, minBuyIn: min, maxBuyIn: max, sb: t.sb, bb: t.bb, ante: t.ante || 0, seed: crypto.getRandomValues(new Uint32Array(1))[0],
       game: t.game, turnMs: t.turnSecs * 1000, sitOutMs: (t.sitOutMins ?? 10) * 60_000,
       open: t.status === 'open', link: linkOk, idleMs, askMs, nextHandMs,
       // Its rake or time (#449): ducy's engine takes it from each hand.

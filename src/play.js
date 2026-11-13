@@ -2639,6 +2639,8 @@ function stakesText(s) {
   if (tableGame.bomb) return `ante ${c(ante())}`;
   if (s.bomb_pot) return `<b>bomb pot</b> · ante ${c(ante())}`;
   let h = `blinds ${c(s.small_blind ?? setup.sb)}/${c(s.big_blind ?? setup.bb)}`;
+  // A club table's ante, posted every hand (#655).
+  if (num(s.ante) > 0) h += `, ante ${c(s.ante)}`;
   if (tableBombs) {
     // This hand (n) isn't one: the next is the first multiple after it.
     const n = num(s.hand_number);
