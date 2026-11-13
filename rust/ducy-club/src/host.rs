@@ -517,15 +517,10 @@ impl ClubState {
                 self.book.log_move(&line, moved, now);
                 out.account(&id, Some(e.n - 1));
             }
-            // The owner's float (#589): refilled from their vault, at once
-            // the first time in a day, else after a day or approved with a
-            // passkey from another device (`device`: the relay's word, never
-            // the page's); its size lower at once, higher after a day.
-            "refill" => out.value = self.book.refill(&text(args, "device"), now)?,
-            "approve_refill" => out.value = self.book.approve_refill(&text(args, "device"), now)?,
-            "cancel_refill" => self.book.cancel_refill(now)?,
+            // The owner's float (#589, #660): refilled from their vault and
+            // resized, at once (the relay has checked a fresh passkey unlock).
+            "refill" => out.value = self.book.refill(now)?,
             "float_size" => self.book.set_float_size(num(args, "amount"), now)?,
-            "cancel_float_raise" => self.book.cancel_float_raise(now)?,
             // Settling what's due happens before every command: this is it alone.
             "vault_settle" => {}
             // A member's own vault (#579): only ever from their signed

@@ -21,10 +21,10 @@ export const HOSTED = new Set([
   'add_payout_table', 'edit_payout_table', 'delete_payout_table', 'set_payout_table',
   'new_promo', 'edit_promo', 'promo_status', 'approve_award', 'void_award', 'promos',
   'new_tourney', 'edit_tourney', 'edit_series', 'stop_series', 'cancel_tourney', 'set_must_move', 'list_remove', 'offer_game', 'remove_offer',
-  // The owner's float (#589); settling what the float and members' vaults
-  // have due. (A member's own vault command, member_vault, isn't here: it
-  // comes only from their signed message, club-server.js.)
-  'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise', 'vault_settle',
+  // The owner's float (#589); settling what members' vaults have due. (A
+  // member's own vault command, member_vault, isn't here: it comes only from
+  // their signed message, club-server.js.)
+  'refill', 'float_size', 'vault_settle',
   // A reply in the thread with someone joining (#621).
   'note_reply',
   // Let in at once (#631): the club server runs it after a join it let in.

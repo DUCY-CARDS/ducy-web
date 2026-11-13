@@ -10,10 +10,8 @@
 //   prize       a promotion prize held          Pay · Replay
 //   stopped     a table stopped dealing         Close table
 //   left_owing  left a table owing the club     (a notice) (#404)
-//   move        a big give or take back, a removal (#576), a refill or a change
-//               to the float (#589), for 7 days
-//   refill_wait a refill of the float, waiting its day    Approve · Cancel (#589)
-//   float_raise a raise of the float, waiting its day     Cancel (#589)
+//   move        a give, take back, refill or float size change of more than a
+//               full buy-in, or a removal (#576, #660), for 7 days
 // Each has a `key`, unique and stable while it stands, so the notices that
 // need no answer (stopped, left_owing, move) can be cleared.
 
@@ -26,9 +24,7 @@ export const CLEARABLE = new Set(['stopped', 'left_owing', 'move', 'fair_play'])
 
 export const managerNotices = (club, {cleared = new Set(), seated = {}} = {}, now = Date.now()) => overview(club, 'notices', {cleared: [...cleared], seated}, now);
 
-// The owner's float (#589): {size, float (what it holds), raise: {to, at,
-// applies} or null, wait: {at, applies} (a refill waiting) or null, last
-// (refilled), waits (a refill now would wait)}.
+// The owner's float (#589): {size, float (what it holds)}.
 export const floatOf = (club, now = Date.now()) => overview(club, 'float', {}, now);
 
 // The keys of the clearable notices in `list`, to put away with Clear.

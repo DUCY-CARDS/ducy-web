@@ -230,7 +230,6 @@ test('a club connection acts only once unlocked; chips need a recent unlock', as
   g = await unlockCheck({type: 'unlock', token: 'good'}, null, 'ann', session, t0);
   assert.equal(g.reply.type, 'unlocked');
   let u = g.u;
-  assert.equal(u.device, '', 'which passkey, when the relay says (#589)');
   g = await unlockCheck({body: {type: 'chip_request', amount: 5}}, u, 'ann', session, t0 + 60_000);
   assert.equal(g.pass, true);
   u = g.u;
@@ -240,12 +239,17 @@ test('a club connection acts only once unlocked; chips need a recent unlock', as
   u = g.u;
   g = await unlockCheck({body: {type: 'owner_cmd', op: 'give', args: {}}}, u, 'ann', session, t0 + 6 * 60_000);
   assert.equal(g.reply.type, 'unlock_again');
+  // The float's refill and size, at once now (#660), need a fresh unlock too.
+  for (const op of ['refill', 'float_size']) {
+    g = await unlockCheck({body: {type: 'owner_cmd', op, args: {}}}, u, 'ann', session, t0 + 6 * 60_000);
+    assert.equal(g.reply.type, 'unlock_again', op);
+  }
   assert.equal(movesChips({body: {type: 'owner_cmd', op: 'settings'}}), false);
   assert.equal(movesChips({body: {type: 'agent_cmd'}}), true);
   // The float (#589) and a member's vault (#579): taking chips out and the
   // wait need it; putting chips in and cancelling don't.
   assert.equal(movesChips({body: {type: 'owner_cmd', op: 'refill'}}), true);
-  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'approve_refill'}}), true);
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'float_size'}}), true);
   assert.equal(movesChips({body: {type: 'vault', op: 'out'}}), true);
   assert.equal(movesChips({body: {type: 'vault', op: 'wait'}}), true);
   assert.equal(movesChips({body: {type: 'vault', op: 'in'}}), false);
@@ -330,10 +334,10 @@ test('the relay vouches: a member who lost their ID is moved to their new one, c
   o.ws.close(); n.ws.close(); old.ws.close();
 });
 
-test('the float (#589): a second refill in a day waits, unless approved with another device’s passkey', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('the float (#589, #660): refills and its size apply at once', {skip: !haveWasm && 'no wasm build'}, async () => {
   const owner = await createIdentity(), ann = await createIdentity();
   const code = 'FFFF-FFFF';
-  let o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
   await o.ready;
   o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Float Night', grant: await grantFor(owner.id)}));
   const made = await o.next('club_created');
@@ -350,21 +354,15 @@ test('the float (#589): a second refill in a day waits, unless approved with ano
   // A new club's float: 2,000 chips, all given.
   assert.equal((await cmd(o, 'give', {id: ann.id, amount: 200_000})).error, '');
   assert.equal((await cmd(o, 'give', {id: ann.id, amount: 100})).error, 'The float is empty. Refill it.');
-  // The first refill in a day: at once.
+  // Refills: at once, every time.
   assert.deepEqual((await cmd(o, 'refill')).value, {added: 200_000});
   assert.equal((await cmd(o, 'give', {id: ann.id, amount: 50_000})).error, '');
-  // The next one waits; this device can't approve it, whatever its page says.
-  assert.equal((await cmd(o, 'refill')).value.waiting, true);
-  assert.match((await cmd(o, 'approve_refill', {device: 'another'})).error, /another of your devices/);
-  // From another device, with its own passkey: it goes ahead.
-  const second = await relay.addPasskey(owner);
-  o.ws.close();
-  await o.closed;
-  o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner, {passkey: second});
-  await o.ready;
-  const r = await cmd(o, 'approve_refill');
-  assert.equal(r.error, '');
-  assert.deepEqual(r.value, {added: 50_000});
+  assert.deepEqual((await cmd(o, 'refill')).value, {added: 50_000});
+  // A bigger float: at once too, filled by a refill.
+  assert.equal((await cmd(o, 'float_size', {amount: 300_000})).error, '');
+  assert.deepEqual((await cmd(o, 'refill')).value, {added: 100_000});
+  // The wait's commands are gone.
+  assert.match((await cmd(o, 'approve_refill')).error, /approve_refill/);
 
   // Ann's vault (#579): in at once; out after her wait, which the owner
   // doesn't see.

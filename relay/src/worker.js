@@ -867,8 +867,7 @@ export class Room {
         // Counted as active (#601), as well as on connecting: the player
         // who just made the club connected before it was one.
         if (club) this.notePlayer(id, c.code);
-        // With the passkey it was unlocked with (#589: refills).
-        if (club) await club.message({from: id, data: m, device: g.u?.device || ''});
+        if (club) await club.message({from: id, data: m});
         else if (m?.body?.type === 'create_club') await this.create(ws, id, m);
         return;
       }

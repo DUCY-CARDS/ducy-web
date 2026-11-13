@@ -8,7 +8,7 @@ import {
   tableSummaries, todaysTourneys,
 } from '../src/club-overview.js';
 import './wasm.mjs';
-import { clearableKeys, managerNotices, raiseTo } from '../src/club-notices.js';
+import { clearableKeys, floatOf, managerNotices, raiseTo } from '../src/club-notices.js';
 import { buyIn, cashOut, ensureChips, issue, requestChips, setStack } from '../src/club-chips.js';
 import { newTable } from '../src/club-tables.js';
 import { setCredit } from '../src/club-credit.js';
@@ -218,4 +218,27 @@ test('notifications: each kind, newest first, with what its quick actions need',
   t.dealing = dealClock(t.dealing, true, NOW);
   issue(c, 'dee', 20_000, NOW, 'Cash');
   assert.ok(!managerNotices(c).some(n => n.kind === 'stopped' || n.kind === 'left_owing'));
+});
+
+test('the float (#660): refills and size changes at once, nothing waiting, big ones a notice', () => {
+  const c = withFloat(club());
+  // A refill and a raise waiting from before: dropped.
+  Object.assign(c.float, {wait: {at: NOW - MIN, device: 'x'}, raise: {to: 900_000, at: NOW - MIN}, last: NOW - MIN});
+  assert.deepEqual(floatOf(c, NOW), {size: 200_000, float: 200_000});
+  assert.deepEqual(managerNotices(c, {}, NOW).map(n => n.kind), ['join']);
+  command(c, 'give', {id: 'ann', amount: 150_000}, NOW);
+  assert.deepEqual(command(c, 'refill', {}, NOW).value, {added: 150_000});
+  command(c, 'give', {id: 'ann', amount: 10_000}, NOW + MIN);
+  const again = command(c, 'refill', {}, NOW + MIN);
+  assert.deepEqual(again.value, {added: 10_000}, 'again at once');
+  assert.equal(again.nextVault, null, 'nothing left waiting');
+  command(c, 'float_size', {amount: 500_000}, NOW + MIN);
+  assert.deepEqual(floatOf(c, NOW + MIN), {size: 500_000, float: 200_000});
+  // Notices: the refill of 1,500 and the raise of 3,000; the refill of 100 is logged only.
+  const texts = managerNotices(c, {}, NOW + MIN).filter(n => n.kind === 'move').map(n => n.text);
+  assert.ok(texts.includes('Refilled the float: +1,500'));
+  assert.ok(texts.includes('Float set to 5,000 (from 2,000)'));
+  assert.ok(!texts.includes('Refilled the float: +100'));
+  assert.ok(c.log.some(l => l.text === 'Refilled the float: +100' && !l.notice));
+  assert.throws(() => command(c, 'cancel_float_raise', {}, NOW + MIN));
 });

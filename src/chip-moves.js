@@ -9,9 +9,8 @@ export const CHIP_OPS = new Set([
   'service_add', 'service_update',
   // Recording a payment of what a member owes clears it (#633).
   'record_payment',
-  // The owner's float (#589): refilling it, approving a refill from another
-  // device, cancelling one, and its size.
-  'refill', 'approve_refill', 'cancel_refill', 'float_size', 'cancel_float_raise',
+  // The owner's float (#589): refilling it and its size, both at once (#660).
+  'refill', 'float_size',
 ]);
 
 // A member's vault commands that do (#579): taking chips out, and the wait.

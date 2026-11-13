@@ -104,7 +104,7 @@ test('an always-on club: created by its owner, joined, run by signed commands, a
   assert.ok(storage.keys().includes('identity') && storage.keys().includes('hostKey'));
 });
 
-test('the float (#589): gives stop at it, a refill and a raise wait, and a restart changes neither', {skip: !haveWasm && 'no wasm build'}, async () => {
+test('the float (#589, #660): gives stop at it, refills and raises are at once, and a restart keeps it', {skip: !haveWasm && 'no wasm build'}, async () => {
   await engine();
   const storage = memoryStorage();
   const owner = await createIdentity(), ann = await createIdentity();
@@ -129,27 +129,27 @@ test('the float (#589): gives stop at it, a refill and a raise wait, and a resta
   assert.equal(server.club.money.float, 100_000, 'what was over it went back to the vault');
   assert.equal((await cmd('give', {id: ann.id, amount: 60_000})).error, '');
   assert.equal((await cmd('give', {id: ann.id, amount: 50_000})).error, 'That’s more than the float: 400 left. Refill it.');
+  // A raise applies at once (#660); a refill fills it, and the next one too.
   assert.equal((await cmd('float_size', {amount: 500_000})).error, '');
-  assert.equal(server.club.float.raise.to, 500_000, 'a raise waits');
-  assert.equal((await cmd('refill')).error, '');
+  assert.equal(server.club.float.size, 500_000, 'a raise is at once');
+  assert.equal(server.club.money.float, 40_000, 'not filled by the raise');
+  assert.deepEqual((await cmd('refill')).value, {added: 460_000});
   assert.equal((await cmd('give', {id: ann.id, amount: 60_000})).error, '');
-  assert.deepEqual((await cmd('refill')).value, {waiting: true, applies: server.club.float.wait.at + 864e5}, 'a second refill waits');
+  assert.deepEqual((await cmd('refill')).value, {added: 60_000}, 'a second refill is at once');
+  assert.deepEqual(Object.keys(server.club.float).sort(), ['open', 'size']);
 
-  // The room restarts: the float, the raise and the refill waiting are as they were.
+  // The room restarts: the float is as it was.
   await server.flush();
   box = inbox(hostId);
   server = await openClub({storage, send: box.send, online: [owner.id]});
-  assert.equal(server.club.float.size, 100_000);
-  assert.equal(server.club.float.raise.to, 500_000);
-  assert.ok(server.club.float.wait);
-  assert.match((await cmd('give', {id: ann.id, amount: 50_000})).error, /400 left/);
-  // The owner hears of the float set lower, the refill, and a give over a full buy-in.
+  assert.equal(server.club.float.size, 500_000);
+  assert.equal(server.club.money.float, 500_000);
+  // The owner hears of each change and refill over a full buy-in, and a give over one.
   const notes = server.club.log.filter(l => l.notice).map(l => l.text);
-  assert.deepEqual(notes, ['Float set to 1,000', 'Gave Ann 600', 'Refilled the float: +600', 'Gave Ann 600']);
-  assert.equal((await cmd('cancel_float_raise')).error, '');
-  assert.equal(server.club.float.raise, undefined);
-  assert.equal((await cmd('cancel_refill')).error, '');
-  assert.equal(server.club.float.wait, undefined);
+  assert.deepEqual(notes, ['Float set to 1,000 (from 2,000)', 'Gave Ann 600', 'Float set to 5,000 (from 1,000)', 'Refilled the float: +4,600', 'Gave Ann 600', 'Refilled the float: +600']);
+  // The wait's commands are gone.
+  assert.match((await cmd('cancel_float_raise')).error, /no host action/);
+  assert.match((await cmd('cancel_refill')).error, /no host action/);
   // The books add up.
   const {totals} = await import('../src/club-chips.js');
   assert.ok(totals(server.club).conserved);
