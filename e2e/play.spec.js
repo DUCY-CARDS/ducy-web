@@ -763,8 +763,6 @@ test.describe('a club member', () => {
     await owner.locator('#cl-clubname').fill('Night Owls');
     await owner.locator('[data-cl="create"]').click();
     await owner.locator('[data-cl="pass-enrol"]').click();
-    await owner.locator('[data-cl="wiz-skip"]').click();
-    await owner.locator('[data-cl="wiz-onward"]').click();
     const form = owner.locator('form[data-tableform]');
     await expect(form).toBeVisible();
     await form.locator('input[name=blinds][value=other]').check({force: true});
