@@ -88,16 +88,17 @@ export function clubChargeHtml(club, note = '') {
 }
 
 // Each player's contributions (ducy-club's contributions: {players, agents,
-// totals}) as the owner sees them, or an agent theirs (`agent`).
-export function contributionsHtml(c, {agent = false, link = null} = {}) {
+// totals}) as the owner sees them. (An agent sees theirs on their Play
+// table, club-players.js.)
+export function contributionsHtml(c, {link = null} = {}) {
   if (!c?.players?.length) return '';
   const row = (name, r, cls = '') => `<tr${cls}><th>${name}</th><td>${chipText(r.today)}</td><td>${chipText(r.week)}</td><td>${chipText(r.all)}</td></tr>`;
   const head = first => `<thead><tr><th>${first}</th><th>Today</th><th>7 days</th><th>All time</th></tr></thead>`;
-  let h = `<section class="cl-rake"><h2>Rake and time</h2><table class="cl-acct cl-rake-table">${head(agent ? 'Your players' : 'Player')}<tbody>`;
+  let h = `<section class="cl-rake"><h2>Rake and time</h2><table class="cl-acct cl-rake-table">${head('Player')}<tbody>`;
   h += row('Total', c.totals, ' class="cl-acct-sum"');
   for (const p of c.players) h += row(link ? `<a href="${esc(link(p.id))}">${esc(p.name)}</a>` : esc(p.name), p);
   h += '</tbody></table>';
-  if (!agent && c.agents?.length) {
+  if (c.agents?.length) {
     h += `<table class="cl-acct cl-rake-table">${head('Agent')}<tbody>`;
     for (const a of c.agents) h += row(esc(a.name), a);
     h += '</tbody></table>';

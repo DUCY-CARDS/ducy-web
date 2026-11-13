@@ -890,6 +890,16 @@ body.pl-seated .psec[data-tab="play"] .clubs { display: none; }
 .tf-fields label[hidden] { display: none; }
 .tf-fields label.tf-check { flex-direction: row; align-items: center; align-self: end; min-height: 32px; }
 .cl-rake-table td { text-align: right; }
+/* Players (#661): the table scrolls sideways on a phone, the names staying. */
+.pp-tools { align-items: center; margin-bottom: 10px; }
+.pp-periods { display: flex; gap: 6px; flex-wrap: wrap; }
+.pp-wrap { overflow-x: auto; max-width: 100%; }
+.pp-table { width: 100%; white-space: nowrap; }
+.pp-table th:first-child { position: sticky; left: 0; background: var(--bg, #fff); z-index: 1; }
+.pp-table td.pp-text { font-family: inherit; }
+.pp-sort { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.pp-sort.on { color: var(--fg-strong); font-weight: 600; }
+.pp-agent { margin-top: 12px; }
 .cl-more { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
 /* My clubs (#143): what needs you, the sub-tabs, ⋯ menus and the settings dialog. */
 .cl-needs { border: 1px solid var(--amber); border-radius: var(--radius); padding: 8px 12px; background: var(--amber-faint); }

@@ -839,6 +839,90 @@ test.describe('a club member', () => {
     await ava.screenshot({path: info.outputPath('ante-table.png'), fullPage: true});
   });
 
+  test('Players: each player’s hands and results by period, sorted, and exported as CSV (#661)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    test.setTimeout(180_000);
+    const {page: owner} = await browserWith(browser, watch);
+    await owner.goto(await grantLink(owner, url, admin));
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    const form = owner.locator('form[data-tableform]');
+    await expect(form).toBeVisible();
+    await owner.waitForTimeout(1500);
+    await form.locator('button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+    // Nothing played yet.
+    await owner.evaluate(() => { location.hash = 'clubs/players'; });
+    await expect(owner.getByRole('heading', {name: 'Players'})).toBeVisible();
+    await expect(owner.locator('.mg-link.on')).toHaveText('Players');
+    await expect(owner.getByText('No play yet.')).toBeVisible();
+
+    const join = async name => {
+      const {page} = await browserWith(browser, watch);
+      await page.goto(invite);
+      await askToJoin(page, name);
+      await page.locator('[data-cl="pass-enrol"]').click();
+      await letIn(owner);
+      await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+      await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+      await page.locator(`[data-ask-amt="${code}"]`).fill('400');
+      await page.locator('[data-cl="ask"]').click();
+      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+      await owner.locator('[data-cl="grant"]').first().click();
+      await expect(page.getByText('Balance 400')).toBeVisible();
+      await page.locator('[data-cl="sit-open"]').first().click();
+      await page.locator('form[data-sitform] button[type="submit"]').click();
+      await expect(page.locator('.pl-felt')).toBeVisible();
+      return page;
+    };
+    const players = [await join('Ava'), await join('Bo')];
+    // They check and call until a hand is over: each was dealt one.
+    await owner.evaluate(() => { location.hash = 'clubs/players'; });
+    const table = owner.locator('.pp-table');
+    const row = name => table.locator('tbody tr', {hasText: name});
+    for (let i = 0; i < 240 && !(await row('Bo').count()); i++) {
+      for (const p of players) {
+        const act = p.locator('[data-act="check"], [data-act="call"]').first();
+        if (await act.isVisible()) await act.click().catch(() => {});
+      }
+      await owner.waitForTimeout(250);
+    }
+    await expect(row('Ava')).toBeVisible();
+    await expect(row('Bo')).toBeVisible();
+    // Each row's cells at one moment (more hands may follow): Player, Hands, Won, …
+    const rows = await table.evaluate(t => [...t.tBodies[0].rows].map(r => [...r.cells].map(c => c.innerText.trim())));
+    expect(rows.map(r => r[0]).sort()).toEqual(['Ava', 'Bo']);
+    for (const r of rows) expect(Number(r[1])).toBeGreaterThanOrEqual(1);
+    // No rake: one won what the other lost.
+    expect(rows.reduce((s, r) => s + Number(r[2].replace(/[+,]/g, '')), 0)).toBe(0);
+    await expect(owner.locator('[data-pp-period="month"]')).toHaveAttribute('aria-pressed', 'true');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('players.png'), fullPage: true});
+
+    // Today has them too; sorted by name, A to Z, then Z to A.
+    await owner.locator('[data-pp-period="today"]').click();
+    await expect(owner.locator('[data-pp-period="today"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(row('Ava')).toBeVisible();
+    await owner.locator('[data-pp-sort="name"]').click();
+    await expect(table.locator('tbody tr').first()).toContainText('Ava');
+    await owner.locator('[data-pp-sort="name"]').click();
+    await expect(table.locator('tbody tr').first()).toContainText('Bo');
+    await expect(table.locator('th[aria-sort="ascending"], th[aria-sort="descending"]')).toHaveText('Player ↓');
+    await fitsTheScreen(owner);
+
+    // Export CSV: what's shown, in chips.
+    const [download] = await Promise.all([owner.waitForEvent('download'), owner.locator('[data-pp-csv]').click()]);
+    expect(download.suggestedFilename()).toBe('ducy-players-today.csv');
+    const csv = (await (await download.createReadStream()).toArray()).join('');
+    const lines = csv.trim().split('\n');
+    expect(lines[0]).toBe('player,agent,hands,won,won per 100,rake,rake per 100,tournaments,last played');
+    expect(lines[1]).toMatch(/^Bo,Club,\d+,/);
+    expect(lines[2]).toMatch(/^Ava,Club,\d+,/);
+  });
+
   test('the owner gives from a float, refills it and resizes it at once; Ava keeps chips in her vault (#589, #660, #579)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, ava, code} = await clubWithAva(browser, watch);

@@ -6,7 +6,7 @@ import { grantToken, managerPage, NAV, navOf, pageHash, PAGES, pageTitle } from 
 
 test('the sidebar groups the pages by task', () => {
   assert.deepEqual(NAV.map(g => g.group), ['', 'Games', 'Members', 'Settings']);
-  assert.deepEqual(PAGES, ['overview', 'cash', 'tourneys', 'promos', 'requests', 'members', 'settle', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
+  assert.deepEqual(PAGES, ['overview', 'cash', 'tourneys', 'promos', 'requests', 'members', 'players', 'settle', 'chips', 'fairplay', 'info', 'rules', 'backup', 'history']);
   assert.equal(pageTitle('backup'), 'Backup and devices');
 });
 
@@ -19,10 +19,12 @@ test('each page has its own address, and a member theirs', () => {
 });
 
 test('the older addresses still open the right page', () => {
-  const old = {own: 'overview', tables: 'cash', players: 'members', accounting: 'chips', settings: 'rules'};
+  const old = {own: 'overview', tables: 'cash', accounting: 'chips', settings: 'rules'};
   for (const [from, to] of Object.entries(old)) assert.deepEqual(managerPage(`#clubs/${from}`), {page: to, member: '', old: true}, from);
   // Tabs whose name is still a page's are that page.
   for (const p of ['tourneys', 'promos', 'history']) assert.equal(managerPage(`#clubs/${p}`).page, p);
+  // Players is its own page now (#661), not Members.
+  assert.deepEqual(managerPage('#clubs/players'), {page: 'players', member: '', old: false});
 });
 
 test('a club you manage has the same pages under its own address (#417)', () => {
@@ -32,7 +34,7 @@ test('a club you manage has the same pages under its own address (#417)', () => 
   assert.deepEqual(managerPage('#clubs/c/ABCD-EFGH/member/x%20y'), {page: 'member', member: 'x y', old: false, code: 'ABCD-EFGH'});
   // The club's own page (its tools) and older names aren't pages here.
   assert.equal(managerPage('#clubs/c/ABCD-EFGH'), null);
-  assert.equal(managerPage('#clubs/c/ABCD-EFGH/players'), null);
+  assert.equal(managerPage('#clubs/c/ABCD-EFGH/accounting'), null);
 });
 
 test('Members keeps its order and page in its address, so Back returns there (#426)', () => {

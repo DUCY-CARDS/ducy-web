@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};
 
 use crate::money::{CLUB, Entry, EntryKind, Money, MoneyError};
+use crate::players::PlayBook;
 use crate::rake::RakeBook;
 use crate::rules::{Club, RuleError, Status, chip_text, new_invite, refuse};
 
@@ -66,6 +67,9 @@ pub struct Book {
     /// What each player paid in rake and time (#449).
     #[serde(default, skip_serializing_if = "RakeBook::is_empty")]
     pub rake_book: RakeBook,
+    /// Each player's cash hands and results (#661).
+    #[serde(default, skip_serializing_if = "PlayBook::is_empty")]
+    pub play_book: PlayBook,
 }
 
 /// A member's account to send them, after entry `since` (none: no entries).
