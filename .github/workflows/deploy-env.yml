@@ -175,6 +175,8 @@ jobs:
           scripts/build-site.sh "${SHA::8}-${DUCY_REV::8}" _site
           # The club manager's site (#637), for club-<environment>.ducy.cards.
           scripts/build-club.sh "${SHA::8}-${DUCY_REV::8}" _club
+          # The admin site's staging copy (#664), for admin-staging.ducy.cards.
+          if [ "$DUCY_ENV" = staging ]; then scripts/build-admin.sh "${SHA::8}-${DUCY_REV::8}" _admin; fi
 
       - name: Set up SSH
         run: |
@@ -217,5 +219,24 @@ jobs:
           echo "/version.json: $CODE"
           if [ "$CODE" != 401 ]; then
             echo "expected 401 (password protected) from https://club-$ENV_NAME.ducy.cards/version.json" >&2
+            exit 1
+          fi
+
+      # The admin site's staging copy (#664), with staging only, into
+      # admin-staging.ducy.cards' folder: keeps the folder's password, never
+      # uploads to an open folder, and is skipped with a warning while the
+      # folder doesn't exist (scripts/deploy-admin.sh).
+      - name: Deploy the admin site's staging copy
+        id: admin
+        if: inputs.environment == 'staging'
+        run: scripts/deploy-admin.sh _admin "${{ secrets.SSH_DEPLOY_TARGET }}/admin-staging"
+
+      - name: Check the admin site's staging copy
+        if: steps.admin.outputs.deployed == 'true'
+        run: |
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://admin-staging.ducy.cards/version.json")"
+          echo "/version.json: $CODE"
+          if [ "$CODE" != 401 ]; then
+            echo "expected 401 (password protected) from https://admin-staging.ducy.cards/version.json" >&2
             exit 1
           fi

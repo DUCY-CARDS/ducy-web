@@ -32,7 +32,7 @@ echo "== 1/3 upload release folder"
 rsync -avz "$SITE/v/" "$TARGET/v/"
 
 echo "== 2/3 swap in root files"
-rsync -avz --delete-after --exclude '/v/' --exclude '/gto/' --exclude '/ducy-backup/' --exclude '/staging/' --exclude '/sandbox/' --exclude '/admin/' --exclude '/club/' --exclude '/club-staging/' --exclude '/club-sandbox/' "$SITE/" "$TARGET/"
+rsync -avz --delete-after --exclude '/v/' --exclude '/gto/' --exclude '/ducy-backup/' --exclude '/staging/' --exclude '/sandbox/' --exclude '/admin/' --exclude '/admin-staging/' --exclude '/club/' --exclude '/club-staging/' --exclude '/club-sandbox/' "$SITE/" "$TARGET/"
 
 echo "== 3/3 prune old releases (keeping $KEEP)"
 # --list-only lines look like: "drwxr-xr-x  4,096 2026/10/01 23:53:47 name".

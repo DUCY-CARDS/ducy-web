@@ -40,7 +40,7 @@ ALLOWED_ORIGINS = "https://ducy.cards,https://www.ducy.cards,https://club.ducy.c
 # passkeys.js). Empty: anywhere (a local relay).
 CLUB_ORIGINS = "https://club.ducy.cards"
 # The admin site (#601): may call /admin/ only.
-ADMIN_ORIGINS = "https://admin.ducy.cards"
+ADMIN_ORIGINS = "https://admin.ducy.cards,https://admin-staging.ducy.cards"
 # Always-on clubs (#98, #265): at most this many per owner, and in all,
 # while on Cloudflare's free plan. Creating a club takes permission, granted
 # on the admin site (admin.ducy.cards, #601), except each player's one free
@@ -81,7 +81,7 @@ script_name = "ducy-judge-staging"
 ENVIRONMENT = "staging"
 ALLOWED_ORIGINS = "https://staging.ducy.cards,https://club-staging.ducy.cards"
 CLUB_ORIGINS = "https://club-staging.ducy.cards"
-ADMIN_ORIGINS = "https://admin.ducy.cards"
+ADMIN_ORIGINS = "https://admin.ducy.cards,https://admin-staging.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""
@@ -109,7 +109,7 @@ script_name = "ducy-judge-sandbox"
 ENVIRONMENT = "sandbox"
 ALLOWED_ORIGINS = "https://sandbox.ducy.cards,https://club-sandbox.ducy.cards"
 CLUB_ORIGINS = "https://club-sandbox.ducy.cards"
-ADMIN_ORIGINS = "https://admin.ducy.cards"
+ADMIN_ORIGINS = "https://admin.ducy.cards,https://admin-staging.ducy.cards"
 MAX_CLUBS_PER_OWNER = "3"
 MAX_CLUBS = "25"
 CLUB_CREATORS = ""

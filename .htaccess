@@ -25,10 +25,13 @@ RewriteRule ^ - [E=ducy_safari15:1]
   <FilesMatch "\.(html|js|css|wasm|json)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
-  # The admin site (admin.ducy.cards, #601) reads which release this is; on
-  # a password-protected site, once you've signed in to it in that browser.
+  # The admin site (admin.ducy.cards, #601) and its staging copy
+  # (admin-staging.ducy.cards, #664) read which release this is; on a
+  # password-protected site, once you've signed in to it in that browser.
   <Files "version.json">
-    Header set Access-Control-Allow-Origin "https://admin.ducy.cards"
+    SetEnvIf Origin "^https://admin(-staging)?\.ducy\.cards$" ADMIN_ORIGIN=$0
+    Header set Access-Control-Allow-Origin "%{ADMIN_ORIGIN}e" env=ADMIN_ORIGIN
+    Header merge Vary "Origin"
     Header set Access-Control-Allow-Credentials "true"
   </Files>
   # The GTO bot's model files never change: a new model gets a new folder.

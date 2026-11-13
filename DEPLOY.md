@@ -193,6 +193,26 @@ in `relay/wrangler.toml`). Each site's `.htaccess` lets the admin site read
 its `version.json`; on staging and sandbox that works once you've signed in
 to that site in the same browser (else the site shows "Sign in").
 
+### Its staging copy
+
+admin-staging.ducy.cards (#664): the same build, deployed by every
+**Deploy staging** (each push to master) from the same commit as staging, so
+admin changes can be checked before a release. Same relay list (live,
+staging, sandbox), same admin keys. Every relay's `ADMIN_ORIGINS` and each
+site's `version.json` allow it as they do admin.ducy.cards.
+
+`scripts/deploy-admin.sh` uploads it to `SSH_DEPLOY_TARGET/admin-staging`
+with the same rules: the folder's password is kept, an open folder is never
+uploaded to, and with no folder the step warns and staging goes on. The live
+deploy leaves `admin-staging/` alone.
+
+**To set it up**, in DirectAdmin:
+1. Create the subdomain **admin-staging.ducy.cards**; its folder is
+   `public_html/admin-staging`.
+2. Password-protect that folder, as `admin` is.
+
+The next staging deploy fills it.
+
 **Usage counts** (`relay/src/stats.js`): each relay's registry keeps totals
 per day for 90 days: active and new players, friends games and players per
 game, hands, clubs active and club hands. The admins' own player IDs aren't
