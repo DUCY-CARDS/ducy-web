@@ -313,6 +313,7 @@ export class Registry {
   }
 
   async alarm() {
+    loadEngine();
     // The beta keeps clubs as long as it can (#551): none are deleted for being unused.
     const unused = this.env.KEEP_UNUSED_CLUBS === 'on' ? [] : await this.reg.expired();
     for (const code of unused) {
@@ -323,6 +324,10 @@ export class Registry {
   }
 
   async fetch(req) {
+    // ducy's engine first: the registry's rules (registry.js clubRegistry),
+    // admin checks and passkeys all call it, and this object may start in
+    // a fresh isolate where nothing else has loaded it.
+    loadEngine();
     const path = new URL(req.url).pathname;
     // Wiping a test relay (reset.js), from the Worker's /reset only.
     if (this.env.RESETTABLE === 'on' && path === '/reset-list') {
@@ -342,7 +347,6 @@ export class Registry {
     // of a connection's session.
     const pko = path.match(/^\/passkey\/([a-z]+)$/);
     if (pko) {
-      loadEngine();
       const out = await this.pk.http(pko[1], body, req.headers.get('x-ducy-origin') || '');
       return Response.json(out.body, {status: out.status});
     }
