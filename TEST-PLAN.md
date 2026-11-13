@@ -63,7 +63,8 @@ A major release is any of these:
 | The club manager offers no way to start a club and no demo club (`#clubs`, `#clubs/new`, a bad `#clubs/start/…`); a made-up grant link is refused and shows your player ID | Club manager |
 | A grant link (#636) on the club site, against a relay taking clubs from the club site only: forwarded to someone else it's refused and shows their ID; its own player makes the club with their passkey, and the link leaves the address; opened on ducy.cards it goes to the club site (Chromium, 1280 and 375 px) | Club manager |
 | A raked table: members see the rake, the hand log and replay show it, the owner sees each player's share; the club's default rake on Rules (skipped while cash-game rake is off in the beta) | Beta extras |
-| A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner | Club manager |
+| A credit player plays on credit out of the float and owes it; Balances shows it, the owner records the payment (the float untouched), and pays out a winner; Chips' parts add up to Out with players, which with the float makes what the owner put in, and Credit shows Paid back | Club manager |
+| The owner gives from the float on top of Chips and refills it (not on Rules); a member's vault shows on Chips under In vaults | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
 | A first passkey from You → Passkeys → Add, with no unlock (#646); it then lists as this one, and opening You again offers no first Add | Club manager |
@@ -237,7 +238,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 **C4 Tournaments**
 1. Walk the wizard to the end: game, buy-in, stack and players, blinds, payouts, repeats.
 2. Run one to a winner with two members. The prizes reach their balances, and History records it.
-3. With a rake: each entry costs the buy-in plus the rake, the pool is the buy-ins only, and the owner's row shows the rake taken. Cancelling it refunds both. After a finish, Chips' Taken back includes the rake.
+3. With a rake: each entry costs the buy-in plus the rake, the pool is the buy-ins only, and the owner's row shows the rake taken. Cancelling it refunds both. While it runs, Chips' Out with players has the entries under In tournaments; after a finish the rake is out of play, and Chips still adds up.
 
 **C5 Members and chips**
 1. A player asks to join (M6): Needs you and Requests show their message, with Let in, Reply and Decline. Reply: they see it, and their answer shows in the thread.
@@ -249,6 +250,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 7. History: hands and replays open. Big chip moves stand out in the activity log.
 
 **C5b Float and vaults** (#589, #579; the owner on two real devices, each with its own passkey)
+0. Chips opens on the float (#657): Left (what's in it, of its size) with Refill, and Size with Save; a refill or raise waiting shows under them. Rules has no float.
 1. Give chips until the float is empty: the give is refused, saying to refill. Refill: the passkey is asked for, and the float is full again, with a notice.
 2. Give some, then refill again the same day: it waits 24 hours, with a notice that has Approve and Cancel. Approve on the same device: refused. Approve on the other device: the float fills, with a notice.
 3. With only one passkey, the waiting refill can only be cancelled or left to go ahead after 24 hours.
@@ -271,11 +273,12 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 
 **C9 Credit and Balances** (#404, #454; three browsers: owner, a credit player, a cash player)
 1. Owner: on a member's page, set a credit limit. Each save needs a recent passkey unlock. The member sees the limit, and can sit with it and no chips of their own. A raise bigger than a full buy-in shows in the owner's notices.
-2. The credit player sits: the float on Rules drops by their buy-in (#633). With less in the float than the buy-in, they can't sit and are told the float is too low.
+2. The credit player sits: the float on Chips drops by their buy-in (#633). With less in the float than the buy-in, they can't sit and are told the float is too low.
 3. The credit player loses some and stands up. What they left with goes back to the float. They see a negative balance; the owner's Overview says they left owing, Members' Owes filter lists them, and Balances says they owe the club.
-4. They pay outside ducy. The owner records it on their member page with Record payment and a note (a passkey unlock first). The float doesn't change. Balances drops the row and still adds up; the member sees the payment and note in My chips; Chips shows Debts paid.
+4. They pay outside ducy. The owner records it on their member page with Record payment and a note (a passkey unlock first). The float doesn't change. Balances drops the row and still adds up; the member sees the payment and note in My chips; Chips' Credit shows it as Paid back, and Owed to the club drops by it.
 5. The cash player stands up ahead. Balances says the club owes them; Take back with a note pays them out. All at zero, and it adds up.
 6. A credit player at their limit asks for more from the table: the owner can only raise the limit or decline.
+6b. Chips at each step above (#657), at 1280 and 375 px: In balances, In vaults, On tables and In tournaments add up to Total; the float plus Total is what the owner put in, less what they took back (with no rake or prizes); Credit shows Owed to the club and Paid back; Adds up ✓ shows once; Members has each member's balance, seat, results and, for Credit players, their limit.
 7. Agents: the agent sets a player's line (Your players → Credit, a passkey unlock first), and Your players shows each player's credit limit. The owner sees the line on the player's page but can't set or raise it. A player let in with a line isn't told to ask for chips. The player on credit counts against the agent's own limit, and their buy-in comes out of the float. Balances shows the agent's row, which carries their players; the agent's Your players shows the player's balance and seat.
 
 **C10 The club site** (#637; on staging, club-staging.ducy.cards, then live)
@@ -327,7 +330,7 @@ Run a row only when that feature is about to be turned on.
 - **B7:** rake and time at cash tables (#449), with `cashRake` out of `OFF`, at desktop and phone width.
   1. Rules → Rake: "No rake" to start. Set 4.5% with a 2.5 BB cap: refused above 10% or at 0%; time below 0.05 or above 0.25 BB refused. New table → More options starts from it; set a table's own instead. Members see "Rake 4.5% · cap 2.5 BB" on the table before they sit, and the owner on the game's table cards and table rows.
   2. Play hands with two or three members: one that ends before the flop takes no rake (always); one that sees a flop does, in whole chips. A side pot and a run twice still pay out right. The hand log and the replay say "Rake …".
-  3. Stand up: Chips → Rake and time shows each player's share today, over 7 days and in all, and per agent; the ledger has a "Rake and time" line from the house, and In the club still adds up.
+  3. Stand up: Chips → Rake and time shows each player's share today, over 7 days and in all, and per agent; the ledger has a "Rake and time" line from the house, and Chips still adds up.
   4. An agent's Your players shows their players' rake and time, and no one else's.
   5. A second table with House: Time, 0.25 BB: each player dealt in pays it every hand, from what they end it with (one who busts pays nothing); one sitting out doesn't.
 

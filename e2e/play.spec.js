@@ -708,9 +708,14 @@ test.describe('a club member', () => {
   test('the owner gives from a float and refills it; Ava keeps chips in her vault (#589, #579)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, ava, code} = await clubWithAva(browser, watch);
-    // A new club's float, on Rules: full.
-    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    // A new club's float, on top of Chips (#657): full; nothing out yet.
+    await owner.evaluate(() => { location.hash = 'clubs/chips'; });
     await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 2,000');
+    await expect(owner.locator('.cl-out .cl-acct-sum td')).toHaveText('0');
+    // Rules no longer has it.
+    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await expect(owner.locator('[data-cl="let-all-in"]').first()).toBeVisible();
+    await expect(owner.locator('.cl-float-now')).toHaveCount(0);
     // Giving Ava 1,500 from it.
     await owner.evaluate(() => { location.hash = 'clubs/members'; });
     await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
@@ -720,8 +725,10 @@ test.describe('a club member', () => {
     await owner.locator('form[data-chipform] button[type=submit]').click();
     await expect(ava.getByText('Balance 1,500')).toBeVisible();
     // The first refill of the day goes ahead; the next one would wait.
-    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await owner.evaluate(() => { location.hash = 'clubs/chips'; });
     await expect(owner.locator('.cl-float-now')).toHaveText('500 of 2,000');
+    await expect(owner.locator('.cl-out tr', {hasText: 'In balances'}).locator('td')).toHaveText('1,500');
+    await expect(owner.locator('.cl-out .cl-acct-sum td')).toHaveText('1,500');
     await owner.locator('[data-cl="refill"]').click();
     await expect(owner.locator('.cl-float-now')).toHaveText('2,000 of 2,000');
     await owner.evaluate(() => { location.hash = 'clubs/members'; });
@@ -730,7 +737,7 @@ test.describe('a club member', () => {
     await owner.locator('#cl-amt').fill('100');
     await owner.locator('form[data-chipform] button[type=submit]').click();
     await expect(ava.getByText('Balance 1,600')).toBeVisible();
-    await owner.evaluate(() => { location.hash = 'clubs/rules'; });
+    await owner.evaluate(() => { location.hash = 'clubs/chips'; });
     await owner.getByRole('button', {name: 'Refill in 24 h'}).click();
     await expect(owner.locator('.cl-float-note').getByText(/Refill waiting until/)).toBeVisible();
     // This device can't approve it: it takes another device's passkey.
@@ -765,6 +772,14 @@ test.describe('a club member', () => {
     await owner.evaluate(() => { location.hash = 'clubs/members'; });
     await owner.locator('.mg-members a', {hasText: 'Ava'}).click();
     await expect(owner.locator('.mg-stat', {hasText: 'Vault'})).toContainText('1,000');
+    // Chips: her vault is a part of what's out with players, the total the same.
+    await owner.evaluate(() => { location.hash = 'clubs/chips'; });
+    await expect(owner.locator('.cl-out tr', {hasText: 'In balances'}).locator('td')).toHaveText('600');
+    await expect(owner.locator('.cl-out tr', {hasText: 'In vaults'}).locator('td')).toHaveText('1,000');
+    await expect(owner.locator('.cl-out .cl-acct-sum td')).toHaveText('1,600');
+    await expect(owner.locator('.cl-adds-up')).toBeVisible();
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('chips-page.png'), fullPage: true});
     expect(code).toBeTruthy();
   });
 

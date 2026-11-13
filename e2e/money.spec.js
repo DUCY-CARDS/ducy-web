@@ -147,9 +147,9 @@ test.describe('club money', () => {
     await expect(page.locator('.pl-felt')).toBeVisible();
   };
   const settleRow = (owner, name) => owner.locator('.cl-settle tr', {hasText: name});
-  // What the owner's float holds now (Rules), in chips (#633).
+  // What the owner's float holds now (on top of Chips, #657), in chips (#633).
   const floatNow = async owner => {
-    await go(owner, 'clubs/rules');
+    await go(owner, 'clubs/chips');
     return num((await owner.locator('.cl-float-now').innerText()).match(new RegExp(amount))[0]);
   };
   // The owner records `name`'s payment of what they owe, with a note (#633).
@@ -227,6 +227,19 @@ test.describe('club money', () => {
     await owner.screenshot({path: info.outputPath('payment-recorded.png'), fullPage: true});
     await expect.poll(() => balanceOf(ava)).toBe(0);
     expect(await floatNow(owner)).toBe(before - owes);
+    // Chips (#657): the parts out with players add up to their total; with
+    // the float, that's all the owner put in (Bo's 200 came from it, Ava's
+    // credit too). Paid back is her payment; her row has her credit limit.
+    const cell = async (table, label) => num(await owner.locator(`${table} tr`, {hasText: label}).locator('td').innerText());
+    const parts = (await owner.locator('.cl-out tr:not(.cl-acct-sum) td').allInnerTexts()).map(num);
+    const out = await cell('.cl-out', 'Total');
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(out);
+    expect(before - owes + out).toBe(before + 200);
+    expect([await cell('.cl-owed', 'Owed to the club'), await cell('.cl-owed', 'Paid back')]).toEqual([0, owes]);
+    await expect(owner.locator('.cl-adds-up')).toHaveText('Adds up ✓');
+    await expect(owner.locator('.cl-chip-members tr', {hasText: 'Ava'}).locator('td').last()).toHaveText('200');
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('chips-page.png'), fullPage: true});
     await go(owner, 'clubs/settle');
     await expect(settleRow(owner, 'Ava')).toHaveCount(0);
     await expect(owner.getByText('Adds up ✓')).toBeVisible();
@@ -350,7 +363,7 @@ test.describe('club money', () => {
     // The owner sees the rake it has taken so far, and where the chips are.
     await expect(card).toContainText('rake 2');
     await go(owner, 'clubs/chips');
-    await expect(owner.locator('.cl-acct tr', {hasText: 'In tournaments'})).toContainText('22');
+    await expect(owner.locator('.cl-out tr', {hasText: 'In tournaments'})).toContainText('22');
     await fitsTheScreen(owner);
     await owner.screenshot({path: info.outputPath('owner-tourney-chips.png'), fullPage: true});
 
