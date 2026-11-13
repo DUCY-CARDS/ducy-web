@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import './wasm.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { createClub, openClub } from '../relay/src/club-room.js';
-import { buyIn, cashOut, setStack, totals } from '../src/club-chips.js';
+import { buyIn, cashOut, setStack, totals, whereChips } from '../src/club-chips.js';
 import { createTableHost } from '../src/club-host.js';
 import { clubEngine } from '../src/club-engine.js';
 import { command } from '../src/club-commands.js';
@@ -81,6 +81,51 @@ test('the owner sets a limit, answers a request at it by raising it, and records
   // (Her lost 500 went to no one here, so the books can't add up.)
   assert.deepEqual([t.owedToClub, t.paid], [20000, 30000]);
   assert.match(club.log.at(-1).text, /Recorded Ann’s payment of 300: cash/);
+});
+
+// The Chips page's numbers (#657): what's out with players adds up to its
+// total, and with the float that's what the owner put in, less what they
+// took back, as chips go out on credit, come back, are paid for and are
+// taken back.
+test('where the chips are: out with players adds up, and with the float makes what the owner put in', () => {
+  const club = {
+    code: 'ABCD-EFGH', hostId: 'HOST', tables: [], chips: {issued: 0, reclaimed: 0}, ratholeHours: 0,
+    members: {
+      ann: {id: 'ann', name: 'Ann', status: 'member', balance: 0},
+      bob: {id: 'bob', name: 'Bob', status: 'member', balance: 0, credit: 30000},
+    },
+  };
+  command(club, 'vault_settle');
+  const putIn = club.money.float;
+  let takenBack = 0;
+  const check = (want, why) => {
+    const w = whereChips(club);
+    const {balances, vaults, tables, tourneys, total} = w.out;
+    assert.equal(balances + vaults + tables + tourneys, total, `${why}: the parts make the total`);
+    assert.equal(club.money.float + total, putIn - takenBack, `${why}: the float and what's out`);
+    assert.ok(w.conserved, `${why}: adds up`);
+    assert.deepEqual({balances, tables, total, owed: w.owed, paid: w.paid}, want, why);
+  };
+  check({balances: 0, tables: 0, total: 0, owed: 0, paid: 0}, 'a new club');
+  command(club, 'give', {id: 'ann', amount: 30000});
+  check({balances: 30000, tables: 0, total: 30000, owed: 0, paid: 0}, 'a give from the float');
+  // Both sit: Ann with her own chips, Bob all on credit, out of the float.
+  buyIn(club, 'ann', 't1', 30000, {min: 1, max: 30000});
+  buyIn(club, 'bob', 't1', 20000, {min: 1, max: 30000});
+  check({balances: 0, tables: 50000, total: 50000, owed: 20000, paid: 0}, 'seated, one on credit');
+  // Ann wins 150 of Bob's; both stand up. Bob's 50 goes back to the float.
+  setStack(club, 'ann', 45000);
+  setStack(club, 'bob', 5000);
+  cashOut(club, 'ann');
+  cashOut(club, 'bob');
+  check({balances: 45000, tables: 0, total: 45000, owed: 15000, paid: 0}, 'stood up, Bob owing');
+  // Bob pays outside ducy: no chips move.
+  command(club, 'record_payment', {id: 'bob', amount: 15000});
+  check({balances: 45000, tables: 0, total: 45000, owed: 0, paid: 15000}, 'paid back');
+  // The owner takes Ann's winnings back.
+  command(club, 'take', {id: 'ann', amount: 45000});
+  takenBack += 45000;
+  check({balances: 0, tables: 0, total: 0, owed: 0, paid: 15000}, 'taken back');
 });
 
 // A table's chip requests on credit, on ducy's engine.

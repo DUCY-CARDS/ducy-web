@@ -231,6 +231,21 @@ export function totals(club) {
   return overview(club, 'totals');
 }
 
+// Where the club's chips are, for the Chips page (#657). `out`: the chips
+// out with players, each part counted once and adding up to `total` (a
+// balance below zero is owed, not out: its chips are on a table or with
+// whoever won them). `owed`: what members owe the club; `paid`: what they
+// paid back outside ducy (#633). Chips on credit come from the float, so in
+// the plain case the float plus `total` is what the owner put in, less what
+// they took back.
+export function whereChips(club) {
+  const t = totals(club);
+  const vaults = t.inVaults || 0;
+  const out = {balances: t.owedToPlayers - vaults, vaults, tables: t.onTables, tourneys: t.inTourneys};
+  out.total = out.balances + out.vaults + out.tables + out.tourneys;
+  return {out, owed: t.owedToClub, paid: t.paid || 0, conserved: t.conserved};
+}
+
 // What a member is told about their account: balance, open request, and
 // the entries on their own links after `since`, with their credit limit and
 // what's available to sit with (#404). `ledger: 'links'`: the entries are

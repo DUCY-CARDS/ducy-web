@@ -30,7 +30,7 @@ import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
 } from './club.js';
-import { ensureChips, ledgerCsv, MAX_NOTE, totals, VAULT_WAITS } from './club-chips.js';
+import { ensureChips, ledgerCsv, MAX_NOTE, totals, VAULT_WAITS, whereChips } from './club-chips.js';
 import {
   buyInRange, defaultSeats, defaultTableName, ensureTables, gameLabel, GAMES, MAX_TABLE_NAME, maxSeats, newTable, openTables, tableById, tablesBody,
 } from './club-tables.js';
@@ -3007,19 +3007,20 @@ const NOTE_TAGS = {join: 'Join', new: 'New', chips: 'Chips', at_limit: 'Chips', 
 // When something waiting applies: "Sat 9:15 PM".
 const capWhen = at => new Date(at).toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
 
-// The owner's float (#589): what can be given now, of its size, refilled
-// from the owner's vault; a refill waiting (Approve from another device, or
-// Cancel); the size, lower at once and higher after a day.
+// The owner's float (#589), on top of Chips (#657): what's left to give (and
+// for chips on credit, #633), of its size, refilled from the owner's vault;
+// a refill waiting (Approve from another device, or Cancel); the size, lower
+// at once and higher after a day.
 function floatRowsHtml() {
   const f = floatOf(club);
-  let h = `<div class="pl-row"><span class="pl-label">Float</span><div class="pl-opts"><b class="cl-float-now">${chips(f.float)} of ${chips(f.size)}</b>`;
+  let h = `<div class="pl-row"><span class="pl-label">Left</span><div class="pl-opts"><b class="cl-float-now">${chips(f.float)} of ${chips(f.size)}</b>`;
   if (!f.wait) {
     const refill = `<button class="btn-small" data-cl="refill">${f.waits ? 'Refill in 24 h' : 'Refill'}</button>`;
     h += f.float >= f.size ? offBtn(refill, 'Full') : refill;
   }
   h += '</div></div>';
   if (f.wait) h += `<p class="pl-meta cl-float-note">Refill waiting until ${esc(capWhen(f.wait.applies))} <button class="btn-small" data-cl="refill-approve">Approve</button> <button class="link-btn" data-cl="refill-cancel">Cancel</button></p>`;
-  h += `<div class="pl-row"><span class="pl-label">Float size</span><form class="pl-opts" data-floatform="size"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(f.size))}" aria-label="Float size"><button class="btn-small primary" type="submit">Save</button></form></div>`;
+  h += `<div class="pl-row"><span class="pl-label">Size</span><form class="pl-opts" data-floatform="size"><input class="pl-text cl-cap-in" name="amount" type="number" inputmode="decimal" required min="0.01" step="${CHIP_STEP}" value="${esc(chipInput(f.size))}" aria-label="Float size"><button class="btn-small primary" type="submit">Save</button></form></div>`;
   if (f.raise) h += `<p class="pl-meta cl-float-note">Rises to ${chips(f.raise.to)} ${esc(capWhen(f.raise.applies))} <button class="link-btn" data-cl="float-cancel">Cancel</button></p>`;
   return h;
 }
@@ -3051,7 +3052,6 @@ function rulesHtml() {
   h += '<div class="pl-row"><span class="pl-label">Let everyone in</span><div class="pl-opts">';
   h += [[false, 'Off'], [true, 'On']].map(([on, text]) => `<button class="cc-btn${all === on ? ' on' : ''}" data-cl="let-all-in" data-on="${on ? 1 : 0}" aria-pressed="${all === on}">${text}</button>`).join('');
   h += '</div></div>';
-  h += floatRowsHtml();
   h += `<div class="pl-row"><span class="pl-label">Keep hands</span><div class="pl-opts">${[1, 7, 30].map(d => `<button class="cc-btn${(club.keepDays ?? HOST_KEEP_DAYS) === d ? ' on' : ''}" data-cl="keep-days" data-days="${d}">${d} day${d > 1 ? 's' : ''}</button>`).join('')}</div></div>`;
   // Outside servers that give chips (club-services.js): an always-on club's room answers them.
   if (remote && !OFF.has('services')) h += servicesHtml(club, {form: serviceForm, note: serviceNote});
@@ -3135,31 +3135,36 @@ function settleHtml() {
   return h;
 }
 
-// The Accounting tab: where the club's chips are, each member's balance and
-// results, and every chip movement (the ledger).
+// The Chips page (#657): where the club's chips are. The float; the chips
+// out with players, adding up to their total; credit, owed and paid back;
+// each member; the rake; then results by session and the ledger.
 function accountingHtml() {
-  const t = totals(club);
+  const w = whereChips(club);
   const names = memberNames();
   const about = aboutNames(club);
   const ledger = ledgerView(club);
   const results = totalsByMember(tableSessions(ledger));
   const signed = n => `<span class="${n > 0 ? 'cl-up' : n < 0 ? 'cl-down' : ''}">${n > 0 ? '+' : ''}${chips(n)}</span>`;
-  let h = '<table class="cl-acct"><tbody>';
-  h += `<tr><th>Given out</th><td>${chips(t.issued)}</td></tr>`;
-  h += `<tr><th>Taken back</th><td>${chips(t.reclaimed)}</td></tr>`;
-  // Debts paid outside ducy (#633): chips on credit, paid for.
-  if (t.paid) h += `<tr><th>Debts paid</th><td>${chips(t.paid)}</td></tr>`;
-  h += `<tr class="cl-acct-sum"><th>In the club</th><td>${chips(t.issued + (t.paid || 0) - t.reclaimed)}</td></tr>`;
-  h += `<tr><th>In balances</th><td>${chips(t.balances)}</td></tr>`;
-  h += `<tr><th>On tables</th><td>${chips(t.onTables)}</td></tr>`;
-  if (t.inTourneys) h += `<tr><th>In tournaments</th><td>${chips(t.inTourneys)}</td></tr>`;
-  // Credit players (#404): what's owed each way.
-  if (t.owedToClub) h += `<tr><th>Owed to the club</th><td>${chips(t.owedToClub)}</td></tr>`;
+  const row = (label, n, cls = '') => `<tr${cls}><th>${label}</th><td>${chips(n)}</td></tr>`;
+  let h = `<section class="cl-chips-float"><h2>Float</h2>${floatRowsHtml()}</section>`;
+  h += '<h2>Out with players</h2><table class="cl-acct cl-out"><tbody>';
+  h += row('In balances', w.out.balances);
+  if (w.out.vaults) h += row('In vaults', w.out.vaults);
+  h += row('On tables', w.out.tables);
+  if (w.out.tourneys) h += row('In tournaments', w.out.tourneys);
+  h += row('Total', w.out.total, ' class="cl-acct-sum"');
   h += '</tbody></table>';
   const members = membersByStatus(club, 'member').sort((a, b) => a.name.localeCompare(b.name));
+  const credit = members.some(m => creditRow(m).credit);
+  // Credit (#404, #633): what members owe the club, and paid back outside ducy.
+  if (credit || w.owed || w.paid) h += `<h2>Credit</h2><table class="cl-acct cl-owed"><tbody>${row('Owed to the club', w.owed)}${row('Paid back', w.paid)}</tbody></table>`;
+  h += w.conserved ? '<p class="pl-meta cl-adds-up">Adds up ✓</p>' : '<p class="pl-desc pl-neterr">Doesn’t add up.</p>';
   if (members.length) {
-    h += '<h2>Results</h2><table class="cl-acct"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th></tr></thead><tbody>';
-    for (const m of members) h += `<tr><th><a href="#${ph('member', m.id)}">${esc(m.name)}</a></th><td${m.balance < 0 ? ' class="cl-down"' : ''}>${signed(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td></tr>`;
+    h += `<h2>Members</h2><table class="cl-acct cl-chip-members"><thead><tr><th>Member</th><th>Balance</th><th>On a table</th><th>Results</th>${credit ? '<th>Credit limit</th>' : ''}</tr></thead><tbody>`;
+    for (const m of members) {
+      const limit = creditRow(m).credit;
+      h += `<tr><th><a href="#${ph('member', m.id)}">${esc(m.name)}</a></th><td>${signed(m.balance)}</td><td>${m.seat ? chips(m.seat.stack) : '–'}</td><td>${signed(results[m.id] || 0)}</td>${credit ? `<td>${limit ? chips(limit) : '–'}</td>` : ''}</tr>`;
+    }
     h += '</tbody></table>';
   }
   // Each player's rake and time (#449), and each agent's players'.
