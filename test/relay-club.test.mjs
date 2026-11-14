@@ -258,6 +258,9 @@ test('a club connection acts only once unlocked; chips need a recent unlock', as
   // wait need it; putting chips in and cancelling don't.
   assert.equal(movesChips({body: {type: 'owner_cmd', op: 'refill'}}), true);
   assert.equal(movesChips({body: {type: 'owner_cmd', op: 'float_size'}}), true);
+  // Letting someone in as an agent offers the role (#666); as a player doesn't.
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'approve', args: {id: 'x', kind: 'agent'}}}), true);
+  assert.equal(movesChips({body: {type: 'owner_cmd', op: 'approve', args: {id: 'x', kind: 'cash'}}}), false);
   assert.equal(movesChips({body: {type: 'vault', op: 'out'}}), true);
   assert.equal(movesChips({body: {type: 'vault', op: 'wait'}}), true);
   assert.equal(movesChips({body: {type: 'vault', op: 'in'}}), false);

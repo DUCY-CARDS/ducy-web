@@ -403,6 +403,22 @@ impl ClubState {
             "approve" | "decline" => {
                 // A Credit player (#621): let in with a credit line.
                 let credit = crate::book::approval_credit(args)?;
+                // Let in as an agent (#666): the offer goes with it, so it is
+                // checked first, as offer_agent would.
+                let agent = op == "approve" && crate::book::approval_agent(args);
+                if agent {
+                    let ok = self
+                        .book
+                        .club
+                        .members
+                        .get(&id)
+                        .is_some_and(|m| m.is(Status::Pending) && m.agent_of.is_none());
+                    if !ok {
+                        return refuse(
+                            "Only someone asking to join the club can be let in as an agent.",
+                        );
+                    }
+                }
                 // Someone joining through an agent gets their line from them (#633).
                 if credit.is_some() {
                     self.book.owners_credit(&id)?;
@@ -422,6 +438,9 @@ impl ClubState {
                         out.account(&id, None);
                         // They hear it with being let in (#633).
                         crate::book::with_credit(&mut out.replies, &id, limit);
+                    }
+                    if agent {
+                        out.replies.push(self.book.offer_agent(&id)?);
                     }
                     out.tables_to.push(id);
                 }
@@ -1280,6 +1299,41 @@ mod tests {
         .unwrap();
         assert_eq!((c.book.credit("hal"), c.book.available("hal")), (500, 500));
         assert_eq!(o.accounts[0].id, "hal");
+    }
+
+    #[test]
+    fn let_in_as_an_agent_offers_the_role_at_once() {
+        let mut c = club(&["ann"]);
+        c.book.club.invite = "INVITE".into();
+        let join = |name: &str| json!({"type": "join", "club": "ABCD-EFGH", "invite": "INVITE", "name": name});
+        c.book.club.receive("ida", &join("Ida"), 5);
+        let o = run(&mut c, "approve", json!({"id": "ida", "kind": "agent"})).unwrap();
+        assert_eq!(c.book.club.members["ida"].status, Status::Member);
+        assert_eq!(c.book.club.members["ida"].agent.as_deref(), Some("offered"));
+        assert!(o.replies.iter().any(|r| r["body"]["type"] == "agent_role"));
+        assert_eq!(c.book.credit("ida"), 0);
+        // With a credit line for their players.
+        c.book.club.receive("jo", &join("Jo"), 6);
+        assert!(
+            run(
+                &mut c,
+                "approve",
+                json!({"id": "jo", "kind": "agent", "credit": 0})
+            )
+            .is_err()
+        );
+        assert_eq!(c.book.club.members["jo"].status, Status::Pending);
+        run(
+            &mut c,
+            "approve",
+            json!({"id": "jo", "kind": "agent", "credit": 400}),
+        )
+        .unwrap();
+        assert_eq!(c.book.credit("jo"), 400);
+        assert_eq!(c.book.club.members["jo"].agent.as_deref(), Some("offered"));
+        // Not a member already.
+        assert!(run(&mut c, "approve", json!({"id": "ann", "kind": "agent"})).is_err());
+        assert!(c.book.club.members["ann"].agent.is_none());
     }
 
     #[test]

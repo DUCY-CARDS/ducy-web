@@ -57,6 +57,7 @@ A major release is any of these:
 | Starting a club without permission is refused | Club manager |
 | A new player asks to join with a message, gets a reply, is let in as Cash and given chips | Main |
 | The same as a Credit player: let in with a credit line, and can sit with it | Club manager |
+| The same as an agent: the offer comes with being let in (an optional credit line), and they accept; an agent letting in their own players has no Agent choice | Club manager |
 | The same through an agent's link: the agent replies, lets them in and gives chips | Club manager |
 | With Let everyone in on: in at once as Cash, New until the owner gives chips | Club manager |
 | A demo club opens (`?on=demoClub`: Try a demo club is off in the beta, #636), and its main pages draw | Club manager |

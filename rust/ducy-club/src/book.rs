@@ -118,14 +118,23 @@ pub(crate) fn int(v: Option<&Value>) -> Option<i64> {
 
 /// The credit line an approval sets (#621): `{kind: "credit", credit}` for a
 /// Credit player, a whole number of chips above 0; None for a Cash player.
+/// An agent (#666, `kind: "agent"`) may have one, for their players.
 pub fn approval_credit(args: &Value) -> Result<Option<u64>, RuleError> {
-    if args.get("kind").and_then(Value::as_str) != Some("credit") {
+    let kind = args.get("kind").and_then(Value::as_str);
+    let agent = kind == Some("agent");
+    if kind != Some("credit") && !(agent && args.get("credit").is_some_and(|v| !v.is_null())) {
         return Ok(None);
     }
     match args.get("credit").and_then(Value::as_u64) {
         Some(n) if n > 0 && n <= MAX_CHIPS => Ok(Some(n)),
+        _ if agent => refuse("An agent's credit line is a whole number of chips."),
         _ => refuse("A Credit player needs a credit line: a whole number of chips."),
     }
+}
+
+/// Whether an approval lets them in as an agent (#666).
+pub fn approval_agent(args: &Value) -> bool {
+    args.get("kind").and_then(Value::as_str) == Some("agent")
 }
 
 impl Book {
@@ -937,6 +946,10 @@ impl Book {
                 });
                 if !ok {
                     return refuse("No such request.");
+                }
+                // Only the owner makes agents (#666).
+                if approval_agent(cmd) {
+                    return refuse("Only the owner makes agents.");
                 }
                 // A Credit player (#621): let in with a line on their link with the agent.
                 let credit = approval_credit(cmd)?;
@@ -1819,6 +1832,15 @@ mod tests {
         )
         .unwrap();
         b.club.members.insert("dee".into(), p);
+        // Only the owner lets someone in as an agent (#666).
+        assert!(
+            err(b.run_agent(
+                "al",
+                &json!({"op": "approve", "id": "dee", "kind": "agent"}),
+                3
+            ))
+            .contains("Only the owner")
+        );
         assert!(
             err(b.run_agent(
                 "al",
