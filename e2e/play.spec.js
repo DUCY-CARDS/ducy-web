@@ -1206,6 +1206,23 @@ test.describe('joining a club', () => {
     await shot(cy, info, 'credit-player.png');
   });
 
+  test('let in as an agent: the offer comes with it, and they accept (#666)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, invite, code} = await ownerClub(browser, watch);
+    const ava = await asks(browser, watch, invite, 'Ava', 'Ava, the owner’s sister');
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await owner.locator('.cl-needs [data-cl="approve"]').first().click();
+    await owner.locator('.cl-needs form[data-letin] input[value="agent"]').check();
+    await owner.locator('.cl-needs form[data-letin] [name=credit]').fill('800');
+    await shot(owner, info, 'let-in-agent.png');
+    await owner.locator('.cl-needs form[data-letin] button[type=submit]').click();
+    await clubPage(ava, code);
+    await expect(ava.getByText('Credit limit 800')).toBeVisible();
+    await shot(ava, info, 'agent-offer.png');
+    await ava.locator('[data-cl="agent-yes"]').click();
+    await expect(ava.locator('[data-cl="mtab"][data-tab="players"]')).toBeVisible();
+  });
+
   test('through an agent’s link: the agent replies, lets them in and gives chips', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     const {owner, invite, code} = await ownerClub(browser, watch);
@@ -1234,6 +1251,8 @@ test.describe('joining a club', () => {
     await expect(bo.getByText('Hi Bo!')).toBeVisible();
     await shot(ava, info, 'agent-request.png');
     await recruits.locator('[data-cl="ag-approve"]').click();
+    // Only the owner makes agents (#666).
+    await expect(ava.locator('form[data-letin] input[value="agent"]')).toHaveCount(0);
     await ava.locator('form[data-letin] button[type=submit]').click();
     // Bo is her player, New until she gives him chips.
     const row = ava.locator('.cl-agent li', {hasText: 'Bo'});

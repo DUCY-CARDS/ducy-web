@@ -13,6 +13,10 @@ export const CHIP_OPS = new Set([
   'refill', 'float_size',
 ]);
 
+// Whether owner command `op` with `args` needs the unlock: letting someone in
+// as an agent (#666) offers the role too.
+export const chipOp = (op, args) => CHIP_OPS.has(op) || (op === 'approve' && args?.kind === 'agent');
+
 // A member's vault commands that do (#579): taking chips out, and the wait.
 // Putting chips in and cancelling a take-out keep them in, so needn't.
 export const VAULT_OPS = new Set(['out', 'wait']);
@@ -32,5 +36,5 @@ export function movesChips(m) {
   if (!b || typeof b !== 'object') return false;
   if (b.type === 'chip_request' || b.type === 'agent_cmd') return true;
   if (b.type === 'vault') return VAULT_OPS.has(b.op);
-  return b.type === 'owner_cmd' && CHIP_OPS.has(b.op);
+  return b.type === 'owner_cmd' && chipOp(b.op, b.args);
 }

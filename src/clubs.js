@@ -43,7 +43,7 @@ import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import * as pk from './passkey.js';
-import { CHIP_OPS, VAULT_OPS } from './chip-moves.js';
+import { chipOp, VAULT_OPS } from './chip-moves.js';
 import { accountOf, contributions, playersOf } from './club-agents.js';
 import { chargeFieldsHtml, chargeOn, chargeText, clubChargeHtml, contributionsHtml, readCharge, syncChargeFields } from './club-rake.js';
 import { playersCsvFile, playersEvent, playersPageHtml, playersReport } from './club-players.js';
@@ -292,7 +292,7 @@ async function hostAct(op, args) {
   if (key) { busy.add(key); render(); }
   let ok = true;
   // Moving chips needs a recent passkey unlock (#575).
-  const no = isRemote() && CHIP_OPS.has(op) ? await freshPass() : '';
+  const no = isRemote() && chipOp(op, args) ? await freshPass() : '';
   if (no) { busy.delete(key); failAt(key, no); return false; }
   try {
     if (!isRemote()) throw new Error('Move the club to ducy’s server first.');
@@ -1126,11 +1126,12 @@ function onSubmitIn(e) {
   const lif = e.target.closest('form[data-letin]');
   if (lif) {
     e.preventDefault();
-    const kind = lif.elements.kind?.value === 'credit' ? 'credit' : 'cash';
-    const credit = kind === 'credit' ? parseChips(lif.elements.credit.value) : 0;
+    const kind = ['credit', 'agent'].includes(lif.elements.kind?.value) ? lif.elements.kind.value : 'cash';
+    const credit = kind !== 'cash' && lif.elements.credit ? parseChips(lif.elements.credit.value) || 0 : 0;
     if (kind === 'credit' && !(credit > 0)) { lif.elements.credit.focus(); failAt(lif.querySelector('[type=submit]'), 'Give a Credit player a credit line.'); return; }
     const [who, a, b] = lif.dataset.letin.split('|');
-    const args = kind === 'credit' ? {kind, credit} : {kind};
+    // An agent's credit line, for their players, is optional (#666).
+    const args = credit > 0 ? {kind, credit} : {kind};
     letIn = '';
     if (who === 'o') hostAct('approve', {id: a, ...args});
     else agentCmd(a, {op: 'approve', id: b, ...args});
@@ -3227,7 +3228,10 @@ function letInHtml(to, dis = '') {
   const [who, id] = to.split('|');
   if (!(who === 'o' && underAgent(club?.members[id]))) {
     h += '<span class="pl-opts" role="radiogroup" aria-label="Player">';
-    h += `<label class="cc-btn"><input type="radio" name="kind" value="cash" checked> Cash</label><label class="cc-btn"><input type="radio" name="kind" value="credit"> Credit</label></span>`;
+    h += `<label class="cc-btn"><input type="radio" name="kind" value="cash" checked> Cash</label><label class="cc-btn"><input type="radio" name="kind" value="credit"> Credit</label>`;
+    // The owner can let them in as an agent, offered at once (#666).
+    if (who === 'o' && !OFF.has('agents')) h += '<label class="cc-btn"><input type="radio" name="kind" value="agent"> Agent</label>';
+    h += '</span>';
     h += `<input class="pl-text cl-credit-in" name="credit" type="number" inputmode="decimal" min="0.01" step="${CHIP_STEP}" placeholder="Credit line" aria-label="Credit line">`;
   }
   return h + `<button class="btn-small primary" type="submit"${dis}>Let in</button><button class="btn-small" type="button" data-cl="letin-cancel">Cancel</button></form>`;
