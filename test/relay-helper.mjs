@@ -50,7 +50,8 @@ export async function softPasskey() {
 // `origin` (#637): the page it acts as, for its requests, connections and
 // sign-ins; by default none, and sign-ins as a local page.
 export function relayClient(port, {origin = ''} = {}) {
-  const signAs = origin ? {origin, rpId: 'ducy.cards'} : {};
+  const host = origin ? new URL(origin).hostname : '';
+  const signAs = origin ? {origin, rpId: /(^|\.)ducy\.cards$/.test(host) ? 'ducy.cards' : host} : {};
   const post = async (op, body) => {
     const r = await fetch(`http://localhost:${port}/passkey/${op}`, {method: 'POST', headers: {'content-type': 'application/json', ...(origin ? {origin} : {})}, body: JSON.stringify(body || {})});
     return {status: r.status, body: await r.json()};

@@ -25,7 +25,7 @@ import { keepStorage, loadIdentity, showId, signMessage, Verifier } from './iden
 import { clubBackupText } from './club-backup.js';
 import { chipText, chipInput, parseChips, CHIP_STEP } from './chip-format.js';
 import { backupFormHtml, downloadFile, notifyOn, restoreBackupFile, RESTORE_CLUB_KEY } from './player-settings.js';
-import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, wsUrl } from './play-net.js';
+import { connect, DEFAULT_RELAY, newCode, normCode, relayUrl, replacedText, wsUrl } from './play-net.js';
 import {
   account, approve, decline, hostReceive, inviteLink, lastEntry, MAX_CLUB_NAME, MAX_PLAYER_NAME, membersByStatus,
   newClub, newMembership, playerReceive,
@@ -96,6 +96,10 @@ let club = null;
 let verifier = null;
 let memberships = []; // clubs this browser asked to join
 const playerNets = new Map(); // club code → {net, online, hostHere}
+// Another tab, or the other ducy site, took this tab's club connections
+// over (#618): {where} (play-net.js replacedWhere), or null. Nothing here
+// connects again, and the club pages give way to a card, until Use here.
+let elsewhere = null;
 let invite = null; // an invite from the page address, not yet acted on
 let note = '', copied = false;
 // An always-on club this browser owns (#93, club-owner.js): `club` is then
@@ -574,6 +578,7 @@ function submitTable(f) {
 // before the table, so play.js has somewhere to draw it.
 let showTable = null;
 export function setShowTable(fn) { showTable = fn; }
+let watchingAt = null; // the watched table's handlers, while watching one
 
 function watchTable(id) {
   const t = tableById(club, id);
@@ -606,7 +611,8 @@ function watchTable(id) {
     // An always-on club's table runs in its room: its view comes encrypted
     // over the owner's (or a manager's) connection (#125).
     ctl.watch(id, toPage(handlers)).catch(e => handlers.onFail(e.message));
-    return {send() {}, close: () => ctl.unwatch()};
+    watchingAt = handlers;
+    return {send() {}, close: () => { if (watchingAt === handlers) watchingAt = null; ctl.unwatch(); }};
   }, {
     label: `${club.name} · ${t.name} (watching)`,
     watch: true,
@@ -1342,7 +1348,7 @@ function saveMemberships() {
 }
 
 function connectMembership(mem) {
-  if (playerNets.has(mem.code)) return;
+  if (playerNets.has(mem.code) || elsewhere) return;
   // keys: this connection's key pair for encrypted table updates (e2e.js);
   // aes: the key shared with the host, for the host key in aesFor.
   const entry = {net: null, online: false, hostHere: false, sends: Promise.resolve(), inbox: Promise.resolve(), keys: newKeyPair(), aes: null, aesFor: '', unlocked: false};
@@ -1506,7 +1512,36 @@ function connectMembership(mem) {
       mem.error = /No table/.test(reason) ? 'The club isn’t reachable, and this relay can’t hold your request. Try again later.' : reason;
       render();
     },
+    onReplaced(where) {
+      entry.online = false;
+      if (playerNets.get(mem.code) === entry) playerNets.delete(mem.code);
+      takenOver(where);
+    },
   }, {queue: true, persistent: true, prove: proveFor(mem.code)});
+}
+
+// This tab's club connections were taken over (#618), from another tab or
+// the other ducy site (`where`). Its others go too (that page opens them
+// all), and a table here is left in this tab only: nothing is sent, so the
+// seat, now the other page's, stays.
+function takenOver(where) {
+  elsewhere = {where};
+  for (const [code, n] of playerNets) { playerNets.delete(code); n.net?.close(); }
+  owner?.stop();
+  if (seatedAt) seatedAt.handlers.onFail('');
+  watchingAt?.onFail('');
+  render();
+}
+
+// Use here (#618): this tab takes the connections back.
+function useHere() {
+  elsewhere = null;
+  note = '';
+  reconnectAll();
+}
+
+function elsewhereHtml() {
+  return `<section class="cl-card cl-elsewhere"><h2>${esc(replacedText(elsewhere.where))}</h2><button class="btn-small primary" data-cl="use-here">Use here</button></section>`;
 }
 
 // ---- passkeys (#575) and proving the player's ID (#577) ----
@@ -2190,6 +2225,9 @@ function render() {
 // The current tab's part, or '' when it has nothing to show.
 function viewHtml() {
   let msg = note ? `<p class="pl-desc pl-neterr">${esc(note)}</p>` : '';
+  // Open in another tab or on the other site (#618): only that, and the way
+  // to use it here instead.
+  if (elsewhere) return view === 'play' || view === 'ladder' || view === 'quest' ? '' : elsewhereHtml();
   if (mode === 'manage') return msg + managerHtml();
   // Seated at a club table and looking elsewhere: the way back (#187).
   if (seatedAt && view !== 'play') {
@@ -3973,6 +4011,7 @@ async function onClickIn(e) {
   else if (act === 'forget') leaveMembership(b.dataset.code);
   else if (act === 'setname') setName(root.querySelector('#cl-myname')?.value);
   else if (act === 'reconnect-owner') { note = ''; owner.start(); render(); }
+  else if (act === 'use-here') useHere();
   else if (act === 'retry') { const m = memberships.find(x => x.code === b.dataset.code); if (m) { m.error = ''; connectMembership(m); render(); } }
   else if (act === 'give') openChipForm('give', b.dataset.id);
   else if (act === 'take') openChipForm('take', b.dataset.id);
@@ -4214,7 +4253,9 @@ function disconnectAll() {
 }
 
 function reconnectAll() {
-  if (!me) return;
+  // Taken over by another tab (#618): only Use here takes them back, or the
+  // two tabs would knock each other off.
+  if (!me || elsewhere) return;
   // The club you run, on the club manager only; there, too, the clubs you
   // help run (their staff views come over your member connection).
   if (mode === 'manage') owner?.start();
@@ -4293,6 +4334,8 @@ export function startClubs() {
         if (kind === 'unlock_again') pass.note = 'Unlock with your passkey again to move chips.';
         refreshPass();
       },
+      // Another tab, or ducy.cards, took the club over (#618).
+      onReplaced: where => takenOver(where),
     });
     // Finds the always-on club's record, from IndexedDB if need be, and
     // (on the club manager) connects to it.

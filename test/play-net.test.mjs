@@ -61,6 +61,23 @@ test('looking up a code asks the relay over http, and trusts only what it should
   assert.equal(asked.at(-1), 'https://ducy-relay.ducy.workers.dev/code/ABCD-EFGH');
 });
 
+test('where a taken-over connection is open now, from the relay’s close reason (#618)', async () => {
+  const { replacedWhere, replacedText } = await import('../src/play-net.js');
+  assert.equal(replacedWhere('replaced club.ducy.cards', 'ducy.cards'), 'club.ducy.cards');
+  assert.equal(replacedWhere('replaced ducy.cards', 'club.ducy.cards'), 'ducy.cards');
+  assert.equal(replacedWhere('replaced ducy.cards', 'ducy.cards'), '', 'another tab of this site');
+  assert.equal(replacedWhere('replaced', 'ducy.cards'), '');
+  assert.equal(replacedWhere('', 'ducy.cards'), '');
+  assert.equal(replacedWhere('replaced a b', 'ducy.cards'), '');
+  assert.equal(replacedText(''), 'Open in another tab');
+  assert.equal(replacedText('club.ducy.cards'), 'Open on club.ducy.cards');
+  const { replacedReason } = await import('../relay/src/replace.js');
+  assert.equal(replacedReason('https://club.ducy.cards'), 'replaced club.ducy.cards');
+  assert.equal(replacedReason('http://localhost:4173'), 'replaced localhost:4173');
+  assert.equal(replacedReason(''), 'replaced');
+  assert.equal(replacedReason('null'), 'replaced');
+});
+
 test('table codes read in any case, and never contain I, L, O, 0 or 1', () => {
   assert.equal(normCode('abcd-efgh'), 'ABCD-EFGH');
   assert.equal(normCode(' AbCd eFgH '), 'ABCD-EFGH');

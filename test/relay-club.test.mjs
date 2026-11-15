@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from '../relay/node_modules/ws/index.js';
-import { relayClient, softPasskey } from './relay-helper.mjs';
+import { ORIGIN, relayClient, softPasskey } from './relay-helper.mjs';
 import { granter, testAdmin } from './admin-helper.mjs';
 import { createIdentity, signMessage } from '../src/identity.js';
 import { passkeys, rpIdFor } from '../relay/src/passkeys.js';
@@ -394,4 +394,42 @@ test('the float (#589, #660): refills and its size apply at once', {skip: !haveW
   // The owner can't run her vault for her.
   assert.match((await cmd(o, 'member_vault', {id: ann.id, op: 'out', amount: 1})).error, /no host action/);
   o.ws.close(); a.ws.close();
+});
+
+test('a second tab, or the other site, takes over: the first is told where, and nothing it still sends counts (#618)', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const owner = await createIdentity(), ann = await createIdentity();
+  const code = 'RRRR-RRRR';
+  const o = open(`/room/${code}?role=guest&id=${owner.id}&queue=1`, owner);
+  await o.ready;
+  o.send(await signMessage(owner, {type: 'create_club', club: code, name: 'Two Tabs', grant: await grantFor(owner.id)}));
+  const made = await o.next('club_created');
+  const a = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a.ready;
+  a.send(await signMessage(ann, {club: code, type: 'join', invite: made.invite, name: 'Ann'}));
+  await a.next('status');
+  o.send(await signMessage(owner, {club: code, type: 'owner_cmd', op: 'approve', args: {id: ann.id}, id: 1}));
+  assert.equal((await o.next('owner_result')).body.error, '');
+  await a.next('status');
+
+  // The first tab stops reading (a phone's tab in the background): it never
+  // hears it was replaced, and still sends.
+  a.ws._socket.pause();
+  // (The test relay takes local pages only: one stands in for the other site.)
+  const a2 = relay.as(ORIGIN).open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a2.ready;
+  a.send(await signMessage(ann, {club: code, type: 'chip_request', amount: 100}));
+  await new Promise(r => setTimeout(r, 300));
+  a2.send(await signMessage(ann, {club: code, type: 'chip_request', amount: 70}));
+  let acc;
+  do acc = await a2.next('account'); while (!acc.body.request);
+  assert.equal(acc.body.request.amount, 70, 'only the current connection’s request reached the club');
+  // Told where it's open now: the newer page's site.
+  a.ws._socket.resume();
+  assert.deepEqual(await a.closedWith, {code: 4009, reason: `replaced ${new URL(ORIGIN).host}`});
+
+  // Taking it back from a page with no site known: 'replaced'.
+  const a3 = open(`/room/${code}?role=guest&id=${ann.id}&queue=1`, ann);
+  await a3.ready;
+  assert.deepEqual(await a2.closedWith, {code: 4009, reason: 'replaced'});
+  o.ws.close(); a3.ws.close();
 });

@@ -16,7 +16,7 @@ class FakeSocket {
   close() { this.readyState = 3; }
   open() { this.readyState = 1; this.onopen(); }
   message(obj) { this.onmessage({data: JSON.stringify(obj)}); }
-  drop(code = 1006) { this.readyState = 3; this.onclose({code}); }
+  drop(code = 1006, reason = '') { this.readyState = 3; this.onclose({code, reason}); }
 }
 globalThis.WebSocket = FakeSocket;
 
@@ -60,6 +60,29 @@ test('without persistent, the old give-up after six tries stands', t => {
   ws().open();
   for (let i = 0; i < 7; i++) { ws().drop(); t.mock.timers.tick(64_000); }
   assert.deepEqual(log.fails, ['Lost the connection.']);
+});
+
+test('taken over by a newer connection (4009): it says where, and never reconnects on its own (#618)', t => {
+  t.mock.timers.enable({apis: ['setInterval', 'setTimeout', 'Date']});
+  const where = [];
+  const before = sockets.length;
+  const net = connect('ABCD-EFGH', 'guest', 'ann', {onOpen() {}, onMessage() {}, onStatus() {}, onFail: r => where.push(['fail', r]), onReplaced: w => where.push(w)}, {queue: true, persistent: true});
+  sockets.at(-1).open();
+  // Another tab of this site.
+  sockets.at(-1).drop(4009, 'replaced ducy.example');
+  t.mock.timers.tick(10 * 60_000);
+  assert.equal(sockets.length, before + 1, 'no new socket, even after a long wait');
+  assert.deepEqual(where, ['']);
+  net.close();
+  // The club site; and an older relay's reason, with no site.
+  const {log, ws} = member();
+  ws().open();
+  ws().drop(4009, 'replaced club.ducy.cards');
+  assert.deepEqual(log.fails, ['Open on club.ducy.cards']);
+  const two = member();
+  two.ws().open();
+  two.ws().drop(4009, 'replaced');
+  assert.deepEqual(two.log.fails, ['Open in another tab']);
 });
 
 // ---- club tables (club-host.js) on ducy's engine ----
