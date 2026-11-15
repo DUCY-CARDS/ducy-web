@@ -687,8 +687,6 @@ test.describe('a club member', () => {
     await form.locator('[name=sb]').fill('0.25');
     await form.locator('[name=bb]').fill('0.5');
     await form.locator('.tf-more summary').click();
-    // Off in the beta until club-beta.js turns it on.
-    test.skip(!(await form.locator('[name=house]').count()), 'rake is off in the beta');
     await expect(form.locator('[name=rakePct]')).toBeHidden();
     // None by default; a typed percentage and a cap in big blinds.
     await expect(form.locator('[name=house]')).toHaveValue('none');

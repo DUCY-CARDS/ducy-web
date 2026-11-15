@@ -2,10 +2,10 @@
 // club manager; the code and the room's commands stay, and what a club already
 // has still shows. Delete a name to turn it back on. Credit, Balances (Settle)
 // and tournament rake came back on in #623; rake and time at cash tables
-// (#449, club-rake.js) are `cashRake`, still off. `demoClub` (#636): the club
+// (#449, club-rake.js) came on for the dry run. `demoClub` (#636): the club
 // manager's Try a demo club (demo.js).
 
-export const OFF = new Set(['cashRake', 'promos', 'services', 'demoClub']);
+export const OFF = new Set(['promos', 'services', 'demoClub']);
 
 /**
  * Whether feature `f` is off on this page. `?on=f` in the address turns it

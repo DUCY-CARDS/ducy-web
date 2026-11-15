@@ -9,7 +9,7 @@ import { structureEditor } from '../src/tourney-structure-ui.js';
 import { chargeOn } from '../src/club-rake.js';
 
 test('the unfinished features are off', () => {
-  assert.deepEqual([...OFF].sort(), ['cashRake', 'demoClub', 'promos', 'services']);
+  assert.deepEqual([...OFF].sort(), ['demoClub', 'promos', 'services']);
 });
 
 test('Try a demo club is off, and ?on=demoClub turns it on for that page only (#636)', () => {
@@ -23,9 +23,9 @@ test('agents, credit, Balances and tournament rake are on (#623)', () => {
   for (const f of ['agents', 'credit', 'balances', 'rake']) assert.ok(!OFF.has(f), f);
 });
 
-test('rake at cash tables stays off, unless the club already has one (#449)', () => {
-  assert.equal(chargeOn({tables: []}), false);
-  assert.equal(chargeOn({charge: {percent: 500, capBB: 0, timeBB: 0}, tables: []}), true);
+test('rake at cash tables is on (#449)', () => {
+  assert.ok(!OFF.has('cashRake'));
+  assert.equal(chargeOn({tables: []}), true);
 });
 
 test('Promotions leaves the sidebar, Balances is in it, and their addresses still parse', () => {
