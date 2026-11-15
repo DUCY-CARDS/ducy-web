@@ -56,7 +56,8 @@ goes up). A good sign-in starts a session.
 | `POST /passkey/challenge` | | `{challenge}`, good for 5 minutes, once |
 | `POST /passkey/status` | `{id}` | `{enrolled, creds, movedTo}` |
 | `POST /passkey/enrol` | `{env}`: signed `{type: 'passkey_enrol', challenge, credId, spki, alg, name, token?}` | `{ok, token}` |
-| `POST /passkey/unlock` | `{credId, clientDataJSON, authenticatorData, signature}` | `{token, id, copy, clubs, movedTo}` |
+| `POST /passkey/unlock` | `{credId, clientDataJSON, authenticatorData, signature}` | `{token, id, copy, clubs, name, movedTo}` |
+| `POST /passkey/name` | `{token, name}`: the player's display name, given back at a sign-in (#619) | `{ok}` |
 | `POST /passkey/copy` | `{env}`: signed `{type: 'passkey_copy', challenge, token, credId, copy: {iv, ct}}` | `{ok}` |
 | `POST /passkey/list` | `{token}` | `{creds: [{credId, name, at, copy, current}]}` |
 | `POST /passkey/remove` | `{token, credId}` (a session from the last 5 minutes) | `{ok}` |

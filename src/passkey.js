@@ -20,6 +20,7 @@
 
 import { exportIdentity, importIdentity, loadIdentity, saveIdentity, showId, signMessage } from './identity.js';
 import { relayUrl } from './play-net.js';
+import { restoreName, storedName } from './player-name.js';
 import { isSubsite } from './sites.js';
 
 export const FRESH_MS = 5 * 60_000;
@@ -171,6 +172,23 @@ async function saveCopy(ident, s, prf) {
   return lockDown(ident);
 }
 
+// ---- the player's name (#619) ----
+
+// The relay keeps this browser's name with the passkey, so a restore brings
+// it back: sent with session `token` when it differs from `kept` (what the
+// relay has, when known).
+async function sendName(token, kept = null) {
+  const name = storedName();
+  if (!name || name === kept) return;
+  await call('name', {token, name}).catch(e => console.warn('passkey: name not kept:', e.message));
+}
+// The name was changed here: kept with the passkey, if this tab is signed
+// in (as player `id`, or whoever it is).
+export function nameChanged(id = load()?.id) {
+  const s = id ? session(id) : null;
+  return s ? sendName(s.token) : Promise.resolve();
+}
+
 // ---- enrol, unlock, recover ----
 
 const started = (id, credId, token) => {
@@ -212,6 +230,7 @@ export async function enrol(ident, who = '') {
   // Some passkeys give PRF's key as they're made; the rest at the next unlock.
   const prf = prfOf(cred);
   if (prf) await saveCopy(ident, s, prf).catch(e => console.warn('passkey: no copy yet:', e));
+  await sendName(s.token);
   return s;
 }
 
@@ -247,6 +266,7 @@ export async function unlock(ident) {
   if (id !== ident.id) throw new Error('That passkey is for another account.');
   const s = started(id, v.credId, v.token);
   if (!v.copy && v.prf) await saveCopy(ident, s, v.prf).catch(e => console.warn('passkey: no copy:', e));
+  await sendName(s.token, v.name);
   last = v;
   return s;
 }
@@ -275,21 +295,29 @@ export async function exportable(ident) {
 // a vouch there would move the player's clubs to that site's fresh ID. Only
 // the copy brings the player over; without one it throws NO_COPY.
 export const NO_COPY = 'This passkey can’t bring your account here yet. Unlock a club with it once on ducy.cards, then try again.';
+//
+// The player's name comes back too (#619): the relay's copy, unless this
+// browser has a name of its own. `name` in the answer: the one it now goes
+// by ('' when neither has one: the page asks before they sit or join).
 export async function recover({vouch = !isSubsite()} = {}) {
   const v = await signIn();
+  const back = async (id, more = {}) => {
+    started(id, v.credId, v.token);
+    const name = restoreName(v.name);
+    await sendName(v.token, v.name);
+    return {id, clubs: v.clubs || {}, vouched: false, name, ...more};
+  };
   if (v.copy && v.prf) {
     const ident = await lockDown(await openCopy(v.copy, v.prf).then(async i => { await saveIdentity(i); return i; }));
-    started(ident.id, v.credId, v.token);
-    return {id: ident.id, clubs: v.clubs || {}, vouched: false};
+    return back(ident.id);
   }
   if (!vouch) throw new Error(NO_COPY);
   const me = await loadIdentity();
-  if (me.id === v.id) { started(me.id, v.credId, v.token); return {id: me.id, clubs: v.clubs || {}, vouched: false}; }
+  if (me.id === v.id) return back(me.id);
   const env = await signMessage(me, {type: 'passkey_vouch', challenge: await takeChallenge(), token: v.token});
   await call('vouch', {env});
   statuses.clear();
-  started(me.id, v.credId, v.token);
-  return {id: me.id, clubs: v.clubs || {}, vouched: true, from: v.id};
+  return back(me.id, {vouched: true, from: v.id});
 }
 
 // This player's passkeys, from a live session: [{credId, name, at, copy, current}].

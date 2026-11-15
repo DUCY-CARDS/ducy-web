@@ -570,6 +570,76 @@ test.describe('a club member', () => {
     await expect(away(own2)).toBeVisible();
   });
 
+  // A restore on a new browser (#619): the name comes back with the player
+  // ID; with none, it's asked for before a seat, never a blank one.
+  test('a passkey restore on a fresh browser brings the name back, and with no name a seat asks for one (#619)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    test.setTimeout(180_000);
+    const {page: owner} = await browserWith(browser, watch);
+    await owner.goto(await grantLink(owner, url, admin));
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('form[data-tableform] button[type="submit"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+
+    const {page: ava, auth} = await browserWith(browser, watch);
+    await ava.goto(invite);
+    await askToJoin(ava, 'Ava');
+    await ava.locator('[data-cl="pass-enrol"]').click();
+    await letIn(owner);
+    await ava.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await ava.locator(`[data-ask-amt="${code}"]`).fill('200');
+    await ava.locator('[data-cl="ask"]').click();
+    await owner.evaluate(() => { location.hash = 'clubs/requests'; });
+    await owner.locator('[data-cl="grant"]').first().click();
+    await expect(ava.getByText('Balance 200')).toBeVisible();
+    const avaId = await idOf(ava);
+    const creds = await auth.credentials();
+    await ava.close();
+
+    // A fresh browser, where her passkey has synced: signing in with it
+    // brings her clubs, chips and name back. (Chrome's virtual authenticator
+    // gives a copied passkey no PRF, so the relay vouches: the club moves her
+    // onto this browser's ID. With PRF the old ID comes back, as in #575's test,
+    // and the name the same way.)
+    const {page: again, auth: againAuth} = await browserWith(browser, watch);
+    for (const c of creds) await againAuth.add(c);
+    await again.goto(`/?relay=${url}#join`);
+    await again.locator('[data-pt=player]').first().click();
+    await expect(again.locator('#pset .pl-pid')).not.toHaveText('…');
+    await expect(again.locator('#ps-name')).toHaveValue('');
+    await again.locator('#pset [data-ps="pk-recover"]').click();
+    await expect(again.locator('#pset').getByText('Signed in.')).toBeVisible();
+    await expect(again.locator('#ps-name')).toHaveValue('Ava');
+    await closeYou(again);
+    await again.reload();
+    await expect(again.locator('.pt-me-name').first()).toHaveText(/Ava/);
+    await again.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+    await expect(again.getByText('Balance 200')).toBeVisible();
+    expect(await idOf(again)).not.toBe(avaId);
+    await fitsTheScreen(again);
+    await again.screenshot({path: info.outputPath('restored-name.png'), fullPage: true});
+
+    // No name here at all: sitting down asks for one first.
+    await again.evaluate(() => localStorage.removeItem('ducyClubName'));
+    await again.reload();
+    await expect(again.getByText('Balance 200')).toBeVisible();
+    await again.locator('[data-cl="sit-open"]').first().click();
+    await again.locator('form[data-sitform] button[type="submit"]').click();
+    const ask = again.locator('form[data-nameform]');
+    await expect(ask).toBeVisible();
+    await expect(again.locator('.pl-felt')).toHaveCount(0);
+    await fitsTheScreen(again);
+    await again.screenshot({path: info.outputPath('ask-name.png'), fullPage: true});
+    await ask.locator('[name=name]').fill('Ava');
+    await ask.locator('button[type="submit"]').click();
+    await expect(again.locator('.pl-felt')).toBeVisible();
+    await expect(again.locator('.pl-seat.hero .pl-plate b')).toHaveText('Ava');
+  });
+
   test('at a club table: players within 100 m are flagged on their seats, one who won’t share says so, and the owner’s hands show it (#581)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     // Three members and an owner, and hands to play: longer than most.
