@@ -66,6 +66,18 @@ export async function lookupCode(code, get = globalThis.fetch, invite = '') {
   }
 }
 
+// Where the player's connection is open now, once a newer one took over
+// (4009, #618), from the relay's close reason ('replaced <host>', the newer
+// page's site): that host when it's another site than `here`, else ''
+// (another tab of this one).
+export function replacedWhere(reason, here = globalThis.location?.host || '') {
+  const host = /^replaced (\S+)$/.exec(String(reason || ''))?.[1] || '';
+  return host && host !== here ? host : '';
+}
+
+// What the page that lost says (#618).
+export const replacedText = where => (where ? `Open on ${where}` : 'Open in another tab');
+
 // Opens the room and keeps it open, reconnecting with backoff when the
 // connection drops. Handlers: onOpen(), onMessage(obj), onStatus(text) with
 // '' once connected, onFail(reason) when it gives up, and onHealth(healthy)
@@ -83,7 +95,9 @@ export const SILENT_MS = 12_000;
 // is no one, so it can't knock off the player's other one.
 // Coming back to the page (a phone waking the tab) checks the connection at
 // once: a dead one reconnects straight away, a silent one is replaced.
-export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}}, {queue = false, persistent = false, prove = null} = {}) {
+// onReplaced(where), when given, instead of onFail when the player's newer
+// connection took over (4009): `where` as replacedWhere.
+export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth = () => {}, onReplaced = null}, {queue = false, persistent = false, prove = null} = {}) {
   if (localRelay) return localRelay.connect(code, role, id, {onOpen, onMessage, onStatus, onFail, onHealth});
   let ws = null, closed = false, tries = 0, retry = null, joined = false;
   let heard = 0, pongs = false, healthy = false;
@@ -122,11 +136,15 @@ export function connect(code, role, id, {onOpen, onMessage, onStatus, onFail, on
       check();
       if (closed) return;
       // 4009: a newer connection with the same id took over, from another tab
-      // or window. Reconnecting would knock that one off in turn, and the two
-      // would trade places every second; the newer one keeps it.
+      // or the other ducy site (#618). Reconnecting would knock that one off
+      // in turn, and the two would trade places; the newer one keeps it
+      // until this page's player asks for it back.
       if (e.code === 4009) {
         closed = true;
-        onFail('This is open in another tab or window, which took it over. Use that one, or reload this page to take it back.');
+        if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake);
+        const where = replacedWhere(e.reason);
+        if (onReplaced) onReplaced(where);
+        else onFail(replacedText(where));
         return;
       }
       // 4003: ducy paused the club, or its free trial ended (#265): say why,

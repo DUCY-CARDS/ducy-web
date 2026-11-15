@@ -19,7 +19,9 @@
 //
 // Close codes: 4000 bad request, 4003 the club is paused or its trial ended
 // (#265; the reason says which), 4004 no such club, 4008 sending too fast,
-// 4009 replaced by a newer connection with the same id, 4029 the room is full.
+// 4009 replaced by a newer connection with the same id (its reason
+// 'replaced <host>', the newer page's site, #618; nothing more from the old
+// one counts), 4029 the room is full.
 //
 // The super admin's API (#265, #401): POST /admin/…, each request signed by
 // a key listed in admins.json (bundled at build time). admin.js has the
@@ -56,6 +58,7 @@ import { serviceHttp, serviceInRoom } from './service-http.js';
 import { clubCodes, resetRefusal } from './reset.js';
 import { passkeys } from './passkeys.js';
 import { mustProve, newChallenge, proves } from './prove.js';
+import { replacedReason } from './replace.js';
 import { CLUB_SITE_REPLY, check as unlockCheck, siteOk, unlockedNow } from './unlock.js';
 import { stats } from './stats.js';
 import { cfAnalytics } from './cf-analytics.js';
@@ -690,7 +693,7 @@ export class Room {
     // unproven one of the same ID goes.
     const proving = mustProve({queue, club});
     for (const old of this.state.getWebSockets('g:' + id)) {
-      if (!proving || this.unproven(old)) old.close(4009, 'replaced');
+      if (!proving || this.unproven(old)) this.replace(old, req.headers.get('Origin') || '');
     }
     if (this.state.getWebSockets('guest').length >= MAX_GUESTS) return refuse(4029, 'the room is full');
     const tags = ['guest', 'g:' + id, 'c:' + code];
@@ -711,9 +714,22 @@ export class Room {
     return !!ws.deserializeAttachment()?.proof;
   }
 
-  // The guest connections of player `id` that count: proven, or not asked.
+  // Connection `ws` is replaced by its player's newer one, from page
+  // `origin` (4009, #618): marked first, so nothing it sent that's still
+  // on its way counts, then closed.
+  replace(ws, origin) {
+    try { ws.serializeAttachment({...(ws.deserializeAttachment() || {}), replaced: true}); } catch {}
+    try { ws.close(4009, replacedReason(origin)); } catch {}
+  }
+
+  replaced(ws) {
+    return !!ws.deserializeAttachment()?.replaced;
+  }
+
+  // The guest connections of player `id` that count: proven, or not asked,
+  // and not replaced.
   guests(id) {
-    return this.state.getWebSockets('g:' + id).filter(g => !this.unproven(g));
+    return this.state.getWebSockets('g:' + id).filter(g => !this.unproven(g) && !this.replaced(g));
   }
 
   // Guest `ws` (player `id`) counts from now: the club hears they're here,
@@ -754,8 +770,10 @@ export class Room {
       if (m?.type === 'prove') ws.close(4000, 'not proven');
       return;
     }
+    // A newer one proved first, meanwhile: this one lost.
+    if (this.replaced(ws)) return;
     ws.serializeAttachment({...(ws.deserializeAttachment() || {}), proof: null});
-    for (const old of this.state.getWebSockets('g:' + id)) if (old !== ws) old.close(4009, 'replaced');
+    for (const old of this.state.getWebSockets('g:' + id)) if (old !== ws) this.replace(old, a.origin);
     ws.send(JSON.stringify({type: 'proven'}));
     await this.arrived(ws, id);
   }
@@ -798,6 +816,8 @@ export class Room {
     // A heartbeat: answered here, never passed on or queued.
     const pong = pingReply(msg);
     if (pong) { ws.send(pong); return; }
+    // Replaced by the player's newer connection (#618): nothing from it counts.
+    if (this.replaced(ws)) return;
     const id = this.guestId(ws);
     // Checking a proof checks a signature, with the engine (after
     // hibernation the Worker may have started again without it).
@@ -811,7 +831,7 @@ export class Room {
       if (club && msg.startsWith('{"type":"location"')) {
         let m;
         try { m = JSON.parse(msg); } catch { return; }
-        if (unlockedNow(ws.deserializeAttachment()?.unlock)) await club.message({from: id, data: m});
+        if (unlockedNow(ws.deserializeAttachment()?.unlock) && !this.replaced(ws)) await club.message({from: id, data: m});
         return;
       }
       if (club || msg.includes('"create_club"') || msg.startsWith('{"type":"unlock"')) {
@@ -831,6 +851,9 @@ export class Room {
         if (!g.pass) return;
         // Running a club only from a club site, with a session made there (#637).
         if (!siteOk(m, g.u, a.origin, originsOf(this.env.CLUB_ORIGINS))) { ws.send(JSON.stringify(CLUB_SITE_REPLY)); return; }
+        // Replaced while its unlock was checked (#618): only the player's
+        // current connection acts.
+        if (this.replaced(ws)) return;
         // Counted as active (#601), as well as on connecting: the player
         // who just made the club connected before it was one.
         if (club) this.notePlayer(id, c.code);

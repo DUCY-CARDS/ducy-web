@@ -530,6 +530,46 @@ test.describe('a club member', () => {
     expect(await idOf(nova)).toBe(novaId);
   });
 
+  test('a second tab takes over: the first says so, with Use here, and the two never trade places on their own (#618)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    const {owner, ava, auth, code} = await clubWithAva(browser, watch);
+    const away = page => page.getByRole('heading', {name: 'Open in another tab'});
+    // Ava opens the club in a second tab: it takes over as soon as it has
+    // proved her ID, even before its unlock.
+    const tab2 = watch(await ava.context().newPage());
+    const auth2 = await authenticator(tab2);
+    for (const c of await auth.credentials()) await auth2.add(c);
+    await tab2.goto(`/?relay=${url}#clubs/c/${encodeURIComponent(code)}`);
+    await expect(away(ava)).toBeVisible();
+    await expect(ava.getByRole('button', {name: 'Use here'})).toBeVisible();
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toHaveCount(0);
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('other-tab.png'), fullPage: true});
+    await tab2.locator('[data-cl="pass-unlock"]').click();
+    await expect(tab2.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    // Nothing takes it back on its own: not waiting, not coming back online.
+    await ava.evaluate(() => dispatchEvent(new Event('online')));
+    await ava.waitForTimeout(3000);
+    await expect(away(ava)).toBeVisible();
+    await expect(away(tab2)).toHaveCount(0);
+    await expect(tab2.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    // Use here: the first tab has it again, and the second says so.
+    await ava.getByRole('button', {name: 'Use here'}).click();
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(away(tab2)).toBeVisible();
+    await ava.waitForTimeout(2000);
+    await expect(away(ava)).toHaveCount(0);
+
+    // The owner's club manager in a second tab: the same.
+    const own2 = watch(await owner.context().newPage());
+    await own2.goto(owner.url());
+    await expect(away(owner)).toBeVisible();
+    await fitsTheScreen(owner);
+    await owner.getByRole('button', {name: 'Use here'}).click();
+    await expect(away(owner)).toHaveCount(0);
+    await expect(away(own2)).toBeVisible();
+  });
+
   test('at a club table: players within 100 m are flagged on their seats, one who won’t share says so, and the owner’s hands show it (#581)', async ({browser, watch, browserName}, info) => {
     needsPasskeys(browserName);
     // Three members and an owner, and hands to play: longer than most.

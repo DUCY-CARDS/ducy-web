@@ -15,6 +15,7 @@ import { serviceHttp, serviceInRoom } from './src/service-http.js';
 import { passkeys } from './src/passkeys.js';
 import { CLUB_SITE_REPLY, check as unlockCheck, siteOk, unlockedNow } from './src/unlock.js';
 import { mustProve, newChallenge, proves } from './src/prove.js';
+import { replacedReason } from './src/replace.js';
 import { stats } from './src/stats.js';
 import { cfAnalytics } from './src/cf-analytics.js';
 import { initSync } from '../wasm/ducy_wasm.js';
@@ -402,7 +403,10 @@ function proveFirst(ws, code, id, held, then) {
 // A guest's connection, accepted: `held`, any messages it sent meanwhile.
 function guest(ws, room, code, id, queue, isClub, held) {
   {
-    room.guests.get(id)?.ws.close(4009, 'replaced');
+    // The player's older connection (#618): marked, so nothing it sent
+    // that's still on its way counts, then closed.
+    const old = room.guests.get(id)?.ws;
+    if (old) { old.replaced = true; old.close(4009, replacedReason(ws.origin)); }
     room.guests.delete(id);
     if (room.guests.size >= MAX_GUESTS) return ws.close(4029, 'the room is full');
     room.guests.set(id, {ws, queue});
@@ -427,13 +431,15 @@ function guest(ws, room, code, id, queue, isClub, held) {
       if (!allow(ws, RATE, BURST)) return ws.close(4008, 'too many messages');
       const pong = pingReply(String(data));
       if (pong) return ws.send(pong);
+      // Replaced by the player's newer connection (#618): nothing counts.
+      if (ws.replaced) return;
       if (data.length > MAX_MESSAGE) return;
       // A location reading (#581): from an unlocked connection only, not
       // counted as activity (unlock.js unlockedNow).
       if (room.store.has('club') && String(data).startsWith('{"type":"location"')) {
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
-        if (unlockedNow(ws.unlock)) inRoom(room, async () => (await clubOf(room, code))?.message({from: id, data: msg}));
+        if (unlockedNow(ws.unlock)) inRoom(room, async () => !ws.replaced && (await clubOf(room, code))?.message({from: id, data: msg}));
         return;
       }
       // An always-on club runs here, or someone asks to make this room one.
@@ -452,6 +458,9 @@ function guest(ws, room, code, id, queue, isClub, held) {
           if (!g.pass) return;
           // Running a club only from a club site, with a session made there (#637).
           if (!siteOk(msg, g.u, ws.origin, CLUB_ORIGINS)) return send(ws, CLUB_SITE_REPLY);
+          // Replaced while it waited its turn (#618): only the player's
+          // current connection acts.
+          if (ws.replaced) return;
           // Counted as active (#601), as well as on connecting: the player
           // who just made the club connected before it was one.
           if (club) notePlayer(room, id, code);

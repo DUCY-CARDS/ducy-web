@@ -70,6 +70,7 @@ A major release is any of these:
 | The owner gives from the float on top of Chips and refills it, again the same day, and raises its size, each at once with notices for the big ones and nothing waiting (#660; not on Rules); a member's vault shows on Chips under In vaults | Club manager |
 | An agent's player let in with credit: not told to ask for chips; the agent's list shows the line, the owner can't set it; their buy-in comes out of the float | Club manager |
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
+| A second tab (#618), for a member and for the owner's club manager: it takes over once it has proved the player's ID; the first shows only "Open in another tab" and Use here, and stays so through a wait and an `online` event; Use here takes it back and the second says so (Chromium, 1280 and 375 px) | Main |
 | A first passkey from You → Passkeys → Add, with no unlock (#646); it then lists as this one, and opening You again offers no first Add | Club manager |
 | The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager (Chromium; a browser without passkeys goes straight on); the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
@@ -90,6 +91,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | No one hosts a game in a tab: the relay refuses a host | `relay-queue.test`, `relay-club.test` | yes | M2 |
 | Side pots, run it twice, bomb pots at the Regulars | `pots.test`, `fair-deal.test` | no | M1 |
 | Disconnects and reloads at a club table | `heartbeat.test`, `idle-seats.test`, `hit-and-run.test` | no | M5 |
+| Two tabs, or the club site and ducy.cards, with one player ID (#618): the newer takes over; the other says where it's open, with Use here, and never reconnects on its own; nothing a replaced connection still sends reaches the club | `heartbeat.test`, `play-net.test`, `relay-club.test` | two tabs | M5 |
 | Chat and muting at a bot table | `table-chat.test`, `bot-chat.test` | no | M1 |
 | Play the Regulars | `regulars.test`, `bot-chat.test` | yes | M1 |
 | Player stats (VPIP/PFR on seats, the stats table): bot tables only, none at club tables | `play-stats.test` | yes | M6 |
@@ -185,7 +187,9 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 5. The front page has no Start a game, and `/#host` (even with `?on=startGame`) opens no game setup (#643).
 
 **M5 Connections**
-1. At a club table (M6), reload a player. They return to their seat with their chips, and a second tab of the same player takes over from the first, which says so.
+1. At a club table (M6), reload a player. They return to their seat with their chips.
+1b. Open the club in a second tab of the same browser, while seated in the first (#618). The second takes over the seat; the first leaves the table and shows only "Open in another tab" and Use here, with nothing left to fold or bet with. The seat plays on in the second. Use here in the first: it has the club again, and the second says so. Leave both alone for a minute: neither takes it back on its own. On a phone, do the same with the first tab in the background, then bring it to the front.
+1c. As the owner, have the club manager open on club.ducy.cards and the club open on ducy.cards (#637). Whichever opened last has it; the other says "Open on club.ducy.cards" or "Open on ducy.cards", with Use here.
 2. Turn the player's network off for 30 seconds, then back on. They return to their seat.
 3. Close the player's tab for good. After the timeout the seat empties, and the chips go back to their balance.
 

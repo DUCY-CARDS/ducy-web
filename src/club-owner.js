@@ -16,7 +16,7 @@
 
 import { checkSignature, signMessage, Verifier } from './identity.js';
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
-import { connect, newCode } from './play-net.js';
+import { connect, newCode, replacedText } from './play-net.js';
 import { dropTable, getTable, putTable } from './table-store.js';
 
 const KEY = 'ducyClubRemote';
@@ -35,7 +35,9 @@ function save(v) {
 // token, or '' for none yet). Until it's unlocked nothing is sent to the
 // club. onPass(kind) hears the relay's word: 'unlocked', 'locked' (unlock
 // with the passkey) or 'unlock_again' (a chip command needs a fresh one).
-export function createOwner({identity, onChange = () => {}, onNote = () => {}, gated = false, session = () => '', onPass = () => {}}) {
+// onReplaced(where): another tab or site took the connection over (#618,
+// play-net.js replacedWhere); start() connects again.
+export function createOwner({identity, onChange = () => {}, onNote = () => {}, gated = false, session = () => '', onPass = () => {}, onReplaced = null}) {
   let rec = load();
   let net = null, online = false, view = null;
   let unlocked = !gated, unlockWaits = [];
@@ -104,6 +106,15 @@ export function createOwner({identity, onChange = () => {}, onNote = () => {}, g
         onNote(reason);
         onChange();
       },
+      ...(onReplaced ? {onReplaced(where) {
+        net = null;
+        online = false;
+        creating?.reject(new Error(replacedText(where)));
+        creating = null;
+        for (const [id, w] of waiting) { clearTimeout(w.timer); w.reject(new Error(replacedText(where))); waiting.delete(id); }
+        onReplaced(where);
+        onChange();
+      }} : {}),
     }, {queue: true, persistent: true, ...(gated ? {prove: challenge => signMessage(identity, {type: 'prove', room: code, challenge})} : {})});
   }
 
