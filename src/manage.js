@@ -14,7 +14,9 @@
 //   #clubs/c/CODE    a club you help run
 //   #play            a table being watched (play.js), inside the manager
 
-// First, so a demo club's storage (#406) is in place before anything reads storage.
+// First, so staging's player slot (#671) and a demo club's storage (#406)
+// are in place before anything reads storage.
+import './player-slot-ui.js';
 import './error-report.js';
 import { demo } from './demo.js';
 import init from '../wasm/ducy_wasm.js';
