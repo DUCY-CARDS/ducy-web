@@ -43,6 +43,7 @@ import { CHAT_MAX, cleanChat } from './table-chat.js';
 import { ago } from './time-ago.js';
 import { createOwner } from './club-owner.js';
 import * as pk from './passkey.js';
+import { keepName, storedName } from './player-name.js';
 import { chipOp, VAULT_OPS } from './chip-moves.js';
 import { accountOf, contributions, playersOf } from './club-agents.js';
 import { chargeFieldsHtml, chargeOn, chargeText, clubChargeHtml, contributionsHtml, readCharge, syncChargeFields } from './club-rake.js';
@@ -79,7 +80,7 @@ import { changedSince, formatInfo, isEmpty, MAX_EVENT_TEXT, MAX_INFO_TEXT, nextE
 const fair = fairPlayer(); // this page's side of fair deals (#136)
 import { newKeyPair, open as openBox, sharedKey } from './e2e.js';
 
-const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs', NAME_KEY = 'ducyClubName';
+const CLUB_KEY = 'ducyClub', SENDERS_KEY = 'ducyClubSenders', MEMBERSHIPS_KEY = 'ducyClubs';
 
 let root = null, open = false;
 let view = 'clubs'; // which Play tab this draws (see above)
@@ -173,7 +174,7 @@ function checkSeatWatch(mem) {
 }
 // When something happened (#193): relative, with the full time on hover.
 const when = t => (t ? `<time datetime="${new Date(t).toISOString()}" title="${esc(new Date(t).toLocaleString())}">${ago(t)}</time>` : '');
-const myName = () => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } };
+const myName = storedName;
 // The name you go by in a club you joined (#185): its own, or this browser's.
 const nameIn = mem => mem?.myName || myName();
 
@@ -1181,6 +1182,18 @@ function onSubmitIn(e) {
   // A member's credit limit (#404).
   const cf = e.target.closest('form[data-creditform]');
   if (cf) { e.preventDefault(); hostAct('set_credit', {id: cf.dataset.id, amount: readPick(cf.elements, 'amount', parseChips)}); return; }
+  // A name, then the seat it was asked for (#619).
+  const af = e.target.closest('form[data-nameform]');
+  if (af) {
+    e.preventDefault();
+    const n = String(af.elements.name.value || '').trim();
+    if (!n || !askName) return;
+    const {code, table, amount} = askName;
+    askName = null;
+    setName(n);
+    sitAt(code, table, amount);
+    return;
+  }
   // Sitting down with a buy-in (#404).
   const sf2 = e.target.closest('form[data-sitform]');
   if (sf2) {
@@ -1730,7 +1743,7 @@ function joinFromInvite(name, intro = '') {
   if (invite.hostId === me.id) { note = 'That’s an invite to your own club.'; invite = null; clearInviteFromAddress(); render(); return; }
   // The first name given is this browser's; another one is for this club
   // only (#185).
-  if (!myName()) { try { localStorage.setItem(NAME_KEY, n); } catch {} }
+  if (!myName()) keepName(n);
   // Joining a club: ask the browser to keep this player ID (#562).
   keepStorage();
   let mem = memberships.find(m => m.code === invite.code);
@@ -1758,9 +1771,11 @@ function joinFromInvite(name, intro = '') {
 async function setName(name) {
   const n = String(name || '').trim().slice(0, MAX_PLAYER_NAME);
   if (!n) { alert('Enter a name.'); return; }
-  try { localStorage.setItem(NAME_KEY, n); } catch {}
+  keepName(n);
   // Clubs with a name of their own keep it (#185).
   for (const m of memberships) if (!m.myName) sendName(m);
+  // Kept with the passkey too, so a restore brings it back (#619).
+  if (me) pk.nameChanged(me.id);
   render();
 }
 
@@ -1922,6 +1937,14 @@ async function openReplay(id, list = '') {
 
 // ---- playing at a club table ----
 
+// Sitting down with no name (#619): {code, table, amount}, until one's given.
+let askName = null;
+export function askNameHtml() {
+  let h = '<form class="cl-left cl-pass" data-nameform="1"><label class="cl-left-title" for="cl-askname">Your name</label>';
+  h += `<input class="pl-text" id="cl-askname" name="name" maxlength="${MAX_PLAYER_NAME}" autocomplete="nickname" required>`;
+  return h + '<span class="cl-pass-acts"><button class="btn-small primary" type="submit">Sit down</button><button class="link-btn" type="button" data-cl="name-cancel">Cancel</button></span></form>';
+}
+
 // Sits down at a club table: the #play page draws it (play.js), and its
 // commands go to the host signed, over this club's connection.
 // `amount`: the buy-in chosen on the club page (#404), added once seated.
@@ -1931,6 +1954,14 @@ function sitAt(code, table, amount = 0) {
   const tourney = table.startsWith('tourney:') ? mem?.tourneys?.find(x => x.id === table.slice(8)) : null;
   const t = tourney || mem?.tables?.find(x => x.id === table);
   if (!mem || !t) return;
+  // Never a blank seat (#619): with no name (a restore that found none),
+  // asked for first.
+  if (!nameIn(mem)) {
+    askName = {code, table, amount};
+    render();
+    root?.querySelector('#cl-askname')?.focus();
+    return;
+  }
   // A cash table's chips come from what's available, own and credit (#404);
   // with nothing, the manager is asked from the table.
   const credit = tourney ? null : {
@@ -2089,7 +2120,7 @@ function toolsHtml() {
 }
 
 // Forms whose typing survives a redraw (#398, #404, #544).
-const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform], form[data-schedform], form[data-threadform], form[data-letin]';
+const KEPT_FORMS = 'form[data-noteform], form[data-infoform], form[data-sitform], form[data-creditform], form[data-voidform], form[data-floatform], form[data-vaultform], form[data-schedform], form[data-threadform], form[data-letin], form[data-nameform]';
 // A control that had the focus while it was busy (disabled): it gets it back
 // once it's answered (#544).
 let focusLater = '';
@@ -2241,6 +2272,7 @@ function viewHtml() {
   // Clubs need the passkey first (#575).
   const gate = passGateHtml();
   if (gate) return msg + gate + footHtml();
+  if (askName) return msg + askNameHtml() + footHtml();
   if (view === 'join') {
     const h = requestsHtml();
     return h || msg ? msg + h : '';
@@ -3921,6 +3953,7 @@ async function onClickIn(e) {
   else if (act === 'copy-unlock' || act === 'copy-add') passAct(act);
   else if (act === 'sit-open') { sitForm = `${b.dataset.code}|${b.dataset.table}`; sitAmount = 0; render(); root.querySelector('form[data-sitform] input')?.select(); }
   else if (act === 'sit-cancel') { sitForm = ''; sitAmount = 0; render(); }
+  else if (act === 'name-cancel') { askName = null; render(); }
   // Grouped tables (#501): the answer to "We're starting a new table. Join?".
   else if (act === 'group-yes' || act === 'group-no') {
     const mem = memberships.find(m => m.code === b.dataset.code);
@@ -4616,7 +4649,11 @@ export async function recoverWithPasskey() {
   await recoverAccount();
 }
 export function renameMember(n) {
-  if (!started) { try { localStorage.setItem(NAME_KEY, String(n || '').trim().slice(0, MAX_PLAYER_NAME)); } catch {} return; }
+  if (!started) {
+    keepName(n);
+    pk.nameChanged();
+    return;
+  }
   setName(n);
 }
 

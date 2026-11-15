@@ -222,6 +222,26 @@ test('without PRF the relay vouches: the new device’s ID takes over, and the o
   await assert.rejects(pk.enrol(await enrolEnv(pk, old, await softPasskey())), /moved/);
 });
 
+test('the player’s name is kept with the passkey: set from a session, given back only at a sign-in, and moved with a vouch (#619)', {skip: !haveWasm && 'no wasm build'}, async () => {
+  const {pk} = memoryPasskeys();
+  const ann = await createIdentity(), fresh = await createIdentity();
+  const p = await softPasskey();
+  const made = await pk.enrol(await enrolEnv(pk, ann, p));
+  assert.equal((await pk.unlock(await p.sign((await pk.challenge()).challenge))).name, '', 'none yet');
+  // Only from a live session, and never blank.
+  assert.equal((await pk.http('name', {token: 'nope', name: 'Eve'})).status, 400);
+  assert.match((await pk.http('name', {token: made.token, name: '   '})).body.error, /name/);
+  assert.equal((await pk.http('name', {token: made.token, name: '  Ann Lee, the very long name  '})).status, 200);
+  const v = await pk.unlock(await p.sign((await pk.challenge()).challenge));
+  assert.equal(v.name, 'Ann Lee, the very lo', 'trimmed and cut to 20');
+  // Her status, which anyone can ask for, doesn't say it.
+  assert.equal(JSON.stringify(await pk.status(ann.id)).includes('Ann'), false);
+  await pk.setName(v.token, 'Ann');
+  // A new device's ID taking over (no PRF): the name comes along.
+  await pk.vouch(await signMessage(fresh, {type: 'passkey_vouch', challenge: (await pk.challenge()).challenge, token: v.token}));
+  assert.equal((await pk.unlock(await p.sign((await pk.challenge()).challenge))).name, 'Ann');
+});
+
 test('a club connection acts only once unlocked; chips need a recent unlock', async () => {
   const live = {id: 'ann', at: 0, movedFrom: null};
   const session = async t => (t === 'good' ? {...live} : null);

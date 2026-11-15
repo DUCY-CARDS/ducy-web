@@ -72,6 +72,7 @@ A major release is any of these:
 | A tournament with a rake: the entry costs both, the owner sees the rake, unregistering gives both back | Club manager |
 | A second tab (#618), for a member and for the owner's club manager: it takes over once it has proved the player's ID; the first shows only "Open in another tab" and Use here, and stays so through a wait and an `online` event; Use here takes it back and the second says so (Chromium, 1280 and 375 px) | Main |
 | A first passkey from You → Passkeys → Add, with no unlock (#646); it then lists as this one, and opening You again offers no first Add | Club manager |
+| A passkey restore on a fresh browser (#619): on ducy.cards the member's name comes back with her player ID and balance; with no name at all, Sit down asks for one first and the seat shows it; on the club site's first visit the name comes over from ducy.cards with the ID (Chromium, 1280 and 375 px) | Club manager |
 | The club site (club.ducy.cards and ducy.cards served from the checkout): a first visit asks for the passkey before making a player ID, someone new goes on to the manager (Chromium; a browser without passkeys goes straight on); the wordmark goes to ducy.cards; its `app.html` sends anyone not in a demo to ducy.cards | Club manager |
 | The full landing page is still at `#welcome` | Beta extras |
 | The heads-up challenge deals a hand | Beta extras |
@@ -127,6 +128,7 @@ Every browser test fails on an uncaught error, a console error, or a page wider 
 | Demo clubs | `demo-club.test` | yes | C7 |
 | The club site: its build and deploy (open on live, password kept on staging and sandbox, skipped without a folder, the live deploy leaves it alone), each relay allowing it | `club-site.test` | – | C10 |
 | One passkey on both sites: the first visit's sign-in brings the same player ID, never a vouch there; club running and agents' commands only from a club site with a session made there | `sites.test`, `relay-club.test` | first visit | C10 |
+| The name comes back with a passkey restore (#619): kept on the relay from a session, given back only at a sign-in (never in the public status), moved with a vouch; this browser's own name wins; with none, asked for before a seat | `relay-club.test`, `player-name.test` | yes | M10 |
 
 ### Beta extras
 
@@ -219,7 +221,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 2. Unlock: close the tab and come back. "Unlock your clubs" shows; Use passkey opens the club. Within the same tab nothing asks again, until 4 hours without using a club.
 3. Chips: ask for chips more than 5 minutes after unlocking. The passkey is asked for first. As the owner, give chips more than 5 minutes after unlocking: the same.
 4. Refusal: cancel the passkey prompt. The club stays locked and says "Not unlocked."; nothing is sent.
-5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open the You page → Restore with a passkey → Sign in. The same player ID comes back (compare it on the You page), with the same clubs and balances, and no new join request.
+5. Recovery: on a second device signed in to the same Apple or Google account (so the passkey syncs), open the You page → Restore with a passkey → Sign in. The same player ID comes back (compare it on the You page), with the same clubs and balances, your name (#619), and no new join request.
 6. Recovery without PRF: on a device whose passkey manager doesn't support PRF (iPhone before iOS 18, some third-party managers), do step 5. The device keeps its own player ID; the clubs list the member under it, with the same name and balance, and the owner's activity log says "Moved … to a new ID (ducy vouched)". Note which devices took which path.
 7. A second device's own passkey: on the recovered device, You → Passkeys → Add. Both passkeys list, with their device and date.
 7b. A first passkey from You (#646): with a player ID that has none (e.g. made before passkeys), You → Passkeys → Add. The device asks once, no unlock first; the passkey then lists as this one. Do it on ducy.cards and on club.ducy.cards after "I'm new to ducy".
@@ -304,7 +306,7 @@ Every step runs on staging.ducy.cards (its password is in DirectAdmin) before th
 7. At 375 px the table scrolls sideways with the names kept in view; the page doesn't.
 
 **C10 The club site** (#637; on staging, club-staging.ducy.cards, then live)
-1. Open club-staging.ducy.cards in a browser that has a player with a passkey on staging.ducy.cards: Sign in → Use your passkey brings the same player ID (Player settings shows it) and their clubs. No new ID was made.
+1. Open club-staging.ducy.cards in a browser that has a player with a passkey on staging.ducy.cards: Sign in → Use your passkey brings the same player ID (Player settings shows it), their name (#619) and their clubs. No new ID was made.
 2. A passkey that has never unlocked a club on staging.ducy.cards since it was made, with no copy: the club site says to unlock once on staging.ducy.cards first, and moves nothing. After that unlock, signing in on the club site works.
 3. I'm new to ducy: a new player ID; Set up a passkey works; starting a club from a one-time link (#636) works there.
 4. As owner on the club site: give chips, set credit, refill the float. As an agent: give chips. Each works.

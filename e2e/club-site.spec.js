@@ -99,16 +99,22 @@ test('the player app makes no fuss on its own site, and asks for no sign-in firs
 async function authenticator(page) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('WebAuthn.enable', {enableUI: false});
-  await cdp.send('WebAuthn.addVirtualAuthenticator', {options: {
+  const {authenticatorId} = await cdp.send('WebAuthn.addVirtualAuthenticator', {options: {
     protocol: 'ctap2', ctap2Version: 'ctap2_1', transport: 'internal', hasResidentKey: true,
     hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true, hasPrf: true,
   }});
+  return {
+    credentials: async () => (await cdp.send('WebAuthn.getCredentials', {authenticatorId})).credentials,
+    // A passkey synced from another device.
+    add: credential => cdp.send('WebAuthn.addCredential', {authenticatorId, credential}),
+  };
 }
 
 // A dev relay of its own that takes clubs from the club site only
 // (CLUB_ORIGINS), with a test admin to grant them (#636).
-async function clubRelay(port, admin) {
-  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, ADMINS_FILE: admin.file, CLUB_ORIGINS: 'https://club.ducy.cards'}});
+// `env`: more of its settings.
+async function clubRelay(port, admin, env = {}) {
+  const relay = spawn(process.execPath, ['relay/dev-server.mjs', String(port)], {cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore', env: {...process.env, ADMINS_FILE: admin.file, CLUB_ORIGINS: 'https://club.ducy.cards', ...env}});
   for (let i = 0; i < 100; i++) {
     if (await fetch(`http://localhost:${port}/code/ZZZZ-ZZZZ`).then(() => true, () => false)) return relay;
     await new Promise(r => setTimeout(r, 100));
@@ -176,5 +182,51 @@ test.describe('a grant link (#636)', () => {
     const clubs = (await adminCall(admin, port, '/admin/clubs')).body;
     expect(clubs.clubs.map(c => [c.owner, c.name])).toEqual([[id, 'Night Owls']]);
     expect(clubs.invites[id].used).toBe(true);
+  });
+});
+
+// A first visit to the club site (#619), with storage of its own: the
+// passkey brings the player's ID over from ducy.cards, and their name with
+// it. (In the same browser: Chrome's virtual authenticator gives passkeys
+// copied to another browser no PRF, so the copy can't open there.)
+test.describe('a passkey restore on the club site', () => {
+  test.skip(({browserName}) => browserName !== 'chromium', 'only Chromium has a virtual passkey authenticator');
+  let relay, url;
+  test.beforeAll(async ({browserName}, info) => {
+    if (browserName !== 'chromium') return;
+    const port = RELAY_PORT + 110 + info.parallelIndex;
+    // Sign-ins from both sites count.
+    relay = await clubRelay(port, await grantAdmin(), {ALLOWED_ORIGINS: 'https://ducy.cards,https://club.ducy.cards'});
+    url = `ws://localhost:${port}`;
+  });
+  test.afterAll(() => relay?.kill());
+
+  test('brings the name back with the player ID', async ({page}, info) => {
+    // On ducy.cards: a name, a first passkey, and an unlock (its copy is kept).
+    await authenticator(page);
+    await page.goto(`https://ducy.cards/?relay=${url}`);
+    await expect(page.getByRole('heading', {name: 'Pull up a chair.'})).toBeVisible();
+    const you = () => page.evaluate(async () => (await import('/src/player-settings.js')).openPlayerSettings());
+    await you();
+    await page.locator('#ps-name').fill('Ava');
+    await page.locator('[data-psform="name"] button[type="submit"]').click();
+    await page.locator('[data-ps="pk-first"]').click();
+    await expect(page.getByText('Passkey added.')).toBeVisible();
+    await page.evaluate(() => sessionStorage.clear());
+    await you();
+    await page.locator('[data-ps="pk-show"]').click();
+    await expect(page.locator('.ps-keys')).toContainText('(this one)');
+    const id = await page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id));
+
+    // The club site, with nothing of hers yet.
+    await page.goto(`https://club.ducy.cards/?relay=${url}#clubs`);
+    expect(await page.evaluate(() => localStorage.getItem('ducyClubName'))).toBe(null);
+    await page.getByRole('button', {name: 'Use your passkey'}).click();
+    await expect(page.locator('.mg-badge')).toHaveText('Club manager');
+    await page.locator('#clubs .cl-pass, #clubs .pl-head').first().waitFor();
+    expect(await page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id))).toBe(id);
+    expect(await page.evaluate(() => localStorage.getItem('ducyClubName'))).toBe('Ava');
+    await fitsTheScreen(page);
+    await page.screenshot({path: info.outputPath('club-site-restored.png'), fullPage: true});
   });
 });

@@ -22,7 +22,9 @@
 //
 // storage: {get(key), put(key, value), delete(key)}, async (the registry's).
 //   pk:<id>          {creds: [{credId, spki, alg, count, name, at, copy?}],
-//                     clubs: {code: {hostId, name, owner}}, movedTo?, movedFrom?}
+//                     clubs: {code: {hostId, name, owner}}, name?, movedTo?, movedFrom?}
+//                    (`name`: the player's display name, set from a session,
+//                    given back only at a passkey sign-in, #619)
 //   pkcred:<credId>  the player ID it belongs to
 //   pkChallenges     {challenge: issued at}
 //   pkSessions       {token: {id, credId, at (the sign-in), used}}
@@ -36,7 +38,7 @@ export const FRESH_MS = 5 * 60_000;
 // A session no club connection has used for this long has ended.
 export const IDLE_MS = 4 * 3600e3;
 // Passkeys a player may have, and clubs remembered for their recovery.
-const MAX_CREDS = 10, MAX_CLUBS = 50;
+const MAX_CREDS = 10, MAX_CLUBS = 50, MAX_NAME = 20;
 const ALGS = {
   [-8]: {imp: {name: 'Ed25519'}, sig: {name: 'Ed25519'}},
   [-7]: {imp: {name: 'ECDSA', namedCurve: 'P-256'}, sig: {name: 'ECDSA', hash: 'SHA-256'}, der: true},
@@ -240,7 +242,8 @@ export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = 
 
     // A passkey sign-in {credId, clientDataJSON, authenticatorData,
     // signature}: a session for its player ID. {token, id, at, copy (the
-    // locked key copy for this passkey, or null), clubs}.
+    // locked key copy for this passkey, or null), clubs, name (the
+    // player's display name, or '', #619)}.
     async unlock(a) {
       const credId = String(a?.credId || '');
       const id = await storage.get(`pkcred:${credId}`);
@@ -251,7 +254,22 @@ export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = 
       cred.count = await checkAssertion(cred, a, {challengeOk: useChallenge, origins});
       await put(id, rec);
       const token = await startSession(id, credId, assertionOrigin(a));
-      return {token, id, at: clock(), copy: cred.copy || null, movedTo: rec.movedTo || null, clubs: rec.clubs || {}};
+      return {token, id, at: clock(), copy: cred.copy || null, movedTo: rec.movedTo || null, clubs: rec.clubs || {}, name: rec.name || ''};
+    },
+
+    // Keeps the display name of session `token`'s player (#619), so a sign-in
+    // on a new device brings it back with the player ID.
+    async setName(token, name) {
+      const s = await live(token);
+      if (!s) throw new Error('Unlock with your passkey first.');
+      const n = String(name ?? '').trim().slice(0, MAX_NAME);
+      if (!n) throw new Error('Enter a name.');
+      const rec = await get(s.id);
+      if (rec.name !== n) {
+        rec.name = n;
+        await put(s.id, rec);
+      }
+      return {ok: true};
     },
 
     // Keeps the PRF-locked copy of the signer's key for their passkey
@@ -312,6 +330,7 @@ export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = 
       if (now.creds.length) throw new Error('This device’s player ID has a passkey of its own.');
       now.creds = old.creds;
       now.clubs = {...old.clubs};
+      if (old.name) now.name = old.name;
       now.movedFrom = from;
       old.movedTo = to;
       old.creds = [];
@@ -359,6 +378,7 @@ export function passkeys(storage, {origins = [], clubOrigins = [], now: clock = 
         else if (op === 'unlock') v = await this.unlock(body);
         else if (op === 'copy') v = await this.saveCopy(body?.env);
         else if (op === 'list') v = await this.list(body?.token);
+        else if (op === 'name') v = await this.setName(body?.token, body?.name);
         else if (op === 'remove') v = await this.remove(body?.token, String(body?.credId || ''));
         else if (op === 'vouch') v = await this.vouch(body?.env, origin);
         else return {status: 404, body: {error: 'not found'}};

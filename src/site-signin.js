@@ -2,7 +2,8 @@
 // quest, odds and training to come), which have browser storage of their
 // own: before anything makes a new player ID there, the player signs in
 // with their passkey, which brings their player ID over from ducy.cards
-// (passkey.js recover: the relay's copy, opened with the passkey's PRF).
+// (passkey.js recover: the relay's copy, opened with the passkey's PRF),
+// and their name with it (#619).
 // The relay never vouches here, so opening another site never moves
 // anyone's clubs to a new ID. Someone new to ducy goes on with a new one.
 //
