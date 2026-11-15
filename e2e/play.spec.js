@@ -687,8 +687,6 @@ test.describe('a club member', () => {
     await form.locator('[name=sb]').fill('0.25');
     await form.locator('[name=bb]').fill('0.5');
     await form.locator('.tf-more summary').click();
-    // Off in the beta until club-beta.js turns it on.
-    test.skip(!(await form.locator('[name=house]').count()), 'rake is off in the beta');
     await expect(form.locator('[name=rakePct]')).toBeHidden();
     // None by default; a typed percentage and a cap in big blinds.
     await expect(form.locator('[name=house]')).toHaveValue('none');
@@ -712,11 +710,9 @@ test.describe('a club member', () => {
     const join = async name => {
       const {page} = await browserWith(browser, watch);
       await page.goto(invite);
-      await page.locator('form[data-joinform] input[name="name"]').fill(name);
-      await page.locator('form[data-joinform] button[type="submit"]').click();
+      await askToJoin(page, name);
       await page.locator('[data-cl="pass-enrol"]').click();
-      await owner.evaluate(() => { location.hash = 'clubs/requests'; });
-      await owner.locator('[data-cl="approve"]').first().click();
+      await letIn(owner);
       await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
       await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
       await page.locator(`[data-ask-amt="${code}"]`).fill('50');
@@ -747,7 +743,20 @@ test.describe('a club member', () => {
     await fitsTheScreen(ava);
     await ava.screenshot({path: info.outputPath('rake-log.png'), fullPage: true});
 
-    // The owner: each player's share on Chips, and the rake in the replay.
+    // The owner: each player's share on Players and on Chips, and the rake in the replay.
+    await owner.evaluate(() => { location.hash = 'clubs/players'; });
+    const paid = owner.locator('.pp-table');
+    await expect(paid.locator('tbody tr', {hasText: 'Bo'})).toBeVisible();
+    const byName = await paid.evaluate(t => {
+      const head = [...t.tHead.rows[0].cells].map(c => c.innerText.replace(/[↑↓]/g, '').trim());
+      return Object.fromEntries([...t.tBodies[0].rows].map(r => [r.cells[0].innerText.trim(), Object.fromEntries(head.map((h, i) => [h, r.cells[i].innerText.trim()]))]));
+    });
+    expect(byName.Ava.Rake).toBe('0.05');
+    expect(byName.Bo.Rake).toBe('0.05');
+    // What they won between them is what the club took.
+    expect(Number(byName.Ava.Won.replace(/[+,]/g, '')) + Number(byName.Bo.Won.replace(/[+,]/g, ''))).toBeCloseTo(-0.1);
+    await fitsTheScreen(owner);
+    await owner.screenshot({path: info.outputPath('rake-players.png'), fullPage: true});
     await owner.evaluate(() => { location.hash = 'clubs/chips'; });
     const rake = owner.locator('.cl-rake');
     await expect(rake.getByRole('heading', {name: 'Rake and time'})).toBeVisible();
