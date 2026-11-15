@@ -1,5 +1,7 @@
 // First, so a local test profile (?as=) is in place before anything reads storage.
 import { profile } from './profile.js';
+// And staging's player slot (#671), the same way.
+import './player-slot-ui.js';
 // Next, to hear about anything that goes wrong from here on (#552).
 import { reportError } from './error-report.js';
 // And a demo club's (#406), for the person you are in it.

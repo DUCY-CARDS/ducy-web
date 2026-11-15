@@ -92,6 +92,12 @@ which replace the live site's.
 symlink, `gto -> ../gto`. A new model pin reaches them when a release
 publishes it.
 
+**Several players in one browser (staging only, #671):** add `?player=2`
+(up to 20) to a staging address and that window is another player, with
+its own player ID, name, clubs and settings; the tab at the top of the
+page shows which, and opens or switches to the others. Slot 1 is the
+browser's normal player. The live sites ignore `?player`.
+
 ## Deploying the sandbox
 
 Actions → **Deploy sandbox** → Run workflow: give a branch, tag or commit,

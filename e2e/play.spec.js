@@ -570,6 +570,66 @@ test.describe('a club member', () => {
     await expect(away(own2)).toBeVisible();
   });
 
+  // Staging's player slots (#671), here on a local page: one browser, the
+  // owner in one window and two players in others (?player=2, ?player=3),
+  // each their own player ID, and none takes another's club over (#618);
+  // the same player in a second window still does.
+  test('one browser: the owner and two players, each in a window of their own, and no takeover between them (#671)', async ({browser, watch, browserName}, info) => {
+    needsPasskeys(browserName);
+    test.setTimeout(180_000);
+    const ctx = await browser.newContext();
+    const away = page => page.getByRole('heading', {name: 'Open in another tab'});
+    const idIn = page => page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id));
+    const owner = watch(await ctx.newPage());
+    await authenticator(owner);
+    await owner.goto(await grantLink(owner, url, admin));
+    await owner.locator('#cl-clubname').fill('Night Owls');
+    await owner.locator('[data-cl="create"]').click();
+    await owner.locator('[data-cl="pass-enrol"]').click();
+    await owner.locator('[data-cl="wiz-invite"]').click();
+    const invite = await owner.locator('#cl-link').inputValue();
+    const code = new URL(invite).searchParams.get('club');
+    await owner.locator('[data-cl="wiz-done"]').click();
+    const as = n => { const u = new URL(invite); u.searchParams.set('player', String(n)); return u.toString(); };
+
+    // Players 2 and 3, in windows of the same browser, ask and are let in.
+    const join = async (n, name) => {
+      const page = watch(await ctx.newPage());
+      const auth = await authenticator(page);
+      await page.goto(as(n));
+      await askToJoin(page, name);
+      await page.locator('[data-cl="pass-enrol"]').click();
+      await letIn(owner);
+      await page.evaluate(c => { location.hash = `clubs/c/${encodeURIComponent(c)}`; }, code);
+      await expect(page.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+      return {page, auth};
+    };
+    const {page: ava, auth} = await join(2, 'Ava');
+    const {page: bea} = await join(3, 'Bea');
+    const ids = [await idIn(owner), await idIn(ava), await idIn(bea)];
+    expect(new Set(ids).size).toBe(3);
+    await expect(ava.locator('details.ps-slot summary')).toHaveText('P2 Ava');
+    await expect(bea.locator('details.ps-slot summary')).toHaveText('P3 Bea');
+    // Everyone keeps their own window: nobody was taken over.
+    await owner.waitForTimeout(2000);
+    for (const p of [owner, ava, bea]) await expect(away(p)).toHaveCount(0);
+    await expect(ava.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await expect(bea.getByRole('heading', {name: 'Night Owls'})).toBeVisible();
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('slot-ava.png'), fullPage: true});
+
+    // Ava again in another window: that one is the same player, and takes over.
+    const ava2 = watch(await ctx.newPage());
+    const auth2 = await authenticator(ava2);
+    for (const c of await auth.credentials()) await auth2.add(c);
+    await ava2.goto(`/?relay=${url}&player=2#clubs/c/${encodeURIComponent(code)}`);
+    expect(await idIn(ava2)).toBe(ids[1]);
+    await expect(away(ava)).toBeVisible();
+    await expect(away(bea)).toHaveCount(0);
+    await expect(away(owner)).toHaveCount(0);
+    await ctx.close();
+  });
+
   // A restore on a new browser (#619): the name comes back with the player
   // ID; with none, it's asked for before a seat, never a blank one.
   test('a passkey restore on a fresh browser brings the name back, and with no name a seat asks for one (#619)', async ({browser, watch, browserName}, info) => {

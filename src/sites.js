@@ -7,6 +7,11 @@
 //
 // A local page (localhost, the browser tests) has no subdomains: the club
 // manager is manage.html beside index.html, as before.
+//
+// On staging, a link to the other site keeps the window's player slot
+// (player-slot.js, #671).
+
+import { withSlot } from './player-slot.js';
 
 export const SITES = ['club'];
 const ENVS = ['staging', 'sandbox'];
@@ -50,14 +55,14 @@ const withHash = (base, hash) => `${base}${hash ? `#${String(hash).replace(/^#/,
 // on the club site, or manage.html on a local page.
 export function clubUrl(hash = '', loc = location) {
   const h = siteHost('club', loc.hostname);
-  if (h) return withHash(h === loc.hostname ? './' : `https://${h}/`, hash);
+  if (h) return h === loc.hostname ? withHash('./', hash) : withSlot(withHash(`https://${h}/`, hash));
   return withHash('manage.html', hash);
 }
 
 // The player app's page `hash`, from page `loc`.
 export function playerUrl(hash = '', loc = location) {
   const h = playerHost(loc.hostname);
-  if (h && h !== loc.hostname && !(h === 'ducy.cards' && loc.hostname === 'www.ducy.cards')) return withHash(`https://${h}/`, hash);
+  if (h && h !== loc.hostname && !(h === 'ducy.cards' && loc.hostname === 'www.ducy.cards')) return withSlot(withHash(`https://${h}/`, hash));
   return withHash('./', hash);
 }
 

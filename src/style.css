@@ -1744,6 +1744,37 @@ body.has-callbar .pt-toast:not(.cl-callbar) { bottom: 76px; }
   background: var(--teal); color: #fff; opacity: 0.9; pointer-events: none;
 }
 
+/* Staging's player switcher (#671, player-slot-ui.js): a small tab hanging
+   from the top edge, in the middle of the top bar, clear of the wordmark,
+   the menus and a table's controls; its menu opens downward. */
+.ps-slot {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 1300;
+  font: 500 12px var(--font-ui); color: #1d3a2c;
+}
+.ps-slot summary {
+  list-style: none; cursor: pointer; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: #f5c542; border: 1px solid #1d3a2c; border-top: 0; border-radius: 0 0 8px 8px; padding: 1px 8px 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.ps-slot summary::-webkit-details-marker { display: none; }
+/* On a phone the tab is just the number (the menu names everyone), so it
+   stays clear of the top bar's badge. */
+@media (max-width: 520px) { .ps-slot-name { display: none; } }
+.ps-slot ul {
+  position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 80px); overflow: auto; list-style: none; padding: 4px 0;
+  background: #f3e7c9; border: 2px solid #1d3a2c; border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.ps-slot li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.ps-slot li[aria-current] { background: #e8d9b0; }
+.ps-slot-who { flex: 1; min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-slot li button {
+  flex: none; font: 600 12px var(--font-ui); color: #1d3a2c; background: transparent;
+  border: 1px solid #1d3a2c; border-radius: 8px; padding: 4px 10px; cursor: pointer;
+}
+.ps-slot li button:hover { background: #1d3a2c; color: #f3e7c9; }
+
 /* A demo club (#406, demo.js): the striped DEMO bar on every page, its
    person switcher and Simulate, and Demo over. */
 .demo-bar {
