@@ -7,8 +7,9 @@
 import { test as base, expect } from '@playwright/test';
 import { SITE_PORT } from './playwright.config.js';
 
-// The live relay isn't reached from the tests: its requests are refused.
-const EXPECTED = /Failed to load resource|WebSocket connection|access control checks/;
+// The live relay isn't reached from the tests: its requests are refused
+// (WebKit says "Load failed").
+const EXPECTED = /Failed to load resource|WebSocket connection|access control checks|TypeError: Load failed/;
 const LOCAL = `http://localhost:${SITE_PORT}`;
 const PLAYER = p => (p === '/' ? '/index.html' : p);
 const CLUB = p => (p === '/' ? '/manage.html' : p === '/app.html' ? '/index.html' : p);
@@ -36,10 +37,16 @@ const test = base.extend({
 const fitsTheScreen = async page => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 const idOf = page => page.evaluate(() => import('/src/identity.js').then(m => m.loadIdentity()).then(i => i.id));
 const pill = page => page.locator('details.ps-slot');
-// The page is up: its first screen drawn.
-const ready = page => expect(page.locator('body')).not.toHaveClass(/booting/);
+// The page is up: its first screen drawn, and what it loads loaded (so
+// leaving it cuts no module short).
+const ready = async page => {
+  await expect(page.locator('body')).not.toHaveClass(/booting/);
+  await page.waitForLoadState('networkidle');
+};
+// Screenshots in Chromium only: WebKit's add a stylesheet the page's policy refuses.
+const shot = (page, browserName, path) => (browserName === 'chromium' ? page.screenshot({path}) : null);
 
-test('staging: each window is its own player, named in the switcher', async ({page}, info) => {
+test('staging: each window is its own player, named in the switcher', async ({page, browserName}, info) => {
   await page.goto('https://staging.ducy.cards/');
   await ready(page);
   await expect(pill(page).locator('summary')).toHaveText('P1');
@@ -72,7 +79,7 @@ test('staging: each window is its own player, named in the switcher', async ({pa
   await expect(rows.nth(1)).toContainText('P2 Ava');
   await expect(rows.nth(2)).toContainText('New player');
   await fitsTheScreen(page);
-  await page.screenshot({path: info.outputPath('switcher.png')});
+  await shot(page, browserName, info.outputPath('switcher.png'));
 
   // New window as player 2: it opens on that player.
   const [popup] = await Promise.all([page.context().waitForEvent('page'), rows.nth(1).getByRole('button', {name: 'P2 in a new window'}).click()]);
@@ -98,14 +105,14 @@ test('staging: each window is its own player, named in the switcher', async ({pa
   expect(await idOf(page)).toBe(one);
 });
 
-test('staging’s club site: the window’s player, and links to the player app keep it', async ({page}, info) => {
+test('staging’s club site: the window’s player, and links to the player app keep it', async ({page, browserName}, info) => {
   await page.addInitScript(() => { delete window.PublicKeyCredential; });
   await page.goto('https://club-staging.ducy.cards/?player=2#clubs');
   await expect(page.locator('#clubs .cl-pass, #clubs .pl-head').first()).toBeVisible();
   await expect(pill(page).locator('summary')).toHaveText('P2');
   await expect(page.locator('a.wordmark')).toHaveAttribute('href', 'https://staging.ducy.cards/?player=2');
   await fitsTheScreen(page);
-  await page.screenshot({path: info.outputPath('club-site.png')});
+  await shot(page, browserName, info.outputPath('club-site.png'));
 });
 
 test('the live sites: no switcher, and ?player changes nothing', async ({page}) => {
@@ -123,7 +130,7 @@ test('the live sites: no switcher, and ?player changes nothing', async ({page}) 
   }
 });
 
-test('a local page has no switcher unless a window asks for a player; at a table it keeps out of the way', async ({page}, info) => {
+test('a local page has no switcher unless a window asks for a player; at a table it keeps out of the way', async ({page, browserName}, info) => {
   await page.goto('/');
   await ready(page);
   await expect(pill(page)).toHaveCount(0);
@@ -133,5 +140,5 @@ test('a local page has no switcher unless a window asks for a player; at a table
   await page.locator('[data-act="sitregulars"]').click();
   await expect(page.locator('[data-act="check"], [data-act="call"], [data-act="fold"], [data-act="next"]').first()).toBeVisible();
   await fitsTheScreen(page);
-  await page.screenshot({path: info.outputPath('table.png')});
+  await shot(page, browserName, info.outputPath('table.png'));
 });
