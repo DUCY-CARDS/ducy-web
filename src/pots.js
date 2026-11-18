@@ -37,3 +37,26 @@ export function returnUncalled(state) {
   });
   return {...state, seats, pot: Math.max(0, amt(state.pot) - u.amount)};
 }
+
+/**
+ * Whether a finished hand's pot was split between two runs (or a bomb
+ * pot's two boards): ducy decides it pot by pot, so the short
+ * stack's main pot can run once while the big stacks' side pot runs twice.
+ * A pot run once is won on the first board.
+ */
+export const ranTwice = p => amt(p?.runs) === 2;
+
+/**
+ * The log line for what the all-in players chose (ducy's `runs` event:
+ * `count`, and `pots`, how many times each pot runs, main pot first).
+ */
+export function runsText(e) {
+  const pots = (e.pots || []).map(amt);
+  const twice = pots.flatMap((r, i) => (r === 2 ? [i] : []));
+  if (amt(e.count) !== 2 || !twice.length) return 'Running it once';
+  // Everyone in the main pot is in every side pot: if it runs twice, so
+  // does every pot more than one player can win.
+  if (pots[0] === 2) return 'Running it twice';
+  if (pots.length === 2) return 'Side pot runs twice';
+  return `Side pot${twice.length > 1 ? 's' : ''} ${twice.join(' and ')} run${twice.length > 1 ? '' : 's'} twice`;
+}

@@ -1460,7 +1460,7 @@ async function seedHands(page) {
     const view = (n, events, seats, board, showdown) => ({
       street: null, pot: 0, current_bet: 0, hero: 0, seat: 0, pot_limit: false, to_act: null, legal: null, complete: true,
       hand_number: n, small_blind: 100, big_blind: 200, button: 0, hole_cards: 2, board, showdown,
-      pots: [{amount: 1200, eligible: [], awards: [], winning_hand: null}], events, seats: seats.map(seat),
+      pots: [{amount: 1200, eligible: [], awards: [], winning_hand: null, runs: 1}], events, seats: seats.map(seat),
     });
     const pre = [
       {type: 'small_blind', seat: 1, amount: 100}, {type: 'big_blind', seat: 2, amount: 200},

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import './wasm.mjs';
-import { returnUncalled, shownPots } from '../src/pots.js';
+import { ranTwice, returnUncalled, runsText, shownPots } from '../src/pots.js';
 
 const seat = (o = {}) => ({stack: 0, street_bet: 0, folded: false, all_in: false, ...o});
 
@@ -37,4 +37,20 @@ test('an uncalled all-in goes straight back: the bettor has it again, and their 
   assert.equal(returnUncalled(done), done);
   const plain = {complete: false, pot: 400, events: shove.slice(0, 2), seats: [seat({street_bet: 200}), seat({street_bet: 100})]};
   assert.equal(returnUncalled(plain), plain);
+});
+
+test('run it twice pot by pot: the log says which pots ran twice', () => {
+  assert.equal(runsText({count: 1, pots: [1, 1]}), 'Running it once');
+  assert.equal(runsText({count: 2, pots: [2]}), 'Running it twice');
+  assert.equal(runsText({count: 2, pots: [2, 2, 1]}), 'Running it twice');
+  // The short stack said no: their main pot once, the side pot twice.
+  assert.equal(runsText({count: 2, pots: [1, 2]}), 'Side pot runs twice');
+  assert.equal(runsText({count: 2, pots: [1, 1, 2]}), 'Side pot 2 runs twice');
+  assert.equal(runsText({count: 2, pots: [1, 2, 2]}), 'Side pots 1 and 2 run twice');
+});
+
+test('a pot run once was won on the first board, not split between runs', () => {
+  assert.equal(ranTwice({runs: 2}), true);
+  assert.equal(ranTwice({runs: 1}), false);
+  assert.equal(ranTwice(undefined), false);
 });

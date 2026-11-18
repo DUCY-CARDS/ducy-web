@@ -369,4 +369,66 @@ test.describe('club money', () => {
     await row.locator('[data-cl="t-unregister"]').click();
     await expect(ava.getByText('Balance 100')).toBeVisible();
   });
+
+  test('run it twice pot by pot: the short stack runs the main pot once, the big stacks their side pot twice', async ({browser, watch}, info) => {
+    const {owner, invite, code} = await clubWithTable(browser, watch);
+    const ava = await join(browser, watch, invite, code, 'Ava', ownerApproves(owner));
+    const bo = await join(browser, watch, invite, code, 'Bo', ownerApproves(owner));
+    const cy = await join(browser, watch, invite, code, 'Cy', ownerApproves(owner));
+    for (const name of ['Ava', 'Bo', 'Cy']) await chipMove(owner, name, 'give', 200, 'buy-in');
+    // Ava sits with the table's least, Bo and Cy with 200.
+    await ava.locator('[data-cl="sit-open"]').first().click();
+    const input = ava.locator('form[data-sitform] input[name="amount"]');
+    await input.fill(await input.getAttribute('min'));
+    await ava.locator('form[data-sitform] button[type="submit"]').click();
+    await expect(ava.locator('.pl-felt')).toBeVisible();
+    await sit(bo);
+    await sit(cy);
+    const players = [ava, bo, cy];
+    const inHand = page => page.locator('.pl-seat:not(.empty):not(.out)').count();
+    // Until a hand with all three: they check or fold. With all three, they
+    // all go all-in; any other run-it-twice choice runs once.
+    let asked = false;
+    for (let i = 0; i < 400 && !asked; i++) {
+      for (const page of players) {
+        if (await page.locator('[data-act="runtwice"]').isVisible()) {
+          if (await inHand(page) === 3 && await page.locator('.pl-seat:not(.empty):not(.out):not(.folded)').count() === 3) { asked = true; break; }
+          await page.locator('[data-act="runonce"]').click().catch(() => {});
+          continue;
+        }
+        const three = await inHand(page) === 3;
+        const shove = page.locator('.pl-sizes [data-size]', {hasText: 'All-in'});
+        if (three && await shove.isVisible()) {
+          await shove.click().catch(() => {});
+          await page.locator('[data-act="raise"], [data-act="bet"]').first().click().catch(() => {});
+        } else if (three && await page.locator('[data-act="call"]').isVisible()) {
+          await page.locator('[data-act="call"]').click().catch(() => {});
+        } else if (await page.locator('[data-act="check"]').isVisible()) {
+          await page.locator('[data-act="check"]').click().catch(() => {});
+        } else if (await page.locator('[data-act="fold"]').isVisible()) {
+          await page.locator('[data-act="fold"]').click().catch(() => {});
+        }
+      }
+      await ava.waitForTimeout(250);
+    }
+    expect(asked).toBe(true);
+    // Ava says once: the hand still waits, since Bo and Cy may run their
+    // side pot twice.
+    await ava.locator('[data-act="runonce"]').click();
+    await expect(ava.locator('.pl-status')).toContainText('waiting for the others');
+    await fitsTheScreen(ava);
+    await ava.screenshot({path: info.outputPath('run-twice-waiting.png'), fullPage: true});
+    await bo.locator('[data-act="runtwice"]').click();
+    await expect(bo.locator('.pl-status')).toContainText('waiting for the others');
+    await cy.locator('[data-act="runtwice"]').click();
+    // Two boards; the main pot won on run 1, the side pot on both runs.
+    for (const page of players) {
+      await expect(page.locator('.pl-board2')).toBeVisible();
+      const summary = page.locator('.pl-summary.now');
+      await expect(summary.locator('li', {hasText: 'Main pot'})).toContainText('· run 1');
+      await expect(summary.locator('li', {hasText: 'Side pot'}).first()).not.toContainText('· run 1');
+      await fitsTheScreen(page);
+    }
+    await bo.screenshot({path: info.outputPath('run-twice-side-pot.png'), fullPage: true});
+  });
 });

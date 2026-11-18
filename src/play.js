@@ -20,7 +20,7 @@ import { loadIdentity } from './identity.js';
 import { cardSound, chipsSound, hurrySound, potSound, shuffleSound, turnSound, unlockSounds } from './sounds.js';
 import { chipText, chipInput, parseChips, tableChip, toChip, CHIP_STEP } from './chip-format.js';
 import { chipsHtml as chipPile, handChips, rowHtml as chipRow, seatChips } from './chips.js';
-import { returnUncalled, shownPots } from './pots.js';
+import { ranTwice, returnUncalled, runsText, shownPots } from './pots.js';
 import { handText, handWords } from './hand-words.js';
 import { PLAYER_AVATARS, avatarUrl, botAvatar } from './avatars.js';
 import { stayText } from './club-tables.js';
@@ -2670,7 +2670,7 @@ function eventText(e) {
     case 'bet': return `${who} ${v('bet')} ${c(e.to)}${allIn}`;
     case 'raise': return `${who} ${v('raise', 'raises')} to ${c(e.to)}${allIn}`;
     case 'board': return `${String(e.street)}: ${e.cards.join(' ')}`;
-    case 'runs': return e.count === 2 ? 'Running it twice' : 'Running it once';
+    case 'runs': return runsText(e);
     case 'second_board': return `${bombHand(state) ? 'Board 2' : 'Second run'}: ${e.cards.join(' ')}`;
     case 'award': return `${who} ${v('win')} ${c(e.amount)}${e.pot > 0 ? ' (side pot)' : ''}`;
     // What a club table takes (#449).
@@ -2761,8 +2761,8 @@ function summaryLine(s) {
     const cards = i => (s.seats[i]?.cards?.length && s.seats[i].cards.every(Boolean) ? ` ${s.seats[i].cards.map(smallCard).join('')}` : '');
     const won = winners(p);
     const names = won.map(a => `${who(a.seat)}${cards(a.seat)}`).join(' and ');
-    line = `${names} ${won.length > 1 ? 'split' : twoBoards(s) ? 'scooped' : 'won'} ${c(p.amount)}`;
-    if (p.winning_hand && !twoBoards(s)) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
+    line = `${names} ${won.length > 1 ? 'split' : ranTwice(p) ? 'scooped' : 'won'} ${c(p.amount)}`;
+    if (p.winning_hand && !ranTwice(p)) line += ` with ${esc(handText(p.winning_hand) || p.winning_hand)}`;
     if (contested.length > 1) line += `, and ${contested.length - 1} side pot${contested.length > 2 ? 's' : ''}`;
   } else if (pots.length) {
     const a = pots[0].awards[0];
@@ -2800,10 +2800,13 @@ function summaryBody(s) {
       const label = contested.length > 1 ? (k === 0 ? 'Main pot' : `Side pot ${k}`) : 'Pot';
       const won = winners(p);
       const names = won.map(a => `<b>${who(a.seat)}</b>${holeOf(a.seat)}`);
+      // Run twice pot by pot: a pot run once was won on run 1 alone.
+      const twice = ranTwice(p);
       const split = won.length > 1 ? ` split ${won.map(a => `${who(a.seat)} ${c(a.amount)}`).join(', ')}`
-        : twoBoards(s) ? ` ${won[0].seat === 0 && !watching ? 'scoop' : 'scoops'} both ${tableGame.bomb ? 'boards' : 'runs'}` : '';
-      const hand = p.winning_hand && !twoBoards(s) ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : '';
-      h += `<li>${label} ${c(p.amount)}: ${names.join(' and ')}${split}${hand}</li>`;
+        : twice ? ` ${won[0].seat === 0 && !watching ? 'scoop' : 'scoops'} both ${tableGame.bomb ? 'boards' : 'runs'}` : '';
+      const hand = p.winning_hand && !twice ? ` <span class="pl-sum-hand">with ${words(p.winning_hand)}</span>` : '';
+      const runOne = twoBoards(s) && !twice ? ' <span class="pl-meta">· run 1</span>' : '';
+      h += `<li>${label} ${c(p.amount)}${runOne}: ${names.join(' and ')}${split}${hand}</li>`;
     });
     for (const p of pots.filter(x => x.eligible.length === 1)) {
       for (const a of p.awards) h += `<li class="pl-meta">${who(a.seat)} ${a.seat === 0 && !watching ? 'get' : 'gets'} ${c(a.amount)} back, uncalled</li>`;
@@ -3094,8 +3097,10 @@ function controlsHtml() {
       fold = '<button class="tr-btn" data-act="prefold">Undo <kbd>F</kbd></button>';
     }
   } else if (s.run_choice) {
-    // Everyone left is all-in: run the rest of the board twice? Everyone
-    // still in must say yes (bots go along).
+    // Everyone left is all-in: run the rest of the board twice? Settled pot
+    // by pot once everyone has answered: a pot runs twice when everyone in
+    // it says yes (bots go along), so after a no it still waits for the
+    // others, whose side pot may run twice.
     const me = s.seats[0];
     const asked = !watching && !me.folded && !me.sitting_out && !me.empty;
     const answer = mode === 'guest' ? mySeat?.run_twice : myRunAnswer?.hand === num(s.hand_number) ? myRunAnswer.yes : undefined;

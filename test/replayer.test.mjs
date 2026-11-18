@@ -10,7 +10,7 @@ import { equityHash, handText, knownCards, Replayer } from '../src/replayer.js';
 
 const full = v => ({
   street: null, pot: 0, current_bet: 0, hero: 0, seat: 0, pot_limit: false, to_act: null, legal: null, complete: true, ...v,
-  pots: (v.pots || []).map(p => ({eligible: [], awards: [], winning_hand: null, ...p})),
+  pots: (v.pots || []).map(p => ({eligible: [], awards: [], winning_hand: null, runs: 1, ...p})),
   seats: v.seats.map(s => ({id: '', human: true, away: false, street_bet: 0, all_in: false, empty: false, sitting_out: false, ...s})),
 });
 
