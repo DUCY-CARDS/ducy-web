@@ -1,5 +1,6 @@
 // Running it twice through ducy-wasm: at a bot table the person chooses and
-// the bots go along; at a club table (MultiTable) both players must say yes.
+// the bots go along; at a club table (MultiTable) it's settled pot by pot,
+// each pot twice when everyone in it says yes.
 // Run: wasm-pack build --target nodejs --out-dir pkg-node (in ducy-wasm), then
 // node ducy-wasm/tests/run-twice.cjs
 const assert = require('node:assert/strict');
@@ -91,6 +92,57 @@ function clubAllIn() {
   table.handle('ann', {type: 'run_twice', yes: true}, t());
   const r = table.handle('bo', {type: 'run_twice', yes: false}, t());
   assert.equal(r.state.runs, 1, 'Bo said no: once');
+  assert.deepEqual(r.state.second_board, []);
+  assert.deepEqual(r.state.pot_runs, [1]);
+}
+
+// Three-way, pot by pot: Ann (50) all-in against Bo and Cy (100 each). A
+// pot runs twice when everyone in it says yes.
+function threeWay() {
+  let now = 1000;
+  const t = () => (now += 10);
+  const ids = ['ann', 'bo', 'cy'];
+  const table = w.MultiTable.club(3, 40n, 200n, 1n, 2n, 5n, undefined, 30000n);
+  ids.forEach((id, seat) => {
+    table.handle(id, {type: 'join', name: id}, t());
+    table.handle(id, {type: 'request_chips', amount: seat ? 100 : 50}, t());
+    table.approveChips(seat, t());
+  });
+  let r = table.newHand(t());
+  for (let k = 0; k < 6 && r.awaiting?.kind !== 'run_choice'; k++) {
+    const id = ids[r.state.to_act];
+    const view = r.out.filter(m => m.to === id && m.data.type === 'state').pop().data.view;
+    r = table.handle(id, {type: 'act', seq: r.seq, kind: view.legal.raise ? 'allin' : 'call', amount: 0}, t());
+  }
+  assert.equal(r.awaiting?.kind, 'run_choice');
+  return {table, t};
+}
+{
+  // Ann says no, Bo and Cy yes: the main pot once, the side pot twice.
+  const {table, t} = threeWay();
+  let r = table.handle('ann', {type: 'run_twice', yes: false}, t());
+  assert.equal(r.state.complete, false, 'Bo and Cy may still run their side pot twice');
+  const mine = r.out.filter(m => m.to === 'ann' && m.data.type === 'state').pop().data;
+  assert.equal(mine.me.run_twice, false, 'Ann waits with her answer');
+  table.handle('bo', {type: 'run_twice', yes: true}, t());
+  r = table.handle('cy', {type: 'run_twice', yes: true}, t());
+  assert.equal(r.state.complete, true);
+  assert.equal(r.state.runs, 2);
+  assert.deepEqual(r.state.pot_runs, [1, 2]);
+  assert.deepEqual(r.state.pots.map(p => p.runs), [1, 2]);
+  assert.equal(r.state.second_board.length, 5);
+  const runs = r.state.events.find(e => e.type === 'runs');
+  assert.deepEqual([runs.count, runs.pots], [2, [1, 2]]);
+  // The main pot is all on the first board: one award per winner.
+  const main = r.state.pots[0];
+  assert.equal(main.awards.reduce((a, x) => a + Number(x.amount), 0), Number(main.amount));
+}
+{
+  // Bo is in both pots: his no settles it at once, all run once.
+  const {table, t} = threeWay();
+  const r = table.handle('bo', {type: 'run_twice', yes: false}, t());
+  assert.equal(r.state.complete, true);
+  assert.deepEqual(r.state.pot_runs, [1, 1]);
   assert.deepEqual(r.state.second_board, []);
 }
 console.log('run-twice: ok');

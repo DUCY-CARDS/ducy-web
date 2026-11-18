@@ -416,8 +416,8 @@ impl Club {
             .values()
             .filter(|m| m.seat_table() == Some(table))
             .filter(|m| {
-                !m.seat()
-                    .is_some_and(|s| s.get("moving").is_some_and(|v| !v.is_null()))
+                m.seat()
+                    .is_none_or(|s| s.get("moving").is_none_or(|v| v.is_null()))
             })
             .map(|m| {
                 let sat = m

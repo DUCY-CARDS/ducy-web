@@ -115,7 +115,7 @@ for (const [seat, id] of ["ann", "bo"].entries()) {
 }
 const before = club.newHand(t()).state;
 const saved = club.save(t());
-assert.throws(() => MultiTable.restore(saved.replace('"version":1', '"version":99'), t()));
+assert.throws(() => MultiTable.restore(saved.replace('"version":2', '"version":99'), t()));
 const back = MultiTable.restore(saved, t());
 assert.ok(back.isPaused());
 r = back.state(t());

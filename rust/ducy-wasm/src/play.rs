@@ -1370,7 +1370,8 @@ impl MultiTable {
     }
 
     /// The host's answer to running it twice (players send
-    /// {type: 'run_twice', yes}). Twice only if every person still in says yes.
+    /// {type: 'run_twice', yes}). Settled pot by pot: a pot runs twice when
+    /// every person who can win it says yes.
     #[wasm_bindgen(js_name = hostRunTwice)]
     pub fn host_run_twice(&mut self, yes: bool, now: f64) -> Result<JsValue, JsError> {
         let out = self.host.host_run_twice(yes, now as u64).map_err(err)?;
